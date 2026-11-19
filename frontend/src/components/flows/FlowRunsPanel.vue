@@ -16,7 +16,8 @@
  * project without flows (where `/_flows` answers 404) sees the page it
  * always saw. A refused read drops the runs on screen (BUG-E8XE7I).
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import { listSubjectRuns, startFlowRun, type Flow, type FlowRun } from '@/api/flows'
@@ -26,6 +27,7 @@ import { useEvents } from '@/composables/useEvents'
 import { useFlowList } from '@/composables/useFlowList'
 import { useUIStore } from '@/stores'
 import FlowRunCard from './FlowRunCard.vue'
+import { focusRunCard, requestedRun } from './focusRun'
 
 /** The entity type of a run header; a run's moves change it. */
 const FLOW_RUN_TYPE = '_flow-run'
@@ -107,6 +109,22 @@ watch(
   { immediate: true }
 )
 
+// `?run=<id>` (a flow task hint links here with it) brings that run's card
+// into view once per entity and run, as soon as the card is on screen.
+const route = useRoute()
+const panel = ref<HTMLElement | null>(null)
+/** The entity and run `?run=` already focused, so a reload does not steal focus. */
+let focusedRun = ''
+watch(
+  () => [runs.value, props.entityId, requestedRun(route?.query ?? {})] as const,
+  async ([, entityId, id]) => {
+    const key = `${entityId}|${id}`
+    if (!id || key === focusedRun) return
+    await nextTick()
+    if (focusRunCard(panel.value, id)) focusedRun = key
+  }
+)
+
 // A step, a timer or another reader moves a run; its header and the subject
 // change with it. The event names no subject, so a burst of run changes
 // anywhere is folded into one reload.
@@ -154,6 +172,7 @@ const visible = computed(
 <template>
   <section
     v-if="visible"
+    ref="panel"
     class="flow-runs-panel"
     aria-labelledby="flow-runs-heading"
     data-testid="flow-runs-panel"

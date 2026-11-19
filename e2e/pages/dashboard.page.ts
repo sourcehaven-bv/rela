@@ -61,6 +61,18 @@ export class DashboardPage extends BasePage {
     await expect(this.sidebarLink(label)).not.toHaveAttribute('aria-current', 'page');
   }
 
+  /** The validation card (TKT-31822PN), which `validation:` can hide. */
+  get validationCard(): Locator {
+    return this.page.getByTestId('dashboard-validation');
+  }
+
+  async expectValidationCard(shown: boolean) {
+    // Wait for a card first, so an absence is not read off a half-drawn page.
+    await expect(this.cards.first()).toBeVisible();
+    if (shown) await expect(this.validationCard).toBeVisible();
+    else await expect(this.validationCard).toHaveCount(0);
+  }
+
   async getCardCount(): Promise<number> {
     return this.cards.count();
   }

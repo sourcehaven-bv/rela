@@ -151,12 +151,13 @@ export interface WorldMessages {
   stand_in?: string
 }
 
-// A property's display format. Only currency exists today; more formats may
-// join, and at most one applies.
+// A property's display format. More formats may join; at most one applies.
 export interface PropertyDisplay {
   // ISO 4217 code: the integer or decimal renders as money in the reader's
   // locale.
   currency?: string
+  // The string renders as a link through the url widget (TKT-0101IO4).
+  link?: boolean
 }
 
 export interface PropertyDef {

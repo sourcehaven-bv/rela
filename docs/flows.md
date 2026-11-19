@@ -15,11 +15,12 @@ The file is optional. Without it, a project has no flows and no triggers.
 `schema.yaml` never refers to it.
 
 > **Status.** This release runs flows that a person starts by hand, from
-> the web app, over MCP or with `rela flow start`. A run writes its
+> the web app, over MCP or with `rela flow start`, and flows that start
+> when their subject is created (`on: create`). A run writes its
 > outputs, follows `done` branches and ends in a final state. People do
 > their steps in the web app or over MCP, and a completed step takes the
 > `change` branches. Timers fire and failed steps are tried again while
-> `rela-server` or the desktop app runs. The `create`, `predicate` and
+> `rela-server` or the desktop app runs. The `predicate` and
 > `schedule` triggers, `change` events from ordinary edits, retention and
 > the inbox are checked but not acted on yet; they follow in a later
 > release. See [Running flows](#running-flows) and
@@ -109,6 +110,50 @@ grants it, because then nobody can start the flow by hand. rela also warns
 about a flow without start triggers. A schedule start needs
 `per_subject: one`; with `many`, every tick would start another run on
 every matching subject.
+
+### Starting on create
+
+A flow with an `on: create` start gets a run each time an entity of its
+subject type is created and the `when:` condition, if any, holds for the
+new entity. Several `on: create` starts on one flow still give one run.
+It works for every create that goes through rela's write path: the web
+app and the API, MCP, `rela create`, `rela import --mapping`, a Lua
+script (an action, a webhook action, a scheduled script) and a trigger's
+`create` output.
+
+- The run is started by the flow's `run_as`, the identity that writes
+  its outputs. The person or script that created the entity needs no
+  permission on the flow. So anyone who may create the subject makes
+  `run_as` write. Grant `run_as` only the writes the outputs make, and
+  use `when:` to narrow which creates start a run.
+- On SQLite and PostgreSQL the run is stored in the same transaction as
+  the entity. If the create fails or rolls back, no run exists. Because
+  the run is part of the create, a retried request that creates nothing
+  new starts nothing new either.
+- On the file store nothing rolls back. A create that fails after the
+  entity was written keeps the entity, and keeps its run too.
+- Right after the create commits, and after the entity's own on-create
+  automations, rela enters the initial state and writes its outputs. The
+  request that made the create waits for this, for at most 30 seconds.
+  If it fails or takes longer, the run waits with its step pending, and
+  the flow worker tries again as for any failed step.
+- With `per_subject: one`, a subject that already carries an unfinished
+  run gets no second one. rela logs this and the create still succeeds.
+- A `when:` reads only the new entity's own properties. A `when:` that
+  cannot be evaluated starts no run. rela logs it and the create still
+  succeeds.
+
+Some ways of adding entities are not creates and start no run:
+`rela import` of an export without a mapping, `rela db load`, a
+conversion, a copy to another face and a restore from history.
+
+A run's outputs can create entities that start further runs. Each run
+started this way stores its `depth` on the run: one more than the run
+whose output made the create. rela starts no run at depth 8 or deeper,
+and logs it. The bound holds whether a run settles right after its
+create or later through the flow worker. It limits the length of a
+chain, not its width: one run that creates several subjects starts a run
+for each.
 
 ## States
 
@@ -363,6 +408,47 @@ reader cannot see, a flow condition is held to a smaller set:
   restricts. acl.yaml must key `visible:` by the type's own name; a key
   that names an alias fails to load, because it would restrict nothing.
 
+A property is restricted when some reader of the subject may not see it:
+
+- a role's `visible:` block for the type leaves it out, or lists it only
+  with a `when:`;
+- a client baseline leaves it out of its `visible:` or names it in its
+  `redact:`.
+
+A role without a `visible:` block for the type sees every property. So a
+condition may read a property that every role's `visible:` block for the
+type lists without a `when:`. A block may still leave other properties
+out. For example, the signup flow below reads `terms_accepted`, and the
+customer role hides the account's internal ids:
+
+```yaml
+# acl.yaml
+roles:
+  staff:
+    read: ["*"]
+  customer:
+    read: [account]
+    visible:
+      account:
+        - field: name
+        - field: terms_accepted
+```
+
+```yaml
+# flows.yaml
+flows:
+  signup:
+    subject: account
+    states:
+      details:
+        on:
+          change:
+            - when: "entity.terms_accepted == true"
+              to: accepted
+```
+
+The same rule applies to a template's `{{subject.<property>}}`.
+
 ## Versions
 
 Each flow has a version: a hash of its definition. A change to a flow
@@ -377,7 +463,8 @@ A run is recorded as an entity of the type `_flow-run`, with id prefix
 `RUN-`. rela adds the type when a project declares flows; `schema.yaml`
 cannot declare it. A run holds the flow's name, its version, its status
 (`working`, `input_required`, `completed`, `cancelled` or `failed`), its
-active state and its start, completion and deadline times. Two relations
+active state, its start, completion and deadline times and, for a run
+started on create, its depth (see [Starting on create](#starting-on-create)). Two relations
 link it to the graph: `_carries` points at the subject, and `_produced`
 points at each entity a step created.
 
@@ -420,6 +507,9 @@ rela flow runs                      # list the runs you can read
 rela flow runs --flow onboarding
 rela flow cancel RUN-4OSX           # cancel an unfinished run
 ```
+
+A flow with an `on: create` start also starts by itself; see
+[Starting on create](#starting-on-create).
 
 `rela flow start` needs an `on: manual` trigger on the flow, and the
 caller must hold its `permission` for the subject. A role held through a
@@ -553,6 +643,11 @@ Both lists read at most 500 (tasks) or 1,000 (runs) runs, the oldest
 tasks and the newest runs; past that they say the list is cut short, and a
 filter narrows it. The task list matches
 each run against the current `flows.yaml`.
+
+A next-action source can put your oldest task in a banner on every
+page, with a button to its step: see `source: flow_tasks` in
+[Next actions](data-entry.md#waiting-flow-steps-source-flow_tasks). An
+entity page link with `?run=<id>` scrolls to that run and focuses it.
 
 **Parallel branches.** A forked run shows each branch with its own state,
 reason and step form. The Flow tasks page lists one task per branch that

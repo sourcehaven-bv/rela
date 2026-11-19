@@ -44,5 +44,6 @@ body:
       "permission": "report:all",
       "index": 3
     }
-  ]
+  ],
+  "validation": true
 }

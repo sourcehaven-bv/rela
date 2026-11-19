@@ -309,10 +309,18 @@ type SectionData struct {
 	source string
 
 	// hideEmpty is the section's `hide_empty:` setting. The section is
-	// dropped from the response by [omitHiddenEmpty], not here, because the
+	// dropped from the response by [omitHiddenSections], not here, because the
 	// affordance resolvers index sections in step with the view config.
 	// Unexported: it never leaves this package.
 	hideEmpty bool
+
+	// withheld reports that this reader gets nothing from the section: its
+	// `permission:` is not held, or it is an entry properties section whose
+	// every field is redacted for the reader ([allFieldsRedacted]). Only the
+	// `_views` path acts on it: [omitHiddenSections] drops the section there,
+	// for the same index-alignment reason as hideEmpty. The side panel never
+	// omits a section, and config load refuses `permission:` on one.
+	withheld bool
 }
 
 // SectionTreeNode is one row of a `display: nested` section: an entity plus
@@ -483,8 +491,15 @@ func withRowEditData(
 func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection, result *viewResult) []SectionData {
 	s := h.schema()
 	out := make([]SectionData, 0, len(sections))
+	aclImpl := h.currentACL()
 
 	for _, sec := range sections {
+		if !permitsGatedUIElement(ctx, aclImpl, sec.Permission) {
+			// Still appended, so later resolvers keep their index alignment
+			// with the config; omitHiddenSections drops it.
+			out = append(out, SectionData{Heading: sec.Heading, withheld: true})
+			continue
+		}
 		sd := SectionData{
 			Heading:      sec.Heading,
 			SectionID:    slugify(sec.Heading),
@@ -505,6 +520,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 					sd.Fields = append(sd.Fields, buildSectionFieldData(f, e, entDef, sec.Render))
 				}
 				resolveRelationFields(ctx, h, s, sd.Fields, e)
+				sd.withheld = allFieldsRedacted(sec.Fields, e)
 			case "content":
 				sd.Content = e.Content
 				sd.HasContent = e.Content != ""
@@ -556,17 +572,39 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 	return out
 }
 
-// omitHiddenEmpty drops the sections that opted into `hide_empty` and have
-// no rows (TKT-JT101B). Call it after every resolver that indexes sections in step with
-// the view config (resolveSectionCreate), because it breaks that alignment.
+// allFieldsRedacted reports whether an entry properties section would show
+// the reader nothing but labels: it has at least one field, and every field
+// is a property that field-level `visible:` withholds from this reader
+// (e.Redacted, set by [visibility.Redact]). A relation field always counts as
+// content, since it shows the reader's own view of the relation.
+//
+// The heading and labels are not secret (the metamodel and the config are
+// served to everyone); dropping the section is presentation only.
+func allFieldsRedacted(fields []ViewSectionField, e *entity.Entity) bool {
+	if len(fields) == 0 || len(e.Redacted) == 0 {
+		return false
+	}
+	for _, f := range fields {
+		if f.Relation != "" || !slices.Contains(e.Redacted, f.Property) {
+			return false
+		}
+	}
+	return true
+}
+
+// omitHiddenSections drops the sections this reader should not see: those
+// marked withheld (a `permission:` not held, or every field redacted), and
+// those that opted into `hide_empty` and have no rows (TKT-JT101B). Call it
+// after every resolver that indexes sections in step with the view config
+// (resolveSectionCreate), because it breaks that alignment.
 //
 // An Incomplete section stays: its collection, or one it was traversed from,
 // holds only part of the matching sources, so "empty" is not known to be
 // true.
-func omitHiddenEmpty(sections []SectionData) []SectionData {
+func omitHiddenSections(sections []SectionData) []SectionData {
 	out := sections[:0:0]
 	for _, sec := range sections {
-		if sec.hideEmpty && sec.IsEmpty && !sec.Incomplete {
+		if sec.withheld || (sec.hideEmpty && sec.IsEmpty && !sec.Incomplete) {
 			continue
 		}
 		out = append(out, sec)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/nextaction"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -43,6 +44,10 @@ type nextActionResponse struct {
 	// re-resolves on a change of that type and of no other, so a page that no
 	// context source is about never refreshes on graph changes.
 	ContextType string `json:"context_type,omitempty"`
+	// RefreshTypes are all the entity types whose changes can change the
+	// answer: the context type above, and the flow run type when a
+	// flow_tasks source can apply here. It supersedes ContextType.
+	RefreshTypes []string `json:"refresh_types,omitempty"`
 }
 
 // nextActionWire is one suggestion as the SPA sees it.
@@ -156,21 +161,26 @@ func (a *App) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
 		writeNextActionError(w, r, err)
 		return
 	}
-	contextType := page.refreshType(st.Cfg)
+	refresh := page.refreshTypes(st.Cfg)
+	contextType := ""
+	if len(refresh) > 0 && refresh[0] != entityPkg.FlowRunType {
+		contextType = refresh[0]
+	}
 	if !found {
-		writeV1JSON(w, http.StatusOK, nextActionResponse{ContextType: contextType})
+		writeV1JSON(w, http.StatusOK, nextActionResponse{ContextType: contextType, RefreshTypes: refresh})
 		return
 	}
 
-	writeV1JSON(w, http.StatusOK, nextActionResponse{ContextType: contextType, Suggestion: &nextActionWire{
-		Source:      sug.Source,
-		Band:        sug.Band,
-		EntityID:    sug.EntityID,
-		Variant:     sug.Key.Variant,
-		Message:     sug.Message,
-		Actions:     sug.Actions,
-		PickOptions: pickOptionsWire(sug.PickOptions),
-	}})
+	writeV1JSON(w, http.StatusOK, nextActionResponse{
+		ContextType: contextType, RefreshTypes: refresh, Suggestion: &nextActionWire{
+			Source:      sug.Source,
+			Band:        sug.Band,
+			EntityID:    sug.EntityID,
+			Variant:     sug.Key.Variant,
+			Message:     sug.Message,
+			Actions:     sug.Actions,
+			PickOptions: pickOptionsWire(sug.PickOptions),
+		}})
 }
 
 // writeNextActionError maps a resolve failure to a response. The one error

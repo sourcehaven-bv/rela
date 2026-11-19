@@ -10,13 +10,36 @@ import { isCancelledFetch } from '@/composables/usePageData'
 import { useNavigationPending } from '@/composables/useNavigationPending'
 import { relaBase } from '@/api/base'
 import { getSidebar } from '@/api/schema'
-import { spaceOf, useSpaceStore, withSpace } from '@/stores/space'
+import { lastSpace, homeTarget, spaceOf, useSpaceStore, withSpace } from '@/stores/space'
 import { CONFIGURE_PREFIX, configureRoute, isConfigurePath } from '@/configure/routes'
 
 const routes: RouteRecordRaw[] = [
   {
+    /*
+     * The root opens the home of the current space (TKT-JEAR2UA): the one
+     * the user is in, else the one they were last in, else the first they
+     * may enter. Without `spaces:` it opens the dashboard, as it always did.
+     *
+     * A guard rather than a `redirect` for the reason the `/s/:space` route
+     * gives: on a cold load the space store is still empty, so this asks the
+     * server, which resolves the remembered space against the principal's
+     * permitted ones. The answer fills the store, so a later visit to the
+     * root needs no request.
+     */
     path: '/',
-    redirect: '/dashboard',
+    // Never rendered: the guard always redirects.
+    component: { render: () => null },
+    beforeEnter: async () => {
+      const store = useSpaceStore()
+      if (store.loaded) return homeTarget(store.spaces, store.current)
+      try {
+        const data = await getSidebar(lastSpace())
+        store.set(data)
+        return homeTarget(store.spaces, store.current)
+      } catch {
+        return '/dashboard'
+      }
+    },
   },
   {
     path: '/dashboard',
@@ -214,9 +237,7 @@ routes.push({
         spaces = []
       }
     }
-    const home = spaces.find((s) => s.id === id)?.home
-    // A home of "/" would land back on this route and redirect forever.
-    return withSpace(home && home !== '/' ? home : '/dashboard', id)
+    return homeTarget(spaces, id)
   },
 })
 

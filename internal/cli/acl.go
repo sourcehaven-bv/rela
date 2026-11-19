@@ -333,8 +333,9 @@ type dataEntryPermissions struct {
 }
 
 // UsedPermissions returns every permission referenced by a data-entry UI gate:
-// documents, dashboard cards, navigation entries (recursively, since groups
-// nest items, and in every space), spaces, page tabs, commands and actions.
+// documents, dashboard cards and validation cards, entity page buttons,
+// navigation entries (recursively, since groups nest items, and in every
+// space), spaces, built-in sidebar rows, page tabs, commands and actions.
 func (d *dataEntryPermissions) UsedPermissions() []string {
 	if d == nil || d.cfg == nil {
 		return nil
@@ -358,12 +359,21 @@ func (d *dataEntryPermissions) UsedPermissions() []string {
 		for _, card := range dash.Config.Cards {
 			add(card.Permission)
 		}
+		add(dash.Config.Validation.Permission)
 	}
+	add(d.cfg.HeaderButtons.History.Permission)
+	add(d.cfg.HeaderButtons.AddToPile.Permission)
 	for _, tree := range dataentryconfig.NavigationTrees(d.cfg) {
 		perms = append(perms, navigationPermissions(tree.Entries)...)
 	}
+	for _, c := range d.cfg.Builtins {
+		add(c.Permission)
+	}
 	for _, sp := range d.cfg.Spaces {
 		add(sp.Permission)
+		for _, c := range sp.Builtins {
+			add(c.Permission)
+		}
 	}
 	for _, page := range d.cfg.Pages {
 		for _, tab := range page.Tabs {

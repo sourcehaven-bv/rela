@@ -294,6 +294,55 @@ func TestParse_AliasSubjectReadsNoHiddenProperty(t *testing.T) {
 	}
 }
 
+// TestParse_GuardReadsFieldEveryVisibleBlockShows pins that a guard may read
+// a property that a role's visible: block lists without a when:, while one the
+// block leaves out or shows only under a when: is still refused. The run's
+// state, and each branch's verdict in the run view, would otherwise disclose a
+// hidden value to a reader of the subject.
+func TestParse_GuardReadsFieldEveryVisibleBlockShows(t *testing.T) {
+	tests := []struct {
+		name    string
+		visible string
+		refused string // "" means the flows load
+	}{
+		{"guard fields listed, others left out",
+			"[{field: name}, {field: status}, {field: documents}]", ""},
+		{"guard field left out",
+			"[{field: name}, {field: status}]", "reads person.documents"},
+		{"guard field shown under a when",
+			"[{field: name}, {field: status}, {field: documents, when: \"entity.status == 'active'\"}]",
+			"reads person.documents"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := string(readFile(t, "acl.yaml"))
+			if !strings.Contains(src, "assignments:\n") {
+				t.Fatal("the fixture acl.yaml has no assignments: line to insert the role before")
+			}
+			src = strings.Replace(src, "assignments:\n",
+				"  employee:\n    read: [person]\n    visible:\n      person: "+tt.visible+"\nassignments:\n", 1)
+			policy, err := acl.ParsePolicy([]byte(src), "acl.yaml")
+			if err != nil {
+				t.Fatalf("parse acl: %v", err)
+			}
+			_, err = Parse(readFile(t, "flows.yaml"), testMeta(t), policy)
+			if tt.refused == "" {
+				if err != nil {
+					t.Fatalf("Parse = %v; want the flows to load", err)
+				}
+				return
+			}
+			var e *Error
+			if !errors.As(err, &e) {
+				t.Fatalf("Parse = %v; want a load error", err)
+			}
+			if !slices.ContainsFunc(e.Problems, func(p Problem) bool { return strings.Contains(p.Message, tt.refused) }) {
+				t.Errorf("problems %v; want ...%s...", e.Problems, tt.refused)
+			}
+		})
+	}
+}
+
 func TestParse_Warnings(t *testing.T) {
 	c, err := parseSample(t, [2]string{"permission: onboarding.start", "permission: nobody.has"})
 	if err != nil {

@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { spaceOf, stripSpace, useSpaceStore, withSpace } from './space'
+import {
+  homeTarget,
+  lastSpace,
+  lastSpaceStorageKey,
+  spaceOf,
+  stripSpace,
+  useSpaceStore,
+  withSpace,
+} from './space'
 
 describe('spaceOf', () => {
   it.each([
@@ -68,5 +76,47 @@ describe('useSpaceStore', () => {
     expect(store.currentSpace?.label).toBe('ISMS')
     expect(store.href('/list/risks')).toBe('/s/isms/list/risks')
     expect(store.create).toHaveLength(1)
+  })
+})
+
+describe('homeTarget', () => {
+  const spaces = [
+    { id: 'staff', label: 'Staff', home: '/list/accounts' },
+    { id: 'portal', label: 'Portal', home: '/p/account' },
+    { id: 'bare', label: 'Bare', home: '/' },
+  ]
+  it.each([
+    ['no spaces', [], undefined, '/dashboard'],
+    ['the current space home', spaces, 'portal', '/s/portal/p/account'],
+    ['a home of / opens the dashboard', spaces, 'bare', '/s/bare/dashboard'],
+    ['an unknown space opens its dashboard', spaces, 'gone', '/s/gone/dashboard'],
+  ])('%s', (_name, list, current, want) => {
+    expect(homeTarget(list, current)).toBe(want)
+  })
+})
+
+describe('last space', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+  })
+
+  it('is remembered when the sidebar resolves a space', () => {
+    expect(lastSpace()).toBeUndefined()
+    useSpaceStore().set({ spaces: [{ id: 'portal', label: 'Portal', home: '/' }], space: 'portal' })
+    expect(lastSpace()).toBe('portal')
+  })
+
+  it('is kept when a sidebar without spaces loads', () => {
+    localStorage.setItem(lastSpaceStorageKey(), 'portal')
+    const store = useSpaceStore()
+    store.set({})
+    expect(store.loaded).toBe(true)
+    expect(lastSpace()).toBe('portal')
+  })
+
+  it('ignores a stored value that is not a space id', () => {
+    localStorage.setItem(lastSpaceStorageKey(), '../x')
+    expect(lastSpace()).toBeUndefined()
   })
 })

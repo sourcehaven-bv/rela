@@ -1208,3 +1208,56 @@ func TestProperty_FileValueRefused(t *testing.T) {
 		t.Errorf("shot binds %v; want 2", got)
 	}
 }
+
+// TestParse_ReadsPropertyEveryVisibleBlockShows pins that a trigger's when:
+// and a role's from: may read a property that every role's visible: block
+// for the type lists without a when:, and that one a block leaves out is
+// still refused.
+func TestParse_ReadsPropertyEveryVisibleBlockShows(t *testing.T) {
+	all := []string{"title", "owner", "status", "severity", "due", "count", "risk", "reference", "evidence",
+		"ticket", "escalated"}
+	without := func(drop string) []string {
+		return slices.DeleteFunc(slices.Clone(all), func(f string) bool { return f == drop })
+	}
+	tests := []struct {
+		name    string
+		fields  []string
+		refused string // "" means realtime.yaml loads
+	}{
+		{"every read property listed", all, ""},
+		{"trigger property left out", without("severity"), "reads datalek.severity"},
+		{"role property left out", without("owner"), "datalek.owner is restricted"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := os.ReadFile("testdata/acl.yaml")
+			if err != nil {
+				t.Fatal(err)
+			}
+			src := string(data)
+			if !strings.Contains(src, "assignments:\n") {
+				t.Fatal("the fixture acl.yaml has no assignments: line to insert the role before")
+			}
+			grants := make([]string, len(tc.fields))
+			for i, f := range tc.fields {
+				grants[i] = "{field: " + f + "}"
+			}
+			src = strings.Replace(src, "assignments:\n", "  viewer:\n    read: [datalek]\n    visible:\n      datalek: ["+
+				strings.Join(grants, ", ")+"]\nassignments:\n", 1)
+			policy, err := acl.ParsePolicy([]byte(src), "acl.yaml")
+			if err != nil {
+				t.Fatalf("parse acl: %v", err)
+			}
+			_, err = Parse([]byte(golden(t)), testMeta(t), policy)
+			if tc.refused == "" {
+				if err != nil {
+					t.Fatalf("Parse = %v; want realtime.yaml to load", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.refused) {
+				t.Fatalf("Parse = %v; want a refusal containing %q", err, tc.refused)
+			}
+		})
+	}
+}

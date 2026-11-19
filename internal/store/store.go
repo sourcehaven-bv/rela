@@ -1924,6 +1924,13 @@ func ContextWithTxView(ctx context.Context, view Store) context.Context {
 	return context.WithValue(ContextInTx(ctx), txViewKey{}, view)
 }
 
+// ContextOutsideTx returns ctx without the marks of [ContextInTx] and
+// [ContextWithTxView], keeping its other values. It is for work queued in
+// a transaction to run once that transaction has committed.
+func ContextOutsideTx(ctx context.Context) context.Context {
+	return context.WithValue(context.WithValue(ctx, txViewKey{}, nil), inTxKey{}, false)
+}
+
 // TxView returns the view [ContextWithTxView] put on ctx.
 //
 // Nil: returned when ctx carries no view.

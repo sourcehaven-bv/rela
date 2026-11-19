@@ -46,7 +46,7 @@ func auditsInTx(deps Deps) bool {
 func emitWrite(ctx context.Context, deps Deps, st store.Store, rec audit.Record) error {
 	tx, ok := deps.Audit.(TxAudit)
 	if !ok {
-		if p, held := ctx.Value(heldAuditKey{}).(*heldAudit); held {
+		if p := scopeOf(ctx).held; p != nil {
 			p.recs = append(p.recs, rec)
 			return nil
 		}
@@ -56,7 +56,7 @@ func emitWrite(ctx context.Context, deps Deps, st store.Store, rec audit.Record)
 	if st == nil {
 		return errAuditOutsideTx
 	}
-	if b, ok := ctx.Value(txBatchKey{}).(*txBatch); ok && b.view == st {
+	if b := scopeOf(ctx).batch; b != nil && b.view == st {
 		b.recs = append(b.recs, rec)
 		return nil
 	}
@@ -71,6 +71,12 @@ func emitWrite(ctx context.Context, deps Deps, st store.Store, rec audit.Record)
 // context carries the view ([store.ContextWithTxView]). A ctx that already
 // carries a view joins that transaction rather than open a second one, which
 // on postgres would wait for the lock its own caller holds.
+//
+// The functions queued with onCommit inside the transaction run after it,
+// on ctx: once it has committed, or after a failure on a store that does
+// not roll back, whose writes stayed. When ctx already carries a commit
+// list, the create entry point that put it there ([beginCreate]) runs it
+// instead, after its own follow-ups.
 func auditTx(ctx context.Context, deps Deps, need bool, fn func(context.Context, store.Store) error) error {
 	if view := store.TxView(ctx); view != nil {
 		return fn(ctx, view)
@@ -78,31 +84,44 @@ func auditTx(ctx context.Context, deps Deps, need bool, fn func(context.Context,
 	if !need && !auditsInTx(deps) {
 		return fn(ctx, deps.Store)
 	}
+	scope := &txScope{commits: scopeOf(ctx).commits}
+	owned := scope.commits == nil
+	if owned {
+		scope.commits = &commitList{}
+	}
+	runCommits := func(err error) {
+		if owned && (err == nil || !store.TxRollsBack(deps.Store)) {
+			scope.commits.run(ctx)
+		}
+	}
 	if tx, ok := deps.Audit.(TxAudit); ok {
-		b := &txBatch{}
-		batchCtx := context.WithValue(ctx, txBatchKey{}, b)
-		return deps.Store.Tx(ctx, func(view store.Store) error {
-			b.view = view
-			if err := fn(store.ContextWithTxView(batchCtx, view), view); err != nil {
+		scope.batch = &txBatch{}
+		scopeCtx := withTxScope(ctx, scope)
+		err := deps.Store.Tx(ctx, func(view store.Store) error {
+			scope.batch.view = view
+			if err := fn(store.ContextWithTxView(scopeCtx, view), view); err != nil {
 				return err
 			}
-			if len(b.recs) == 0 {
+			if len(scope.batch.recs) == 0 {
 				return nil
 			}
-			return tx.RecordTx(ctx, view, b.recs)
+			return tx.RecordTx(ctx, view, scope.batch.recs)
 		})
+		runCommits(err)
+		return err
 	}
-	held := &heldAudit{}
-	heldCtx := context.WithValue(ctx, heldAuditKey{}, held)
-	err := deps.Store.Tx(heldCtx, func(view store.Store) error {
-		return fn(store.ContextWithTxView(heldCtx, view), view)
+	scope.held = &heldAudit{}
+	scopeCtx := withTxScope(ctx, scope)
+	err := deps.Store.Tx(scopeCtx, func(view store.Store) error {
+		return fn(store.ContextWithTxView(scopeCtx, view), view)
 	})
 	if err != nil && store.TxRollsBack(deps.Store) {
 		return err
 	}
-	for _, rec := range held.recs {
+	for _, rec := range scope.held.recs {
 		deps.Audit.Record(rec)
 	}
+	runCommits(err)
 	return err
 }
 
@@ -114,8 +133,6 @@ func auditTx(ctx context.Context, deps Deps, need bool, fn func(context.Context,
 // held record describes a write that stayed, so it is delivered.
 type heldAudit struct{ recs []audit.Record }
 
-type heldAuditKey struct{}
-
 // txBatch collects the records a [TxAudit] sink receives inside a
 // transaction [auditTx] opened, and appends them in one call before the
 // transaction commits. A write that records many rows (a cascade delete, a
@@ -126,5 +143,3 @@ type txBatch struct {
 	view store.Store
 	recs []audit.Record
 }
-
-type txBatchKey struct{}

@@ -1531,6 +1531,21 @@ run, exactly as for a sidebar action, and the script's writes stay bounded by
 the caller's own ACL. The key reveals only a verdict about config, which is
 not secret; it carries no entity data.
 
+**A role from a role relation counts for the menu gates** (TKT-CBRLZWU). The
+`permission:` of a navigation entry, page tab, space or dashboard card counts a
+role the principal holds globally, or through a `role_relations:` edge on any
+entity (with its `when:`, and narrowed by the client ceiling). This widens
+nothing: the gates decide what to render, and the read path still gates every
+row and field. The edges are read once per request, one query per role relation
+that confers a role. If that read fails, no such role counts: the element is
+shown only when a global role grants the permission.
+
+Every gate that allows an action counts global roles only: commands, actions
+(list buttons included), documents (`allow_acl_bypass` included), the built-in
+permissions (`history:read`, `config:edit`, `comment:read` and the others),
+flow jobs, and `requires_permission`. There the permission is the whole check,
+and a role held on one entity must not grant it everywhere.
+
 **Nav status counts are per principal and live apart from the sidebar.**
 A `status:` rule on a nav entry puts a count next to it. A count is about
 data, so it is served by `/api/v1/_nav_status` and never by `_sidebar`,

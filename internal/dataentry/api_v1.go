@@ -117,7 +117,7 @@ func toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) v
 		System:      propDef.System,
 	}
 	if d := propDef.Display; d != nil {
-		pd.Display = &v1.PropertyDisplay{Currency: d.Currency}
+		pd.Display = &v1.PropertyDisplay{Currency: d.Currency, Link: d.Link}
 	}
 	// Labels mirror Values: a property naming a custom type inherits that
 	// type's values and labels; an inline `labels` map on a custom-typed
@@ -2175,6 +2175,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Actions:          s.Cfg.Actions,
 		Navigation:       s.Cfg.Navigation,
 		Spaces:           s.Cfg.Spaces,
+		Builtins:         s.Cfg.Builtins,
 		Pages:            s.Cfg.Pages,
 		Documents:        s.Cfg.Documents,
 		Apps:             appsToV1(a.scanAppsOrLog(r.Context())),

@@ -267,9 +267,11 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 			resp.Space = sp.ID
 			resp.Navigation = sidebarNavigation(ctx, aclImpl, s.Cfg, s.Meta, sp.Navigation, sp.ID)
 			resp.Create = h.spaceCreate(ctx, sp)
+			resp.HiddenBuiltins = hiddenBuiltins(ctx, aclImpl, sp.Builtins)
 		}
 	} else {
 		resp.Navigation = sidebarNavigation(ctx, aclImpl, s.Cfg, s.Meta, s.Cfg.Navigation, "")
+		resp.HiddenBuiltins = hiddenBuiltins(ctx, aclImpl, s.Cfg.Builtins)
 	}
 	h.setItemsCreate(ctx, resp.Navigation)
 	resp.Pages = sidebarPages(ctx, aclImpl, s.Cfg, s.Meta)
@@ -277,8 +279,22 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	resp.InlineCreate = h.inlineCreateForms(ctx)
 	resp.PilesAvailable = h.pilesAvailable != nil && h.pilesAvailable(ctx)
 	resp.Piles = pilesWire(s.Cfg.Piles)
+	resp.HeaderButtons = headerButtonsWire(ctx, aclImpl, s.Cfg.HeaderButtons)
 
 	writeV1JSON(w, http.StatusOK, resp)
+}
+
+// headerButtonsWire resolves `header_buttons:` for this principal. A UX
+// filter like permitsGatedUIElement: the history and pile endpoints keep
+// their own ACL whatever it says.
+func headerButtonsWire(
+	ctx context.Context, aclImpl acl.ACL, cfg dataentryconfig.HeaderButtonsConfig,
+) v1.SidebarHeaderButtons {
+	permits := func(perm string) bool { return permitsGatedUIElement(ctx, aclImpl, perm) }
+	return v1.SidebarHeaderButtons{
+		History:   cfg.History.Shown(permits),
+		AddToPile: cfg.AddToPile.Shown(permits),
+	}
 }
 
 // sidebarNavigation builds the sidebar groups of one navigation tree. space
@@ -342,6 +358,17 @@ func sidebarNavigation(
 		}
 	}
 	return navigation
+}
+
+// hiddenBuiltins returns the built-in sidebar rows this principal does not
+// get. A row's `permission:` is the same UX filter as a navigation entry's
+// (permitsGatedUIElement): it tidies the sidebar and gates nothing behind it.
+func hiddenBuiltins(
+	ctx context.Context, aclImpl acl.ACL, builtins dataentryconfig.Builtins,
+) []dataentryconfig.BuiltinRow {
+	return builtins.Hidden(func(permission string) bool {
+		return permitsGatedUIElement(ctx, aclImpl, permission)
+	})
 }
 
 // permittedSpaces returns the spaces the principal may enter, in config
@@ -902,7 +929,7 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	// After resolveSectionCreate, which indexes sections in step with the
 	// view config. Before ownerRows and the header create menu, so a hidden
 	// section contributes nothing.
-	sections = omitHiddenEmpty(sections)
+	sections = omitHiddenSections(sections)
 
 	// Build response
 	entityDef := s.Meta.Entities[result.Entry.Type]

@@ -26,6 +26,7 @@
  * package's public type surface).
  */
 import { t } from '@/i18n'
+import { LINK_PROTOCOLS } from '@/utils/linkHref'
 
 /**
  * Characters a browser discards while resolving a URL's scheme.
@@ -59,14 +60,11 @@ function stripIgnoredChars(input: string): string {
 }
 
 /**
- * Schemes a link may use.
- *
- * An allowlist, not a blocklist: an unknown scheme is refused rather than
- * permitted, so the set of things that can reach a stored `href` only grows
- * deliberately. Narrower than the preset's, which also allows `tel:` and
- * `ftp:`.
+ * Schemes a link may use: the shared allowlist, which the url widget's
+ * read-side check also applies. Narrower than the preset's, which also allows
+ * `tel:` and `ftp:`.
  */
-const ALLOWED_PROTOCOLS = new Set(['http:', 'https:', 'mailto:'])
+const ALLOWED_PROTOCOLS = LINK_PROTOCOLS
 
 /** A scheme per RFC 3986. Used only to detect that the user wrote one. */
 const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i

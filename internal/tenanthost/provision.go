@@ -116,6 +116,21 @@ var ErrNeedsOperator = errors.New("tenanthost: provisioning needs an operator")
 // starts at most one run.
 const elsewhereHold = 5 * time.Second
 
+// successHold is how long a successful run is remembered. A request reads
+// the tenant before it asks for a run, so a request that read it as absent
+// just before a run succeeded reaches start after the run has left runs.
+// During the hold start refuses with errProvisionedRecently instead of
+// starting another create (BUG-CZFPMSX). A request answers provisioning,
+// and its next poll finds the tenant active. A webhook answers 503 with
+// Retry-After, so the IdP retries after the hold: the retry is routed to
+// the active tenant, or creates it if an operator deleted the control row
+// by hand in the meantime. So no event is acknowledged without a tenant.
+const successHold = 5 * time.Second
+
+// errProvisionedRecently reports that the org's last run succeeded less
+// than [successHold] ago, so no run started.
+var errProvisionedRecently = errors.New("tenanthost: the tenant was provisioned moments ago")
+
 // errProvisionElsewhere reports that another process was creating the
 // org's tenant less than [elsewhereHold] ago, so no run started.
 var errProvisionElsewhere = errors.New("tenanthost: the tenant is being provisioned by another process")
@@ -185,6 +200,8 @@ type provisioning struct {
 	// elsewhere holds when a run last found another process creating the
 	// org's tenant.
 	elsewhere map[string]time.Time
+	// succeeded holds when an org's last run succeeded, for [successHold].
+	succeeded map[string]time.Time
 	// stuck holds when the host last logged that an org's tenant is left
 	// in the provisioning status.
 	stuck map[string]time.Time
@@ -228,6 +245,7 @@ func newProvisioning(cfg ProvisionConfig) *provisioning {
 		runs:       map[string]*run{},
 		failed:     map[string]failure{},
 		elsewhere:  map[string]time.Time{},
+		succeeded:  map[string]time.Time{},
 		stuck:      map[string]time.Time{},
 	}
 }
@@ -263,11 +281,11 @@ func validateProvision(cfg ProvisionConfig, webhook bool) error {
 }
 
 // start returns orgID's run, starting one when none is in progress. A
-// caller already checked orgID with [tenant.SchemaFor]. The run keeps ctx's
-// values but not its cancellation, so a client that disconnects does not
-// abort a migration.
+// caller already checked orgID with [tenant.SchemaFor]. The run keeps ctx's values but not its
+// cancellation, so a client that disconnects does not abort a migration.
 //
-// It refuses with a *heldFailureError while the org's last run failed less
+// It refuses with errProvisionedRecently while the org's last run succeeded
+// less than [successHold] ago, with a *heldFailureError while it failed less
 // than its hold ago, with errProvisionElsewhere while its last run found
 // another process creating the tenant less than elsewhereHold ago, and with
 // errProvisionBusy when the rate or the running cap is reached or the host
@@ -288,6 +306,14 @@ func (p *provisioning) start(ctx context.Context, orgID string) (*run, error) {
 		if now.Sub(at) >= elsewhereHold {
 			delete(p.elsewhere, org)
 		}
+	}
+	for org, at := range p.succeeded {
+		if now.Sub(at) >= successHold {
+			delete(p.succeeded, org)
+		}
+	}
+	if _, ok := p.succeeded[orgID]; ok {
+		return nil, errProvisionedRecently
 	}
 	if f, ok := p.failed[orgID]; ok {
 		return nil, &heldFailureError{cause: f.err, left: f.hold() - now.Sub(f.at)}
@@ -340,6 +366,8 @@ func (p *provisioning) execute(ctx context.Context, orgID string, r *run) {
 		// refused for its status.
 	case err != nil:
 		p.failed[orgID] = failure{err: err, at: p.now()}
+	default:
+		p.succeeded[orgID] = p.now()
 	}
 	r.err = err
 	p.mu.Unlock()

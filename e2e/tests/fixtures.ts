@@ -1058,6 +1058,12 @@ entities:
         type: integer
         display:
           currency: EUR
+      # url-link.spec.ts (TKT-0101IO4): a URL string shown as a link. No seed
+      # bug sets it.
+      doc_url:
+        type: string
+        display:
+          link: true
 
   # BUG-L1DHC5: a dedicated type whose file property is REQUIRED. Separate from
   # 'bug' on purpose — a required property on a shared type makes every other
@@ -1409,6 +1415,8 @@ forms:
       # TKT-7K3BJF: exercised by attachments-create.spec.ts.
       - property: screenshot
       - property: evidence
+      # url-link.spec.ts (TKT-0101IO4): a URL input.
+      - property: doc_url
     # BUG-NSGD6OE: links to another bug's edit form, so a spec can switch
     # entity inside the same form route.
     side_panel:
@@ -1607,6 +1615,15 @@ lists:
     filter_controls:
       - property: severity
       - property: status
+
+  # url-link.spec.ts (TKT-0101IO4): a link-formatted column. Not in the
+  # sidebar, so it changes no navigation count.
+  bug_links:
+    entity_type: bug
+    title: "Bug links"
+    columns:
+      - property: title
+      - property: doc_url
 
   tasks:
     entity_type: task
@@ -1919,6 +1936,21 @@ kanbans:
     card:
       title: title
     quick_add: true
+
+  # url-link.spec.ts (TKT-0101IO4): a link-formatted card field. Not in the
+  # sidebar, so it changes no navigation count.
+  bug-link-board:
+    entity_type: bug
+    title: "Bug Link Board"
+    column_property: status
+    columns:
+      - value: draft
+        label: New
+    card:
+      title: title
+      fields:
+        - property: doc_url
+          show_label: false
 
   # kanban-summary.spec.ts (TKT-SVLQQ6): column colours from styles:, column
   # summaries and a currency card field. Not in the sidebar, so it changes no
