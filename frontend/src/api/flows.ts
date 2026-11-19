@@ -99,7 +99,7 @@ export interface FlowEvent {
   /** The state's label, or its name when the flow lost the state. */
   label?: string
   from?: string
-  via: 'start' | 'done' | 'change' | 'timer' | 'join' | string
+  via: 'start' | 'done' | 'change' | 'timer' | 'join' | 'cancel' | string
   timer?: string
   by?: string
   /** The title of `by` when it is an entity the reader may see. */

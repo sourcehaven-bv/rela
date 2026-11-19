@@ -657,7 +657,10 @@ subject's id instead.
 
 Each run also has its own page. A finished run keeps only its header, so
 its page shows the flow, the final state, when the run started and ended,
-and a link to the subject. Its timeline and diagram are not kept.
+and a link to the subject. The header also keeps the timeline, so someone
+who manages the flow still sees it, with the diagram at the final state.
+The timeline of a cancelled run ends with the cancel and who cancelled it.
+A run that ended before rela kept the timeline has none.
 
 A next-action source can put your oldest task in a banner on every
 page, with a button to its step: see `source: flow_tasks` in

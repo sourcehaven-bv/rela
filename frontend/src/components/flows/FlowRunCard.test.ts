@@ -296,6 +296,29 @@ describe('FlowRunCard', () => {
     await flushPromises()
     expect(getFlowRunMock).toHaveBeenCalledWith('R1', expect.any(AbortSignal))
   })
+
+  it('shows a manager the timeline and diagram of a finished run, with no controls', async () => {
+    const wrapper = mountCard(
+      run({
+        active: false,
+        state: 'finished',
+        status: 'completed',
+        waiting: undefined,
+        diagram: 'stateDiagram-v2\n  class finished current',
+        log: [
+          { at: '2026-01-01T10:00:00Z', state: 'collect', via: 'start' },
+          { at: '2026-01-02T10:00:00Z', state: 'finished', from: 'collect', via: 'change' },
+        ],
+        _actions: { complete: false, manage: true, cancel: false, retry: false },
+      })
+    )
+    await flushPromises()
+    expect(getFlowRunMock).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('Timeline')
+    expect(wrapper.text()).toContain('Diagram')
+    expect(wrapper.find('[data-testid="flow-cancel"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="flow-retry"]').exists()).toBe(false)
+  })
 })
 
 describe('FlowRunCard for a reader who does not manage the flow', () => {

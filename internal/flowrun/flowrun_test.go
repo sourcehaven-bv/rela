@@ -225,6 +225,34 @@ func TestAppendLog(t *testing.T) {
 	require.NoError(t, flowrun.CheckState(flowrun.State{Log: log}))
 }
 
+func TestLogBody(t *testing.T) {
+	log := []flowrun.Step{
+		{At: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC), State: "a", Via: flowrun.ViaStart, By: "alice"},
+		{At: time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC), State: "b", From: "a", Via: flowrun.ViaChange},
+	}
+	body, err := flowrun.LogBody(log)
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(body, "```json\n"), "a code block reads as one in the entity view")
+	got, err := flowrun.ParseLogBody(body)
+	require.NoError(t, err)
+	require.Equal(t, log, got)
+	got, err = flowrun.ParseLogBody("\n" + body + "\n")
+	require.NoError(t, err)
+	require.Equal(t, log, got, "the store may add or trim newlines around the body")
+
+	got, err = flowrun.ParseLogBody("")
+	require.NoError(t, err)
+	require.Nil(t, got, "a header without a log")
+
+	for _, bad := range []string{
+		"[]", "```json\n{\n```\n", "```json\n[{\"state\":\"a\",\"via\":\"poke\"}]\n```\n",
+		"```json\n[{\"state\":\"\",\"via\":\"start\"}]\n```\n",
+	} {
+		_, err = flowrun.ParseLogBody(bad)
+		require.Error(t, err, bad)
+	}
+}
+
 func TestCheckState_LogAndClaim(t *testing.T) {
 	tests := []struct {
 		name string

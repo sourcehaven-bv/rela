@@ -65,6 +65,10 @@ type Headers interface {
 	CreateHeader(ctx context.Context, subject entity.Ref, props map[string]any) (flow.RunID, error)
 	// PatchHeader writes props on the header.
 	PatchHeader(ctx context.Context, id flow.RunID, props map[string]any) error
+	// EndHeader writes props on the header of a run that ended, and body,
+	// the run's log as [flowrun.LogBody] wrote it, as its body. The log
+	// holds state names, times and the principals who moved the run.
+	EndHeader(ctx context.Context, id flow.RunID, props map[string]any, body string) error
 	// DeleteHeader deletes the header and its relations.
 	DeleteHeader(ctx context.Context, id flow.RunID) error
 	// LinkProduced writes the `_produced` edge from the header to created.
@@ -288,6 +292,26 @@ func (e *Engine) Cancel(ctx context.Context, id flow.RunID) error {
 		if err != nil {
 			return err
 		}
+		at := e.now()
+		props := endProps(flow.StatusCancelled, at)
+		// A forked run's header keeps the join it was headed for; its
+		// cancel is logged at the state of its newest move.
+		var state string
+		if n := len(run.Log); n > 0 {
+			state = run.Log[n-1].State
+		}
+		if f, ferr := e.flowOf(ctx, run); ferr == nil && !forked(run) {
+			state = flow.Read(f.Definition(), run.Instance, run.CreatedAt).State
+			props[metamodel.FlowRunPropState] = state
+		}
+		var last *flowrun.Step
+		if state != "" {
+			last = &flowrun.Step{At: at, State: state, Via: flowrun.ViaCancel, By: byOf(ctx)}
+		}
+		body, err := endBody(run, last)
+		if err != nil {
+			return err
+		}
 		err = e.d.Runs.Delete(ctx, id, run.Rev)
 		switch {
 		case errors.Is(err, flowrun.ErrConflict):
@@ -297,13 +321,8 @@ func (e *Engine) Cancel(ctx context.Context, id flow.RunID) error {
 		case err != nil:
 			return err
 		}
-		props := endProps(flow.StatusCancelled, e.now())
-		// A forked run's header keeps the join it was headed for.
-		if f, ferr := e.flowOf(ctx, run); ferr == nil && !forked(run) {
-			props[metamodel.FlowRunPropState] = flow.Read(f.Definition(), run.Instance, run.CreatedAt).State
-		}
 		wctx := audit.WithFlowStep(ctx, audit.FlowStep{Flow: run.Flow, Run: string(id), By: byOf(ctx)})
-		if err := e.d.Headers.PatchHeader(wctx, id, props); err != nil {
+		if err := e.d.Headers.EndHeader(wctx, id, props, body); err != nil {
 			return fmt.Errorf("flowengine: run %s is cancelled, but its header is not: %w", id, err)
 		}
 		return nil

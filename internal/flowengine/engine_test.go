@@ -48,8 +48,10 @@ type fakes struct {
 	mu       sync.Mutex
 	subjects map[string]*entity.Entity
 	// hidden lists the subjects run_as cannot read.
-	hidden   map[string]bool
-	headers  map[flow.RunID]map[string]any
+	hidden  map[string]bool
+	headers map[flow.RunID]map[string]any
+	// bodies holds the body each ended header was given.
+	bodies   map[flow.RunID]string
 	carries  map[flow.RunID]entity.Ref
 	produced map[flow.RunID][]entity.Ref
 	sets     []map[string]any
@@ -103,6 +105,19 @@ func (f *fakes) PatchHeader(_ context.Context, id flow.RunID, props map[string]a
 		return f.failEnd
 	}
 	maps.Copy(h, props)
+	return nil
+}
+
+func (f *fakes) EndHeader(ctx context.Context, id flow.RunID, props map[string]any, body string) error {
+	if err := f.PatchHeader(ctx, id, props); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.bodies == nil {
+		f.bodies = map[flow.RunID]string{}
+	}
+	f.bodies[id] = body
 	return nil
 }
 

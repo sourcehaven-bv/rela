@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/flowview"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -507,4 +509,135 @@ func TestFlowControl_FinishedRunNamesSubject(t *testing.T) {
 	}
 	_, err = ctl.Run(flowUser(t, svc, "eve"), id)
 	require.ErrorIs(t, err, flowview.ErrNotFound)
+}
+
+// TestFlowControl_FinishedRunKeepsTimeline pins BUG-A4BFVNW: a run keeps its log
+// in the header body when it ends, so a manager still sees its timeline, its
+// diagram at the final state and the manage view. Cancel and retry are not
+// offered on a run that has ended. A cancel adds a step that names who
+// cancelled. The run list reads headers without a body, so it carries no
+// timeline.
+func TestFlowControl_FinishedRunKeepsTimeline(t *testing.T) {
+	type ender func(t *testing.T, ctl *appbuild.FlowControl, alice context.Context, id flow.RunID)
+	tests := []struct {
+		name   string
+		end    ender
+		status string
+		states []string
+		marked string
+	}{
+		{name: "completed", status: "completed", states: []string{"collect", "review", "finished"},
+			marked: "finished",
+			end: func(t *testing.T, ctl *appbuild.FlowControl, alice context.Context, id flow.RunID) {
+				t.Helper()
+				run, err := ctl.Run(alice, id)
+				require.NoError(t, err)
+				got, err := ctl.Complete(alice, id, run.Generation, map[string]any{"documents": true})
+				require.NoError(t, err)
+				require.True(t, got.Finished)
+			}},
+		{name: "cancelled", status: "cancelled", states: []string{"collect", "collect"},
+			marked: "collect",
+			end: func(t *testing.T, ctl *appbuild.FlowControl, alice context.Context, id flow.RunID) {
+				t.Helper()
+				require.NoError(t, ctl.Cancel(alice, id))
+			}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, ctl := stepProject(t)
+			addFlowPerson(t, svc, "PER-1", map[string]any{"name": "Ada"})
+			alice, bob := flowUser(t, svc, "alice"), flowUser(t, svc, "bob")
+			id, err := ctl.Start(alice, "onboarding", "PER-1")
+			require.NoError(t, err)
+			tc.end(t, ctl, alice, id)
+
+			run, err := ctl.Run(alice, id)
+			require.NoError(t, err)
+			require.False(t, run.Active)
+			require.Equal(t, tc.status, run.Status)
+			states := make([]string, len(run.Log))
+			for i, e := range run.Log {
+				states[i] = e.State
+			}
+			require.Equal(t, tc.states, states)
+			require.Equal(t, "alice", run.Log[0].By)
+			require.Equal(t, "Collect documents", run.Log[0].Label)
+			if tc.status == "cancelled" {
+				last := run.Log[len(run.Log)-1]
+				require.Equal(t, "cancel", last.Via)
+				require.Equal(t, "alice", last.By)
+			}
+			require.Equal(t, []string{tc.marked}, markedStates(run.Diagram))
+			require.Equal(t, flowview.Actions{Manage: true}, run.Actions)
+
+			run, err = ctl.Run(bob, id)
+			require.NoError(t, err)
+			require.Equal(t, flowview.Actions{}, run.Actions, "a reader who does not manage the flow")
+			require.Len(t, run.Log, len(tc.states), "a reader sees the timeline, as on an active run")
+
+			runs, err := ctl.SubjectRuns(alice, "PER-1")
+			require.NoError(t, err)
+			require.Len(t, runs, 1)
+			require.Len(t, runs[0].Log, len(tc.states), "the subject's runs carry the timeline")
+			require.True(t, runs[0].Actions.Manage)
+
+			list, err := ctl.RunList(alice, "", "", 1, 10)
+			require.NoError(t, err)
+			require.Len(t, list.Runs, 1)
+			require.Empty(t, list.Runs[0].Log, "the run list carries no timeline")
+			require.False(t, list.Runs[0].Actions.Manage)
+		})
+	}
+}
+
+// TestFlowControl_FinishedRunWithoutLog pins that a header with no log, from
+// a run that ended before the header kept one, or with a log that does not
+// parse, shows the run without a timeline instead of failing the page.
+func TestFlowControl_FinishedRunWithoutLog(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{name: "no body", body: ""},
+		{name: "unreadable body", body: "not a log"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, ctl := stepProject(t)
+			addFlowPerson(t, svc, "PER-1", map[string]any{"name": "Ada"})
+			alice := flowUser(t, svc, "alice")
+			id, err := ctl.Start(alice, "onboarding", "PER-1")
+			require.NoError(t, err)
+			require.NoError(t, ctl.Cancel(alice, id))
+
+			ctx := context.Background()
+			h, err := svc.Store().GetEntity(ctx, entity.Ref{ID: string(id)})
+			require.NoError(t, err)
+			h.Content = tc.body
+			require.NoError(t, svc.Store().UpdateEntity(ctx, h))
+
+			run, err := ctl.Run(alice, id)
+			require.NoError(t, err)
+			require.Empty(t, run.Log)
+			require.Equal(t, []string{"collect"}, markedStates(run.Diagram))
+			require.True(t, run.Actions.Manage)
+		})
+	}
+}
+
+var diagramState = regexp.MustCompile(`^state "(.*)" as (\S+)$`)
+
+// markedStates returns the names of the states diagram marks as current.
+func markedStates(diagram string) []string {
+	names := map[string]string{}
+	var marked []string
+	for line := range strings.SplitSeq(diagram, "\n") {
+		line = strings.TrimSpace(line)
+		if m := diagramState.FindStringSubmatch(line); m != nil {
+			names[m[2]] = m[1]
+		}
+		if rest, ok := strings.CutPrefix(line, "class "); ok {
+			for id := range strings.SplitSeq(strings.TrimSuffix(rest, " current"), ",") {
+				marked = append(marked, names[id])
+			}
+		}
+	}
+	return marked
 }

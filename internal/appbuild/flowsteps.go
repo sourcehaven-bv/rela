@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -405,6 +406,7 @@ func (c *FlowControl) unnamedViews(ctx context.Context, cl *caller, hdrs []*enti
 		explained[r.ID] = xs[i]
 	}
 	flows := c.eng.FlowCache()
+	manages := &manageVerdicts{c: c}
 	subjects := map[entity.Ref]*entity.Entity{}
 	out := make([]flowview.Run, 0, len(hdrs))
 	for _, h := range hdrs {
@@ -412,6 +414,9 @@ func (c *FlowControl) unnamedViews(ctx context.Context, cl *caller, hdrs []*enti
 		run, ok := byID[flow.RunID(h.ID)]
 		if !ok {
 			v.Subject = carried[h.ID]
+			if detail {
+				c.addFinishedDetail(ctx, &v, h, flows, manages)
+			}
 			out = append(out, v)
 			continue
 		}
@@ -457,7 +462,7 @@ func (c *FlowControl) unnamedViews(ctx context.Context, cl *caller, hdrs []*enti
 				Complete: mayStep(bw, bx),
 			})
 		}
-		manage := c.authorize(ctx, run.Subject.ID, c.runManagePermissions(ctx, flows, run)) == nil
+		manage := manages.may(ctx, run.Subject.ID, c.runManagePermissions(ctx, flows, run))
 		v.Actions = flowview.Actions{
 			Complete: len(x.Parallel) == 0 && mayStep(w, x),
 			Manage:   manage,
@@ -559,15 +564,11 @@ func addDetail(w *flowview.Waiting, x flowengine.Explanation) {
 func addTimeline(ctx context.Context, v *flowview.Run, run flowrun.Run, x flowengine.Explanation,
 	flows *flowengine.FlowCache) {
 	f, ferr := flows.Of(ctx, run)
-	for _, st := range run.Log {
-		label := st.State
-		if ferr == nil {
-			label = stateLabel(f, st.State)
-		}
-		v.Log = append(v.Log, flowview.Event{At: st.At, State: st.State, Label: label, From: st.From,
-			Via: string(st.Via), Timer: st.Timer, By: st.By, Branch: st.Branch})
-	}
 	if ferr != nil {
+		f = nil
+	}
+	v.Log = timeline(run.Log, f)
+	if f == nil {
 		return
 	}
 	current := []string{x.State}
@@ -578,6 +579,90 @@ func addTimeline(ctx context.Context, v *flowview.Run, run flowrun.Run, x flowen
 		}
 	}
 	v.Diagram = f.MermaidAt(current...)
+}
+
+// timeline is the run view of log, with the state labels of f.
+//
+// Nil f: accepted. The version no longer compiles, or its flow was
+// removed, so states keep their names.
+func timeline(log []flowrun.Step, f *flowcfg.Flow) []flowview.Event {
+	out := make([]flowview.Event, 0, len(log))
+	for _, st := range log {
+		label := st.State
+		if f != nil {
+			label = stateLabel(f, st.State)
+		}
+		out = append(out, flowview.Event{At: st.At, State: st.State, Label: label, From: st.From,
+			Via: string(st.Via), Timer: st.Timer, By: st.By, Branch: st.Branch})
+	}
+	return out
+}
+
+// addFinishedDetail adds to v, the view of the finished run with header h,
+// the timeline the header kept, the diagram at its final state, and the
+// manage action. Cancel and retry stay off: the run has ended.
+//
+// An unreadable log is logged and shows no timeline, so one bad header does
+// not fail the page. A version that no longer compiles takes its labels from
+// the current flow, and its diagram only when the final state is still in
+// it. A forked run gets no diagram: the header keeps one state, not the
+// branches.
+func (c *FlowControl) addFinishedDetail(ctx context.Context, v *flowview.Run, h *entity.Entity,
+	flows *flowengine.FlowCache, manages *manageVerdicts) {
+	log, err := flowrun.ParseLogBody(h.Content)
+	if err != nil {
+		slog.WarnContext(ctx, "flows: a finished run's log is unreadable", "run", h.ID, "error", err)
+		log = nil
+	}
+	run := flowrun.Run{ID: flow.RunID(h.ID), Flow: v.Flow, Version: v.Version}
+	f, ferr := flows.Of(ctx, run)
+	if ferr != nil {
+		f, _ = c.eng.Flow(v.Flow)
+	}
+	v.Log = timeline(log, f)
+	if f != nil && !forked(log) {
+		if _, ok := f.State(v.State); ok {
+			v.Diagram = f.MermaidAt(v.State)
+		}
+	}
+	// The subject is empty when the caller cannot read it; then nobody
+	// manages the run here.
+	ref, err := entity.ParseRef(v.Subject)
+	if v.Subject == "" || err != nil {
+		return
+	}
+	v.Actions.Manage = manages.may(ctx, ref.ID, c.runManagePermissions(ctx, flows, run))
+}
+
+// forked reports whether log has a step on a branch.
+func forked(log []flowrun.Step) bool {
+	for _, st := range log {
+		if st.Branch != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// manageVerdicts remembers, within one views call, whether the caller
+// manages runs on a subject, so a subject's many runs cost one check.
+type manageVerdicts struct {
+	c    *FlowControl
+	seen map[string]bool
+}
+
+// may reports whether the caller holds perms on the subject subjectID.
+func (m *manageVerdicts) may(ctx context.Context, subjectID string, perms []string) bool {
+	key := subjectID + "\x00" + strings.Join(perms, "\x00")
+	if ok, hit := m.seen[key]; hit {
+		return ok
+	}
+	if m.seen == nil {
+		m.seen = map[string]bool{}
+	}
+	ok := m.c.authorize(ctx, subjectID, perms) == nil
+	m.seen[key] = ok
+	return ok
 }
 
 // runManagePermissions are the permissions that cancel or retry run: the

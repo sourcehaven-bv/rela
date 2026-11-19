@@ -34,6 +34,7 @@
       "timer": "naar {state} toen timer {timer} afliep",
       "moved": "naar {state}",
       "join": "samengekomen in {state}",
+      "cancel": "geannuleerd in {state}",
       "inBranch": "{summary} (tak {branch})"
     },
     "waiting": {

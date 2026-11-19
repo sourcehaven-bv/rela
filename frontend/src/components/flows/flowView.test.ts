@@ -127,6 +127,25 @@ describe('flowView', () => {
     expect(entries.map((e) => e.actor)).toEqual(['ann', 'Nina'])
   })
 
+  it('says in which state a run was cancelled', () => {
+    const entries = timelineEntries(
+      run({
+        active: false,
+        log: [
+          {
+            at: '2026-01-01T10:00:00Z',
+            state: 'collect',
+            label: 'Collect',
+            via: 'cancel',
+            by: 'alice',
+          },
+        ],
+      }),
+      t
+    )
+    expect(entries[0].summary).toBe('flows.log.cancel {"state":"Collect"}')
+  })
+
   it('marks no entry current once the run has finished', () => {
     const entries = timelineEntries(
       run({ active: false, log: [{ at: '2026-01-01T10:00:00Z', state: 'finished', via: 'done' }] }),

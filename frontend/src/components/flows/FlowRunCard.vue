@@ -99,7 +99,8 @@ async function reload() {
 
 // The prop changes when the host reads its list again; follow it. A list
 // row without a timeline is a summary, so the card reads the detail; the
-// subject's list already sends it, and a finished run has none to read.
+// subject's list already sends it, also for a finished run, whose header
+// keeps its timeline.
 watch(
   () => [props.run.id, props.run.generation, props.run.status],
   () => {
