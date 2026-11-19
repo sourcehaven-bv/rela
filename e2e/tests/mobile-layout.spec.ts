@@ -1,5 +1,6 @@
 import { test, expect, SEED } from "./fixtures";
-import { MobileLayoutPage } from "../pages";
+import { withDataEntryBlock } from "./next-action-fixture";
+import { MobileLayoutPage, NextActionPage } from "../pages";
 
 /**
  * The mobile app shell (RlAppShell).
@@ -207,4 +208,43 @@ test.describe("Mobile app shell", () => {
       await expect(hint).toBeHidden();
     }
   });
+});
+
+/**
+ * The next-action card is the first thing on a page, right under the
+ * hamburger's row. The two must not touch: a tap meant for the menu would
+ * land on the card, and the card's border would run into the button. Pages
+ * with a sticky topbar are not covered here: there the button sits over the
+ * topbar on purpose, and the card comes below the topbar.
+ */
+const withBanner = withDataEntryBlock(`next_action_bands:
+  - id: focus
+    prominence: banner
+next_actions:
+  about-this-feature:
+    band: focus
+    context: feature
+    suggest: "This one: {title}"
+`);
+
+withBanner.describe("Mobile app shell with a banner", () => {
+  withBanner(
+    "the hamburger keeps clear of the next-action card",
+    async ({ appPage }) => {
+      const mobile = new MobileLayoutPage(appPage);
+      const na = new NextActionPage(appPage);
+      await mobile.navigateTo(
+        `/entity/feature/${SEED.features.authentication}`,
+      );
+      await na.expectShowing(/^This one: /);
+      await expect(mobile.hamburger).toBeVisible();
+
+      const button = await mobile.hamburger.boundingBox();
+      const card = await na.card.boundingBox();
+      if (!button || !card) throw new Error("hamburger or card has no box");
+      // About 8px of air between the button and the card. Boxes are
+      // fractional on a phone, so allow half a pixel of rounding.
+      expect(card.y - (button.y + button.height)).toBeGreaterThanOrEqual(7.5);
+    },
+  );
 });

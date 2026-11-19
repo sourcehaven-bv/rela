@@ -494,8 +494,13 @@ body {
   float: left;
   /* No safe-area term: the shell pads the frame, so this button's containing
      block already starts below the notch. */
-  top: 8px;
+  --mobile-menu-btn-top: 8px;
+  top: var(--mobile-menu-btn-top);
   margin-left: calc(0px - var(--page-padding-x, 16px) + 8px);
+  /* `top` moves the button down from its own slot, onto whatever follows
+     it, such as the next-action banner. The margin moves the next element
+     down by the same amount plus some air. */
+  margin-bottom: calc(var(--mobile-menu-btn-top) + var(--rl-space-2, 8px));
   z-index: 101;
 }
 
