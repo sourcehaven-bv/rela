@@ -34,6 +34,17 @@ test.describe('URL link display', () => {
     await form.expectFieldValue('doc_url', pdf);
   });
 
+  // TKT-IO9PTLD: link_text reaches the page through the schema response.
+  test('shows link_text instead of the address', async ({ appPage, api }) => {
+    const bug = await api.createEntity('bugs', {
+      properties: { title: 'Named link bug', status: 'draft', site_url: pdf },
+    });
+
+    const entity = new EntityPage(appPage);
+    await entity.navigateToEntity('bug', bug.id);
+    await entity.expectUrlProperty('Website', pdf);
+  });
+
   test('keeps a javascript: value as text, and its form still saves', async ({ appPage, api }) => {
     const bug = await api.createEntity('bugs', {
       properties: { title: 'Hostile bug', status: 'draft', doc_url: hostile },

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import type { ViewSectionField } from '@/api'
 import type { PropertyDef } from '@/types'
+import { useSchemaStore } from '@/stores/schema'
 import UrlWidget from './UrlWidget.vue'
 import { defaultRegistry, defaultWidgetFor } from './registry'
 import {
@@ -80,6 +81,110 @@ describe('UrlWidget (display)', () => {
       attrs: { class: 'field-value' },
     })
     expect(w.find('a').classes()).toContain('field-value')
+  })
+
+  it('shows a URL as itself on one line with the whole URL on hover', () => {
+    const url = 'https://example.com/a/very/long/path?with=a&long=query'
+    const a = display(url).find('a')
+    expect(a.text()).toBe(url)
+    expect(a.attributes('title')).toBe(url)
+    expect(a.classes()).toContain('url-link--truncated')
+  })
+
+  it('shows link_text instead of the URL', () => {
+    const def: PropertyDef = { type: 'string', display: { link: true, link_text: 'Website' } }
+    const a = mount(UrlWidget, {
+      props: {
+        modelValue: 'https://example.com/',
+        mode: 'display' as const,
+        propertyName: 'site',
+        propertyDef: def,
+      },
+    }).find('a')
+    expect(a.text()).toBe('Website')
+    expect(a.attributes('href')).toBe('https://example.com/')
+    expect(a.attributes('title')).toBe('https://example.com/')
+    expect(a.classes()).not.toContain('url-link--truncated')
+  })
+
+  // Cells and cards pass only the property name and the entity type.
+  it('finds link_text in the schema when no def is passed', () => {
+    useSchemaStore().entityTypes.set('ship', {
+      name: 'ship',
+      properties: { site: { type: 'string', display: { link: true, link_text: 'Website' } } },
+    } as never)
+    const w = mount(UrlWidget, {
+      props: {
+        modelValue: 'https://example.com/',
+        mode: 'display' as const,
+        propertyName: 'site',
+        entityType: 'ship',
+      },
+    })
+    expect(w.find('a').text()).toBe('Website')
+  })
+
+  // A cell without an entity type must not borrow another type's label.
+  it.each([
+    ['all types agree', 'Website', 'Website'],
+    ['the types disagree', 'Homepage', 'https://example.com/'],
+    ['one type has no text', undefined, 'https://example.com/'],
+  ])('without an entity type, when %s', (_, other, want) => {
+    const store = useSchemaStore()
+    store.entityTypes.set('ship', {
+      name: 'ship',
+      properties: { site: { type: 'string', display: { link: true, link_text: 'Website' } } },
+    } as never)
+    store.entityTypes.set('port', {
+      name: 'port',
+      properties: { site: { type: 'string', display: { link: true, link_text: other } } },
+    } as never)
+    const w = mount(UrlWidget, {
+      props: { modelValue: 'https://example.com/', mode: 'display' as const, propertyName: 'site' },
+    })
+    expect(w.find('a').text()).toBe(want)
+  })
+
+  it('takes the own type over the others when the entity type is known', () => {
+    const store = useSchemaStore()
+    store.entityTypes.set('ship', {
+      name: 'ship',
+      properties: { site: { type: 'string', display: { link: true } } },
+    } as never)
+    store.entityTypes.set('port', {
+      name: 'port',
+      properties: { site: { type: 'string', display: { link: true, link_text: 'Website' } } },
+    } as never)
+    const w = mount(UrlWidget, {
+      props: {
+        modelValue: 'https://example.com/',
+        mode: 'display' as const,
+        propertyName: 'site',
+        entityType: 'ship',
+      },
+    })
+    expect(w.find('a').text()).toBe('https://example.com/')
+  })
+
+  // The hover text is the target the link opens, not the stored text.
+  it('shows the link target as the title', () => {
+    const w = display('mailto:a@example.com?cc=b@example.com')
+    const a = w.find('a')
+    expect(a.attributes('title')).toBe(a.attributes('href'))
+  })
+
+  it('keeps the URL as the text of a value that is not a link', () => {
+    const def: PropertyDef = { type: 'string', display: { link: true, link_text: 'Website' } }
+    const w = mount(UrlWidget, {
+      props: {
+        modelValue: 'example.com',
+        mode: 'display' as const,
+        propertyName: 'site',
+        propertyDef: def,
+      },
+    })
+    expect(w.find('a').exists()).toBe(false)
+    expect(w.text()).toBe('example.com')
   })
 })
 

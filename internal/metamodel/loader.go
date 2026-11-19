@@ -1320,7 +1320,7 @@ func validatePropertyDef(
 // shape, not a list of codes: the browser formats every well-formed code (an
 // unknown one shows as the code itself), so a list would only reject codes
 // it does not know yet. Link needs a single-valued string property without
-// a value set (TKT-0101IO4).
+// a value set (TKT-0101IO4); link_text only applies to a link (TKT-IO9PTLD).
 func validatePropertyDisplay(schemaName, propName string, propDef PropertyDef) []string {
 	d := propDef.Display
 	if d == nil {
@@ -1328,6 +1328,10 @@ func validatePropertyDisplay(schemaName, propName string, propDef PropertyDef) [
 	}
 	at := fmt.Sprintf("%s: property %q: display", schemaName, propName)
 	switch {
+	case d.LinkText != "" && !d.Link:
+		return []string{at + ": link_text needs link: true"}
+	case d.LinkText != "" && strings.TrimSpace(d.LinkText) == "":
+		return []string{at + ": link_text is blank; leave it out to show the URL"}
 	case d.Currency == "" && !d.Link:
 		return []string{at + " names no format; use currency or link"}
 	case d.Currency != "" && d.Link:

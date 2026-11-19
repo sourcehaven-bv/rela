@@ -1064,6 +1064,12 @@ entities:
         type: string
         display:
           link: true
+      # url-link.spec.ts (TKT-IO9PTLD): a link shown under a fixed text.
+      site_url:
+        type: string
+        display:
+          link: true
+          link_text: Website
 
   # BUG-L1DHC5: a dedicated type whose file property is REQUIRED. Separate from
   # 'bug' on purpose — a required property on a shared type makes every other

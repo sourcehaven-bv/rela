@@ -159,6 +159,8 @@ export interface PropertyDisplay {
   currency?: string
   // The string renders as a link through the url widget (TKT-0101IO4).
   link?: boolean
+  // The text the link shows instead of the URL (TKT-IO9PTLD).
+  link_text?: string
 }
 
 export interface PropertyDef {

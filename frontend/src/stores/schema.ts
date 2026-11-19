@@ -356,6 +356,31 @@ export const useSchemaStore = defineStore('schema', () => {
     return scanPropertyDefs(property, entityType, (def) => (def?.display ? def : undefined))
   }
 
+  // Resolve the `display: {link_text}` of a URL property (TKT-IO9PTLD). With
+  // an entity type that declares the property, that type's def decides.
+  // Without one, the text is used only when every type that declares the
+  // property agrees on it, so a cell never shows another type's label for a
+  // link; any disagreement shows the URL.
+  function linkTextForProperty(
+    property: string,
+    entityType?: string | EntityType,
+  ): string | undefined {
+    const textOf = (def?: PropertyDef) => def?.display?.link_text?.trim() || undefined
+    if (entityType) {
+      const et = typeof entityType === 'string' ? entityTypes.value.get(entityType) : entityType
+      const own = et?.properties?.[property]
+      if (own) return textOf(own)
+    }
+    const texts = new Set<string | undefined>()
+    for (const types of [entityTypes.value, relationTypes.value]) {
+      for (const [, def] of types) {
+        const prop = def.properties?.[property]
+        if (prop) texts.add(textOf(prop))
+      }
+    }
+    return texts.size === 1 ? [...texts][0] : undefined
+  }
+
   // Resolve the badge style map (value → badge class) for a property. The
   // server keys `styles` by CUSTOM-TYPE name (buildStyleMap; validateStyles
   // rejects other keys), so resolve the property to its custom type first.
@@ -637,6 +662,7 @@ export const useSchemaStore = defineStore('schema', () => {
     getAction,
     getEnumLabel,
     displayDefForProperty,
+    linkTextForProperty,
     enumValuesForProperty,
     resolveOptionLabels,
     stylesForProperty,
