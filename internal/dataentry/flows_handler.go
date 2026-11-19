@@ -28,6 +28,7 @@ type FlowService interface {
 	Flows() []flowview.Flow
 	RunList(ctx context.Context, flowName, status string, page, perPage int) (flowview.Runs, error)
 	SubjectRuns(ctx context.Context, addr string) ([]flowview.Run, error)
+	Startable(ctx context.Context, addr string) ([]string, error)
 	Run(ctx context.Context, id flow.RunID) (flowview.Run, error)
 	Start(ctx context.Context, name, addr string) (flow.RunID, error)
 	Complete(ctx context.Context, id flow.RunID, gen int64, props map[string]any) (flowview.Completed, error)
@@ -41,6 +42,7 @@ type FlowService interface {
 //	GET  /api/v1/_flows                       the flows of flows.yaml
 //	GET  /api/v1/_flows/tasks                 the caller's tasks
 //	GET  /api/v1/_flows/runs                  the run list; ?subject= the runs on one entity
+//	                                          and the flows the caller may start on it
 //	POST /api/v1/_flows/runs                  start a run (201)
 //	GET  /api/v1/_flows/runs/{id}             one run, with why it waits and `_actions`
 //	POST /api/v1/_flows/runs/{id}/_complete   complete the step
@@ -146,7 +148,7 @@ func (h *flowsHandler) tasks(w http.ResponseWriter, r *http.Request) {
 }
 
 // runs answers the run list, or with ?subject= every run on that entity
-// the caller can see.
+// the caller can see and the flows the caller may start on it.
 func (h *flowsHandler) runs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	if addr := q.Get("subject"); addr != "" {
@@ -155,7 +157,15 @@ func (h *flowsHandler) runs(w http.ResponseWriter, r *http.Request) {
 			writeFlowError(w, r, err)
 			return
 		}
-		writeV1JSON(w, http.StatusOK, flowview.Runs{Runs: orEmpty(runs), Total: len(runs)})
+		startable, err := h.svc.Startable(r.Context(), addr)
+		if err != nil {
+			writeFlowError(w, r, err)
+			return
+		}
+		writeV1JSON(w, http.StatusOK, flowview.SubjectRuns{
+			Runs:      flowview.Runs{Runs: orEmpty(runs), Total: len(runs)},
+			Startable: startable,
+		})
 		return
 	}
 	page, perPage := parseV1Pagination(q)

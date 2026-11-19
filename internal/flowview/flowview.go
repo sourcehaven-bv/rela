@@ -197,6 +197,15 @@ type Runs struct {
 	Truncated bool `json:"truncated"`
 }
 
+// SubjectRuns is the answer for the runs on one entity.
+type SubjectRuns struct {
+	Runs
+	// Startable names the flows the caller may start by hand on the
+	// entity, as a manual start checks its permission. A client offers
+	// Start only for these. `per_subject:` is not applied.
+	Startable []string `json:"startable"`
+}
+
 // Completed is the answer to a completed step.
 type Completed struct {
 	// Written are the properties the step wrote.

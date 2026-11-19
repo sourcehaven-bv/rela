@@ -251,6 +251,45 @@ func TestFlowControl_RoleRelationWithInheritance(t *testing.T) {
 	require.True(t, got.Moved)
 }
 
+// TestFlowControl_Startable pins which flows a caller may start on a
+// subject: those whose manual start permission the caller holds for it,
+// also while a run is open; a subject the caller cannot read is not found.
+func TestFlowControl_Startable(t *testing.T) {
+	svc, ctl := stepProject(t)
+	addFlowPerson(t, svc, "PER-1", map[string]any{"name": "Ada"})
+	_, err := ctl.Start(flowUser(t, svc, "alice"), "onboarding", "PER-1")
+	require.NoError(t, err)
+	tests := []struct {
+		user    string
+		want    []string
+		wantErr error
+	}{
+		{user: "alice", want: []string{"onboarding"}},
+		{user: "bob", want: []string{}},
+		{user: "eve", wantErr: flowview.ErrNotFound},
+	}
+	for _, tc := range tests {
+		t.Run(tc.user, func(t *testing.T) {
+			ctx := flowUser(t, svc, tc.user)
+			got, err := ctl.Startable(ctx, "PER-1")
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+			// Start agrees: it refuses a flow left out for a missing
+			// permission, and only per_subject: one refuses a listed one.
+			_, err = ctl.Start(ctx, "onboarding", "PER-1")
+			if len(got) == 0 {
+				require.ErrorIs(t, err, flowview.ErrForbidden)
+			} else {
+				require.NotErrorIs(t, err, flowview.ErrForbidden)
+			}
+		})
+	}
+}
+
 // TestFlowControl_RunList pins the run list: the runs whose headers the
 // caller can read, newest first, filtered and paged.
 func TestFlowControl_RunList(t *testing.T) {

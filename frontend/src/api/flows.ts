@@ -194,6 +194,16 @@ export interface FlowRunPage {
   truncated: boolean
 }
 
+/** The runs on one entity and the flows the caller may start on it. */
+export interface SubjectRuns {
+  runs: FlowRun[]
+  /**
+   * The flows the caller may start by hand on the entity: the caller holds
+   * the start's `permission:` for it. `per_subject:` is not applied.
+   */
+  startable: string[]
+}
+
 /** The answer to a completed step. */
 export interface FlowCompleted {
   /** The properties the step wrote. */
@@ -262,10 +272,13 @@ export async function listFlowRuns(
   )
 }
 
-/** GET every run on one entity the caller can see, newest first. */
-export async function listSubjectRuns(subject: string, signal?: AbortSignal): Promise<FlowRun[]> {
-  const res = await api.get<FlowRunPage>('/_flows/runs', { subject }, signal)
-  return res.runs ?? []
+/**
+ * GET every run on one entity the caller can see, newest first, and the
+ * flows the caller may start on it.
+ */
+export async function listSubjectRuns(subject: string, signal?: AbortSignal): Promise<SubjectRuns> {
+  const res = await api.get<Partial<SubjectRuns>>('/_flows/runs', { subject }, signal)
+  return { runs: res.runs ?? [], startable: res.startable ?? [] }
 }
 
 /** GET one run, with why it waits, its timeline and `_actions`. */

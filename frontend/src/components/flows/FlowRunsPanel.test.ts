@@ -8,11 +8,16 @@ import { resetFlowList } from '@/composables/useFlowList'
 
 const listFlowsMock = vi.fn<() => Promise<Flow[]>>()
 const listSubjectRunsMock = vi.fn<(subject: string, signal?: AbortSignal) => Promise<FlowRun[]>>()
+// The flows the server says the reader may start; the mock adds them to the runs.
+let mayStart: string[] = ['onboarding']
 const startFlowRunMock = vi.fn<(flow: string, subject: string) => Promise<string>>()
 const getFlowRunMock = vi.fn()
 vi.mock('@/api/flows', () => ({
   listFlows: () => listFlowsMock(),
-  listSubjectRuns: (s: string, sig?: AbortSignal) => listSubjectRunsMock(s, sig),
+  listSubjectRuns: async (s: string, sig?: AbortSignal) => ({
+    runs: await listSubjectRunsMock(s, sig),
+    startable: mayStart,
+  }),
   startFlowRun: (f: string, s: string) => startFlowRunMock(f, s),
   getFlowRun: (...a: unknown[]) => getFlowRunMock(...a),
   completeFlowStep: vi.fn(),
@@ -75,6 +80,7 @@ describe('FlowRunsPanel', () => {
     listSubjectRunsMock.mockReset()
     startFlowRunMock.mockReset()
     getFlowRunMock.mockReset()
+    mayStart = ['onboarding']
   })
 
   it('renders nothing and reads no runs when the project has no flows', async () => {
@@ -166,11 +172,22 @@ describe('FlowRunsPanel', () => {
     expect(wrapper.find('[data-testid="flow-start-onboarding"]').exists()).toBe(true)
   })
 
-  it('still offers Start when the runs fail to load', async () => {
+  it('offers no Start when the runs fail to load', async () => {
     listFlowsMock.mockResolvedValue([onboarding])
     listSubjectRunsMock.mockRejectedValue(new Error('boom'))
     const wrapper = mountPanel()
     await flushPromises()
-    expect(wrapper.find('[data-testid="flow-start-onboarding"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="flow-runs-panel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="flow-start-onboarding"]').exists()).toBe(false)
+  })
+
+  it('offers Start only for a flow the server says the reader may start', async () => {
+    listFlowsMock.mockResolvedValue([onboarding])
+    listSubjectRunsMock.mockResolvedValue([run({ active: false, status: 'completed' })])
+    mayStart = []
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="flow-runs-panel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="flow-start-onboarding"]').exists()).toBe(false)
   })
 })

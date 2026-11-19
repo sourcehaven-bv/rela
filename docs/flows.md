@@ -539,11 +539,12 @@ already moved on, for example by a timer) or `settling` (the run moved,
 but a later output step failed and is retried).
 
 The panel also offers a Start button for each flow with an `on: manual`
-start. A flow with `per_subject: one` offers none while a run of it on
-the entity is unfinished. The panel shows Cancel and Retry buttons when
-you hold the flow's `manage` permission, or the start's permission when
-the flow sets no `manage`. Retry tries the failed outputs of a step again now, instead of
-waiting for the next attempt.
+start whose `permission:` you hold for the entity. A flow with
+`per_subject: one` offers none while a run of it on the entity is
+unfinished. The panel shows Cancel and Retry buttons when you hold the
+flow's `manage` permission, or the start's permission when the flow sets
+no `manage`. Retry tries the failed outputs of a step again now, instead
+of waiting for the next attempt.
 
 The sidebar has two pages when the project has flows. **Flow tasks**
 lists the runs that wait for a role you hold, oldest first. **Flow runs**
@@ -574,7 +575,7 @@ second completion is refused.
 | `GET /api/v1/_flows` | The flows of `flows.yaml`, with their `per_subject` and diagrams |
 | `GET /api/v1/_flows/tasks?flow=&page=&per_page=` | Your tasks |
 | `GET /api/v1/_flows/runs?flow=&status=&page=&per_page=` | The runs you can read |
-| `GET /api/v1/_flows/runs?subject=PER-12` | The runs on one entity, with why each waits |
+| `GET /api/v1/_flows/runs?subject=PER-12` | The runs on one entity, with why each waits, and in `startable` the flows you may start on it |
 | `POST /api/v1/_flows/runs` | Start a run: `{"flow":"onboarding","subject":"PER-12"}` |
 | `GET /api/v1/_flows/runs/{id}` | One run, with why it waits and `_actions` |
 | `POST /api/v1/_flows/runs/{id}/_complete` | Do the step: `{"generation":3,"properties":{"documents":true}}` |

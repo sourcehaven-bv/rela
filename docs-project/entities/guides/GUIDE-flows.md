@@ -545,11 +545,12 @@ already moved on, for example by a timer) or `settling` (the run moved,
 but a later output step failed and is retried).
 
 The panel also offers a Start button for each flow with an `on: manual`
-start. A flow with `per_subject: one` offers none while a run of it on
-the entity is unfinished. The panel shows Cancel and Retry buttons when
-you hold the flow's `manage` permission, or the start's permission when
-the flow sets no `manage`. Retry tries the failed outputs of a step again now, instead of
-waiting for the next attempt.
+start whose `permission:` you hold for the entity. A flow with
+`per_subject: one` offers none while a run of it on the entity is
+unfinished. The panel shows Cancel and Retry buttons when you hold the
+flow's `manage` permission, or the start's permission when the flow sets
+no `manage`. Retry tries the failed outputs of a step again now, instead
+of waiting for the next attempt.
 
 The sidebar has two pages when the project has flows. **Flow tasks**
 lists the runs that wait for a role you hold, oldest first. **Flow runs**
