@@ -200,6 +200,15 @@ type NextActionSource struct {
 	// deployment been set up at all?") rather than about the caller's data.
 	CountUngated bool `yaml:"count_ungated,omitempty" json:"count_ungated,omitempty"`
 
+	// Source names a built-in candidate source instead of Query, Context or
+	// Count. The one value is [NextActionSourceFlowTasks]: the reader's flow
+	// tasks, the same list as the Flow tasks page. See [NextActionSource.IsFlowTasks].
+	Source string `yaml:"source,omitempty" json:"source,omitempty"`
+
+	// Flows limits a flow_tasks source to the tasks of these flows. Empty
+	// means every flow. Only valid with Source.
+	Flows []string `yaml:"flows,omitempty" json:"flows,omitempty"`
+
 	// Pick chooses among multiple candidates. Empty means the engine's
 	// default (stable-random). See NextActionPick.
 	Pick NextActionPick `yaml:"pick,omitempty" json:"pick,omitempty"`
@@ -289,6 +298,21 @@ type NextActionSource struct {
 	// "entity:task"). Nil (the default) matches every page. Presentational
 	// only, like VisibleWorlds. See [NextActionSource.VisibleOnSurface].
 	VisibleOn []string `yaml:"visible_on,omitempty" json:"visible_on,omitempty"`
+}
+
+// NextActionSourceFlowTasks is the `source:` value of a source whose
+// candidates are the reader's waiting flow tasks.
+//
+// A built-in source rather than a query: a flow task is a run that waits for
+// a role the reader holds on the run's subject, globally or through a role
+// relation. That depends on the reader's roles, and `_flow-run` is a managed
+// type, so no entity query can express it. The candidates come from the same
+// code as the Flow tasks list, so the two always agree.
+const NextActionSourceFlowTasks = "flow_tasks"
+
+// IsFlowTasks reports whether this is a flow_tasks source.
+func (s NextActionSource) IsFlowTasks() bool {
+	return s.Source == NextActionSourceFlowTasks
 }
 
 // VisibleInWorld reports whether a suggestion from this source may be shown to

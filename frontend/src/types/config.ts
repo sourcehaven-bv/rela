@@ -1097,6 +1097,12 @@ export interface NextActionResponse {
    * of that type and no other.
    */
   context_type?: string
+  /**
+   * Every entity type whose changes can change this page's answer: the
+   * context type, and the flow run type when a flow_tasks source can apply.
+   * Supersedes `context_type`.
+   */
+  refresh_types?: string[]
 }
 
 /** How a user answered a suggestion. */

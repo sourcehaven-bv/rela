@@ -90,20 +90,33 @@ func (p nextActionPage) enabled(cfg *dataentryconfig.Config) bool {
 	return cfg.NextActionsEnabled(p.surface, p.view)
 }
 
-// refreshType is the entity type whose changes can change this page's
-// answer: the page's context type, when some source that may compete here
-// is about it. Empty otherwise, so the client does not re-resolve on graph
-// changes no source here can see.
-func (p nextActionPage) refreshType(cfg *dataentryconfig.Config) string {
-	if p.contextType == "" || p.entityID == "" {
-		return ""
-	}
+// refreshTypes are the entity types whose changes can change this page's
+// answer. The page's context type is one when a context source that may
+// compete here is about it. The run type is one when a flow_tasks source may
+// compete here: completing a step changes the run, and the hint for that
+// task must go away. Empty otherwise, so the client does not re-resolve on
+// graph changes no source here can see.
+//
+// A run moves often (timers, other people's steps), so a page with a
+// flow_tasks source re-resolves on each move by anyone. The client debounces
+// it, and the resolve reads one task list plus one subject batch per type.
+func (p nextActionPage) refreshTypes(cfg *dataentryconfig.Config) []string {
+	var context, tasks bool
 	for id, src := range cfg.NextActions {
-		if src.Context != "" && p.keeps(id, src) {
-			return p.contextType
+		if !p.keeps(id, src) {
+			continue
 		}
+		context = context || (src.Context != "" && p.contextType != "" && p.entityID != "")
+		tasks = tasks || src.IsFlowTasks()
 	}
-	return ""
+	var out []string
+	if context {
+		out = append(out, p.contextType)
+	}
+	if tasks {
+		out = append(out, entityPkg.FlowRunType)
+	}
+	return out
 }
 
 // keeps reports whether a source may compete on this page. It runs before the

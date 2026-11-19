@@ -184,9 +184,9 @@ func checkDeclaredWorld(where, key, world string, meta *metamodel.Metamodel) str
 	return ""
 }
 
-// validateNextActionCandidateSource checks the three mutually exclusive ways
+// validateNextActionCandidateSource checks the four mutually exclusive ways
 // a source names its candidates: Query (global), Context (entity-anchored),
-// or Count (entity-less aggregate). Exactly one must be set.
+// Count (entity-less aggregate) or Source (built-in). Exactly one must be set.
 func validateNextActionCandidateSource(where string, s NextActionSource, meta *metamodel.Metamodel) []string {
 	var errs []string
 
@@ -200,11 +200,15 @@ func validateNextActionCandidateSource(where string, s NextActionSource, meta *m
 	if s.Count != "" {
 		set = append(set, "count")
 	}
+	if s.Source != "" {
+		set = append(set, "source")
+	}
 
 	switch len(set) {
 	case 0:
 		errs = append(errs,
-			where+": needs one of query (global), context (entity-anchored) or count (whole-graph)")
+			where+": needs one of query (global), context (entity-anchored), count (whole-graph) "+
+				"or source (built-in)")
 	case 1:
 	default:
 		errs = append(errs, fmt.Sprintf(
@@ -227,6 +231,60 @@ func validateNextActionCandidateSource(where string, s NextActionSource, meta *m
 	// read gate on a source that never consults it.
 	if s.CountUngated && s.Count == "" {
 		errs = append(errs, where+": count_ungated only applies to a count source")
+	}
+	errs = append(errs, validateNextActionBuiltin(where, s)...)
+	return errs
+}
+
+// validateNextActionBuiltin checks `source:` and the keys that only apply to
+// it. A flow_tasks source refuses every key whose meaning depends on an
+// entity query: it has no query to refine (condition), no world to read in
+// (the task list reads every face), and keys its suggestions by the task
+// (key_props). Ignoring such a key would let an operator believe it applied.
+func validateNextActionBuiltin(where string, s NextActionSource) []string {
+	var errs []string
+	if s.Source == "" {
+		if len(s.Flows) > 0 {
+			errs = append(errs, where+": flows only applies to a flow_tasks source")
+		}
+		return errs
+	}
+	if !s.IsFlowTasks() {
+		return append(errs, fmt.Sprintf("%s: unknown source %q (want %q)", where, s.Source, NextActionSourceFlowTasks))
+	}
+	seen := map[string]bool{}
+	for i, f := range s.Flows {
+		switch {
+		case f == "":
+			errs = append(errs, fmt.Sprintf("%s: flows[%d] is empty", where, i))
+		case seen[f]:
+			errs = append(errs, fmt.Sprintf("%s: flows[%d]: duplicate flow %q", where, i, f))
+		}
+		seen[f] = true
+	}
+	refused := []struct {
+		key string
+		set bool
+	}{
+		{"condition", s.Condition != ""},
+		{"key_props", len(s.KeyProps) > 0},
+		{"source_world", s.SourceWorld != ""},
+		{"pick", s.Pick != ""},
+	}
+	for _, r := range refused {
+		if r.set {
+			errs = append(errs, fmt.Sprintf("%s: %s does not apply to a flow_tasks source", where, r.key))
+		}
+	}
+	for i, o := range s.Actions {
+		if o.PickOne != nil {
+			errs = append(errs, fmt.Sprintf("%s: actions[%d]: pick_one does not apply to a flow_tasks source", where, i))
+		}
+		// A flow step writes its subject through the step form, with the
+		// flow's rules; a set: offer would write it around the flow.
+		if len(o.Set) > 0 {
+			errs = append(errs, fmt.Sprintf("%s: actions[%d]: set does not apply to a flow_tasks source", where, i))
+		}
 	}
 	return errs
 }
