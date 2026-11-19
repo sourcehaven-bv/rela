@@ -796,14 +796,15 @@ type PropertyDef struct {
 	// (TKT-SM20FG). The value is read-only on every interactive surface.
 	System string `json:"system,omitempty"`
 	// Display is the property's display format, such as a currency
-	// (TKT-SVLQQ6). The SPA applies it wherever it renders the value for
-	// reading; inputs stay plain. Omitted when unset.
+	// (TKT-SVLQQ6) or a link (TKT-0101IO4). The SPA applies it wherever it
+	// renders the value. Omitted when unset.
 	Display *PropertyDisplay `json:"display,omitempty"`
 }
 
 // PropertyDisplay is the wire form of metamodel.PropertyDisplay.
 type PropertyDisplay struct {
 	Currency string `json:"currency,omitempty"`
+	Link     bool   `json:"link,omitempty"`
 }
 
 // RelationType is the JSON representation of a relation type.

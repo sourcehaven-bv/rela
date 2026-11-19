@@ -333,6 +333,11 @@ export class FormPage extends BasePage {
     ).toBeVisible();
   }
 
+  /** The field's input shows the URL keyboard (`inputmode="url"`). */
+  async expectUrlInput(name: string) {
+    await expect(this.page.locator(`#field-${name}`)).toHaveAttribute("inputmode", "url");
+  }
+
   async getFieldValue(name: string): Promise<string> {
     const field = this.page.locator(`#field-${name}`);
     return field.inputValue();

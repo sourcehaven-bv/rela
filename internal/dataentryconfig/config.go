@@ -46,6 +46,10 @@ const (
 	// WidgetExternalRef is the read-only display of an external ref
 	// (TKT-SM20FG). It never writes: refs change only through sync.
 	WidgetExternalRef = "external-ref"
+	// WidgetURL renders a string as a link in display mode and a URL input
+	// in edit mode (TKT-0101IO4). It is the default for a string property
+	// with `display: {link: true}`.
+	WidgetURL = "url"
 )
 
 // Direction represents the edge direction for relation columns and form relations.

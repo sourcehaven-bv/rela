@@ -109,6 +109,7 @@ export type WidgetHintKind =
   | 'datetime'
   | 'integer'
   | 'rrule'
+  | 'url'
 
 // DenseHintKind adds the kinds only a dense, read-only surface may route to.
 // They resolve to display-only components, so they are kept out of

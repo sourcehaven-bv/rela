@@ -3391,6 +3391,13 @@ fields:
 | `multi-select` | enum, string (list values)    |
 | `rrule`        | rrule                         |
 | `file`         | file                          |
+| `url`          | string                        |
+
+`url` edits the value in a text input with the URL keyboard, and shows it as
+a link. It is the default for a string with `display: {link: true}` in
+`schema.yaml` (see the metamodel guide). Prefer that setting: it applies on
+every surface. `widget: url` applies only where a field override applies,
+which is a form or an inline-edit section (`render: input`).
 
 Rules worth knowing:
 

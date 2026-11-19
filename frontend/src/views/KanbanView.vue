@@ -1122,6 +1122,10 @@ function onCardClick(entity: Entity, event: MouseEvent) {
   if (event.defaultPrevented) return
   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
   if (event.button !== 0) return
+  // A link inside the card, such as a url field (TKT-0101IO4), handles its
+  // own click; it stops the click before RouterLink sees it.
+  const link = event.target instanceof Element ? event.target.closest('a') : null
+  if (link && link !== event.currentTarget) return
   // Capture phase, so RouterLink's own handler does not navigate as well.
   event.preventDefault()
   event.stopPropagation()

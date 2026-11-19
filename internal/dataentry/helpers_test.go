@@ -404,6 +404,12 @@ func TestResolveWidget(t *testing.T) {
 		{"list enum type", metamodel.PropertyDef{Type: metamodel.PropertyTypeEnum, List: true}, WidgetMultiSelect},
 		{"list custom type", metamodel.PropertyDef{Type: "priority_type", List: true}, WidgetMultiSelect},
 		{"list string type (not multi-select)", metamodel.PropertyDef{Type: metamodel.PropertyTypeString, List: true}, WidgetText},
+		{"string with link display", metamodel.PropertyDef{
+			Type: metamodel.PropertyTypeString, Display: &metamodel.PropertyDisplay{Link: true},
+		}, WidgetURL},
+		{"integer with currency display", metamodel.PropertyDef{
+			Type: metamodel.PropertyTypeInteger, Display: &metamodel.PropertyDisplay{Currency: "EUR"},
+		}, WidgetNumber},
 	}
 
 	for _, tt := range tests {
