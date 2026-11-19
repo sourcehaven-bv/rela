@@ -32,6 +32,10 @@ func addToolbarActions(
 	if cfg == nil {
 		return out
 	}
+	if _, past := asOfFromContext(ctx); past {
+		// A read at an instant is read-only: no action is offered.
+		return out
+	}
 	add := func(id string) {
 		if out == nil {
 			out = map[string]bool{}

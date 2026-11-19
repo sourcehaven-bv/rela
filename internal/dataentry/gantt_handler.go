@@ -665,16 +665,18 @@ func (h *ganttHandler) collectGanttRound(
 		if !verdicts[typeName] {
 			continue
 		}
+		// A traversal, not the read gate's HasInbound slot: under ?as_of= it
+		// follows the hierarchy as it stood at the instant (DEC-TDEF3GD).
 		q := store.GraphQuery{
 			EntityType: typeName,
-			HasInbound: &store.RelationPredicate{
+			Related: []store.DirectedRelation{{Incoming: true, Pred: store.RelationPredicate{
 				// Endpoints expand through the hierarchy closure, so the
 				// predicate matches descendants of the frontier.
 				Endpoints:      frontier,
 				OfTypes:        g.Hierarchy,
 				InheritThrough: g.Hierarchy,
 				Depth:          ganttClosureRoundDepth,
-			},
+			}}},
 		}
 		// The same world and face ceiling the full build's scopedHeaders
 		// read applies, so both paths pick the same row per id.

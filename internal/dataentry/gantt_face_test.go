@@ -3,8 +3,12 @@ package dataentry
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
+
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -203,4 +207,57 @@ func TestGanttEdges_CostIsScaleFree(t *testing.T) {
 		}
 		return counting.Cost(), counting.String()
 	})
+}
+
+// ganttFaceWorlds names one world per face of a project, each serving only
+// that face.
+type ganttFaceWorlds struct{}
+
+func (ganttFaceWorlds) Lookup(name string) (store.WorldScope, bool) {
+	switch name {
+	case metamodel.DefaultWorldName:
+		return store.TrivialScope(), true
+	case "draft", "published":
+		return store.NewWorldScope(map[string]store.TypeResolution{
+			"project": {Chain: []entity.Face{entity.Face(name)}, Fallback: store.FallbackExclude},
+		}), true
+	}
+	return store.TrivialScope(), false
+}
+
+// TestGantt_FollowsTheWorld: `?world=` on a gantt chart serves that world's
+// face of each node, and the content edges that face owns (TKT-6KLUT3U). The
+// route refused every world but the default before.
+func TestGantt_FollowsTheWorld(t *testing.T) {
+	app := facedGanttApp(t)
+	app.setWorlds(ganttFaceWorlds{})
+
+	for _, tc := range []struct{ world, title, epic, other string }{
+		{"published", "Root published", "EPIC-P", "EPIC-D"},
+		{"draft", "Root draft", "EPIC-D", "EPIC-P"},
+	} {
+		t.Run(tc.world, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			app.NewRouter().ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+				"/api/v1/_gantts/plan?world="+tc.world, http.NoBody))
+			resp := decodeGantt(t, rec)
+			var root *v1.GanttNode
+			for i := range resp.Roots {
+				if resp.Roots[i].ID == "PRJ-A" {
+					root = &resp.Roots[i]
+				}
+			}
+			if root == nil {
+				t.Fatalf("PRJ-A missing from %s", rec.Body)
+			}
+			if root.Title != tc.title {
+				t.Errorf("title = %q, want %q", root.Title, tc.title)
+			}
+			// The other face's epic loses its parent edge and stands as a
+			// root of its own; only this face's epic is PRJ-A's child.
+			if len(root.Children) != 1 || root.Children[0].ID != tc.epic {
+				t.Errorf("PRJ-A children = %+v, want only %s (not %s)", root.Children, tc.epic, tc.other)
+			}
+		})
+	}
 }

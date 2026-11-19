@@ -213,7 +213,7 @@ func (h *leasesHandler) listMine(w http.ResponseWriter, r *http.Request) {
 // leaves the field absent: the lease decorates the entity, so it must not
 // fail the read.
 func (h *leasesHandler) entityLease(ctx context.Context, id string) *v1.EntityLease {
-	if h == nil {
+	if h == nil || readsPastInstant(ctx) {
 		return nil
 	}
 	got, err := h.svc.GetReadable(ctx, []string{id})
@@ -228,7 +228,7 @@ func (h *leasesHandler) entityLease(ctx context.Context, id string) *v1.EntityLe
 // rows. The rows have passed the read gate. It costs one lease read for the
 // whole page. A failed read is logged and leaves every `_lease` absent.
 func (h *leasesHandler) serveRowLeases(ctx context.Context, rows []*entityPkg.Entity, data []v1.Entity) {
-	if h == nil || len(rows) == 0 {
+	if h == nil || len(rows) == 0 || readsPastInstant(ctx) {
 		return
 	}
 	ids := make([]string, 0, len(rows))

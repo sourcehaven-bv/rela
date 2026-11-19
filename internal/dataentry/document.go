@@ -276,6 +276,10 @@ func (s *documentService) Render(
 	// attribution bug.
 	p := principal.From(ctx)
 	sfKey := entryID + "|" + cfg.ConfigID + "|" + p.User + "|" + p.Tool
+	// Renders at different instants are distinct renders too (TKT-6KLUT3U).
+	if at, past := asOfFromContext(ctx); past {
+		sfKey += "|" + at.UTC().Format(time.RFC3339Nano)
+	}
 	result, err, _ := s.group.Do(sfKey, func() (any, error) {
 		return s.doRender(ctx, entryID, cfg, entities, contentHash, cacheFile)
 	})
@@ -514,7 +518,8 @@ func (s *documentService) doRender(
 	// disk-cache filename is renderer-agnostic (FNV of the entry entity)
 	// so writing script-render output here would make a subsequent
 	// command: run read stale bytes from the wrong renderer.
-	if cfg.Script == "" {
+	// A render at an instant is not today's render, so it is not cached.
+	if _, past := asOfFromContext(ctx); cfg.Script == "" && !past {
 		if writeErr := s.state.Put(ctx, cacheFile, []byte(htmlContent)); writeErr != nil {
 			slog.Warn("document cache write failed", "error", writeErr)
 		}

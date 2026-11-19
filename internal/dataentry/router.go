@@ -1083,11 +1083,14 @@ func spaHandler(fsys fs.FS) http.Handler {
 }
 
 // responseGates wraps h in the middleware that decides what a GET returns:
-// attachACLRequest outermost, then attachWorld, so at request time the ACL
-// request exists before the world check reads it. NewRouter and
+// attachACLRequest outermost, then attachWorld, then attachAsOf, so at
+// request time the ACL request exists before the world check reads it, and
+// the read instant is bound last, after identity is resolved on today's
+// state. NewRouter and
 // liveReplayChain both call it, so a live-view replay passes the same gates
 // as the GET it stands for.
 func responseGates(h http.Handler, a *App) http.Handler {
+	h = attachAsOf(h, a)
 	h = attachWorld(h, a)
 	if d, ok := a.acl.(*acl.Declarative); ok && d != nil {
 		h = attachACLRequest(h, d, a.jwtGate != nil)

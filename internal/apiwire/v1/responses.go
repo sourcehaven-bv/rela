@@ -557,6 +557,10 @@ type Capabilities struct {
 	// rolls a failed transaction back. False on the markdown-file and
 	// memory stores, where that endpoint answers 501.
 	AtomicBatch bool `json:"atomic_batch"`
+	// AsOf reports that reads take `?as_of=<RFC 3339 instant>` and answer
+	// with the state at that instant. False on the markdown-file and memory
+	// stores, which keep no version history and answer such a read with 501.
+	AsOf bool `json:"as_of"`
 }
 
 // World is the JSON representation of one declared world — a named
@@ -851,9 +855,9 @@ type CustomType struct {
 // Config is the JSON representation of the UI config.
 //
 // It mirrors the top-level keys of data-entry.yaml, so a new key raises the
-// pin by one; `channels` (TKT-91BK6F) is the most recent.
+// pin by one; `builtins` (TKT-JEAR2UA) is the most recent.
 //
-//plimsoll:max-fields=22
+//plimsoll:max-fields=23
 type Config struct {
 	App AppConfig `json:"app"`
 	// AboutDescription is the deployment description shown by the SPA's global
@@ -880,6 +884,7 @@ type Config struct {
 	Actions     map[string]dataentryconfig.Action              `json:"actions,omitempty"`
 	Navigation  []dataentryconfig.NavigationEntry              `json:"navigation"`
 	Spaces      []dataentryconfig.Space                        `json:"spaces,omitempty"`
+	Builtins    dataentryconfig.Builtins                       `json:"builtins,omitempty"`
 	Pages       map[string]dataentryconfig.Page                `json:"pages,omitempty"`
 	Documents   map[string]dataentryconfig.DocumentConfig      `json:"documents,omitempty"`
 	Apps        map[string]App                                 `json:"apps,omitempty"`
@@ -1443,6 +1448,12 @@ type SidebarResponse struct {
 	// the principal may create and for which a create form resolves. A UI
 	// hint, like InlineCreate; the create endpoint re-authorizes.
 	Create []SidebarCreate `json:"create,omitempty"`
+	// HiddenBuiltins names the built-in sidebar rows ("search", "inbox",
+	// "flow_tasks", "flow_runs", "analysis") the current space, or the
+	// top-level sidebar without spaces, leaves out for this principal
+	// ([dataentryconfig.Builtins]). Absent when every row is shown. A UX
+	// filter: the pages behind the rows stay reachable by URL.
+	HiddenBuiltins []dataentryconfig.BuiltinRow `json:"hidden_builtins,omitempty"`
 
 	// Pages are the config's `pages:`, keyed by page id, each with the tabs
 	// this principal may see. Absent when the config declares no pages.

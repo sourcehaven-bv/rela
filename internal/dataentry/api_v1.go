@@ -1827,7 +1827,10 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		Worlds:     schemaWorlds(r.Context(), s.Meta),
 		WorldOrder: metamodel.WorldOrderOf(s.Meta),
 		// Fixed by the store the app was wired with (TKT-ZMPDZ3R).
-		Capabilities: v1.Capabilities{AtomicBatch: store.TxRollsBack(a.store)},
+		Capabilities: v1.Capabilities{
+			AtomicBatch: store.TxRollsBack(a.store),
+			AsOf:        store.SupportsReadInstant(a.store),
+		},
 	}
 
 	for name, def := range s.Meta.Entities {
@@ -2174,6 +2177,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Actions:          s.Cfg.Actions,
 		Navigation:       s.Cfg.Navigation,
 		Spaces:           s.Cfg.Spaces,
+		Builtins:         s.Cfg.Builtins,
 		Pages:            s.Cfg.Pages,
 		Documents:        s.Cfg.Documents,
 		Apps:             appsToV1(a.scanAppsOrLog(r.Context())),
@@ -3274,6 +3278,11 @@ func handleV1AnchoredDocument(a *App, w http.ResponseWriter, r *http.Request, do
 
 	// Check for refresh param - skip cache if present
 	forceRefresh := r.URL.Query().Get("refresh") == "true"
+	// A read at an instant never touches the disk cache: the cache holds
+	// renders of today's state (TKT-6KLUT3U).
+	if _, past := asOfFromContext(r.Context()); past {
+		forceRefresh = true
+	}
 
 	// return_to is the URL the caller is currently on. The rewriter uses
 	// it to inject a `return_to` query param into form links so the form

@@ -185,6 +185,7 @@ body:
     "editorial"
   ],
   "capabilities": {
-    "atomic_batch": false
+    "atomic_batch": false,
+    "as_of": false
   }
 }

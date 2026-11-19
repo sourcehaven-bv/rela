@@ -42,6 +42,9 @@ type refHolders struct {
 	// flowRuns is the flow run store, nil when flows.yaml declares no
 	// flows.
 	flowRuns flowrun.Store
+	// flowStarts starts the runs of the flows that start on create, nil
+	// when no flow does.
+	flowStarts *flowCreateStarts
 	// records is the record service, nil when the schema declares no
 	// record types; recordStore is the backend under it, which a
 	// re-assembly shares.
@@ -114,6 +117,7 @@ func buildRefHolders(
 		if h.flowRuns, err = flowRunBackend(base.cfg.FS, base.cfg.Paths, st, overrides.flowRuns); err != nil {
 			return refHolders{}, fmt.Errorf("flows: %w", err)
 		}
+		h.flowStarts = newFlowCreateStarts(base.flows, st, h.flowRuns)
 	}
 	if h.recordStore = base.recordStore; h.recordStore == nil {
 		if h.recordStore, err = recordBackend(base.cfg.FS, base.cfg.Paths, st, overrides.recordStore); err != nil {
@@ -149,7 +153,7 @@ func buildRefHolders(
 // guardInputs are the write guards' collaborators among h.
 func (h refHolders) guardInputs() guardInputs {
 	return guardInputs{store: h.channels, tombs: h.channelTombs, dueWake: h.dueWake, marker: h.realtimeLocal,
-		flowRuns: h.flowRuns}
+		flowRuns: h.flowRuns, flowStarts: h.flowStarts}
 }
 
 // aliasFanout joins every subscriber that must follow an entity rename or

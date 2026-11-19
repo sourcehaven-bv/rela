@@ -74,16 +74,32 @@ func TestSink_CloseGivesUpOnAHungDatabase(t *testing.T) {
 	require.NoError(t, s.Close(), "a second Close is a no-op")
 }
 
+// The writer is held inside its first append before the queue is filled,
+// so it cannot take a batch off the full queue before Record runs.
 func TestSink_QueueIsBounded(t *testing.T) {
+	entered := make(chan struct{}, 1)
 	release := make(chan struct{})
-	s, _ := newTestSink(t, func(context.Context) error {
+	db := &fakeDB{fn: func(context.Context) error {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
 		<-release
 		return nil
-	})
+	}}
+	log, err := New(db, Dialect{Name: "fake"})
+	require.NoError(t, err)
+	// Close drains maxPending records, so allow it more time than testTuning.
+	tuning := testTuning
+	tuning.closeTimeout = 30 * time.Second
+	s := newSink(log, tuning)
+
+	s.Record(audit.Record{Op: audit.OpCreateEntity})
+	<-entered
 	s.mu.Lock()
 	s.pending = make([]audit.Record, maxPending)
 	s.mu.Unlock()
-	s.Record(audit.Record{Op: audit.OpCreateEntity})
+	s.Record(audit.Record{Op: audit.OpUpdateEntity})
 	s.mu.Lock()
 	dropped := s.dropped
 	s.mu.Unlock()

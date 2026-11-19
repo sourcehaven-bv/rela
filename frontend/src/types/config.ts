@@ -1296,6 +1296,12 @@ export interface SidebarData {
   /** The current space's Create menu: types the principal may create. */
   create?: SidebarCreate[]
   /**
+   * The built-in sidebar rows that `builtins:` leaves out for this principal,
+   * in the current space or the top-level sidebar. Absent when every row is
+   * shown. A UX filter: the pages behind the rows stay reachable by URL.
+   */
+  hidden_builtins?: BuiltinRow[]
+  /**
    * Every page of `pages:`, keyed by page id, with the tabs this principal
    * may see (TKT-ITQ0HL). Absent when the config declares no pages.
    */
@@ -1431,6 +1437,9 @@ export interface SidebarSpace {
   icon?: string
   home: string
 }
+
+/** A built-in sidebar row, as `builtins:` in data-entry.yaml names it. */
+export type BuiltinRow = 'search' | 'inbox' | 'flow_tasks' | 'flow_runs' | 'analysis'
 
 /** One row of a space's Create menu. */
 export interface SidebarCreate {

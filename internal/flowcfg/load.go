@@ -575,7 +575,8 @@ func (l *loader) guardWith(key, subject, src string, ints []string) *Guard {
 	for _, name := range fields {
 		if l.policy != nil && l.policy.FieldRestricted(subject, name) {
 			l.add(key, fmt.Sprintf("reads %s.%s, which a visible: grant in acl.yaml restricts; the run's state "+
-				"would disclose its value to every reader of the subject", subject, name))
+				"would disclose its value to every reader of the subject. A guard may read it once every role's "+
+				"visible: block for %s lists it without a when: and no client baseline hides it", subject, name, subject))
 			ok = false
 		}
 	}

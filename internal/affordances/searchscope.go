@@ -2,7 +2,6 @@ package affordances
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 
@@ -63,7 +62,7 @@ func requireLowerable(
 // property stays visible, as it does in [PolicyResolver.FieldVerdicts]. A nil
 // scope means nothing is hidden on any row of the type.
 //
-// It reproduces [PolicyResolver.FieldVerdicts] exactly for live rows. A field
+// It reproduces [PolicyResolver.FieldVerdicts] exactly. A field
 // is visible on a row when some role that applies to the row shows it, the
 // union of roles (BUG-Y5UF3K):
 //
@@ -80,16 +79,19 @@ func requireLowerable(
 //   - A client ceiling then narrows every grant and can close the type on
 //     its own.
 //
+// Under [WithHistoricalSubject] (a point-in-time read) the scope follows the
+// historical rules FieldVerdicts applies: only roles held globally count, a
+// grant whose condition reads a relation passes nowhere, and a type that
+// some role gates with `visible:` is closed, so a field shows only where a
+// global role grants it.
+//
 // A condition that fails to lower here (only an empty identity can cause
 // that, after the load-time rule) contributes nothing, which hides more and
-// never less. The error is a missing or mismatched request, or a historical
-// subject; callers fail closed.
+// never less. The error is a missing or mismatched request; callers fail
+// closed.
 func (r *PolicyResolver) SearchFieldScope(ctx context.Context, entityType string) (*search.FieldScope, error) {
 	if r.policy == nil {
 		return nil, nil //nolint:nilnil // nil scope is the documented "nothing hidden"
-	}
-	if IsHistoricalSubject(ctx) {
-		return nil, errors.New("affordances: SearchFieldScope: historical subjects have no search scope")
 	}
 	req, err := r.requestFor(ctx)
 	if err != nil {
@@ -99,10 +101,14 @@ func (r *PolicyResolver) SearchFieldScope(ctx context.Context, entityType string
 	c := fieldScopeCompiler{
 		meta: r.meta, policy: r.policy, grants: r.grants,
 		req: req, entityType: entityType, isGlobal: globalRoleSet(req),
+		historical: IsHistoricalSubject(ctx),
 	}
 	globalRoles, locals := c.heldVisibleRoles()
 	ceiling := req.FieldCeilingFor(entityType)
-	if len(globalRoles) == 0 && len(locals) == 0 && !ceiling.Constrains() {
+	// A historical read closes a type some role gates: nothing shows by
+	// default, so an empty scope is not "nothing hidden".
+	closed := c.historical && r.typesWithVisible[entityType]
+	if len(globalRoles) == 0 && len(locals) == 0 && !ceiling.Constrains() && !closed {
 		return nil, nil //nolint:nilnil // nil scope is the documented "nothing hidden"
 	}
 
@@ -118,7 +124,7 @@ func (r *PolicyResolver) SearchFieldScope(ctx context.Context, entityType string
 	grants := c.globalFieldGrants(globalRoles)
 	grants = append(grants, c.localFieldGrants(locals)...)
 	grants = append(grants, blockless...)
-	if len(globalRoles) == 0 {
+	if len(globalRoles) == 0 && !closed {
 		grants = append(grants, openFieldGrant(entityType, universe, locals))
 	}
 
@@ -142,6 +148,9 @@ type fieldScopeCompiler struct {
 	entityType string
 	identity   string          // the principal's user id, "" when unknown
 	isGlobal   map[string]bool // the roles req holds globally
+	// historical drops the roles held through a role relation and the
+	// grants whose condition reads a relation ([WithHistoricalSubject]).
+	historical bool
 }
 
 // localRole is a role that declares `visible:` and is held on some rows
@@ -170,6 +179,9 @@ func (c *fieldScopeCompiler) heldVisibleRoles() (global []string, locals []local
 			global = append(global, role)
 			continue
 		}
+		if c.historical {
+			continue
+		}
 		if preds, ok := c.req.LocalRolePredicates(role); ok {
 			locals = append(locals, localRole{name: role, held: preds})
 		}
@@ -189,9 +201,11 @@ func (c *fieldScopeCompiler) globalFieldGrants(roles []string) []search.FieldGra
 				unconditional = append(unconditional, fg.field)
 				continue
 			}
-			if when, ok := c.lowerWhen(fg.program); ok {
-				out = append(out, search.FieldGrant{Fields: []string{fg.field}, When: when})
+			when, ok := c.lowerWhen(fg.program)
+			if !ok || (c.historical && len(when.Related) > 0) {
+				continue
 			}
+			out = append(out, search.FieldGrant{Fields: []string{fg.field}, When: when})
 		}
 	}
 	if len(unconditional) > 0 {
@@ -272,6 +286,9 @@ func (c *fieldScopeCompiler) blocklessFieldGrants(
 			grants = append(grants, search.FieldGrant{Fields: universe, When: &store.GraphQuery{
 				EntityType: entityType, Faces: store.AllFaces(), FaceIn: faceIn,
 			}})
+			continue
+		}
+		if c.historical {
 			continue
 		}
 		preds, ok := c.req.LocalRolePredicates(role)

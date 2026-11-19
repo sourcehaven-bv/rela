@@ -1000,6 +1000,8 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 	// "no mail global" would leave an operator guessing between a missing
 	// mail.yaml and a missing grant. mail.go argues both halves in full.
 	registerMailModule(r)
+
+	guardInstantBindings(r.L, rela, r.callerCtx)
 }
 
 // registerReadBindings installs read-only bindings on the rela table: entity
