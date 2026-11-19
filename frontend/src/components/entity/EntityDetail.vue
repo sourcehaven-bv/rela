@@ -3432,6 +3432,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                         :model-value="cell.value"
                         :mode="'display'"
                         :property-name="cell.propertyName"
+                        :entity-type="node.entity.type"
                       />
                     </span>
                   </summary>

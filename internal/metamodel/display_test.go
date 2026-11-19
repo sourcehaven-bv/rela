@@ -15,6 +15,8 @@ func TestParse_PropertyDisplay(t *testing.T) {
 		wantErr string
 		// wantLink marks a valid link format; otherwise a valid case is EUR.
 		wantLink bool
+		// wantLinkText is the link text a valid link format carries.
+		wantLinkText string
 	}{
 		{name: "currency on integer", yaml: prop("        type: integer\n        display:\n          currency: EUR\n")},
 		{name: "lower-case code", yaml: prop("        type: integer\n        display:\n          currency: eur\n"),
@@ -40,6 +42,14 @@ func TestParse_PropertyDisplay(t *testing.T) {
 			wantErr: "display: link is not supported on a list property"},
 		{name: "link on an inline enum", yaml: prop("        type: string\n        values: [a, b]\n        display:\n          link: true\n"),
 			wantErr: "display: link is not supported on a property with values"},
+		{name: "link with text", yaml: prop("        type: string\n        display:\n          link: true\n          link_text: Website\n"),
+			wantLink: true, wantLinkText: "Website"},
+		{name: "link text without link", yaml: prop("        type: string\n        display:\n          link_text: Website\n"),
+			wantErr: "display: link_text needs link: true"},
+		{name: "blank link text", yaml: prop("        type: string\n        display:\n          link: true\n          link_text: \"  \"\n"),
+			wantErr: "display: link_text is blank"},
+		{name: "link text with currency", yaml: prop("        type: integer\n        display:\n          currency: EUR\n          link_text: Website\n"),
+			wantErr: "display: link_text needs link: true"},
 		{name: "link and currency", yaml: prop("        type: integer\n        display:\n          link: true\n          currency: EUR\n"),
 			wantErr: "display names two formats; use currency or link, not both"},
 	}
@@ -53,7 +63,7 @@ func TestParse_PropertyDisplay(t *testing.T) {
 				got := meta.Entities["ticket"].Properties["value"].Display
 				want := PropertyDisplay{Currency: "EUR"}
 				if tt.wantLink {
-					want = PropertyDisplay{Link: true}
+					want = PropertyDisplay{Link: true, LinkText: tt.wantLinkText}
 				}
 				if got == nil || *got != want {
 					t.Fatalf("display = %+v, want %+v", got, want)

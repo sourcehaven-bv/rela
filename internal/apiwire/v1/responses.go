@@ -805,6 +805,8 @@ type PropertyDef struct {
 type PropertyDisplay struct {
 	Currency string `json:"currency,omitempty"`
 	Link     bool   `json:"link,omitempty"`
+	// LinkText replaces the URL as the text of a link (TKT-IO9PTLD).
+	LinkText string `json:"link_text,omitempty"`
 }
 
 // RelationType is the JSON representation of a relation type.

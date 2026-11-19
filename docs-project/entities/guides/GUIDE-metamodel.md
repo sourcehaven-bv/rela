@@ -858,7 +858,7 @@ entities:
 | `default`        | Default value for the property                                                        |
 | `format`         | Date format (Go layout string, e.g., `2006-01-02`)                                    |
 | `description`    | Documentation for the property                                                        |
-| `display`        | How the value is shown, such as `{currency: EUR}` or `{link: true}` (see [Display formats](#display-formats)) |
+| `display`        | How the value is shown, such as `{currency: EUR}`, `{link: true}` or `{link: true, link_text: Website}` (see [Display formats](#display-formats)) |
 | `list: true`     | Allow multiple values (multi-select for enum types)                                   |
 | `computed`       | Pure entity-local expression materialized on every write; the property is read-only   |
 | `rollup`         | Summary of related entities, computed on read per reader; see [Roll-up properties](#roll-up-properties) |
@@ -1391,11 +1391,30 @@ become a link. A value without a scheme, such as `example.com`, also stays
 text. A `mailto:` link drops anything after `?` or `#`, such as a `bcc=`, so
 a click cannot add recipients the reader does not see.
 
+By default the link text is the address itself. A long address stays on one
+line and ends in `…`; hovering the link shows where it goes. To show a fixed
+text instead, set `link_text`:
+
+```yaml
+properties:
+  website:
+    type: string
+    display:
+      link: true
+      link_text: Website
+```
+
+Every value of `website` then shows as a link named "Website". A value that
+does not become a link shows as itself, not as the link text. When a list or
+board column shows a property that several types declare, it uses the
+`link_text` only if all those types set the same one; otherwise it shows the
+address.
+
 Forms show a text input with the URL keyboard on phones. The value is not
 checked: a value that is not a web address still saves, and shows as text.
 
-`link` needs a single-valued `string` property without `values:`. Config load
-checks this.
+`link` needs a single-valued `string` property without `values:`, and
+`link_text` needs `link: true` and may not be blank. Config load checks this.
 
 `display` is a map so that more formats can join later, such as a
 percentage or a unit.

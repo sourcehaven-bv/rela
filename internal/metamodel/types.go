@@ -1062,6 +1062,9 @@ type PropertyDisplay struct {
 	// https or mailto value becomes a link; any other value stays text. The
 	// form shows a URL input.
 	Link bool `yaml:"link,omitempty" json:"link,omitempty"`
+	// LinkText is the text a link shows instead of the URL (TKT-IO9PTLD).
+	// The URL stays the target. Only valid with Link.
+	LinkText string `yaml:"link_text,omitempty" json:"link_text,omitempty"`
 }
 
 // TransformStep is one entry in a `transform:` pipeline. A step is EITHER an
