@@ -34,6 +34,7 @@ const onboarding: Flow = {
   subject: 'person',
   version: 'v1',
   manual: true,
+  per_subject: 'many',
   diagram: '',
 }
 
