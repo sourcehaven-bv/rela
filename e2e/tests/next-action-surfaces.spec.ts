@@ -1,6 +1,5 @@
-import fs from "node:fs";
-import path from "node:path";
-import { test as base, expect, SEED } from "./fixtures";
+import { expect, SEED } from "./fixtures";
+import { withDataEntryBlock } from "./next-action-fixture";
 import { NextActionPage } from "../pages";
 
 /**
@@ -25,20 +24,15 @@ next_actions:
     suggest: "This one: {title}"
 `;
 
-const test = base.extend({
-  testProject: async ({ testProject }, use) => {
-    const file = path.join(testProject, "data-entry.yaml");
-    const yaml = fs.readFileSync(file, "utf8");
-    if (!yaml.includes("\nnavigation:\n")) throw new Error("fixture YAML has no navigation:");
-    fs.writeFileSync(file, yaml.replace("\nnavigation:\n", `\n${NEXT_ACTIONS_YAML}\nnavigation:\n`));
-    await use(testProject);
-  },
-});
+const test = withDataEntryBlock(NEXT_ACTIONS_YAML);
 
 test.describe("Next-action surfaces", () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
-  test("a placed source shows on a list and above a full-height board", async ({ appPage, serverUrl }) => {
+  test("a placed source shows on a list and above a full-height board", async ({
+    appPage,
+    serverUrl,
+  }) => {
     const na = new NextActionPage(appPage);
     await appPage.goto(`${serverUrl}/list/features`);
     await na.expectShowing(/^Review /);
@@ -51,7 +45,10 @@ test.describe("Next-action surfaces", () => {
   // The list page reports the impression, which starts that suggestion's
   // cooldown. Without the SPA naming it as current, the board would pick
   // another feature.
-  test("the suggestion stays put across a navigation", async ({ appPage, serverUrl }) => {
+  test("the suggestion stays put across a navigation", async ({
+    appPage,
+    serverUrl,
+  }) => {
     const na = new NextActionPage(appPage);
     const shown = na.waitForImpression();
     await appPage.goto(`${serverUrl}/list/features`);
@@ -68,17 +65,27 @@ test.describe("Next-action surfaces", () => {
     expect(await na.entityId()).toBe(first);
   });
 
-  test("a context source follows the viewed entity", async ({ appPage, serverUrl }) => {
+  test("a context source follows the viewed entity", async ({
+    appPage,
+    serverUrl,
+  }) => {
     const na = new NextActionPage(appPage);
-    await appPage.goto(`${serverUrl}/entity/feature/${SEED.features.authentication}`);
+    await appPage.goto(
+      `${serverUrl}/entity/feature/${SEED.features.authentication}`,
+    );
     await na.expectShowing(/^This one: /);
     expect(await na.entityId()).toBe(SEED.features.authentication);
 
-    await appPage.goto(`${serverUrl}/entity/feature/${SEED.features.exportData}`);
+    await appPage.goto(
+      `${serverUrl}/entity/feature/${SEED.features.exportData}`,
+    );
     await expect.poll(() => na.entityId()).toBe(SEED.features.exportData);
   });
 
-  test("nothing shows where the operator placed nothing", async ({ appPage, serverUrl }) => {
+  test("nothing shows where the operator placed nothing", async ({
+    appPage,
+    serverUrl,
+  }) => {
     const na = new NextActionPage(appPage);
     // The dashboard is not in visible_on, and has no context source.
     let asked = na.waitForRequest("dashboard");
