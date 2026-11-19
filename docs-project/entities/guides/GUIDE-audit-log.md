@@ -518,8 +518,27 @@ cannot be paged, so it offers neither.
   show the old one's records. A record that names another entity the reader
   cannot read now (a relation's far end, a rename's other id) is left out.
   The record's summary is kept only when it names no entity, and names only
-  the properties the reader sees on every row of the type. Only the kind of
-  `triggered_by` is shown, plus the automation or schedule name.
+  the properties the reader sees on every row of the type. An update that
+  changed only properties the reader does not see on every row is left out,
+  so the list does not tell when a hidden value changed. Records of
+  relations rela manages itself (types starting with `_`), changes to `_`
+  properties, and the renumbering of siblings after a drag are left out too.
+  Only the kind of `triggered_by` is shown, plus the automation or schedule
+  name.
+
+  The tab names relations, properties and entity types by their labels, and
+  other entities by their title as the reader sees it (the response's
+  `titles` map). A change made by a `system:` or `integration:` principal
+  shows as "System", and a trigger shows only as "By an automation", "By a
+  schedule" or "Automatically". The labels are applied in the browser: the
+  response still carries the raw names, which are configuration, not data.
+  The global audit view keeps the raw values.
+
+  The tab follows `header_buttons.history` in `data-entry.yaml`: where that
+  hides the History button, it hides the Changes tab as well. Use it to keep
+  the list from customers, for example with
+  `history: {permission: staff.manage}`. Like the button, this is a UX
+  filter; the route keeps its own gate.
 - **The global audit view** (`/audit`, `GET /api/v1/_audit`) pages through the
   whole log, newest first, including deleted entities and `denied-write`
   records. It needs the `audit:read` permission under an ACL policy; without

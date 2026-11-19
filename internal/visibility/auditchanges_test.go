@@ -330,7 +330,8 @@ func (h hiddenFields) FieldVisibleOnEveryRow(_ context.Context, _, property stri
 
 // TestEntityChanges_SummaryNamesNoHiddenProperty: an update summary names
 // only the properties the reader sees on every row, and a relation update
-// names none.
+// names none. An update that changed only hidden properties is left out
+// (seq 3), since even a bare "updated" row tells when a hidden value changed.
 func TestEntityChanges_SummaryNamesNoHiddenProperty(t *testing.T) {
 	ctx := context.Background()
 	update := func(seq int64, summary string) audit.Entry {
@@ -355,7 +356,82 @@ func TestEntityChanges_SummaryNamesNoHiddenProperty(t *testing.T) {
 	for _, c := range page {
 		got = append(got, c.Summary)
 	}
-	require.Equal(t, []string{"updated: title", "updated", "updated", "updated", "updated"}, got)
+	require.Equal(t, []string{"updated: title", "updated", "updated", "updated"}, got)
+	require.Equal(t, []int64{4, 2, 1, 0}, changeSeqs(page))
+}
+
+// TestEntityChanges_LeavesOutManagedNames: a change list shows no record of a
+// relation rela manages itself (a `_` relation type, such as a flow run's
+// `_carries`), and an update summary names no managed property. An update of
+// managed properties alone is left out.
+func TestEntityChanges_LeavesOutManagedNames(t *testing.T) {
+	ctx := context.Background()
+	managed := relationEntry(5, "DOC-1", "", "RUN-1")
+	managed.Record.Subject.RelationType = entity.CarriesRelation
+	update := func(seq int64, summary string) audit.Entry {
+		e := entityEntry(seq, audit.OpUpdateEntity, "doc")
+		e.Record.Summary = summary
+		return e
+	}
+	renumbered := relationEntry(1, "DOC-1", "", "PUB-1")
+	renumbered.Record.Op = audit.OpUpdateRelation
+	renumbered.Record.Summary = "renumbered order"
+	renumbered.Record.TriggeredBy = "renumber:order"
+	src := &fakeEntries{entries: []audit.Entry{
+		managed,
+		update(4, "updated: _order,title"),
+		update(3, "updated: _order"),
+		relationEntry(2, "DOC-1", "", "PUB-1"),
+		renumbered,
+	}}
+	page, _, err := visibility.EntityChanges(ctx, src,
+		readableSet{"DOC-1": "doc", "PUB-1": "doc", "RUN-1": entity.FlowRunType}, allFields{},
+		visibility.ChangesQuery{Ref: entity.Ref{ID: "DOC-1"}, Type: "doc", Limit: 10, Live: true})
+	require.NoError(t, err)
+	require.Equal(t, []int64{4, 2}, changeSeqs(page))
+	require.Equal(t, "updated: title", page[0].Summary)
+}
+
+// TestEntityChanges_HiddenUpdatesDoNotShortenAPage: updates left out for
+// hidden properties do not end a page early while the log has more.
+func TestEntityChanges_HiddenUpdatesDoNotShortenAPage(t *testing.T) {
+	ctx := context.Background()
+	var entries []audit.Entry
+	for seq := int64(6); seq >= 1; seq-- {
+		e := entityEntry(seq, audit.OpUpdateEntity, "doc")
+		e.Record.Summary = "updated: title"
+		if seq > 3 {
+			e.Record.Summary = "updated: salary"
+		}
+		entries = append(entries, e)
+	}
+	page, _, err := visibility.EntityChanges(ctx, &fakeEntries{entries: entries}, readableSet{"DOC-1": "doc"},
+		hiddenFields{"salary": true},
+		visibility.ChangesQuery{Ref: entity.Ref{ID: "DOC-1"}, Type: "doc", Limit: 2, Live: true})
+	require.NoError(t, err)
+	require.Equal(t, []int64{3, 2}, changeSeqs(page))
+}
+
+// TestEntityChanges_NoCursorBeforeOnlyHiddenRecords: a full page whose
+// later records are all left out gets no cursor, so Load more never comes
+// back empty.
+func TestEntityChanges_NoCursorBeforeOnlyHiddenRecords(t *testing.T) {
+	ctx := context.Background()
+	var entries []audit.Entry
+	for seq := int64(6); seq >= 1; seq-- {
+		e := entityEntry(seq, audit.OpUpdateEntity, "doc")
+		e.Record.Summary = "updated: title"
+		if seq < 5 {
+			e.Record.Summary = "updated: salary"
+		}
+		entries = append(entries, e)
+	}
+	page, next, err := visibility.EntityChanges(ctx, &fakeEntries{entries: entries}, readableSet{"DOC-1": "doc"},
+		hiddenFields{"salary": true},
+		visibility.ChangesQuery{Ref: entity.Ref{ID: "DOC-1"}, Type: "doc", Limit: 2, Live: true})
+	require.NoError(t, err)
+	require.Equal(t, []int64{6, 5}, changeSeqs(page))
+	require.Zero(t, next)
 }
 
 // TestEntityChanges_StartFence: the change list of an id is served under a
@@ -421,12 +497,13 @@ func TestEntityChanges_OtherFaceLeftOut(t *testing.T) {
 }
 
 // TestEntityChanges_FullPageStopsReading: a page filled from the first read
-// returns its cursor without reading on, and a limit below 1 is refused.
+// returns its cursor without reading on when the read holds a later record
+// it shows, and a limit below 1 is refused.
 func TestEntityChanges_FullPageStopsReading(t *testing.T) {
 	ctx := context.Background()
 	src := &fakeEntries{entries: []audit.Entry{
 		entityEntry(3, audit.OpUpdateEntity, "doc"),
-		relationEntry(2, "DOC-1", "", "SECRET-1"),
+		entityEntry(2, audit.OpUpdateEntity, "doc"),
 		entityEntry(1, audit.OpCreateEntity, "doc"),
 	}}
 	q := visibility.ChangesQuery{Ref: entity.Ref{ID: "DOC-1"}, Type: "doc", Limit: 1}

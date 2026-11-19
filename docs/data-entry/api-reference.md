@@ -2294,12 +2294,15 @@ of the previous page (otherwise 400 `invalid_cursor`). `next_before` is
 absent on the last page.
 
 `GET /api/v1/_changes/{type}/{id}` returns
-`{changes: [...], next_before?, world_face_absent?}`. The address resolves
+`{changes: [...], next_before?, world_face_absent?, titles?}`. The address resolves
 as `_history` does: the uniform 404 for an entity the caller cannot read, a
 wrong type, or a deleted entity without `history:read`. Each entry is
 `{seq, time, op, subject?, before?, after?, user?, tool?, summary?, trigger?}`.
-Records that name another entity the caller cannot read are left out, so a
-page can be shorter than `limit` while `next_before` is set.
+Records that name another entity the caller cannot read are left out, and so
+are records of `_` relation types and updates of only hidden or `_`
+properties, so a page can be shorter than `limit` while `next_before` is set.
+`titles` maps the ids of the other entities a page names to their titles as
+the caller sees them; an id it leaves out shows as the id.
 `audit.changes` is true whenever the route exists.
 
 `GET /api/v1/_audit` returns `{records: [{seq, record}], next_before?}`,

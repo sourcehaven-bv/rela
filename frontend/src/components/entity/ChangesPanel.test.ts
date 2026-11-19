@@ -7,6 +7,7 @@ import ChangesPanel from './ChangesPanel.vue'
 import { useSchemaStore } from '@/stores/schema'
 import { ApiError } from '@/api/errors'
 import type { ChangesPage } from '@/api/audit'
+import type { EntityType } from '@/types'
 
 const world = ref<string | undefined>(undefined)
 vi.mock('@/composables/useWorld', () => ({
@@ -48,40 +49,98 @@ describe('ChangesPanel', () => {
     expect(wrapper.find('.changes-panel').exists()).toBe(false)
   })
 
-  it('lists changes and names the other end of a relation', async () => {
-    useSchemaStore().setAudit({ changes: true, global: false })
+  it('stays hidden and fetches nothing where header_buttons hides the history', async () => {
+    const store = useSchemaStore()
+    store.setAudit({ changes: true, global: false })
+    store.setHeaderButtons({ history: false, add_to_pile: true })
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(getChangesMock).not.toHaveBeenCalled()
+    expect(wrapper.find('.changes-panel').exists()).toBe(false)
+  })
+
+  it('names relations, fields and entities by label and title', async () => {
+    const store = useSchemaStore()
+    store.setAudit({ changes: true, global: false })
+    store.entityTypes = new Map([
+      [
+        'ticket',
+        {
+          label: 'Ticket',
+          properties: { status: { type: 'string', label: 'Status' } },
+        } as unknown as EntityType,
+      ],
+    ])
+    store.relationTypes = new Map([
+      [
+        'affects',
+        {
+          label: 'Affects',
+          from: [],
+          to: [],
+          inverse: { id: 'affected-by', label: 'Affected by' },
+        },
+      ],
+    ])
     getChangesMock.mockResolvedValue({
       changes: [
         {
           seq: 9,
           time: '2026-01-02T10:00:00Z',
-          op: 'relation-create',
+          op: 'create-relation',
           subject: { kind: 'relation', relation_type: 'affects', from_id: 'TKT-1', to_id: 'CON-7' },
           user: 'alice',
-          trigger: 'flow:triage',
+          trigger: 'automation:close-on-done',
         },
         {
           seq: 8,
           time: '2026-01-01T10:00:00Z',
-          op: 'update',
+          op: 'delete-relation',
+          subject: { kind: 'relation', relation_type: 'affects', from_id: 'BUG-3', to_id: 'TKT-1' },
+          user: 'system:scheduler',
+        },
+        {
+          seq: 7,
+          time: '2026-01-01T09:00:00Z',
+          op: 'update-entity',
           subject: { kind: 'entity', type: 'ticket', id: 'TKT-1' },
           user: '<b>bob</b>',
-          summary: 'status: ready → done',
+          summary: 'updated: status',
+        },
+        {
+          seq: 6,
+          time: '2026-01-01T08:00:00Z',
+          op: 'create-entity',
+          subject: { kind: 'entity', type: 'ticket', id: 'TKT-1' },
+          user: 'carol',
+          summary: 'created',
         },
       ],
+      titles: { 'CON-7': 'Login' },
     })
     const wrapper = mountPanel()
     await flushPromises()
 
-    const rows = wrapper.findAll('[data-testid="change-row"]')
-    expect(rows).toHaveLength(2)
-    expect(rows[0].text()).toContain('alice')
-    expect(rows[0].text()).toContain('affects → CON-7')
-    expect(rows[0].text()).toContain('flow:triage')
-    expect(rows[1].text()).toContain('status: ready → done')
+    const rows = wrapper.findAll('[data-testid="change-row"]').map((r) => r.text())
+    expect(rows).toHaveLength(4)
+    expect(rows[0]).toContain('alice')
+    expect(rows[0]).toContain('Linked')
+    expect(rows[0]).toContain('Affects → Login')
+    expect(rows[0]).toContain('By an automation')
+    expect(rows[0]).not.toContain('close-on-done')
+    // An incoming relation reads by its inverse label; an id without a
+    // title stays the id.
+    expect(rows[1]).toContain('Unlinked')
+    expect(rows[1]).toContain('Affected by → BUG-3')
+    expect(rows[1]).toContain('System')
+    expect(rows[1]).not.toContain('system:scheduler')
+    expect(rows[2]).toContain('Changed: Status')
+    expect(rows[2]).not.toContain('updated')
+    expect(rows[3]).toContain('Created')
+    expect(rows[3]).not.toContain('created')
     // Text interpolation, never markup.
-    expect(rows[1].text()).toContain('<b>bob</b>')
-    expect(rows[1].find('b').exists()).toBe(false)
+    expect(rows[2]).toContain('<b>bob</b>')
+    expect(wrapper.find('b').exists()).toBe(false)
   })
 
   it('passes next_before as the before cursor on Load more', async () => {

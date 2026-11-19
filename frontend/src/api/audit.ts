@@ -41,6 +41,8 @@ export interface ChangesPage {
   next_before?: number
   /** The request's world resolves no face, so there is no change list. */
   world_face_absent?: boolean
+  /** The titles of the other entities the records name, by id (BUG-XR1DUQA). */
+  titles?: Record<string, string>
 }
 
 /** A whole stored audit record (Go: audit.Record), served to audit:read only. */

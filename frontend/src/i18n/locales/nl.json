@@ -1593,7 +1593,6 @@
     "empty": "Het auditlog is leeg.",
     "forbidden": "Je hebt de permissie audit:read nodig om het auditlog te zien.",
     "loadMore": "Meer laden",
-    "triggeredBy": "Gestart door {trigger}",
     "col": {
       "time": "Tijd",
       "user": "Gebruiker",
@@ -1604,7 +1603,28 @@
     },
     "changes": {
       "title": "Wijzigingen",
-      "empty": "Geen wijzigingen vastgelegd."
+      "empty": "Geen wijzigingen vastgelegd.",
+      "system": "Systeem",
+      "changedFields": "Gewijzigd: {fields}",
+      "op": {
+        "created": "Aangemaakt",
+        "changed": "Gewijzigd",
+        "deleted": "Verwijderd",
+        "renamed": "Hernoemd",
+        "converted": "Omgezet",
+        "restored": "Hersteld",
+        "purged": "Definitief verwijderd",
+        "copied": "Gekopieerd",
+        "attached": "Document toegevoegd",
+        "linked": "Gekoppeld",
+        "linkChanged": "Koppeling gewijzigd",
+        "unlinked": "Ontkoppeld"
+      },
+      "by": {
+        "automation": "Door een automatisering",
+        "schedule": "Door een planning",
+        "other": "Automatisch"
+      }
     }
   },
   "asOf": {

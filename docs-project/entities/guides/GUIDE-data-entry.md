@@ -3781,7 +3781,7 @@ The `header_buttons:` block hides two of them:
 
 | Key           | Button                                                         |
 | ------------- | -------------------------------------------------------------- |
-| `history`     | **History**: the entity's version history.                     |
+| `history`     | **History**, and the **Changes** list of audit records.        |
 | `add_to_pile` | **Add to pile**: the menu that adds the entity to a [pile](#piles). |
 
 Each key takes the same values as a dashboard's
@@ -3808,7 +3808,8 @@ history (PostgreSQL or SQLite), and Add to pile still needs piles to be
 available to the reader.
 
 **This is a UX filter, not an access control.** A hidden History button does
-not stop anyone from opening `/history/...` or calling `/api/v1/_history`.
+not stop anyone from opening `/history/...` or calling `/api/v1/_history` or
+`/api/v1/_changes`.
 Those keep their own ACL, as the pile endpoints do. `/api/v1/_config` serves
 the block to every principal, and `/api/v1/_sidebar` serves the result for the
 current principal as `header_buttons: {history, add_to_pile}`. With no

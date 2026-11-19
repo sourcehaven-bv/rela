@@ -104,6 +104,13 @@ const changeScanRounds = 4
 // live. So a deleted id of another type is never served under q.Type,
 // whatever relation records name it.
 //
+// A record of a relation rela manages itself (a `_` relation type, such as a
+// flow run's `_carries`) is left out: it is bookkeeping, not a change the
+// reader made or can act on. So is a renumber of the siblings of a moved
+// relation (trigger `renumber:`), and an update whose changed properties the
+// reader does not see on every row of the type, or that are managed: even a
+// bare "updated" would tell when a hidden value changed (BUG-XR1DUQA).
+//
 // A record is shown only when every other entity it names (a relation's far
 // end) is readable to the principal now, by one [ReadableIDs] batch per
 // source read. The earlier id of a rename or conversion into q.Ref is this
@@ -116,9 +123,11 @@ const changeScanRounds = 4
 // of another entity, because readability is answered per id, not per face.
 //
 // Records left out do not shorten a page while the source has more: the
-// page reads on, up to [changeScanRounds] reads. Past that cap the cursor is
-// the seq of the last record read, which may be one left out. It tells only
-// that a record the principal may not see exists at that position.
+// page reads on, up to [changeScanRounds] reads. A full page returns a
+// cursor only once a later record it would show is found, so Load more does
+// not come back empty. Past that cap the cursor is the seq of the last
+// record read, which may be one left out. It tells only that a record the
+// principal may not see exists at that position.
 func EntityChanges(
 	ctx context.Context, src AuditEntries, readable ReadableIDs, fields FieldVisibility, q ChangesQuery,
 ) ([]ChangeRecord, int64, error) {
@@ -142,16 +151,17 @@ func EntityChanges(
 			return nil, 0, err
 		}
 		for _, e := range shown {
+			rec, ok := changeRecord(ctx, fields, e)
+			if !ok {
+				continue
+			}
 			if len(out) == q.Limit {
 				return out, out[len(out)-1].Seq, nil
 			}
-			out = append(out, changeRecord(ctx, fields, e))
+			out = append(out, rec)
 		}
 		if len(entries) <= q.Limit {
 			return out, 0, nil
-		}
-		if len(out) == q.Limit {
-			return out, out[len(out)-1].Seq, nil
 		}
 		before = entries[len(entries)-1].Seq
 	}
@@ -231,6 +241,9 @@ func aboutEntity(rec audit.Record, q ChangesQuery) bool {
 				named = true
 			}
 		case s.IsRelation():
+			if entity.IsManagedName(s.RelationType) {
+				return false
+			}
 			if s.FromID == q.Ref.ID || s.ToID == q.Ref.ID {
 				named = true
 			}
@@ -303,11 +316,20 @@ func isLineage(rec audit.Record, s *audit.Subject, id string) bool {
 	return s == rec.Before && rec.After != nil && rec.After.ID == id
 }
 
-func changeRecord(ctx context.Context, fields FieldVisibility, e audit.Entry) ChangeRecord {
+// changeRecord builds the reader's view of e, or reports false when the
+// reader may not see it at all: a renumber of siblings, or an update of
+// properties all hidden or managed.
+func changeRecord(ctx context.Context, fields FieldVisibility, e audit.Entry) (ChangeRecord, bool) {
 	r := e.Record
+	if strings.HasPrefix(r.TriggeredBy, renumberTrigger) {
+		return ChangeRecord{}, false
+	}
 	summary := ChangeSummary(r.Summary)
 	if props, found := strings.CutPrefix(summary, updatedPrefix); found {
-		summary = visibleUpdate(ctx, fields, r.Subject, props)
+		var ok bool
+		if summary, ok = visibleUpdate(ctx, fields, r.Subject, props); !ok {
+			return ChangeRecord{}, false
+		}
 	}
 	if summary == "" && (r.Op == audit.OpUpdateEntity || r.Op == audit.OpUpdateRelation) {
 		// An update summary of an unknown shape still says what happened.
@@ -324,7 +346,7 @@ func changeRecord(ctx context.Context, fields FieldVisibility, e audit.Entry) Ch
 		Tool:    r.Principal.Tool,
 		Summary: summary,
 		Trigger: TriggerKind(r.TriggeredBy),
-	}
+	}, true
 }
 
 func copySubject(s *audit.Subject) *audit.Subject {
@@ -341,23 +363,25 @@ func copySubject(s *audit.Subject) *audit.Subject {
 const updatedPrefix = "updated: "
 
 // visibleUpdate returns the summary of an update that changed props, naming
-// only the properties the principal sees on every row of the subject's type.
+// only the properties the principal sees on every row of the subject's type
+// and that rela does not manage. It reports false when that leaves none: the
+// record then tells only when a value the reader may not see changed.
 // A relation's properties are never named: their visibility is judged per
 // relation, which this list does not do.
-func visibleUpdate(ctx context.Context, fields FieldVisibility, subject *audit.Subject, props string) string {
+func visibleUpdate(ctx context.Context, fields FieldVisibility, subject *audit.Subject, props string) (string, bool) {
 	if subject == nil || !subject.IsEntity() {
-		return "updated"
+		return "updated", true
 	}
 	var shown []string
 	for p := range strings.SplitSeq(props, ",") {
-		if fields.FieldVisibleOnEveryRow(ctx, subject.Type, p) {
+		if !entity.IsManagedName(p) && fields.FieldVisibleOnEveryRow(ctx, subject.Type, p) {
 			shown = append(shown, p)
 		}
 	}
 	if len(shown) == 0 {
-		return "updated"
+		return "", false
 	}
-	return updatedPrefix + strings.Join(shown, ",")
+	return updatedPrefix + strings.Join(shown, ","), true
 }
 
 // name is a configuration name: a property, type, face, conversion or
@@ -394,6 +418,10 @@ func ChangeSummary(summary string) string {
 // namedTriggers are the trigger kinds whose label after the colon is a
 // configuration name, kept whole.
 var namedTriggers = map[string]bool{"automation": true, "schedule": true, "renumber": true}
+
+// renumberTrigger starts the triggered_by label of a sibling a move
+// renumbered (entitymanager's auditRenumbered).
+const renumberTrigger = "renumber:"
 
 // TriggerKind returns the kind of a triggered_by label: the part before the
 // first colon, or the whole label for an automation, schedule or renumber,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -98,6 +99,10 @@ type changesResponse struct {
 	// WorldFaceAbsent mirrors the history timeline: the request's world
 	// resolves no face, so there is no change list in it.
 	WorldFaceAbsent bool `json:"world_face_absent,omitempty"`
+	// Titles names the other entities the page's records name, by id, as
+	// the reader sees them now (BUG-XR1DUQA). An id the reader cannot read, or
+	// whose title is hidden, is absent or falls back to the id.
+	Titles map[string]string `json:"titles,omitempty"`
 }
 
 // handleV1Changes serves GET /api/v1/_changes/{type}/{addr}: one page of the
@@ -158,7 +163,46 @@ func handleV1Changes(a *App, w http.ResponseWriter, r *http.Request) {
 	if page == nil {
 		page = []visibility.ChangeRecord{}
 	}
-	writeV1JSON(w, http.StatusOK, changesResponse{Changes: page, NextBefore: next})
+	writeV1JSON(w, http.StatusOK, changesResponse{
+		Changes: page, NextBefore: next, Titles: changeTitles(r.Context(), a, subject.ref.ID, page),
+	})
+}
+
+// changeTitles resolves the titles of the far ends of the relations page
+// names, through the gated resolver in the request's world, as mentions do.
+// A title is served only whole: when the reader cannot see every property
+// it is made of, the id is left out and the list shows the id (BUG-R9EHKV).
+// A failed lookup is logged and serves no titles.
+func changeTitles(ctx context.Context, a *App, self string, page []visibility.ChangeRecord) map[string]string {
+	seen := map[string]bool{}
+	var ids []string
+	for _, c := range page {
+		if c.Subject == nil || !c.Subject.IsRelation() {
+			continue
+		}
+		for _, id := range []string{c.Subject.FromID, c.Subject.ToID} {
+			if id != "" && id != self && !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	if len(ids) == 0 || ctx.Err() != nil {
+		return nil
+	}
+	served, err := a.viewReader.Resolver().ResolveIDsErr(ctx, worldFromContext(ctx).visibility(), ids)
+	if err != nil {
+		slog.WarnContext(ctx, "changes: title lookup failed", "ids", len(ids), "err", err)
+		return nil
+	}
+	meta := a.Meta()
+	out := make(map[string]string, len(served))
+	for id, h := range served {
+		if title := meta.WholeDisplayTitle(id, h.Type, h.Properties); title != id {
+			out[id] = title
+		}
+	}
+	return out
 }
 
 // readableIDs adapts a readableTypes function to [visibility.ReadableIDs].
