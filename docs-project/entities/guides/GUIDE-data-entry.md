@@ -8046,8 +8046,9 @@ ignores case.
 
 ### Working with a pile
 
-Piles appear in the sidebar with a count of their items. Open a pile to see
-its items grouped by type, newest first. From there you can:
+Piles appear in the sidebar with a count of their items. The Piles group shows
+once you have a pile, so make your first one with **Add to pile**. Open a pile
+to see its items grouped by type, newest first. From there you can:
 
 - tick items and remove them. **Undo** puts them back, at the top of the pile
   rather than where they were;

@@ -12,8 +12,9 @@ const meta: Meta<typeof RlIconButton> = {
     tone: { control: { type: 'inline-radio' }, options: ['default', 'danger'] },
     active: { control: 'boolean' },
     pressed: { control: 'boolean' },
+    raised: { control: 'boolean' },
   },
-  args: { icon: 'star', label: 'Star', size: 18, active: false, tone: 'default' },
+  args: { icon: 'star', label: 'Star', size: 18, active: false, tone: 'default', raised: false },
 }
 export default meta
 type Story = StoryObj<typeof RlIconButton>
@@ -48,4 +49,9 @@ export const Pressed: Story = {
 /** The destructive tone only colours on hover and focus, not at rest. */
 export const Danger: Story = {
   args: { icon: 'trash-2', label: 'Delete task', tone: 'danger' },
+}
+
+/** `raised` gives a button that floats over content its own surface. */
+export const Raised: Story = {
+  args: { icon: 'menu', label: 'Open navigation', raised: true },
 }

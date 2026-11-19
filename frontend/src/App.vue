@@ -337,6 +337,7 @@ watch(
         v-if="showHamburger && !navOpen && !presentation.presenting.value"
         class="mobile-menu-btn"
         icon="menu"
+        raised
         :label="t('shell.toggleNav')"
         :aria-expanded="navOpen"
         aria-controls="main-sidebar"

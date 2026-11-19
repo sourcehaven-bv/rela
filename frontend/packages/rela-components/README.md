@@ -445,6 +445,8 @@ not being worked on.
 (`primary`, `secondary`, `subtle`, `ghost`) and `tone` sets what it means, so
 a destructive action can be a solid red Delete or a quiet red text link
 without either needing its own variant. `RlIconButton` takes the same `tone`.
+`raised` gives an icon button its own opaque surface, for a button that floats
+over content as it scrolls.
 
 An action that goes somewhere is a link, not a button. `as` renders an `a`,
 or a router link component passed directly, while keeping the variant, size

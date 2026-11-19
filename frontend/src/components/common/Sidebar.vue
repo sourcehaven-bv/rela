@@ -189,12 +189,16 @@ const navGroups = computed(() => {
   if (!piles.available.value) return groups
   const unpinned = (p: { id: string }) => !pinnedPileIds.value.has(p.id)
   const declaredGroup = declaredPilesNavGroup(piles.declared.value.filter(unpinned))
-  const pilesGroup = pilesNavGroup(piles.collected.value.filter(unpinned))
+  // An empty Piles heading reads as broken, so the group waits for the first
+  // pile, which "Add to pile" makes. A pile a `pile:` entry places still
+  // counts, so the group keeps its "+" when every pile is placed.
+  const pilesGroup =
+    piles.collected.value.length > 0 ? pilesNavGroup(piles.collected.value.filter(unpinned)) : null
   const lead = groups[0] && !groups[0].label ? 1 : 0
   return [
     ...groups.slice(0, lead),
     ...(declaredGroup ? [declaredGroup] : []),
-    pilesGroup,
+    ...(pilesGroup ? [pilesGroup] : []),
     ...groups.slice(lead),
   ]
 })

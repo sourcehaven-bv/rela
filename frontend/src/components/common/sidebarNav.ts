@@ -320,8 +320,8 @@ export function pileNavId(id: string): string {
  * of readable items, and an add control for a new pile.
  *
  * A row opens the pile in the flyout rather than navigating, so it is a
- * button that claims `opensFlyout`. The group is shown even with no piles,
- * because its add control is how the first one gets made.
+ * button that claims `opensFlyout`. The sidebar leaves the group out until
+ * the user has a pile of their own.
  */
 export function pilesNavGroup(piles: readonly PileSummary[]): NavGroup {
   return {

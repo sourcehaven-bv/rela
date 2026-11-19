@@ -4,7 +4,7 @@ import { createRouter, createWebHistory, type Router } from 'vue-router'
 import { defineComponent } from 'vue'
 import type { SidebarData } from '@/types'
 import { resetFlyout, useFlyout } from '@/composables/useFlyout'
-import { resetPilesState } from '@/composables/usePiles'
+import { resetPilesState, usePiles } from '@/composables/usePiles'
 
 let sidebar: SidebarData
 
@@ -85,6 +85,33 @@ describe('Sidebar piles', () => {
     const w = await mountSidebar()
     expect(w.text()).not.toContain('Piles')
     expect(listPiles).not.toHaveBeenCalled()
+  })
+
+  it('has no empty Piles heading until the user has a pile', async () => {
+    listPiles.mockResolvedValue({ piles: [], icons: ['star'] })
+    const w = await mountSidebar()
+    expect(listPiles).toHaveBeenCalled()
+    expect(w.text()).not.toContain('Piles')
+    expect(w.find('button[aria-label="New pile"]').exists()).toBe(false)
+
+    // The first pile, made from Add to pile, brings the group in.
+    listPiles.mockResolvedValue({ piles: [friday], icons: ['star'] })
+    await usePiles().refresh()
+    await flushPromises()
+    expect(w.text()).toContain('Piles')
+    expect(w.find('button[aria-label="New pile"]').exists()).toBe(true)
+  })
+
+  it('keeps the Piles group when every pile is placed in the navigation', async () => {
+    sidebar = {
+      ...sidebar,
+      navigation: [{ group: 'Mine', items: [{ label: friday.name, pile: friday.name }] }],
+    }
+    const w = await mountSidebar()
+    // The placed pile shows once, in its own group, yet Piles and its "+" stay.
+    expect(w.text().split(friday.name)).toHaveLength(2)
+    expect(w.text()).toContain('Piles')
+    expect(w.find('button[aria-label="New pile"]').exists()).toBe(true)
   })
 
   it('opens a pile in the flyout, and closes it on a second click', async () => {
