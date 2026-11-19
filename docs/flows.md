@@ -606,6 +606,10 @@ tasks and the newest runs; past that they say the list is cut short, and a
 filter narrows it. The task list matches
 each run against the current `flows.yaml`.
 
+Each run also has its own page. A finished run keeps only its header, so
+its page shows the flow, the final state, when the run started and ended,
+and a link to the subject. Its timeline and diagram are not kept.
+
 A next-action source can put your oldest task in a banner on every
 page, with a button to its step: see `source: flow_tasks` in
 [Next actions](data-entry.md#waiting-flow-steps-source-flow_tasks). An

@@ -321,20 +321,35 @@ func pageRange(n, page, perPage int) (lo, hi int) {
 	return lo, lo + min(perPage, n-lo)
 }
 
+// splitRuns indexes runs by id and sorts hdrs into the active runs, which
+// have stored state among runs, and the headers of the finished ones.
+func splitRuns(hdrs []*entity.Entity, runs []flowrun.Run) (byID map[flow.RunID]flowrun.Run,
+	active []flowrun.Run, finished []store.EntityHeader) {
+	byID = map[flow.RunID]flowrun.Run{}
+	for _, r := range runs {
+		byID[r.ID] = r
+	}
+	for _, h := range hdrs {
+		if r, ok := byID[flow.RunID(h.ID)]; ok {
+			active = append(active, r)
+		} else {
+			finished = append(finished, store.EntityHeader{ID: h.ID})
+		}
+	}
+	return byID, active, finished
+}
+
 // views builds the run views of hdrs, which passed the row gate, with the
 // stored state of the active runs among runs. Detail adds the waiting
 // reason, the timeline and the diagram.
 func (c *FlowControl) views(ctx context.Context, cl *caller, hdrs []*entity.Entity, runs []flowrun.Run,
 	detail bool) ([]flowview.Run, error) {
-	byID := map[flow.RunID]flowrun.Run{}
-	for _, r := range runs {
-		byID[r.ID] = r
-	}
-	var active []flowrun.Run
-	for _, h := range hdrs {
-		if r, ok := byID[flow.RunID(h.ID)]; ok {
-			active = append(active, r)
-		}
+	byID, active, finished := splitRuns(hdrs, runs)
+	// A finished run keeps only its header, so its subject comes from the
+	// gated `_carries` edge, as in the run list (BUG-TVU9HRT).
+	carried, err := c.carried(ctx, finished)
+	if err != nil {
+		return nil, err
 	}
 	xs, err := c.eng.Explain(ctx, active...)
 	if err != nil {
@@ -351,6 +366,7 @@ func (c *FlowControl) views(ctx context.Context, cl *caller, hdrs []*entity.Enti
 		v := c.labeled(headerView(h))
 		run, ok := byID[flow.RunID(h.ID)]
 		if !ok {
+			v.Subject = carried[h.ID]
 			out = append(out, v)
 			continue
 		}
