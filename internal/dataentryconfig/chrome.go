@@ -194,6 +194,34 @@ func headerButtonsUnknownKeys(data []byte) []string {
 	return unknownKeysIn("header_buttons", raw.HeaderButtons, headerButtonsKeys)
 }
 
+// ListButtonsConfig is the `list_buttons:` block of data-entry.yaml: which
+// built-in buttons lists and search results offer. Every key is optional, and
+// so is the block; an absent key shows its button as before.
+//
+// A hidden button is a UX choice, not access control; see [ChromeToggle].
+type ListButtonsConfig struct {
+	// AddToPile is "Add to pile" in the bulk bar of a list and on search
+	// results. It shows only where piles are available to the principal;
+	// this toggle can only hide it further. A list without it, without a
+	// bulk action and without a row the reader may delete shows no
+	// selection checkboxes.
+	AddToPile ChromeToggle `yaml:"add_to_pile,omitempty" json:"add_to_pile,omitzero"`
+}
+
+// listButtonsKeys are the keys the list_buttons block accepts.
+var listButtonsKeys = []string{"add_to_pile"}
+
+// listButtonsUnknownKeys is [headerButtonsUnknownKeys] for `list_buttons:`.
+func listButtonsUnknownKeys(data []byte) []string {
+	var raw struct {
+		ListButtons map[string]any `yaml:"list_buttons"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil // the struct unmarshal reports malformed YAML
+	}
+	return unknownKeysIn("list_buttons", raw.ListButtons, listButtonsKeys)
+}
+
 // validateDashboardValidation refuses `validation: false` or a permission on
 // an entity dashboard. Such a dashboard never shows the validation card,
 // because the card covers the whole project and an entity dashboard is about

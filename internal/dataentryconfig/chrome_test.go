@@ -122,6 +122,15 @@ func TestChromeToggle_OmittedWhenUnset(t *testing.T) {
 	if strings.Contains(string(y), "header_buttons") {
 		t.Errorf("unset header_buttons serialized: %s", y)
 	}
+	y, err = yaml.Marshal(struct {
+		ListButtons ListButtonsConfig `yaml:"list_buttons,omitempty"`
+	}{})
+	if err != nil {
+		t.Fatalf("marshal yaml: %v", err)
+	}
+	if strings.Contains(string(y), "list_buttons") {
+		t.Errorf("unset list_buttons serialized: %s", y)
+	}
 }
 
 func TestChromeToggle_Shown(t *testing.T) {
@@ -158,6 +167,8 @@ func TestValidateConfig_PageChrome(t *testing.T) {
 		{"entity page header", "header_buttons: {history: false, add_to_pile: {permission: staff.manage}}", ""},
 		{"empty entity page header", "header_buttons: {}", ""},
 		{"entity page header unknown key", "header_buttons: {histroy: false}", `header_buttons: unknown key "histroy"`},
+		{"list buttons", "list_buttons: {add_to_pile: {permission: staff.manage}}", ""},
+		{"list buttons unknown key", "list_buttons: {add_to_piles: false}", `list_buttons: unknown key "add_to_piles"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

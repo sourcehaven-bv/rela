@@ -565,10 +565,12 @@ const hasRelationColumns = computed(() => {
 })
 
 const hasActions = computed(() => resolvedActions.value.length > 0)
+// "Add to pile" needs piles, and `list_buttons.add_to_pile` may hide it.
+const canAddToPile = computed(() => schemaStore.pilesAvailable && schemaStore.listButtons.add_to_pile)
 // Rows are selectable when there is something to do with a selection: a
 // configured bulk action, a row the principal may delete, or a pile to add
-// the rows to (TKT-K3RJLH).
-const selectable = computed(() => hasActions.value || anyRowDeletable.value || schemaStore.pilesAvailable)
+// the rows to (TKT-K3RJLH). With none of these the list shows no checkboxes.
+const selectable = computed(() => hasActions.value || anyRowDeletable.value || canAddToPile.value)
 
 // What "Add to pile" adds: each selected row's ADDRESS, so a pile holds the
 // face the list shows, as the bulk delete does.
@@ -1670,6 +1672,7 @@ watch(searchQuery, () => {
             {{ t('common.delete') }}
           </RlButton>
           <AddToPileMenu
+            v-if="canAddToPile"
             :addresses="selectedAddresses"
             variant="primary"
             placement="top"

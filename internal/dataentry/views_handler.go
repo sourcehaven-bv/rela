@@ -286,6 +286,7 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 		resp.Audit.Changes, resp.Audit.Global = h.audit(ctx)
 	}
 	resp.HeaderButtons = headerButtonsWire(ctx, aclImpl, s.Cfg.HeaderButtons)
+	resp.ListButtons = listButtonsWire(ctx, aclImpl, s.Cfg.ListButtons)
 
 	writeV1JSON(w, http.StatusOK, resp)
 }
@@ -301,6 +302,15 @@ func headerButtonsWire(
 		History:   cfg.History.Shown(permits),
 		AddToPile: cfg.AddToPile.Shown(permits),
 	}
+}
+
+// listButtonsWire resolves `list_buttons:` for this principal, the way
+// headerButtonsWire resolves `header_buttons:`.
+func listButtonsWire(
+	ctx context.Context, aclImpl acl.ACL, cfg dataentryconfig.ListButtonsConfig,
+) v1.SidebarListButtons {
+	permits := func(perm string) bool { return permitsGatedUIElement(ctx, aclImpl, perm) }
+	return v1.SidebarListButtons{AddToPile: cfg.AddToPile.Shown(permits)}
 }
 
 // sidebarNavigation builds the sidebar groups of one navigation tree. space

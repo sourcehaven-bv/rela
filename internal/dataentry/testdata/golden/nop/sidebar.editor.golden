@@ -68,6 +68,9 @@ body:
     "history": true,
     "add_to_pile": true
   },
+  "list_buttons": {
+    "add_to_pile": true
+  },
   "audit": {
     "changes": false,
     "global": false

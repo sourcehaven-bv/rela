@@ -29,6 +29,7 @@ import type {
   PilesConfig,
   SidebarAudit,
   SidebarHeaderButtons,
+  SidebarListButtons,
 } from '@/types'
 
 export const useSchemaStore = defineStore('schema', () => {
@@ -116,6 +117,8 @@ export const useSchemaStore = defineStore('schema', () => {
   // Shown until it says otherwise, as before the block existed. A UX filter:
   // the history and pile APIs keep their own ACL.
   const headerButtons = ref<SidebarHeaderButtons>({ history: true, add_to_pile: true })
+  // The same for lists and search results (`list_buttons:`).
+  const listButtons = ref<SidebarListButtons>({ add_to_pile: true })
   const loaded = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -557,6 +560,11 @@ export const useSchemaStore = defineStore('schema', () => {
     if (header) headerButtons.value = header
   }
 
+  /** Takes `list_buttons` from `/_sidebar`; an older server sends none. */
+  function setListButtons(list: SidebarListButtons | undefined) {
+    if (list) listButtons.value = list
+  }
+
   function setInlineCreate(map: Record<string, string>) {
     inlineCreate.value = map
   }
@@ -653,5 +661,7 @@ export const useSchemaStore = defineStore('schema', () => {
     setPiles,
     setAudit,
     setHeaderButtons,
+    listButtons,
+    setListButtons,
   }
 })

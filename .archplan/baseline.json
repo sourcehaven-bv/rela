@@ -2571,6 +2571,12 @@
       "at": "2026-11-04T04:59:34Z",
       "title": "api/views.ts in api has most of its links to web/components/entity (weighted links: 3.2 to web/components/entity, 0.1 to api)."
     },
+    "concepts.data_clump-5a64215ee778": {
+      "state": "accepted",
+      "reason": "Design: the wire Config mirrors data-entry.yaml on purpose. TKT-UP0AYVN added list_buttons to both, which made the shared fields a new clump.",
+      "at": "2026-11-19T12:00:00Z",
+      "title": "The fields actions, app, builtins, calendars, channels, … and views appear together in 2 types across 2 components."
+    },
     "concepts.data_clump-aa284ee842d3": {
       "state": "accepted",
       "reason": "Design: config shapes mirror data-entry.yaml on purpose. Accepted before under other ids; the id moved when TKT-14FBF1R embedded SectionVisibility in ViewSection.",

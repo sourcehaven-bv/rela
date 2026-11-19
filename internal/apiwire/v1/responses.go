@@ -1508,6 +1508,10 @@ type SidebarResponse struct {
 	// does. A UX filter, not access control: the history and pile APIs keep
 	// their own ACL.
 	HeaderButtons SidebarHeaderButtons `json:"header_buttons"`
+	// ListButtons says which built-in buttons lists and search results
+	// show this principal: `list_buttons:` of data-entry.yaml, resolved
+	// like HeaderButtons.
+	ListButtons SidebarListButtons `json:"list_buttons"`
 	// Audit says which audit views the SPA offers (TKT-X1ZFO04). A UI hint,
 	// never authorization: the audit endpoints check again.
 	Audit SidebarAudit `json:"audit"`
@@ -1519,6 +1523,13 @@ type SidebarResponse struct {
 // needs piles to be available.
 type SidebarHeaderButtons struct {
 	History   bool `json:"history"`
+	AddToPile bool `json:"add_to_pile"`
+}
+
+// SidebarListButtons is [SidebarResponse.ListButtons]. AddToPile is true when
+// "Add to pile" may show on lists and search results; the SPA still needs
+// piles to be available.
+type SidebarListButtons struct {
 	AddToPile bool `json:"add_to_pile"`
 }
 

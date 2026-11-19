@@ -325,6 +325,9 @@ header_buttons:            # Optional: hide built-in entity page buttons
   history: true
   add_to_pile: false
 
+list_buttons:              # Optional: hide built-in list and search buttons
+  add_to_pile: false
+
 kanbans:                   # Kanban board views
   board_name:
     entity_type: task
@@ -3795,7 +3798,8 @@ phone. It does not affect:
 - the pile buttons of [`piles.toggles`](#configuring-piles), which you
   configure separately;
 - **Remove from pile**, shown while you step through a pile;
-- "Add to pile" on lists and search results.
+- "Add to pile" on lists and search results; see
+  [`list_buttons`](#list-and-search-buttons-list_buttons).
 
 A key can only hide a button. History still needs a deployment with version
 history (PostgreSQL or SQLite), and Add to pile still needs piles to be
@@ -3807,6 +3811,36 @@ Those keep their own ACL, as the pile endpoints do. `/api/v1/_config` serves
 the block to every principal, and `/api/v1/_sidebar` serves the result for the
 current principal as `header_buttons: {history, add_to_pile}`. With no
 `acl.yaml`, and under `--read-only`, a gated button shows.
+
+### List and search buttons (`list_buttons`)
+
+A list offers **Add to pile** in the bar that appears when you select rows,
+and search results offer **Add results to pile**. The `list_buttons:` block
+hides them:
+
+| Key           | Button                                                         |
+| ------------- | -------------------------------------------------------------- |
+| `add_to_pile` | **Add to pile** on lists and search results.                   |
+
+The key takes the same values as [`header_buttons`](#entity-header-buttons-header_buttons):
+`true` (the default), `false`, or `{permission: <name>}`.
+
+```yaml
+list_buttons:
+  add_to_pile:
+    permission: staff.manage   # only staff add list rows to a pile
+```
+
+A list shows selection checkboxes only when the reader can do something with
+a selection: a configured bulk action, a row the reader may delete, or Add to
+pile. So in a portal where customers have no bulk actions and may not delete,
+`add_to_pile: false` also removes the checkboxes.
+
+Like `header_buttons`, this is a UX filter, not an access control. The pile
+endpoints keep their own ACL. `/api/v1/_config` serves the block to every
+principal, and `/api/v1/_sidebar` serves the result for the current principal
+as `list_buttons: {add_to_pile}`. With no `acl.yaml`, and under `--read-only`,
+a gated button shows.
 
 ### How navigation resolves
 
@@ -8036,6 +8070,10 @@ You can add entities to a pile from three places:
 - **Search.** Choose **Add results to pile** to put the search results on a
   pile.
 - **The entity page.** Use **Add to pile** on the page of a single entity.
+
+An operator can hide these buttons with
+[`list_buttons`](#list-and-search-buttons-list_buttons) and
+[`header_buttons`](#entity-header-buttons-header_buttons).
 
 A pile holds one face of an entity. When you add from a page or a row that
 shows a face, such as `POL-1@draft`, that face goes on the pile. An id alone

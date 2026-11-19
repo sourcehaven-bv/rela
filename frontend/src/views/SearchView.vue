@@ -561,6 +561,7 @@ watch(
       <div class="results-head">
         <p id="search-results-heading" class="results-count">{{ t('search.resultCount', { n: results.length }, results.length) }}</p>
         <AddToPileMenu
+          v-if="schemaStore.listButtons.add_to_pile"
           :addresses="resultAddresses"
           :label="t('search.addResultsToPile')"
           :new-label="t('search.newPileFromResults')"
