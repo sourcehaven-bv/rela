@@ -13,8 +13,9 @@ import (
 
 // changesBudget is the pinned store-read budget of one change-list page:
 // the subject's gated read, one readability batch for the ids the page's
-// records name, and the ACL membership walk.
-const changesBudget = 4
+// records name, one gated header batch for their titles, and the ACL
+// membership walk.
+const changesBudget = 5
 
 // The change list reads the same number of times whatever the page holds:
 // the ids its records name are checked in one batch per source read, never

@@ -1593,7 +1593,6 @@
     "empty": "The audit log is empty.",
     "forbidden": "You need the audit:read permission to see the audit log.",
     "loadMore": "Load more",
-    "triggeredBy": "Triggered by {trigger}",
     "col": {
       "time": "Time",
       "user": "User",
@@ -1604,7 +1603,28 @@
     },
     "changes": {
       "title": "Changes",
-      "empty": "No changes recorded."
+      "empty": "No changes recorded.",
+      "system": "System",
+      "changedFields": "Changed: {fields}",
+      "op": {
+        "created": "Created",
+        "changed": "Changed",
+        "deleted": "Deleted",
+        "renamed": "Renamed",
+        "converted": "Converted",
+        "restored": "Restored",
+        "purged": "Removed for good",
+        "copied": "Copied",
+        "attached": "Attached a document",
+        "linked": "Linked",
+        "linkChanged": "Changed a link",
+        "unlinked": "Unlinked"
+      },
+      "by": {
+        "automation": "By an automation",
+        "schedule": "By a schedule",
+        "other": "Automatically"
+      }
     }
   },
   "asOf": {

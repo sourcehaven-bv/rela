@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -106,7 +107,9 @@ func TestAuditRoutes_AbsentWithoutLog(t *testing.T) {
 func TestHandleV1Changes(t *testing.T) {
 	f := newFixture()
 	f.AddNode(entity.New("TKT-1", "ticket"))
-	f.AddNode(entity.New("TKT-2", "ticket"))
+	second := entity.New("TKT-2", "ticket")
+	second.Properties["title"] = "Second ticket"
+	f.AddNode(second)
 	app := newAppFromParts(nil, testMeta(), f)
 	log := &fakeAuditLog{entries: []audit.Entry{
 		relationEntry(5, "TKT-1", "TKT-HIDDEN"),
@@ -137,6 +140,10 @@ func TestHandleV1Changes(t *testing.T) {
 		}
 		if bodyMentions(rec, "TKT-HIDDEN") {
 			t.Error("a record naming an unreadable entity was served")
+		}
+		// The far end is named by its title; the entity on screen is not.
+		if want := map[string]string{"TKT-2": "Second ticket"}; !maps.Equal(body.Titles, want) {
+			t.Errorf("titles = %v, want %v", body.Titles, want)
 		}
 	})
 

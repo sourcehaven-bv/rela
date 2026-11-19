@@ -2,16 +2,27 @@
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import RlButton from 'rela-components/components/common/RlButton.vue'
-import { getChanges, describeSubject, type ChangeRecord } from '@/api/audit'
+import { getChanges, type ChangeRecord } from '@/api/audit'
 import { getErrorMessage, shouldDropHeldContent } from '@/api/errors'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { useWorld } from '@/composables/useWorld'
 import { useSchemaStore } from '@/stores/schema'
 import { formatInstant } from '@/components/flows/flowView'
+import {
+  actorText,
+  opText,
+  subjectText,
+  summaryText,
+  triggerText,
+  type ChangeSchema,
+} from './changeText'
 
 // The audit records of the entity face on screen (TKT-X1ZFO04), newest
 // first. The server gates every record, so this renders what it is sent.
-// Self-gating: absent unless the sidebar says a database audit log is wired.
+// Self-gating: absent unless the sidebar says a database audit log is wired,
+// and absent where `header_buttons.history` hides the history (BUG-XR1DUQA).
+// It names fields, relations and entities by label and title, as the rest of
+// the page does; the raw audit values stay in the operators' audit log.
 
 const props = defineProps<{
   entityType: string
@@ -23,7 +34,12 @@ const { t } = useI18n()
 const { worldParam } = useWorld()
 const schemaStore = useSchemaStore()
 
-const enabled = computed(() => schemaStore.auditChanges)
+const enabled = computed(() => schemaStore.auditChanges && schemaStore.headerButtons.history)
+const titles = ref<Record<string, string>>({})
+const schema: ChangeSchema = {
+  entityType: (name) => schemaStore.getEntityType(name),
+  relationType: (name) => schemaStore.getRelationType(name),
+}
 const changes = ref<ChangeRecord[]>([])
 const nextBefore = ref<number | undefined>()
 const loaded = ref(false)
@@ -34,8 +50,22 @@ let controller: AbortController | null = null
 /** The bare id on screen, for naming the other end of a relation. */
 const selfId = computed(() => props.entityId.split('@')[0])
 
+/** Each change as the reader sees it, worked out once per render. */
+const rows = computed(() =>
+  changes.value.map((c) => ({
+    seq: c.seq,
+    time: c.time,
+    actor: actorText(c),
+    op: opText(c.op),
+    subject: subjectText(c, selfId.value, titles.value, schema),
+    fields: summaryText(c, schema),
+    trigger: triggerText(c),
+  }))
+)
+
 function reset() {
   changes.value = []
+  titles.value = {}
   nextBefore.value = undefined
   loaded.value = false
   error.value = ''
@@ -54,6 +84,7 @@ async function load(before?: number) {
     )
     const got = page.changes ?? []
     changes.value = before ? [...changes.value, ...got] : got
+    titles.value = before ? { ...titles.value, ...page.titles } : (page.titles ?? {})
     nextBefore.value = page.next_before || undefined
     loaded.value = true
     error.value = ''
@@ -76,10 +107,6 @@ async function loadMore() {
   } finally {
     loadingMore.value = false
   }
-}
-
-function actor(c: ChangeRecord): string {
-  return c.user || c.tool || ''
 }
 
 watch(
@@ -107,17 +134,15 @@ onBeforeUnmount(() => controller?.abort())
       {{ t('audit.changes.empty') }}
     </p>
     <ol v-if="changes.length > 0" class="change-list">
-      <li v-for="c in changes" :key="c.seq" class="change-item" data-testid="change-row">
+      <li v-for="r in rows" :key="r.seq" class="change-item" data-testid="change-row">
         <div class="change-line">
-          <time :datetime="c.time" class="change-time">{{ formatInstant(c.time) }}</time>
-          <span class="change-user">{{ actor(c) }}</span>
-          <span class="change-op">{{ c.op }}</span>
-          <span class="change-subject">{{ describeSubject(c, selfId) }}</span>
+          <time :datetime="r.time" class="change-time">{{ formatInstant(r.time) }}</time>
+          <span class="change-user">{{ r.actor }}</span>
+          <span class="change-op">{{ r.op }}</span>
+          <span class="change-subject">{{ r.subject }}</span>
         </div>
-        <p v-if="c.summary" class="change-summary">{{ c.summary }}</p>
-        <p v-if="c.trigger" class="change-trigger">
-          {{ t('audit.triggeredBy', { trigger: c.trigger }) }}
-        </p>
+        <p v-if="r.fields" class="change-summary">{{ r.fields }}</p>
+        <p v-if="r.trigger" class="change-trigger">{{ r.trigger }}</p>
       </li>
     </ol>
     <div v-if="nextBefore" class="panel-more">
