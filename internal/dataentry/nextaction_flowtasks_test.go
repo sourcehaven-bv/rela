@@ -289,17 +289,17 @@ func TestNextAction_FlowTasksACLHiddenField(t *testing.T) {
 	src := dataentryconfig.NextActionSource{Flows: []string{"signup"}}
 	tests := []struct {
 		name string
-		ctx  context.Context
+		ctx  func() context.Context
 		want string
 	}{
-		{"hidden status stays a placeholder", aliceCtx(), "Company details for alpha rocket ({status}, alpha rocket)"},
-		{"no visible block shows every field", bobCtx(),
+		{"hidden status stays a placeholder", aliceCtx, "Company details for alpha rocket ({status}, alpha rocket)"},
+		{"no visible block shows every field", bobCtx,
 			"Company details for alpha rocket (zeta777status, alpha rocket)"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			app, d := flowTaskACLApp(t, src)
-			got, code := getNextAction(gateCtxFor(tc.ctx, t, d), t, app)
+			got, code := getNextAction(gateCtxFor(tc.ctx(), t, d), t, app)
 			require.Equal(t, http.StatusOK, code)
 			require.NotNil(t, got.Suggestion)
 			require.Equal(t, tc.want, got.Suggestion.Message)
