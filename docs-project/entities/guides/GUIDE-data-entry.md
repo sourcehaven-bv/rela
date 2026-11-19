@@ -9268,6 +9268,11 @@ listing exactly which required headers the entity is missing (only exact-match
 headers; regex `pattern:` checks are not listed). A validation whose Lua script
 failed instead opens the script-error dialog from the same message click.
 
+The page shows only what you may read. A property finding starts with the
+field's `label` from the schema, or with its property name when it has none,
+such as "Summary: This field is required". A field that `visible:` hides from
+you is not checked, because you cannot see or fix it.
+
 No configuration is needed — the analysis page is always available in the sidebar.
 
 ## Documents
