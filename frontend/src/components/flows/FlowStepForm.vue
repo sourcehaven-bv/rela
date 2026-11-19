@@ -122,7 +122,8 @@ async function submit() {
     const properties: Record<string, unknown> = {}
     for (const name of writes.value) {
       const v = values.value[name]
-      if (v !== undefined && JSON.stringify(v) !== JSON.stringify(loaded[name])) properties[name] = v
+      if (v !== undefined && JSON.stringify(v) !== JSON.stringify(loaded[name]))
+        properties[name] = v
     }
     emit('completed', await completeFlowStep(props.run.id, props.run.generation, properties))
   } catch (err) {
@@ -150,7 +151,7 @@ async function submit() {
 <template>
   <form class="flow-step-form" data-testid="flow-step-form" @submit.prevent="submit">
     <p v-if="loadError" class="flow-step-form__error" role="alert">{{ loadError }}</p>
-    <div v-if="fields.length > 0 && !loading" class="properties-list flow-step-form__fields">
+    <div v-if="fields.length > 0 && !loading" class="flow-step-form__fields">
       <FieldRenderer
         v-for="f in fields"
         :key="f.name"
@@ -184,6 +185,17 @@ async function submit() {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+}
+
+/* One labelled field per row, as on the entity form. */
+.flow-step-form__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.flow-step-form__fields > * {
+  min-width: 0;
 }
 
 .flow-step-form__error {

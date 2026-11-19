@@ -9,6 +9,12 @@
  * step, a cancel or a retry, and on mount for an active run the prop holds
  * without its timeline. It then emits `changed`, so the host can refresh
  * the list it came from.
+ *
+ * How the run works (the roles and guards it waits on, the diagram and the
+ * timeline) shows only when `_actions.manage` says the reader manages the
+ * flow. A reader who only does a step sees the state, whether the step
+ * waits for them, and the step form. This is presentation, not access: the
+ * server still sends the run to every reader of its subject.
  */
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -31,7 +37,14 @@ import { useSpaceStore } from '@/stores/space'
 import FlowWaiting from './FlowWaiting.vue'
 import FlowStepForm from './FlowStepForm.vue'
 import FlowDiagram from './FlowDiagram.vue'
-import { formatInstant, runHref, statusLabel, statusTone, timelineEntries } from './flowView'
+import {
+  formatInstant,
+  labelOf,
+  runHref,
+  statusLabel,
+  statusTone,
+  timelineEntries,
+} from './flowView'
 
 const props = withDefaults(
   defineProps<{
@@ -94,7 +107,8 @@ watch(
   { immediate: true }
 )
 
-const timeline = computed(() => timelineEntries(shown.value, t))
+const manage = computed(() => !!shown.value._actions.manage)
+const timeline = computed(() => (manage.value ? timelineEntries(shown.value, t) : []))
 const places = computed(() => (shown.value.active ? (shown.value.parallel ?? []) : []))
 const waiting = computed(() =>
   shown.value.active && places.value.length === 0 ? shown.value.waiting : undefined
@@ -102,6 +116,8 @@ const waiting = computed(() =>
 const showStep = computed(
   () => !!waiting.value && shown.value._actions.complete && !!props.subjectType
 )
+/** A reader with the step form open needs no line saying it waits for them. */
+const showWaiting = computed(() => !!waiting.value && (manage.value || !showStep.value))
 
 /**
  * Each branch as the run the step form completes: the branch's generation
@@ -171,12 +187,12 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
     <header class="flow-run-card__header">
       <h3 class="flow-run-card__title">
         <RouterLink v-if="linkTitle" :to="space.href(runHref(shown.id))">
-          {{ shown.flow_label || shown.flow }}
+          {{ labelOf(shown.flow_label, shown.flow) }}
         </RouterLink>
-        <template v-else>{{ shown.flow_label || shown.flow }}</template>
+        <template v-else>{{ labelOf(shown.flow_label, shown.flow) }}</template>
       </h3>
       <span class="flow-run-card__state" data-testid="flow-run-state">
-        {{ shown.state_label || shown.state }}
+        {{ labelOf(shown.state_label, shown.state) }}
       </span>
       <RlStatusPill
         :label="statusLabel(shown.status, t)"
@@ -194,9 +210,13 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
       </span>
     </p>
 
-    <section v-if="waiting" class="flow-run-card__section" :aria-label="t('flows.waiting.title')">
-      <h4 class="flow-run-card__heading">{{ t('flows.waiting.title') }}</h4>
-      <FlowWaiting :waiting="waiting" />
+    <section
+      v-if="waiting && showWaiting"
+      class="flow-run-card__section"
+      :aria-label="t('flows.waiting.title')"
+    >
+      <h4 v-if="manage" class="flow-run-card__heading">{{ t('flows.waiting.title') }}</h4>
+      <FlowWaiting :waiting="waiting" :detailed="manage" :can-complete="showStep" />
     </section>
 
     <section
@@ -216,7 +236,9 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
           <span class="flow-run-card__muted">
             {{ t('flows.run.branch', { branch: b.place.branch }) }}
           </span>
-          <span class="flow-run-card__state">{{ b.place.state_label || b.place.state }}</span>
+          <span class="flow-run-card__state">{{
+            labelOf(b.place.state_label, b.place.state)
+          }}</span>
           <RlStatusPill
             :label="statusLabel(b.place.status, t)"
             :color="statusTone(b.place.status)"
@@ -225,7 +247,12 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
         <p v-if="b.place.arrived" class="flow-run-card__muted" data-testid="flow-branch-arrived">
           {{ t('flows.run.arrived') }}
         </p>
-        <FlowWaiting v-else-if="b.place.waiting" :waiting="b.place.waiting" />
+        <FlowWaiting
+          v-else-if="b.place.waiting && (manage || !b.showStep)"
+          :waiting="b.place.waiting"
+          :detailed="manage"
+          :can-complete="b.showStep"
+        />
         <FlowStepForm
           v-if="b.showStep"
           :run="b.run"
@@ -272,7 +299,7 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
       </RlButton>
     </div>
 
-    <details v-if="shown.diagram" class="flow-run-card__section">
+    <details v-if="manage && shown.diagram" class="flow-run-card__section">
       <summary>{{ t('flows.run.diagram') }}</summary>
       <FlowDiagram :source="shown.diagram" />
     </details>

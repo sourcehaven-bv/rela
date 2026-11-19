@@ -2,7 +2,15 @@
 /**
  * The flow runs on the entity page (TKT-ZAXRXND): every run on this entity
  * the reader can see, newest first, and a Start button per manual flow on
- * this type.
+ * this type that the reader may start here.
+ *
+ * The server names the flows the reader may start with the runs, so Start
+ * shows only when the reader holds the start's `permission:`. When the runs
+ * fail to load, no Start shows.
+ *
+ * A flow with `per_subject: one` offers no Start while a run of it on this
+ * entity is unfinished, and no flow offers Start before the runs have
+ * loaded, so the button does not flash up and vanish.
  *
  * Self-gating: it renders nothing unless a flow runs on this type, so a
  * project without flows (where `/_flows` answers 404) sees the page it
@@ -36,33 +44,56 @@ const { flows } = useFlowList()
 const { on } = useEvents()
 
 const runs = ref<FlowRun[]>([])
+// The flows the reader may start on this entity, as the server answered.
+const mayStart = ref<Set<string>>(new Set())
+// The runs of the entity on screen have loaded at least once.
+const loaded = ref(false)
 const error = ref('')
 const starting = ref('')
 let controller: AbortController | null = null
 
 /** The flows that run on this type. */
 const typeFlows = computed<Flow[]>(() => flows.value.filter((f) => f.subject === props.entityType))
-const startable = computed(() => typeFlows.value.filter((f) => f.manual))
+const startButtons = computed(() =>
+  loaded.value
+    ? typeFlows.value.filter((f) => f.manual && mayStart.value.has(f.name) && !blocked(f))
+    : []
+)
+
+/** A `per_subject: one` flow with an unfinished run here cannot start another. */
+function blocked(f: Flow): boolean {
+  return f.per_subject === 'one' && runs.value.some((r) => r.flow === f.name && r.active)
+}
 
 async function load() {
   if (typeFlows.value.length === 0 || !props.entityId) {
     runs.value = []
+    mayStart.value = new Set()
     return
   }
   controller?.abort()
   const ctl = new AbortController()
   controller = ctl
   try {
-    runs.value = await listSubjectRuns(props.entityId, ctl.signal)
+    const res = await listSubjectRuns(props.entityId, ctl.signal)
+    runs.value = res.runs
+    mayStart.value = new Set(res.startable)
     error.value = ''
+    loaded.value = true
   } catch (err) {
     if (isCancelledFetch(err)) return
     if (shouldDropHeldContent(err)) {
       runs.value = []
+      mayStart.value = new Set()
       error.value = ''
+      loaded.value = true
       return
     }
     error.value = getErrorMessage(err, t('flows.panel.loadFailed'))
+    // Without the answer the panel cannot tell who may start, so it offers
+    // no Start.
+    mayStart.value = new Set()
+    loaded.value = true
   }
 }
 
@@ -70,6 +101,8 @@ watch(
   () => [props.entityType, props.entityId, typeFlows.value.length],
   () => {
     runs.value = []
+    mayStart.value = new Set()
+    loaded.value = false
     error.value = ''
     void load()
   },
@@ -126,13 +159,13 @@ async function start(flow: Flow) {
 
 /**
  * Shown when there is a run, a flow to start or an error. A start the
- * server refuses (a missing permission, or `per_subject: one` with a run
- * already here) answers with a message that says why.
+ * server still refuses (a permission withdrawn since the load, or a run
+ * another reader started) answers with a message that says why.
  */
 const visible = computed(
   () =>
     typeFlows.value.length > 0 &&
-    (runs.value.length > 0 || startable.value.length > 0 || !!error.value)
+    (runs.value.length > 0 || startButtons.value.length > 0 || !!error.value)
 )
 </script>
 
@@ -146,9 +179,9 @@ const visible = computed(
   >
     <header class="flow-runs-panel__header">
       <h2 id="flow-runs-heading" class="flow-runs-panel__heading">{{ t('flows.panel.title') }}</h2>
-      <div v-if="startable.length > 0" class="flow-runs-panel__start">
+      <div v-if="startButtons.length > 0" class="flow-runs-panel__start">
         <RlButton
-          v-for="f in startable"
+          v-for="f in startButtons"
           :key="f.name"
           variant="secondary"
           size="sm"

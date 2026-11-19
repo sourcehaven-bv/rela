@@ -114,14 +114,46 @@ func (c *FlowControl) start(ctx context.Context, name, addr string) (flow.RunID,
 	return c.eng.Start(byCaller(ctx), name, subject.Ref())
 }
 
+// Startable names the flows the caller may start by hand on the entity at
+// addr: each flow on its type with an `on: manual` start whose permission
+// the caller holds for it, as [FlowControl.Start] checks. It does not look
+// at `per_subject:`. Its errors carry a [flowview] kind.
+func (c *FlowControl) Startable(ctx context.Context, addr string) ([]string, error) {
+	out, err := c.startable(ctx, addr)
+	return out, classify(err)
+}
+
+func (c *FlowControl) startable(ctx context.Context, addr string) ([]string, error) {
+	subject, err := c.read(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+	out := []string{}
+	for _, f := range c.eng.Flows() {
+		perms := manualPermissions(f)
+		if f.Subject() != subject.Type || len(perms) == 0 {
+			continue
+		}
+		err := c.authorize(ctx, subject.ID, perms)
+		if errors.Is(err, ErrFlowPermission) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, f.Name())
+	}
+	return out, nil
+}
+
 // byCaller stamps the caller as the By of the flow step ctx carries.
 func byCaller(ctx context.Context) context.Context {
 	return audit.WithFlowStep(ctx, audit.FlowStep{By: principal.From(ctx).User})
 }
 
-// Cancel cancels the unfinished run id. The permissions are those of the
-// manual starts of the flow version the run follows; for a run whose
-// version no longer compiles, those of the current flow.
+// Cancel cancels the unfinished run id. The permissions are the manage
+// permissions of the flow version the run follows; for a run whose version
+// no longer compiles, those of the current flow.
 //
 // A header left without a run (a crash between the two writes) is closed
 // as cancelled once it is older than orphanGrace, on the same permissions.
@@ -142,13 +174,7 @@ func (c *FlowControl) cancel(ctx context.Context, id flow.RunID) error {
 	if err != nil {
 		return err
 	}
-	var perms []string
-	if f, ferr := c.eng.FlowOf(ctx, run); ferr == nil {
-		perms = manualPermissions(f)
-	} else if f, ok := c.eng.Flow(run.Flow); ok {
-		perms = manualPermissions(f)
-	}
-	if err := c.authorize(ctx, run.Subject.ID, perms); err != nil {
+	if err := c.authorize(ctx, run.Subject.ID, c.runManagePermissions(ctx, c.eng.FlowCache(), run)); err != nil {
 		return err
 	}
 	return c.eng.Cancel(byCaller(ctx), id)
@@ -178,7 +204,7 @@ func (c *FlowControl) closeOrphan(ctx context.Context, hdr *entity.Entity) error
 	}
 	var perms []string
 	if f, ok := c.eng.Flow(propString(hdr, metamodel.FlowRunPropFlow)); ok {
-		perms = manualPermissions(f)
+		perms = managePermissions(f)
 	}
 	if err := c.authorize(ctx, subject, perms); err != nil {
 		return err
@@ -245,6 +271,16 @@ func (c *FlowControl) authorize(ctx context.Context, subjectID string, perms []s
 		return fmt.Errorf("%w: the flow has no `on: manual` start", ErrFlowPermission)
 	}
 	return fmt.Errorf("%w: needs permission %v", ErrFlowPermission, perms)
+}
+
+// managePermissions are the permissions that cancel or retry a run of f
+// and show how it works: its `manage:` permission, or else those of its
+// manual starts.
+func managePermissions(f *flowcfg.Flow) []string {
+	if p := f.ManagePermission(); p != "" {
+		return []string{p}
+	}
+	return manualPermissions(f)
 }
 
 func manualPermissions(f *flowcfg.Flow) []string {

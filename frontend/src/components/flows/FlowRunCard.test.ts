@@ -47,7 +47,7 @@ function run(over: Partial<FlowRun> = {}): FlowRun {
       branches: [{ to: 'review', guard: 'entity.documents == true', holds: false }],
     },
     log: [{ at: '2026-01-01T10:00:00Z', state: 'collect', via: 'start' }],
-    _actions: { complete: true, cancel: false, retry: false },
+    _actions: { complete: true, manage: true, cancel: false, retry: false },
     ...over,
   }
 }
@@ -102,7 +102,7 @@ describe('FlowRunCard', () => {
     expect(wrapper.find('[data-testid="flow-waiting-pending"]').exists()).toBe(false)
 
     wrapper = mountCard(
-      run({ waiting: waiting({ phase: 'failed', failed: 1, attempts: 3, fail_kind: 'permanent' }) }),
+      run({ waiting: waiting({ phase: 'failed', failed: 1, attempts: 3, fail_kind: 'permanent' }) })
     )
     await flushPromises()
     line = wrapper.find('[data-testid="flow-waiting-job"]')
@@ -166,7 +166,9 @@ describe('FlowRunCard', () => {
     getFlowRunMock.mockResolvedValue(
       run({ active: false, status: 'cancelled', waiting: undefined })
     )
-    const wrapper = mountCard(run({ _actions: { complete: false, cancel: true, retry: true } }))
+    const wrapper = mountCard(
+      run({ _actions: { complete: false, manage: true, cancel: true, retry: true } })
+    )
     await flushPromises()
 
     await wrapper.find('[data-testid="flow-retry"]').trigger('click')
@@ -174,7 +176,9 @@ describe('FlowRunCard', () => {
     expect(retryFlowRunMock).toHaveBeenCalledWith('R1')
 
     // The reload answered a cancelled run without actions; mount again to cancel.
-    const again = mountCard(run({ _actions: { complete: false, cancel: true, retry: false } }))
+    const again = mountCard(
+      run({ _actions: { complete: false, manage: true, cancel: true, retry: false } })
+    )
     await flushPromises()
     await again.find('[data-testid="flow-cancel"]').trigger('click')
     await flushPromises()
@@ -184,7 +188,9 @@ describe('FlowRunCard', () => {
 
   it('does not cancel when the confirmation is declined', async () => {
     confirmMock.mockResolvedValue(false)
-    const wrapper = mountCard(run({ _actions: { complete: false, cancel: true, retry: false } }))
+    const wrapper = mountCard(
+      run({ _actions: { complete: false, manage: true, cancel: true, retry: false } })
+    )
     await flushPromises()
     await wrapper.find('[data-testid="flow-cancel"]').trigger('click')
     await flushPromises()
@@ -204,7 +210,7 @@ describe('FlowRunCard', () => {
       state_label: 'Joined',
       generation: 0,
       waiting: { you_hold: false },
-      _actions: { complete: false, cancel: false, retry: false },
+      _actions: { complete: false, manage: true, cancel: false, retry: false },
       parallel: [
         {
           branch: 'it',
@@ -248,5 +254,90 @@ describe('FlowRunCard', () => {
     mountCard(run({ log: undefined }))
     await flushPromises()
     expect(getFlowRunMock).toHaveBeenCalledWith('R1', expect.any(AbortSignal))
+  })
+})
+
+describe('FlowRunCard for a reader who does not manage the flow', () => {
+  const doer = { complete: true, manage: false, cancel: false, retry: false }
+
+  beforeEach(() => {
+    getFlowRunMock.mockReset()
+    getEntityMock.mockReset()
+    getEntityMock.mockResolvedValue({ properties: {} })
+    useSchemaStore().entityTypes.set('account', {
+      label: 'Account',
+      properties: {
+        company_name: { type: 'string', label: 'Company' },
+        vat_number: { type: 'string' },
+      },
+    } as unknown as EntityType)
+  })
+
+  function mountDoer(r: FlowRun) {
+    return mount(FlowRunCard, {
+      props: { run: r, subjectType: 'account' },
+      global: { stubs: { RouterLink: RouterLinkStub } },
+    })
+  }
+
+  it('shows the step form and none of how the flow works', async () => {
+    const wrapper = mountDoer(
+      run({
+        _actions: doer,
+        waiting: { ...run().waiting!, writes: ['company_name', 'vat_number'] },
+      })
+    )
+    await flushPromises()
+    expect(wrapper.find('[data-testid="flow-step-form"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="flow-waiting"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('entity.documents == true')
+    expect(wrapper.text()).not.toContain('hr')
+    expect(wrapper.find('[data-testid="flow-branch"]').exists()).toBe(false)
+    expect(wrapper.find('details').exists()).toBe(false)
+  })
+
+  it('labels each field from the schema, or with its name, one per row', async () => {
+    const wrapper = mountDoer(
+      run({ _actions: doer, waiting: { you_hold: true, writes: ['company_name', 'vat_number'] } })
+    )
+    await flushPromises()
+    const fields = wrapper.find('.flow-step-form__fields')
+    expect(fields.classes()).not.toContain('properties-list')
+    const labels = fields.findAll('label').map((l) => l.text().replace(/\*/g, '').trim())
+    expect(labels).toEqual(['Company', 'vat_number'])
+  })
+
+  it('says in one line whom the step waits for, or that it is processed or stuck', async () => {
+    const cases: [NonNullable<FlowRun['waiting']>, string, string | undefined][] = [
+      [{ roles: ['staff'], you_hold: false }, 'waiting for someone else', undefined],
+      // The reader holds the role but has no form here: nothing to do.
+      [{ roles: ['staff'], you_hold: true }, 'This step is waiting.', undefined],
+      // A timer and no role.
+      [
+        { you_hold: false, timers: [{ name: 'reminder', to: 'done' }] },
+        'This step is waiting.',
+        undefined,
+      ],
+      [{ you_hold: false, pending: { failures: 0 } }, 'being processed', undefined],
+      [
+        {
+          you_hold: false,
+          pending: { failures: 3, job: { phase: 'failed', failed: 3, attempts: 3 } },
+        },
+        'could not be completed',
+        'alert',
+      ],
+    ]
+    for (const [waiting, text, role] of cases) {
+      getFlowRunMock.mockResolvedValue(run({ _actions: { ...doer, complete: false }, waiting }))
+      const wrapper = mountDoer(run({ _actions: { ...doer, complete: false }, waiting }))
+      await flushPromises()
+      const line = wrapper.find('[data-testid="flow-waiting-plain"]')
+      expect(line.text()).toContain(text)
+      expect(line.attributes('role')).toBe(role)
+      expect(wrapper.find('[data-testid="flow-waiting-roles"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="flow-waiting-job"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="flow-timer"]').exists()).toBe(false)
+    }
   })
 })

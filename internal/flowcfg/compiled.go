@@ -133,12 +133,14 @@ type Flow struct {
 	deadline   flow.Period
 	retention  Retention
 	starts     []Start
-	initial    string
-	states     []State
-	index      map[string]int
-	version    string
-	source     []byte
-	def        *flow.Definition
+	// manage is the permission of `manage:`; empty when the flow sets none.
+	manage  string
+	initial string
+	states  []State
+	index   map[string]int
+	version string
+	source  []byte
+	def     *flow.Definition
 	// outsideEdits is nil when the flow declares no `outside_edits:`.
 	outsideEdits *OutsideEdits
 	// forks are the flow's forks; region maps each state of a fork's
@@ -197,6 +199,11 @@ func (f *Flow) Retention() Retention { return f.retention }
 
 // Starts returns the start triggers in file order. The slice is a copy.
 func (f *Flow) Starts() []Start { return slices.Clone(f.starts) }
+
+// ManagePermission is the permission `manage:` names: the one that
+// cancels and retries a run and shows how the run works. It is empty when
+// the flow sets none; the permissions of the manual starts then do.
+func (f *Flow) ManagePermission() string { return f.manage }
 
 // Initial is the state a run starts in.
 func (f *Flow) Initial() string { return f.initial }

@@ -4,13 +4,23 @@
  * the reader holds one, its timers, its change branches with the guard's
  * verdict now, outputs that have not settled, a claim and a stranded run.
  * Everything here has passed the reader's gate on the server.
+ *
+ * Without `detailed`, for a reader who does not manage the flow, it says
+ * only whom the step waits for and whether it is being processed or stuck:
+ * the roles, guards, timers and attempts describe how the flow works, which
+ * such a reader has no use for.
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { FlowJob, FlowWaiting } from '@/api/flows'
-import { formatInstant } from './flowView'
+import { formatInstant, labelOf } from './flowView'
 
-const props = defineProps<{ waiting: FlowWaiting }>()
+const props = defineProps<{
+  waiting: FlowWaiting
+  detailed: boolean
+  /** The card shows the reader a form for this step. */
+  canComplete?: boolean
+}>()
 
 const { t } = useI18n()
 
@@ -41,6 +51,18 @@ function jobLine(job: FlowJob): string {
   return t('flows.waiting.jobRunning', attempt)
 }
 
+/** The one line a reader who does not manage the flow sees. */
+const plainLine = computed(() => {
+  const w = props.waiting
+  if (w.stranded) return ''
+  if (w.pending?.job?.phase === 'failed') return t('flows.waiting.failedPlain')
+  if (w.pending) return t('flows.waiting.processing')
+  if (w.roles?.length && !w.you_hold) return t('flows.waiting.forOthers')
+  // A role the reader holds without a form here, or a timer: nothing to do.
+  if (w.roles?.length && props.canComplete) return t('flows.waiting.forYou')
+  return t('flows.waiting.waiting')
+})
+
 function branchVerdict(b: { holds: boolean; failed?: boolean }): string {
   if (b.failed) return t('flows.waiting.guardFailed')
   return b.holds ? t('flows.waiting.guardHolds') : t('flows.waiting.guardNotYet')
@@ -48,7 +70,20 @@ function branchVerdict(b: { holds: boolean; failed?: boolean }): string {
 </script>
 
 <template>
-  <div class="flow-waiting" data-testid="flow-waiting">
+  <div v-if="!detailed" class="flow-waiting" data-testid="flow-waiting">
+    <p v-if="waiting.stranded" class="flow-waiting__alert" role="alert">
+      {{ t('flows.waiting.stranded') }}
+    </p>
+    <p
+      v-else
+      class="flow-waiting__line"
+      :role="waiting.pending?.job?.phase === 'failed' ? 'alert' : undefined"
+      data-testid="flow-waiting-plain"
+    >
+      {{ plainLine }}
+    </p>
+  </div>
+  <div v-else class="flow-waiting" data-testid="flow-waiting">
     <p v-if="waiting.stranded" class="flow-waiting__alert" role="alert">
       {{ t('flows.waiting.stranded') }}
     </p>
@@ -104,7 +139,7 @@ function branchVerdict(b: { holds: boolean; failed?: boolean }): string {
       <h4 class="flow-waiting__heading">{{ t('flows.waiting.timers') }}</h4>
       <ul class="flow-waiting__list">
         <li v-for="tm in waiting.timers" :key="tm.name" data-testid="flow-timer">
-          <span>{{ tm.label || tm.name }}</span>
+          <span>{{ labelOf(tm.label, tm.name) }}</span>
           <span class="flow-waiting__muted">
             {{
               tm.due

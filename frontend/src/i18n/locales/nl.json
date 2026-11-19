@@ -65,7 +65,12 @@
       "timers": "Timers",
       "timerDue": "naar {state} op {at}",
       "timerTo": "naar {state}",
-      "branchFork": "tegelijk naar {states}"
+      "branchFork": "tegelijk naar {states}",
+      "forYou": "Deze stap wacht op u.",
+      "forOthers": "Deze stap wacht op iemand anders.",
+      "waiting": "Deze stap wacht.",
+      "processing": "Deze stap wordt verwerkt.",
+      "failedPlain": "Deze stap kon niet worden afgerond. Iemand die deze flow beheert, moet hem opnieuw proberen."
     },
     "step": {
       "title": "Stap",

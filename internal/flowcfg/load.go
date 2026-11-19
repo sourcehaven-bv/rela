@@ -308,6 +308,7 @@ func (l *loader) flow(key, name string, n *yaml.Node) *Flow {
 		f.outsideEdits = l.outsideEdits(key+".outside_edits", &raw.OutsideEdits, f)
 	}
 	f.starts = l.starts(key+".start", raw.Start, f.subject, f.perSubject)
+	f.manage = l.manage(key+".manage", raw.Manage)
 	f.runAs = l.runAs(key+".run_as", raw.RunAs, f)
 	if len(l.problems) > before {
 		return nil
@@ -499,6 +500,22 @@ func (l *loader) noKeys(key string, r rawStart, names ...string) {
 			l.add(key+"."+n, "does not apply to on: "+r.On)
 		}
 	}
+}
+
+// manage compiles `manage:`. A permission no role grants loads with a
+// warning, like a start's: nobody can then cancel or retry a run.
+func (l *loader) manage(key string, raw *rawManage) string {
+	if raw == nil {
+		return ""
+	}
+	if raw.Permission == "" {
+		l.add(key+".permission", "is required: the permission that cancels and retries a run")
+		return ""
+	}
+	if l.policy != nil && !l.policyGrants(raw.Permission) {
+		l.warn(key+".permission", fmt.Sprintf("no role in acl.yaml grants permission %q, so nobody can cancel or retry a run", raw.Permission))
+	}
+	return raw.Permission
 }
 
 func (l *loader) permission(key, name string) string {

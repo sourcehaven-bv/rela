@@ -21,9 +21,9 @@ const test = base.extend({
   },
 });
 
-test.use({ serverEnv: { RELA_DATAENTRY_USER: FLOW_USERS.hr } });
-
 test.describe("flows", () => {
+  test.use({ serverEnv: { RELA_DATAENTRY_USER: FLOW_USERS.hr } });
+
   test("a run started on a person waits for HR, takes the step and finishes", async ({
     appPage,
   }) => {
@@ -37,11 +37,39 @@ test.describe("flows", () => {
     await flows.expectOneRunIn(states.collect);
     await flows.expectStatus("Waiting for input");
     await flows.expectWaitingFor(role, true);
+    await flows.expectCancelOffered();
 
     await flows.completeStepWithCheckbox(writes);
 
     await flows.expectStatus("Completed");
     await flows.expectOneRunIn(states.finished);
     await flows.expectNoStepForm();
+  });
+});
+
+// A person who may start the flow and do its step, but not manage it: a
+// customer completing their own signup.
+test.describe("flows for someone who only does the step", () => {
+  test.use({ serverEnv: { RELA_DATAENTRY_USER: FLOW_USERS.applicant } });
+
+  test("sees a plain step form and none of the flow's workings", async ({ appPage }) => {
+    const flows = new FlowsPage(appPage);
+    const { person, flow, states, writes, stepFields, guard } = FLOW_SEED;
+
+    await flows.openEntity("person", person.id);
+    await flows.expectStartOffered(flow.name, flow.label);
+    await flows.start(flow.name);
+
+    await flows.expectOneRunIn(states.collect);
+    await flows.expectStartNotOffered(flow.name);
+    await flows.expectStepFieldsStacked(stepFields);
+    await flows.expectNoManagerDetails(guard);
+
+    await flows.completeStep(writes, stepFields[1], "2026-12-01");
+
+    await flows.expectStatus("Completed");
+    await flows.expectOneRunIn(states.finished);
+    // The run has ended, so per_subject: one allows another.
+    await flows.expectStartOffered(flow.name, flow.label);
   });
 });

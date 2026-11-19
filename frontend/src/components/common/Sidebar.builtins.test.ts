@@ -22,6 +22,7 @@ const signup: Flow = {
   subject: 'account',
   version: '1',
   manual: true,
+  per_subject: 'many',
   diagram: '',
 }
 vi.mock('@/api/flows', async (orig) => ({

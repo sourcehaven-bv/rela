@@ -6,15 +6,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/mermaid"
 )
 
-// Mermaid renders f as a Mermaid state diagram: an entry arrow to the
+// MermaidAt renders f as a Mermaid state diagram: an entry arrow to the
 // initial state and one edge per branch and timer, labeled with what moves
 // the run. The labels are flattened by package mermaid, so a guard cannot
-// break the diagram.
-func (f *Flow) Mermaid() string { return f.MermaidAt() }
-
-// MermaidAt renders the diagram [Flow.Mermaid] renders with each state in
-// current marked; an empty or unknown current marks nothing. A forked run
-// passes the state of every live branch.
+// break the diagram. Each state in current is marked; an empty or unknown
+// current marks nothing. A forked run passes the state of every live branch.
 func (f *Flow) MermaidAt(current ...string) string {
 	var ts []mermaid.Transition
 	for _, st := range f.states {

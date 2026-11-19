@@ -88,7 +88,7 @@ func (c *FlowControl) Flows() []flowview.Flow {
 	for _, f := range flows {
 		out = append(out, flowview.Flow{
 			Name: f.Name(), Label: f.Label(), Subject: f.Subject(), Version: f.Version(),
-			Manual: len(manualPermissions(f)) > 0, Diagram: f.Mermaid(),
+			Manual: len(manualPermissions(f)) > 0, PerSubject: string(f.PerSubject()), Diagram: f.MermaidAt(),
 		})
 	}
 	return out
@@ -412,9 +412,10 @@ func (c *FlowControl) views(ctx context.Context, cl *caller, hdrs []*entity.Enti
 				Complete: mayStep(bw, bx),
 			})
 		}
-		manage := c.authorize(ctx, run.Subject.ID, c.cancelPermissions(ctx, flows, run)) == nil
+		manage := c.authorize(ctx, run.Subject.ID, c.runManagePermissions(ctx, flows, run)) == nil
 		v.Actions = flowview.Actions{
 			Complete: len(x.Parallel) == 0 && mayStep(w, x),
+			Manage:   manage,
 			Cancel:   manage,
 			Retry:    manage && x.Pending != nil,
 		}
@@ -500,15 +501,16 @@ func addTimeline(ctx context.Context, v *flowview.Run, run flowrun.Run, x flowen
 	v.Diagram = f.MermaidAt(current...)
 }
 
-// cancelPermissions are the permissions that cancel or retry run: those of
-// the manual starts of the run's version, or of the current flow for a run
-// whose version no longer compiles.
-func (c *FlowControl) cancelPermissions(ctx context.Context, flows *flowengine.FlowCache, run flowrun.Run) []string {
+// runManagePermissions are the permissions that cancel or retry run: the
+// manage permissions of the run's version, or of the current flow for a
+// run whose version no longer compiles. A run keeps the rule of the version
+// it started on, so adding `manage:` applies to runs started after it.
+func (c *FlowControl) runManagePermissions(ctx context.Context, flows *flowengine.FlowCache, run flowrun.Run) []string {
 	if f, err := flows.Of(ctx, run); err == nil {
-		return manualPermissions(f)
+		return managePermissions(f)
 	}
 	if f, ok := c.eng.Flow(run.Flow); ok {
-		return manualPermissions(f)
+		return managePermissions(f)
 	}
 	return nil
 }
@@ -671,7 +673,7 @@ func (c *FlowControl) Retry(ctx context.Context, id flow.RunID) error {
 	if err != nil {
 		return classify(err)
 	}
-	if err := c.authorize(ctx, run.Subject.ID, c.cancelPermissions(ctx, c.eng.FlowCache(), run)); err != nil {
+	if err := c.authorize(ctx, run.Subject.ID, c.runManagePermissions(ctx, c.eng.FlowCache(), run)); err != nil {
 		return classify(err)
 	}
 	return classify(c.eng.Retry(byCaller(ctx), id))

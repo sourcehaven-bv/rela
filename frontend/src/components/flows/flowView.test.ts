@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { FlowRun } from '@/api/flows'
-import { runHref, statusLabel, statusTone, subjectHref, timelineEntries } from './flowView'
+import { labelOf, runHref, statusLabel, statusTone, subjectHref, timelineEntries } from './flowView'
 
 const t = (key: string, values?: Record<string, unknown>) =>
   values ? `${key} ${JSON.stringify(values)}` : key
@@ -121,5 +121,15 @@ describe('flowView', () => {
     expect(subjectHref('PER-1', 'person')).toBe('/entity/person/PER-1')
     expect(subjectHref(undefined, 'person')).toBe('')
     expect(subjectHref('PER-1', undefined)).toBe('')
+  })
+})
+
+describe('labelOf', () => {
+  it.each([
+    ['Company details', 'details', 'Company details'],
+    ['', 'check_vat', 'check_vat'],
+    [undefined, 'ready', 'ready'],
+  ])('labelOf(%j, %j) is %j', (label, name, want) => {
+    expect(labelOf(label, name)).toBe(want)
   })
 })

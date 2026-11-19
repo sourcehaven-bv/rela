@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,8 @@ import (
 type fakeFlows struct {
 	err   error
 	calls []string
+	// startErr fails Startable alone.
+	startErr error
 }
 
 func (f *fakeFlows) rec(format string, args ...any) {
@@ -42,6 +45,14 @@ func (f *fakeFlows) RunList(_ context.Context, name, status string, page, perPag
 func (f *fakeFlows) SubjectRuns(_ context.Context, addr string) ([]flowview.Run, error) {
 	f.rec("subject %s", addr)
 	return nil, f.err
+}
+
+func (f *fakeFlows) Startable(_ context.Context, addr string) ([]string, error) {
+	f.rec("startable %s", addr)
+	if err := cmp.Or(f.startErr, f.err); err != nil {
+		return nil, err
+	}
+	return []string{"onboarding"}, nil
 }
 
 func (f *fakeFlows) Run(_ context.Context, id flow.RunID) (flowview.Run, error) {
@@ -95,7 +106,8 @@ func TestFlowsAPI_Routes(t *testing.T) {
 			"tasks onboarding 2 10"},
 		{"run list", http.MethodGet, "/api/v1/_flows/runs?flow=f&status=running", "", http.StatusOK,
 			"list f running 1 25"},
-		{"subject runs", http.MethodGet, "/api/v1/_flows/runs?subject=PER-1", "", http.StatusOK, "subject PER-1"},
+		{"subject runs", http.MethodGet, "/api/v1/_flows/runs?subject=PER-1", "", http.StatusOK,
+			"subject PER-1; startable PER-1"},
 		{"start", http.MethodPost, "/api/v1/_flows/runs", `{"flow":"onboarding","subject":"PER-1"}`,
 			http.StatusCreated, "start onboarding PER-1"},
 		{"start without subject", http.MethodPost, "/api/v1/_flows/runs", `{"flow":"onboarding"}`,
@@ -123,9 +135,27 @@ func TestFlowsAPI_Routes(t *testing.T) {
 				require.Empty(t, fake.calls)
 				return
 			}
-			require.Equal(t, []string{tc.call}, fake.calls)
+			require.Equal(t, tc.call, strings.Join(fake.calls, "; "))
 		})
 	}
+}
+
+// TestFlowsAPI_SubjectRunsStartable pins that the runs on one entity carry
+// the flows the caller may start on it.
+func TestFlowsAPI_SubjectRunsStartable(t *testing.T) {
+	app := newHandlerTestApp(t)
+	require.NoError(t, SetFlows(app, &fakeFlows{}))
+	w := flowRequest(t, app, http.MethodGet, "/api/v1/_flows/runs?subject=PER-1", "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var got flowview.SubjectRuns
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.Equal(t, []string{"onboarding"}, got.Startable)
+	require.Equal(t, []flowview.Run{}, got.Runs.Runs)
+
+	// A failed Startable fails the answer; it never sends the runs alone.
+	require.NoError(t, SetFlows(app, &fakeFlows{startErr: flowview.ErrNotFound}))
+	w = flowRequest(t, app, http.MethodGet, "/api/v1/_flows/runs?subject=PER-1", "")
+	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
 }
 
 // TestFlowsAPI_ErrorStatus pins the status each kind of flow error maps to.

@@ -27,6 +27,14 @@ const STATUS_TONES: Record<string, StatusColor> = {
   failed: 'red',
 }
 
+/**
+ * The label of a flow, state or timer, or its name when it has none. A name
+ * is never turned into a label (DEC-6C1NAA): the author writes `label:`.
+ */
+export function labelOf(label: string | undefined, name: string): string {
+  return label || name
+}
+
 /** The status in the interface language; an unknown status as it came. */
 export function statusLabel(status: string, t: Translate): string {
   const key = STATUS_KEYS[status]
@@ -52,17 +60,20 @@ function eventSummary(e: FlowEvent, t: Translate): string {
 function moveSummary(e: FlowEvent, t: Translate): string {
   switch (e.via) {
     case 'start':
-      return t('flows.log.start', { state: e.label || e.state })
+      return t('flows.log.start', { state: labelOf(e.label, e.state) })
     case 'done':
-      return t('flows.log.done', { state: e.label || e.state })
+      return t('flows.log.done', { state: labelOf(e.label, e.state) })
     case 'change':
-      return t('flows.log.change', { state: e.label || e.state })
+      return t('flows.log.change', { state: labelOf(e.label, e.state) })
     case 'timer':
-      return t('flows.log.timer', { state: e.label || e.state, timer: e.timer ?? '' })
+      return t('flows.log.timer', {
+        state: labelOf(e.label, e.state),
+        timer: e.timer ?? '',
+      })
     case 'join':
-      return t('flows.log.join', { state: e.label || e.state })
+      return t('flows.log.join', { state: labelOf(e.label, e.state) })
     default:
-      return t('flows.log.moved', { state: e.label || e.state })
+      return t('flows.log.moved', { state: labelOf(e.label, e.state) })
   }
 }
 
