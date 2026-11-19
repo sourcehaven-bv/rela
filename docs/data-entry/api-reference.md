@@ -2256,3 +2256,27 @@ Each POST is written to the audit log as `remote-resolve`, `remote-dismiss` or
 The routes are a browser surface. Like the git routes, they are not exempt
 from the same-origin check and are not in the OpenAPI spec. Use the `rela
 remote` commands from a script.
+
+## Audit reads: `_changes` and `_audit`
+
+Both routes exist only on the database builds. On the filesystem build they
+answer 404, and `GET /api/v1/_sidebar` reports `audit.changes` and
+`audit.global` as false. Both page newest first with `?limit=` (1 to 200,
+default 50; otherwise 400 `invalid_limit`) and `?before=`, the `next_before`
+of the previous page (otherwise 400 `invalid_cursor`). `next_before` is
+absent on the last page.
+
+`GET /api/v1/_changes/{type}/{id}` returns
+`{changes: [...], next_before?, world_face_absent?}`. The address resolves
+as `_history` does: the uniform 404 for an entity the caller cannot read, a
+wrong type, or a deleted entity without `history:read`. Each entry is
+`{seq, time, op, subject?, before?, after?, user?, tool?, summary?, trigger?}`.
+Records that name another entity the caller cannot read are left out, so a
+page can be shorter than `limit` while `next_before` is set.
+`audit.changes` is true whenever the route exists.
+
+`GET /api/v1/_audit` returns `{records: [{seq, record}], next_before?}`,
+where `record` is the stored audit record, unredacted. It needs `audit:read`
+under an ACL policy; otherwise it answers 403 `permission_required`.
+`audit.global` reports whether the caller holds it. Each page served writes
+an `audit-read` audit record.

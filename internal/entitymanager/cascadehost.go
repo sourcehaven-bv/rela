@@ -268,6 +268,7 @@ func entitySubject(e *entity.Entity) *audit.Subject {
 		Kind: "entity",
 		Type: e.Type,
 		ID:   e.ID,
+		Face: e.Face.String(),
 	}
 }
 
@@ -277,6 +278,7 @@ func relationSubject(r *entity.Relation) *audit.Subject {
 		Kind:         "relation",
 		RelationType: r.Type,
 		FromID:       r.From,
+		FromFace:     r.FromFace.String(),
 		ToID:         r.To,
 	}
 }

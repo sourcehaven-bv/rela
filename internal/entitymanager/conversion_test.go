@@ -901,6 +901,13 @@ func TestConvert_MapsFaceFamilyAndRelations(t *testing.T) {
 	if !reflect.DeepEqual(prev, map[entity.Face]entity.Face{"done": "draft", "active": "final"}) {
 		t.Errorf("version face lineage = %v", prev)
 	}
+	auditFaces := map[string]string{}
+	for _, rec := range f.auditOps(audit.OpConvertEntity) {
+		auditFaces[rec.After.Face] = rec.Before.Face
+	}
+	if !reflect.DeepEqual(auditFaces, map[string]string{"done": "draft", "active": "final"}) {
+		t.Errorf("convert audit faces (after: before) = %v", auditFaces)
+	}
 	slices.SortFunc(f.hooks.faceMoves, func(a, b faceMove) int { return strings.Compare(string(a.from), string(b.from)) })
 	wantFaceMoves := []faceMove{{"task", "draft", "done"}, {"task", "final", "active"}}
 	if !reflect.DeepEqual(f.hooks.faceMoves, wantFaceMoves) {

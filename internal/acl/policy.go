@@ -59,6 +59,14 @@ const PermHistoryRead = "history:read"
 // documented in docs/acl-security.md alongside it.
 const PermHistoryReadRedacted = "history:read-redacted"
 
+// PermAuditRead is the global named permission that opens the project-wide
+// audit view (TKT-X1ZFO04): every record of the database audit log, including
+// those of deleted entities and refused writes. The view bypasses the row
+// gate, so it is an elevated read and needs a configured policy; see
+// access.Mode.PermitsElevatedRead. An entity's own Changes list needs no
+// permission: it is gated like the entity's history.
+const PermAuditRead = "audit:read"
+
 // Comment permissions gate the commentary layer (internal/comments), which
 // lives alongside the graph rather than in it. They are resolved PER TARGET
 // ENTITY via [Request.HoldsPermissionForEntity], so a role conferred by an
@@ -140,7 +148,7 @@ var mutatingCommentPerms = []string{
 // what let history:read be reported as dead config while it was in use.
 func BuiltinPermissions() []string {
 	return []string{
-		PermHistoryRead, PermHistoryReadRedacted,
+		PermHistoryRead, PermHistoryReadRedacted, PermAuditRead,
 		PermCommentRead, PermCommentAdd,
 		PermCommentUpdateOwn, PermCommentUpdateAny,
 		PermCommentDeleteOwn, PermCommentDeleteAny,

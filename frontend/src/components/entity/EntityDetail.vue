@@ -72,6 +72,7 @@ import ChannelsPanel from '@/components/entity/ChannelsPanel.vue'
 import FlowRunsPanel from '@/components/flows/FlowRunsPanel.vue'
 import { withAboveRelationsBlock } from '@/components/entity/channels/channelPlacement'
 import MentionedByPanel from '@/components/entity/MentionedByPanel.vue'
+import ChangesPanel from '@/components/entity/ChangesPanel.vue'
 import CommentIndicator from '@/components/entity/CommentIndicator.vue'
 import TextSelectionComment from '@/components/entity/TextSelectionComment.vue'
 import TextCommentPopover from '@/components/entity/TextCommentPopover.vue'
@@ -3490,6 +3491,10 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           :entity-type="entityType"
           :entity-id="entityRef(entry)"
         />
+
+        <!-- Audit changes (TKT-X1ZFO04). Self-gating: renders nothing unless
+             the sidebar reports a database audit log. -->
+        <ChangesPanel :entity-type="entityType" :entity-id="entityRef(entry)" />
 
         <!-- Comment thread. Self-gating: renders nothing unless the schema
              marks this type commentable, so a project with no `comments:`

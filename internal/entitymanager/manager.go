@@ -3229,7 +3229,11 @@ func (r *familyRename) audit(ctx context.Context, st store.Store, renamed []*ent
 	for _, e := range renamed {
 		var err error
 		if r.conversionFrom != "" {
-			err = recordConversionAudit(ctx, r.m, st, r.conversionName, r.oldID, r.conversionFrom, e)
+			oldFace, moved := r.prevFaces[e.Face]
+			if !moved {
+				oldFace = e.Face
+			}
+			err = recordConversionAudit(ctx, r.m, st, r.conversionName, r.oldID, r.conversionFrom, oldFace, e)
 		} else {
 			err = r.m.recordRenameAudit(ctx, st, r.oldID, e)
 		}

@@ -64,5 +64,9 @@ body:
   "header_buttons": {
     "history": true,
     "add_to_pile": true
+  },
+  "audit": {
+    "changes": false,
+    "global": false
   }
 }

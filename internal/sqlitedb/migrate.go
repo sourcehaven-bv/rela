@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 43
+const schemaVersion = 44
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -413,7 +413,36 @@ var migrations = []migration{
 		to:    43,
 		apply: addColumns([]addedColumn{{"entity_versions", "content_at"}, {"relation_versions", "content_at"}}),
 	},
+	{
+		// v43 → v44: the face and lifecycle of each audit subject
+		// (TKT-X1ZFO04). Rows from before get face '' (every face); starts
+		// is backfilled from the record each row belongs to.
+		to: 44,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			if err := addTableColumns(ctx, conn, "audit_subjects", auditSubjectColumns); err != nil {
+				return err
+			}
+			return sqlSteps(auditSubjectStartsBackfill)(ctx, conn)
+		},
+	},
 }
+
+// auditSubjectColumns are the face and lifecycle columns of audit_subjects,
+// matching auditLogDDL and pgstore migration 0053.
+var auditSubjectColumns = []struct{ name, def string }{
+	{"face", "TEXT NOT NULL DEFAULT ''"},
+	{"starts", "INTEGER NOT NULL DEFAULT 0"},
+}
+
+// auditSubjectStartsBackfill marks the subject rows whose record begins a
+// lifecycle of that id: a create of it, a copy that created its face, or a
+// rename or conversion into it.
+const auditSubjectStartsBackfill = `UPDATE audit_subjects SET starts = 1
+WHERE starts = 0 AND EXISTS (SELECT 1 FROM audit_log l WHERE l.seq = audit_subjects.seq AND (
+	(l.op = 'create-entity' AND json_extract(l.doc, '$.subject.id') = audit_subjects.entity_id)
+	OR (l.op = 'copy-state' AND json_extract(l.doc, '$.subject.id') = audit_subjects.entity_id
+		AND json_extract(l.doc, '$.summary') LIKE '% (created=true)')
+	OR (l.op IN ('rename-entity', 'convert-entity') AND json_extract(l.doc, '$.after.id') = audit_subjects.entity_id)))`
 
 // recordsMutableColumns are the change columns of records, matching
 // recordsDDL and pgstore migration 0050.

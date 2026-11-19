@@ -69,6 +69,14 @@ export interface Config {
   piles?: PilesConfig | null
 }
 
+/** Which audit views the sidebar offers (TKT-X1ZFO04). */
+export interface SidebarAudit {
+  /** A database audit log is wired, so an entity page shows its Changes panel. */
+  changes: boolean
+  /** The log is wired and this principal holds audit:read. */
+  global: boolean
+}
+
 /** The `piles:` block: what the pile panel offers beyond its own controls. */
 export interface PilesConfig {
   /** Global action ids, run once per item. */
@@ -1343,6 +1351,8 @@ export interface SidebarData {
   piles_available?: boolean
   /** The `piles:` block of data-entry.yaml; null or absent when not declared. */
   piles?: PilesConfig | null
+  /** The audit views this principal is offered; absent from an older server. */
+  audit?: SidebarAudit
   /**
    * The `header_buttons:` toggles resolved for this principal (TKT-31822PN).
    * Absent from an older server, where every button shows.

@@ -191,6 +191,8 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_conflicts/", a.handleV1ConflictRoutes)
 	mux.HandleFunc("/api/v1/_documents/", a.handleV1Documents)
 	mux.HandleFunc("/api/v1/_history/", func(w http.ResponseWriter, r *http.Request) { handleV1History(a, w, r) })
+	mux.HandleFunc("/api/v1/_changes/", func(w http.ResponseWriter, r *http.Request) { handleV1Changes(a, w, r) })
+	mux.HandleFunc("/api/v1/_audit", func(w http.ResponseWriter, r *http.Request) { handleV1Audit(a, w, r) })
 	mux.HandleFunc("/api/v1/_relation_history/",
 		func(w http.ResponseWriter, r *http.Request) { handleV1RelationHistory(a, w, r) })
 	mux.HandleFunc(openAPISpecPath, a.handleV1OpenAPI)

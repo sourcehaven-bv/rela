@@ -1508,6 +1508,9 @@ type SidebarResponse struct {
 	// does. A UX filter, not access control: the history and pile APIs keep
 	// their own ACL.
 	HeaderButtons SidebarHeaderButtons `json:"header_buttons"`
+	// Audit says which audit views the SPA offers (TKT-X1ZFO04). A UI hint,
+	// never authorization: the audit endpoints check again.
+	Audit SidebarAudit `json:"audit"`
 }
 
 // SidebarHeaderButtons is [SidebarResponse.HeaderButtons]. Each field is true
@@ -1517,6 +1520,16 @@ type SidebarResponse struct {
 type SidebarHeaderButtons struct {
 	History   bool `json:"history"`
 	AddToPile bool `json:"add_to_pile"`
+}
+
+// SidebarAudit is [SidebarResponse.Audit].
+type SidebarAudit struct {
+	// Changes reports that a database audit log is wired, so an entity
+	// page offers its Changes tab.
+	Changes bool `json:"changes"`
+	// Global reports that the log is wired and this principal may read the
+	// global audit view (the audit:read permission).
+	Global bool `json:"global"`
 }
 
 // ConflictItem represents a conflicted file.

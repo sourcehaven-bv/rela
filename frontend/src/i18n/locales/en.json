@@ -16,7 +16,8 @@
     "inboxMentions": "{n} mention | {n} mentions",
     "inboxUnread": "{n} unread channel | {n} unread channels",
     "flowTasks": "Flow tasks",
-    "flowRuns": "Flow runs"
+    "flowRuns": "Flow runs",
+    "audit": "Audit log"
   },
   "flows": {
     "status": {
@@ -1580,5 +1581,24 @@
     "addOutput": "Add output",
     "removeOutput": "Remove {name}",
     "usedBy": "These automations use it: {names}."
+  },
+  "audit": {
+    "title": "Audit log",
+    "empty": "The audit log is empty.",
+    "forbidden": "You need the audit:read permission to see the audit log.",
+    "loadMore": "Load more",
+    "triggeredBy": "Triggered by {trigger}",
+    "col": {
+      "time": "Time",
+      "user": "User",
+      "op": "Operation",
+      "subject": "Subject",
+      "summary": "Summary",
+      "trigger": "Triggered by"
+    },
+    "changes": {
+      "title": "Changes",
+      "empty": "No changes recorded."
+    }
   }
 }

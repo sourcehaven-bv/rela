@@ -35,33 +35,8 @@ import (
 func Services(app *dataentry.App, svc *appbuild.Services) error {
 	app.SetCalDAVAliases(svc.CalDAVAliases())
 	app.SetComments(svc.Comments())
-	// Piles are absent when the backend offers no piles store; the routes
-	// then 404 and the bootstrap says piles_available false.
-	if p := svc.Piles(); p != nil {
-		if err := app.SetPiles(p, appbuild.LuaPiles(svc)); err != nil {
-			return fmt.Errorf("wire piles: %w", err)
-		}
-	}
-	// Without a lease service the lease routes 404 and no response carries
-	// `_lease`.
-	if l := appbuild.Leases(svc); l != nil {
-		if err := dataentry.SetLeases(app, l); err != nil {
-			return fmt.Errorf("wire leases: %w", err)
-		}
-	}
-
-	// Without record types in the schema the record routes answer 404.
-	if rs := appbuild.Records(svc); rs != nil {
-		if err := dataentry.SetRecords(app, rs, appbuild.LuaRecords(svc)); err != nil {
-			return fmt.Errorf("wire records: %w", err)
-		}
-	}
-
-	// Without flows in flows.yaml the flow routes answer 404.
-	if ctl := appbuild.FlowControlFor(svc); ctl != nil {
-		if err := dataentry.SetFlows(app, ctl); err != nil {
-			return fmt.Errorf("wire flows: %w", err)
-		}
+	if err := wireOptionalStores(app, svc); err != nil {
+		return err
 	}
 
 	// The remote routes list every remote in remotes.yaml; a project
@@ -192,6 +167,48 @@ func llmActions(app *dataentry.App, svc *appbuild.Services) error {
 	}
 	if err = appbuild.SetLLMActionRunner(svc, llm); err != nil {
 		return fmt.Errorf("wire llm actions: %w", err)
+	}
+	return nil
+}
+
+// wireOptionalStores wires the stores a backend or schema may not offer.
+// Each one that is absent leaves its routes answering 404.
+func wireOptionalStores(app *dataentry.App, svc *appbuild.Services) error {
+	// Piles are absent when the backend offers no piles store; the routes
+	// then 404 and the bootstrap says piles_available false.
+	if p := svc.Piles(); p != nil {
+		if err := app.SetPiles(p, appbuild.LuaPiles(svc)); err != nil {
+			return fmt.Errorf("wire piles: %w", err)
+		}
+	}
+	// Without a lease service the lease routes 404 and no response carries
+	// `_lease`.
+	if l := appbuild.Leases(svc); l != nil {
+		if err := dataentry.SetLeases(app, l); err != nil {
+			return fmt.Errorf("wire leases: %w", err)
+		}
+	}
+
+	// Without record types in the schema the record routes answer 404.
+	if rs := appbuild.Records(svc); rs != nil {
+		if err := dataentry.SetRecords(app, rs, appbuild.LuaRecords(svc)); err != nil {
+			return fmt.Errorf("wire records: %w", err)
+		}
+	}
+
+	// Without a database audit log (the fs and memory tiers) the audit
+	// routes answer 404 and the sidebar offers neither audit view.
+	if l := svc.AuditLog(); l != nil {
+		if err := dataentry.SetAuditLog(app, l); err != nil {
+			return fmt.Errorf("wire audit log: %w", err)
+		}
+	}
+
+	// Without flows in flows.yaml the flow routes answer 404.
+	if ctl := appbuild.FlowControlFor(svc); ctl != nil {
+		if err := dataentry.SetFlows(app, ctl); err != nil {
+			return fmt.Errorf("wire flows: %w", err)
+		}
 	}
 	return nil
 }

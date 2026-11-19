@@ -285,6 +285,11 @@ const pinnedGroups = computed(() => {
     },
   ]
   const items = rows.filter((r) => r.when && showsBuiltin(r.row)).map((r) => r.item)
+  // The audit view is not a `builtins:` row: the server offers it only to a
+  // holder of audit:read on a database backend.
+  if (schemaStore.auditGlobal) {
+    items.push({ label: t('nav.audit'), href: '/audit', icon: 'history' })
+  }
   return toNavGroups(
     inSpace(items.length ? [{ items }] : []),
     RouterLink,
@@ -345,6 +350,7 @@ async function loadSidebar() {
     schemaStore.setInlineCreate(data.inline_create ?? {})
     // So is whether this principal may use piles (TKT-K3RJLH).
     schemaStore.setPiles(data)
+    schemaStore.setAudit(data.audit)
     // And which entity header buttons it is shown (TKT-31822PN).
     schemaStore.setHeaderButtons(data.header_buttons)
   } catch (err) {
