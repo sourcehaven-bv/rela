@@ -188,6 +188,13 @@ export class FormPage extends BasePage {
     // blank title so the caller types record N+1 into a settled form rather
     // than racing the reset that is about to clear it.
     await expect(this.titleInput).toHaveValue("", { timeout: 15000 });
+    // The success toast sits in the bottom-right corner, over this button
+    // when the form is scrolled to its end. Only the pane scrolls, so the
+    // next click cannot scroll clear of it: close it, as a user would. In the
+    // New dialog the toast is behind the modal and covers nothing.
+    if ((await this.page.locator(".rl-modal__scrim").count()) === 0) {
+      await this.dismissToasts();
+    }
     return response.json() as Promise<{ id: string }>;
   }
 
