@@ -27,11 +27,13 @@
 package nextaction
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"hash/fnv"
 	"log/slog"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -79,6 +81,35 @@ var ErrIdentityConflict = errors.New("nextaction: query identity on the context 
 // caller's reader.
 type Candidate struct {
 	Entity *entity.Entity
+	// Task is set for a candidate of a flow_tasks source, where Entity is
+	// the task's subject. Nil for every other source.
+	Task *FlowTask
+}
+
+// FlowTask is the waiting flow step a flow_tasks candidate is about. The
+// wiring site fills it from the Flow tasks list, so a suggestion and that
+// list name the same tasks.
+type FlowTask struct {
+	// Run is the run id, Branch the parallel branch ("" for the run's own
+	// step) and State the state the step waits in. Together they are the
+	// suggestion's variant, so a run that moves on to another waiting
+	// state is a new suggestion and an old snooze no longer hides it.
+	Run, Branch, State string
+	// Flow and Step are the flow and state as shown: their label, or the
+	// name when no label is declared. They fill {flow} and {step}.
+	Flow, Step string
+	// Subject is the subject's display title, or its address when the title
+	// is hidden. It fills {subject}.
+	Subject string
+	// SubjectType fills {type} in a navigate offer.
+	SubjectType string
+	// Address is the subject's address, with its face when the run names
+	// one. It fills {id} in a navigate offer, so the link opens the face the
+	// run is on.
+	Address string
+	// Link is the page the step is completed on. A source that declares no
+	// navigate offer gets one to it.
+	Link string
 }
 
 // PickOption is one choice in a pick_one affordance.
@@ -530,7 +561,10 @@ func (e *Engine) eligibleFromSource(
 		return nil, err
 	}
 
-	if len(cands) > e.cap {
+	// A flow_tasks source is not cut to the cap: its list is already bounded
+	// by the task call, and it shows its oldest task that is not snoozed, so
+	// cutting first would let snoozed tasks hide the ones after them.
+	if len(cands) > e.cap && !src.IsFlowTasks() {
 		cands = e.truncateKeepingCurrent(id, cands)
 	}
 
@@ -563,7 +597,29 @@ func (e *Engine) eligibleFromSource(
 		}
 		out = append(out, sug)
 	}
+	if src.IsFlowTasks() {
+		out = e.oldestTask(out)
+	}
 	return out, nil
+}
+
+// oldestTask keeps one suggestion of a flow_tasks source: the one on
+// screen if it is still eligible, otherwise the first. The candidates come
+// oldest first, so that is the task that has waited longest and is not
+// snoozed. Tasks of one source share a band and a message shape, so a
+// random pick among them would only make the banner change between days
+// while the oldest task keeps waiting. Other sources in the band still
+// compete with it through the band's stable-random pick.
+func (e *Engine) oldestTask(out []Suggestion) []Suggestion {
+	if len(out) <= 1 {
+		return out
+	}
+	for _, s := range out {
+		if e.isCurrent(s) {
+			return []Suggestion{s}
+		}
+	}
+	return out[:1]
 }
 
 // want is the part of a source's list eligibleFromSource uses: the first cap
@@ -571,7 +627,9 @@ func (e *Engine) eligibleFromSource(
 // drop any candidate, so a source with one reads everything.
 func (e *Engine) want(id string, src dataentryconfig.NextActionSource) Want {
 	var w Want
-	if src.Condition == "" {
+	// A flow_tasks source reads every task: its list is bounded by the task
+	// call, and a snooze must hide only its own task, not use up the cap.
+	if src.Condition == "" && !src.IsFlowTasks() {
 		w.First = e.cap
 	}
 	if e.current != nil && e.current.Source == id {
@@ -604,7 +662,9 @@ func (e *Engine) truncateKeepingCurrent(id string, cands []Candidate) []Candidat
 
 // cooldownExempt reports whether the impression cooldown is skipped for sug.
 //
-// Two cases. The suggestion already on screen (see [WithCurrent]), so asking
+// Three cases. A flow_tasks source with no `cooldown:`: a flow task is
+// required work, so seeing the hint once does not hide it; snooze does. The
+// suggestion already on screen (see [WithCurrent]), so asking
 // again does not replace it. And every context-aware suggestion: it is about
 // the entity the reader is looking at, so hiding it for a day because they
 // looked at that entity yesterday would make it vanish exactly when it is
@@ -612,7 +672,7 @@ func (e *Engine) truncateKeepingCurrent(id string, cands []Candidate) []Candidat
 // "Seen it" snoozes them for [Cooldown] instead. Snooze, dismiss and mute
 // still suppress both.
 func (e *Engine) cooldownExempt(src dataentryconfig.NextActionSource, sug Suggestion) bool {
-	return src.Context != "" || e.isCurrent(sug)
+	return src.Context != "" || e.isCurrent(sug) || (src.IsFlowTasks() && src.Cooldown == "")
 }
 
 // inCooldown reports whether a suggestion shown at lastShown is still
@@ -743,10 +803,83 @@ func buildSuggestion(
 		if src.ResolvedDeferScope() != dataentryconfig.DeferScopeSource {
 			s.Key.EntityID = c.Entity.ID
 			s.Key.Variant = variantFor(src.KeyProps, c.Entity)
+			if c.Task != nil {
+				s.Key.Variant = taskVariant(c.Task)
+			}
 		}
+	}
+	if c.Task != nil {
+		s.Message = interpolateWith(src.Suggest, func(name string) string {
+			return taskValue(c.Task, c.Entity, name, format)
+		})
+		s.Actions = taskActions(src.Actions, c.Task, cmp.Or(c.Task.Address, s.EntityID))
+		return s
 	}
 	s.Message = interpolate(src.Suggest, c.Entity, format)
 	return s
+}
+
+// taskVariant keys a flow task by its run, state and branch.
+func taskVariant(t *FlowTask) string {
+	v := "run=" + t.Run + ";state=" + t.State
+	if t.Branch != "" {
+		v += ";branch=" + t.Branch
+	}
+	return v
+}
+
+// taskValue renders one placeholder of a flow task message. {flow}, {step}
+// and {subject} are the task's own and win over a subject property of the
+// same name; any other name is a property of the subject.
+func taskValue(t *FlowTask, subject *entity.Entity, name string, format ValueFormatter) string {
+	switch name {
+	case "flow":
+		return t.Flow
+	case "step":
+		return t.Step
+	case "subject":
+		return t.Subject
+	}
+	if subject == nil {
+		return ""
+	}
+	return messageValue(subject, name, format)
+}
+
+// taskActions returns the offers of a flow task suggestion: the config's,
+// with {run}, {type} and {id} filled in each navigate offer, and a navigate
+// offer to the step first when the config declares none. A copy, never the
+// config's slice, which every suggestion of the source shares.
+func taskActions(offers []dataentryconfig.NextActionOffer, t *FlowTask, id string) []dataentryconfig.NextActionOffer {
+	out := make([]dataentryconfig.NextActionOffer, 0, len(offers)+1)
+	navigates := false
+	for _, o := range offers {
+		if o.Navigate != "" {
+			navigates = true
+			o.Navigate = fillLink(o.Navigate, t, id)
+		}
+		out = append(out, o)
+	}
+	if !navigates && t.Link != "" {
+		out = append([]dataentryconfig.NextActionOffer{{Navigate: t.Link}}, out...)
+	}
+	return out
+}
+
+// fillLink fills {run}, {type} and {id} in a navigate link, escaped for
+// where each lands: as a path segment before the first `?`, as a query
+// value after it.
+func fillLink(link string, t *FlowTask, id string) string {
+	fill := func(part string, esc func(string) string) string {
+		return strings.NewReplacer(
+			"{run}", esc(t.Run), "{type}", esc(t.SubjectType), "{id}", esc(id),
+		).Replace(part)
+	}
+	path, query, hasQuery := strings.Cut(link, "?")
+	if !hasQuery {
+		return fill(path, url.PathEscape)
+	}
+	return fill(path, url.PathEscape) + "?" + fill(query, url.QueryEscape)
 }
 
 // variantFor renders the key_props values that make a RESET condition read as
@@ -767,7 +900,16 @@ func variantFor(props []string, e *entity.Entity) string {
 // into a message with a hole in it, which reads as a product bug rather than
 // as the operator error it is.
 func interpolate(tmpl string, e *entity.Entity, format ValueFormatter) string {
-	if e == nil || !strings.ContainsRune(tmpl, '{') {
+	if e == nil {
+		return tmpl
+	}
+	return interpolateWith(tmpl, func(name string) string { return messageValue(e, name, format) })
+}
+
+// interpolateWith substitutes each {name} with value(name), leaving a
+// placeholder whose value is empty verbatim (see [interpolate]).
+func interpolateWith(tmpl string, value func(string) string) string {
+	if !strings.ContainsRune(tmpl, '{') {
 		return tmpl
 	}
 	var b strings.Builder
@@ -786,7 +928,7 @@ func interpolate(tmpl string, e *entity.Entity, format ValueFormatter) string {
 		closeIdx += open
 		name := rest[open+1 : closeIdx]
 		b.WriteString(rest[:open])
-		if v := messageValue(e, name, format); v != "" {
+		if v := value(name); v != "" {
 			b.WriteString(v)
 		} else {
 			b.WriteString(rest[open : closeIdx+1])

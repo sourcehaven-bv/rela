@@ -61,7 +61,7 @@ import type { AutoSaveOwner } from '@/composables/useSectionAutoSave'
 import type { PropertyItem } from '@/components/common/PropertyDisplay.vue'
 import { ChevronRight } from 'lucide-vue-next'
 import { defaultRegistry } from '@/widgets/registry'
-import { isDenseEmpty, viewFieldRoutingHint } from '@/widgets/viewRouting'
+import { isDenseEmpty, viewFieldRoutingHintFor } from '@/widgets/viewRouting'
 import { formatDisplayNumber } from '@/utils/format'
 import type { WidgetRoutingHint } from '@/widgets/types'
 import type { PropertyDef } from '@/types'
@@ -252,7 +252,8 @@ const pileActions = useEntityPileActions(
     const target = scopeTarget('next') ?? scopeTarget('prev')
     if (target) void router.push(target)
     else void loadScopeNav()
-  }
+  },
+  () => schemaStore.headerButtons.add_to_pile
 )
 const backTarget = useBackTarget()
 
@@ -1755,7 +1756,11 @@ watch([viewData, worldInfo], ([, info]) => {
 // 501. Rendering the button regardless is the affordance-that-lies shape, so
 // it is ABSENT when the capability is — never disabled, which would still
 // advertise a feature this deployment cannot provide.
-const showHistory = computed(() => schemaStore.historyEnabled)
+//
+// The operator may also hide it with `header_buttons.history` (TKT-31822PN),
+// which the server resolves per principal. That is a UX choice, not access
+// control: `/_history` keeps its own ACL.
+const showHistory = computed(() => schemaStore.historyEnabled && schemaStore.headerButtons.history)
 
 // The export formats, for the action list. ExportMenu fetches the same cached
 // registry for the desktop button.
@@ -2045,9 +2050,9 @@ interface NestedCell {
 // fieldRowsFor returns the precomputed FieldRow array for one entity's
 // fields. Cards/list templates iterate this instead of calling helper
 // functions inline per cell.
-function fieldRowsFor(ent: { fields?: ViewSectionField[] }): FieldRow[] {
+function fieldRowsFor(ent: { type: string; fields?: ViewSectionField[] }): FieldRow[] {
   return (ent.fields ?? []).map((field) => {
-    const hint = viewFieldRoutingHint(field)
+    const hint = viewFieldRoutingHintFor(field, ent.type, getPropertyDef)
     return {
       field,
       hint,
@@ -2709,7 +2714,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             and the page's world, in which the export resolves the entry's links.
           -->
             <ExportMenu :url-for="exportUrlFor(entityRef(entry))" />
+            <!--
+            Hidden by `header_buttons.add_to_pile` (TKT-31822PN), a UX choice
+            the server resolves per principal; the action list gates on the
+            same flag through useEntityPileActions.
+          -->
             <AddToPileMenu
+              v-if="schemaStore.headerButtons.add_to_pile"
               :addresses="() => (entry ? [entityRef(entry)] : [])"
               size="md"
               :new-label="t('entity.addToNewPile')"

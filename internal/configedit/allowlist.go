@@ -76,6 +76,7 @@ var editable = map[File][]string{
 		"entities.*.properties.*.default",
 		"entities.*.properties.*.description",
 		"entities.*.properties.*.display.currency",
+		"entities.*.properties.*.display.link",
 		"entities.*.properties.*.label",
 		"entities.*.properties.*.format",
 		"entities.*.properties.*.labels.*",
@@ -105,6 +106,7 @@ var editable = map[File][]string{
 		"relations.*.properties.*.default",
 		"relations.*.properties.*.description",
 		"relations.*.properties.*.display.currency",
+		"relations.*.properties.*.display.link",
 		"relations.*.properties.*.label",
 		"relations.*.properties.*.format",
 		"relations.*.properties.*.labels.*",
@@ -398,6 +400,9 @@ var locked = map[File][]string{
 		// Access control and actions.
 		"nav.permission", "nav.action", "spaces.[].permission", "dashboard.cards.[].permission",
 		"dashboards.*.cards.[].permission",
+		// Page chrome toggles (TKT-31822PN): true, false or {permission}.
+		// Not in the Configure space yet; locked with the other permissions.
+		"dashboard.validation.**", "dashboards.*.validation.**", "header_buttons.**",
 		// Not in the Configure space yet: list-sourced, matrix and ratio cards
 		// (TKT-2SGPJZ). The Configure dashboard page edits query cards only.
 		"dashboard.cards.[].list", "dashboard.cards.[].rows", "dashboard.cards.[].tone_by",
@@ -468,6 +473,7 @@ var protective = map[File][]string{
 		"app.disable_custom_injection", "app.max_attachment_bytes",
 		"nav.permission", "spaces.[].permission", "dashboard.cards.[].permission",
 		"dashboards.*.cards.[].permission",
+		"dashboard.validation.**", "dashboards.*.validation.**", "header_buttons.**",
 	},
 	// A script may stamp what acl.yaml decides access by; removing it
 	// would drop that stamp from every record written afterwards.

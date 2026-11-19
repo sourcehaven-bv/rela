@@ -9,5 +9,6 @@
   "multi-select": ["enum", "string"],
   "rrule": ["rrule"],
   "file": ["file"],
-  "external-ref": ["external_ref"]
+  "external-ref": ["external_ref"],
+  "url": ["string"]
 }

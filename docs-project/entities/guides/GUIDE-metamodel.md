@@ -858,7 +858,7 @@ entities:
 | `default`        | Default value for the property                                                        |
 | `format`         | Date format (Go layout string, e.g., `2006-01-02`)                                    |
 | `description`    | Documentation for the property                                                        |
-| `display`        | How the value is shown for reading, such as `{currency: EUR}` (see [Display formats](#display-formats)) |
+| `display`        | How the value is shown, such as `{currency: EUR}` or `{link: true}` (see [Display formats](#display-formats)) |
 | `list: true`     | Allow multiple values (multi-select for enum types)                                   |
 | `computed`       | Pure entity-local expression materialized on every write; the property is read-only   |
 | `rollup`         | Summary of related entities, computed on read per reader; see [Roll-up properties](#roll-up-properties) |
@@ -1339,9 +1339,11 @@ Common formats:
 
 ### Display formats
 
-`display:` says how the web interface shows a property's value for reading.
-It does not change the stored value, and form inputs stay plain numbers.
-Today there is one format, `currency`:
+`display:` says how the web interface shows a property's value. It does not
+change the stored value. There are two formats, `currency` and `link`, and a
+property takes at most one.
+
+#### Currency
 
 ```yaml
 properties:
@@ -1354,7 +1356,7 @@ properties:
 The value 3500 then shows as "€ 3.500" in a Dutch browser and "€3,500" in an
 American one. A whole amount shows no decimals. The format applies wherever
 the value is shown: kanban cards and column summaries, list cells, and the
-entity page.
+entity page. Form inputs stay plain numbers.
 
 A decimal shows the digits it was written with, and at least two when it has
 any, so `12.5` shows as "€ 12,50". With `scale:` it always shows that many
@@ -1366,6 +1368,34 @@ ISO 4217 code:
 three upper-case letters, such as `EUR` or `USD`. Config load checks both. It
 does not check the code against a list: the browser formats every
 well-formed code, and shows a code it does not know as the code itself.
+
+#### Link
+
+```yaml
+properties:
+  pdf_url:
+    type: string
+    display:
+      link: true
+```
+
+A string that holds a web address then shows as a link wherever the value
+is shown: the entity page, view sections, list and table cells, kanban cards
+and calendar entries. A web link opens in a new tab. Clicking the link opens
+only the link, not the card or row it sits on.
+
+Only a value that starts with `http:`, `https:` or `mailto:` becomes a link.
+The check ignores upper and lower case and leading spaces. Any other value
+shows as plain text, so a stored `javascript:` or `data:` value can never
+become a link. A value without a scheme, such as `example.com`, also stays
+text. A `mailto:` link drops anything after `?` or `#`, such as a `bcc=`, so
+a click cannot add recipients the reader does not see.
+
+Forms show a text input with the URL keyboard on phones. The value is not
+checked: a value that is not a web address still saves, and shows as text.
+
+`link` needs a single-valued `string` property without `values:`. Config load
+checks this.
 
 `display` is a map so that more formats can join later, such as a
 percentage or a unit.

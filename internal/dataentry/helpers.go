@@ -316,6 +316,11 @@ func resolveWidget(prop metamodel.PropertyDef, meta *metamodel.Metamodel) string
 	if prop.List && isEnum {
 		return WidgetMultiSelect
 	}
+	// The loader admits a link format only on a single-valued string
+	// without values, so no higher-precedence rule can apply here.
+	if prop.Display != nil && prop.Display.Link {
+		return WidgetURL
+	}
 
 	return metamodel.ResolveWidgetFromType(meta, prop.Type)
 }

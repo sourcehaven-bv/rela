@@ -28,6 +28,7 @@ import type {
   ActionConfig,
   PilesConfig,
   SidebarAudit,
+  SidebarHeaderButtons,
 } from '@/types'
 
 export const useSchemaStore = defineStore('schema', () => {
@@ -107,6 +108,11 @@ export const useSchemaStore = defineStore('schema', () => {
   // Both default to off, so an older server shows neither.
   const auditChanges = ref(false)
   const auditGlobal = ref(false)
+  // Which built-in entity header buttons this principal is shown
+  // (`header_buttons:`, TKT-31822PN), fed by the principal-scoped `/_sidebar`.
+  // Shown until it says otherwise, as before the block existed. A UX filter:
+  // the history and pile APIs keep their own ACL.
+  const headerButtons = ref<SidebarHeaderButtons>({ history: true, add_to_pile: true })
   const loaded = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -542,6 +548,11 @@ export const useSchemaStore = defineStore('schema', () => {
     auditGlobal.value = audit?.global === true
   }
 
+  /** Takes `header_buttons` from `/_sidebar`; an older server sends none. */
+  function setHeaderButtons(header: SidebarHeaderButtons | undefined) {
+    if (header) headerButtons.value = header
+  }
+
   function setInlineCreate(map: Record<string, string>) {
     inlineCreate.value = map
   }
@@ -607,6 +618,7 @@ export const useSchemaStore = defineStore('schema', () => {
     worldLabel,
     faceLabel,
     historyEnabled,
+    headerButtons,
     collabEnabled,
     collabEpoch,
     getInverseName,
@@ -635,5 +647,6 @@ export const useSchemaStore = defineStore('schema', () => {
     setInlineCreate,
     setPiles,
     setAudit,
+    setHeaderButtons,
   }
 })

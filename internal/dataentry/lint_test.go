@@ -91,8 +91,9 @@ func TestNoStrayWriteRequestConstruction(t *testing.T) {
 //
 //   - `permitsNavEntry(` — still exactly one file. It is nav-specific and has no
 //     business anywhere else.
-//   - `permitsGatedUIElement(` — the shared switch, allowed in the two
-//     presentation handlers that legitimately gate on a `permission:`.
+//   - `permitsGatedUIElement(` — the shared switch, allowed in the
+//     presentation code that legitimately gates on a `permission:` (sidebar,
+//     dashboard cards and entity page sections).
 //
 // Widening either list is a deliberate, argued exception and not routine: the
 // guard's value comes from the list being short, because the reviewer's question
@@ -111,9 +112,16 @@ func TestNavFilterStaysPresentational(t *testing.T) {
 			why:     "the sidebar filter is presentation only",
 		},
 		{
-			needle:  "permitsGatedUIElement(",
-			allowed: map[string]bool{"views_handler.go": true, "dashboard_handler.go": true},
-			why:     "the shared UI-element filter is presentation only",
+			needle: "permitsGatedUIElement(",
+			// sections.go joined in TKT-14FBF1R: a section's `permission:`
+			// leaves a heading off the entity page and is documented as a
+			// display filter; field values stay behind `visible:`.
+			allowed: map[string]bool{
+				"views_handler.go":     true,
+				"dashboard_handler.go": true,
+				"sections.go":          true,
+			},
+			why: "the shared UI-element filter is presentation only",
 		},
 		{
 			// Unlike the two above, this needle guards a real boundary rather

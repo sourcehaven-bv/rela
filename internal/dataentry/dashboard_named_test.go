@@ -132,7 +132,7 @@ func TestNamedDashboard_EmptyCardsIsArray(t *testing.T) {
 
 	rec := namedDashboard(t.Context(), t, app, "name=empty")
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.JSONEq(t, `{"title":"Empty","cards":[]}`, rec.Body.String())
+	require.JSONEq(t, `{"title":"Empty","cards":[],"validation":true}`, rec.Body.String())
 }
 
 // The sidebar links a named dashboard at /dashboard/<name>; a page tab and a

@@ -24,6 +24,7 @@ const (
 	WidgetDate        = dataentryconfig.WidgetDate
 	WidgetDatetime    = dataentryconfig.WidgetDatetime
 	WidgetCards       = dataentryconfig.WidgetCards
+	WidgetURL         = dataentryconfig.WidgetURL
 
 	DirectionIncoming = dataentryconfig.DirectionIncoming
 	DirectionOutgoing = dataentryconfig.DirectionOutgoing

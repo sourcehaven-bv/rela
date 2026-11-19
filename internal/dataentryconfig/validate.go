@@ -52,6 +52,7 @@ var validTopLevelKeys = map[string]bool{
 	"account":              true,
 	"piles":                true,
 	"channels":             true,
+	"header_buttons":       true,
 }
 
 // Known typos with suggestions
@@ -178,6 +179,7 @@ var sectionFieldWidgetTypes = map[string][]string{
 	WidgetRrule:       {metamodel.PropertyTypeRrule},
 	WidgetFile:        {metamodel.PropertyTypeFile},
 	WidgetExternalRef: {metamodel.PropertyTypeExternalRef},
+	WidgetURL:         {metamodel.PropertyTypeString},
 }
 
 // widgetAcceptsProperty reports whether a widget can render a property, and if
@@ -543,6 +545,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateAccount(data, cfg, meta)...)
 	errs = append(errs, llmUnknownKeys(data)...)
 	errs = append(errs, validatePiles(data, cfg, meta)...)
+	errs = append(errs, headerButtonsUnknownKeys(data)...)
 	errs = append(errs, validateChannelsShape(data, cfg)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
@@ -844,6 +847,11 @@ func validateSidePanelSections(formID string, panel *SidePanelConfig) []string {
 		if sec.HideEmpty {
 			errs = append(errs, fmt.Sprintf(
 				"form %q: side_panel section[%d] sets hide_empty, which a side panel does not support",
+				formID, i))
+		}
+		if sec.Permission != "" {
+			errs = append(errs, fmt.Sprintf(
+				"form %q: side_panel section[%d] sets permission, which a side panel does not support",
 				formID, i))
 		}
 		errs = append(errs, refuseSidePanelTableKeys(formID, i, sec)...)
@@ -2669,6 +2677,7 @@ func validateDashboard(cfg *Config, meta *metamodel.Metamodel) []string {
 			errs = append(errs, validateDashboardCardSource(cfg, meta, prefix, i, card)...)
 		}
 		errs = append(errs, validateEntityDashboard(cfg, meta, prefix, d)...)
+		errs = append(errs, validateDashboardValidation(prefix, d.Config)...)
 	}
 
 	return errs

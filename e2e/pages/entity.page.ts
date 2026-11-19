@@ -108,6 +108,11 @@ export class EntityPage extends BasePage {
     await expect(this.page.locator('main').getByText(matcher).first()).toBeVisible();
   }
 
+  /** A url-widget property on the detail page; `href` null means plain text. */
+  async expectUrlProperty(text: string, href: string | null) {
+    await this.expectUrlValue(this.page.locator("main"), text, href);
+  }
+
   /** Click the Edit action on the entity view to navigate to the edit form. */
   async clickEdit() {
     await expect(this.editButton).toBeVisible();
@@ -168,6 +173,23 @@ export class EntityPage extends BasePage {
     return this.page
       .locator('.view-section', { has: this.page.getByRole('heading', { name: heading }) })
       .first();
+  }
+
+  /** A detail-page section heading, matched exactly. */
+  private sectionHeading(heading: string) {
+    return this.page.locator('.view-section').getByRole('heading', { name: heading, exact: true });
+  }
+
+  /** Assert the page shows a section with this heading. */
+  async expectSectionShown(heading: string) {
+    await expect(this.sectionHeading(heading)).toBeVisible();
+  }
+
+  /** Assert the page has no section with this heading. Waits for the view
+   *  to render a section first, so an unloaded page cannot pass. */
+  async expectSectionAbsent(heading: string) {
+    await expect(this.page.locator('.view-section').first()).toBeVisible();
+    await expect(this.sectionHeading(heading)).toHaveCount(0);
   }
 
   /** Assert the enum badges in a display section read exactly `texts`, in

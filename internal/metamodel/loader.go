@@ -1315,19 +1315,25 @@ func validatePropertyDef(
 }
 
 // validatePropertyDisplay checks the `display:` format of a property
-// (TKT-SVLQQ6). Currency needs a single-valued integer or decimal property,
-// and a code shaped like ISO 4217. It checks the shape,
-// not a list of codes: the browser formats every well-formed code (an
+// (TKT-SVLQQ6). Exactly one format applies. Currency needs a single-valued
+// integer or decimal property, and a code shaped like ISO 4217. It checks the
+// shape, not a list of codes: the browser formats every well-formed code (an
 // unknown one shows as the code itself), so a list would only reject codes
-// it does not know yet.
+// it does not know yet. Link needs a single-valued string property without
+// a value set (TKT-0101IO4).
 func validatePropertyDisplay(schemaName, propName string, propDef PropertyDef) []string {
 	d := propDef.Display
 	if d == nil {
 		return nil
 	}
 	at := fmt.Sprintf("%s: property %q: display", schemaName, propName)
-	if d.Currency == "" {
-		return []string{at + " names no format; use currency"}
+	switch {
+	case d.Currency == "" && !d.Link:
+		return []string{at + " names no format; use currency or link"}
+	case d.Currency != "" && d.Link:
+		return []string{at + " names two formats; use currency or link, not both"}
+	case d.Link:
+		return validateLinkDisplay(at, propDef)
 	}
 	var errs []string
 	if !isCurrencyCode(d.Currency) {
@@ -1340,6 +1346,20 @@ func validatePropertyDisplay(schemaName, propName string, propDef PropertyDef) [
 		errs = append(errs, at+": currency is not supported on a list property")
 	}
 	return errs
+}
+
+// validateLinkDisplay checks `display: {link: true}`. A list or a value set
+// renders as tags or a select, so a link format there would never apply.
+func validateLinkDisplay(at string, propDef PropertyDef) []string {
+	switch {
+	case propDef.Type != PropertyTypeString:
+		return []string{fmt.Sprintf("%s: link needs a string property, not %q", at, propDef.Type)}
+	case propDef.List:
+		return []string{at + ": link is not supported on a list property"}
+	case len(propDef.Values) > 0:
+		return []string{at + ": link is not supported on a property with values"}
+	}
+	return nil
 }
 
 func isCurrencyCode(s string) bool {

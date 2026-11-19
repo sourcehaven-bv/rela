@@ -248,4 +248,19 @@ export class BasePage {
   async dismissDialog() {
     this.page.once("dialog", (dialog) => dialog.dismiss());
   }
+
+  /** A url-widget value inside `scope` (TKT-0101IO4): a link to `href` that
+   *  opens in a new tab without an opener, or, when `href` is null, the text
+   *  alone with no link. */
+  protected async expectUrlValue(scope: Locator, text: string, href: string | null) {
+    const link = scope.locator("a", { hasText: text });
+    if (href === null) {
+      await expect(scope.getByText(text, { exact: true }).first()).toBeVisible();
+      await expect(link).toHaveCount(0);
+      return;
+    }
+    await expect(link).toHaveAttribute("href", href);
+    await expect(link).toHaveAttribute("target", "_blank");
+    await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  }
 }
