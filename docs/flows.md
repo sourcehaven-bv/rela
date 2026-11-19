@@ -469,7 +469,9 @@ A run is recorded as an entity of the type `_flow-run`, with id prefix
 cannot declare it. A run holds the flow's name, its version, its status
 (`working`, `input_required`, `completed`, `cancelled` or `failed`), its
 active state, its start, completion and deadline times and, for a run
-started on create, its depth (see [Starting on create](#starting-on-create)). Two relations
+started on create, its depth (see [Starting on create](#starting-on-create)). When the run
+ends, its body holds the run's timeline: each state it entered, when, and
+the user who moved it or cancelled it. Two relations
 link it to the graph: `_carries` points at the subject, and `_produced`
 points at each entity a step created.
 
@@ -552,7 +554,8 @@ edge as `system:flow`, and then enters the initial state:
    subject, every `{{subject.*}}` placeholder is empty.
 2. It takes the first `done` branch that applies, and enters that state.
 3. In a final state the run ends: the `_flow-run` entity records the
-   status and completion time, and the run's working state is dropped.
+   status, the completion time and the timeline, and the run's working
+   state is dropped.
 
 A failed step leaves the run in its state with the rest of the step
 pending: outputs not yet written, a `done` branch not yet taken, or the
