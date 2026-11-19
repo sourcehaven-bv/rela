@@ -82,6 +82,7 @@
       "done": "Stap afgerond.",
       "finished": "Stap afgerond. De run is klaar.",
       "problem": {
+        "blocked": "De run blijft bij deze stap: nog geen voorwaarde van de volgende stap is vervuld. Uw invoer blijft bewaard.",
         "guard": "Uw waarden zijn opgeslagen, maar een voorwaarde van de volgende stap kon niet worden gecontroleerd. De run blijft staan.",
         "moved": "Uw waarden zijn opgeslagen, maar de run was al verder gegaan.",
         "settling": "Uw waarden zijn opgeslagen en de run is verder gegaan, maar een latere stap mislukte. Die wordt opnieuw geprobeerd."

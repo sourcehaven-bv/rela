@@ -219,11 +219,12 @@ export interface FlowCompleted {
   /** The run ended. */
   finished: boolean
   /**
-   * Set when the values were saved but the run did not follow cleanly:
-   * a guard could not be evaluated, the run moved on meanwhile, or an
-   * output step failed after the move and is retried.
+   * Set when the step was taken but the run did not follow cleanly:
+   * a guard could not be evaluated, the run moved on meanwhile, an
+   * output step failed after the move and is retried, or (`blocked`) no
+   * condition of the next step holds, so the run stays.
    */
-  problem?: 'guard' | 'moved' | 'settling'
+  problem?: 'guard' | 'moved' | 'settling' | 'blocked'
 }
 
 export interface FlowRunQuery {

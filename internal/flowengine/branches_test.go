@@ -404,3 +404,21 @@ func TestFork_ChangeRetriesAfterASiblingWrite(t *testing.T) {
 	require.True(t, after.Branches[0].Arrived)
 	require.NotNil(t, after.Branches[1].Claim, "bob's claim on legal stands")
 }
+
+// TestFork_ChangeReportsBlockedBranch pins BUG-HZE3QK3 on a branch: when
+// the one change branch open to the caller has a guard that
+// does not hold, the answer says Blocked and the branch stays.
+func TestFork_ChangeReportsBlockedBranch(t *testing.T) {
+	// The fallback branch takes a role the caller does not hold.
+	h := newHarness(t, strings.Replace(forkFlow, "{ to: rejected, roles: [manager] }", "{ to: rejected, roles: [hr] }", 1))
+	h.f.addPerson("PER-1", map[string]any{"name": "Ada", "documents": false})
+	ctx := context.Background()
+	id, err := h.eng.Start(ctx, "hire", entity.Ref{ID: "PER-1"})
+	require.NoError(t, err)
+	run, err := h.eng.Run(ctx, id)
+	require.NoError(t, err)
+
+	got, err := h.eng.Change(ctx, id, genOf(t, run, "legal"), "bob", holdsRoles("manager"))
+	require.NoError(t, err)
+	require.Equal(t, Changed{State: "legal", Blocked: true}, got)
+}

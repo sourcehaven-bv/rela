@@ -222,11 +222,14 @@ type Completed struct {
 	State string `json:"state"`
 	// Finished reports that the run ended.
 	Finished bool `json:"finished"`
-	// Problem is set when the properties were written but the run did not
-	// follow cleanly: "guard" (a branch guard could not be evaluated, so
+	// Problem is set when the step was taken but the run did not follow
+	// cleanly: "guard" (a branch guard could not be evaluated, so
 	// the run stays), "moved" (the run moved on meanwhile, for example by
-	// a timer) or "settling" (an output step failed after the move; it is
-	// retried with backoff). Empty means the step went through.
+	// a timer), "settling" (an output step failed after the move; it is
+	// retried with backoff) or "blocked" (no change branch the caller
+	// may take has a guard that holds, so the run stays and waits for
+	// the step again; any properties given were written). Empty means the step went
+	// through.
 	Problem string `json:"problem,omitempty"`
 }
 
@@ -235,6 +238,7 @@ const (
 	ProblemGuard    = "guard"
 	ProblemMoved    = "moved"
 	ProblemSettling = "settling"
+	ProblemBlocked  = "blocked"
 )
 
 // The kinds of error a flow call answers, for a transport to map onto its

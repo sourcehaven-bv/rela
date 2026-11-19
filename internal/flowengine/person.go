@@ -114,6 +114,12 @@ type Changed struct {
 	State string
 	// Finished reports that the run ended.
 	Finished bool
+	// Blocked reports that the state has change branches the caller may
+	// take, but none of their guards holds: the run stays. A caller who
+	// may take no branch gets Blocked false; through FlowControl that
+	// cannot happen, since the flow check makes every waiting_for role
+	// admit some change branch.
+	Blocked bool
 }
 
 // Change fires the `change` event on run id at generation gen, caused by
@@ -172,8 +178,13 @@ func (e *Engine) change(ctx context.Context, id flow.RunID, gen int64, by string
 	}
 	ctx = audit.WithFlowStep(ctx, audit.FlowStep{Flow: f.Name(), Run: string(id), Step: cur.State, By: by})
 	var subj *entity.Entity
+	admitted := false
 	d := flow.Decide(cur.State, f.Branches(cur.State, flowcfg.EventChange), flow.Rules[flowcfg.Branch]{
-		Admits: func(b flowcfg.Branch) bool { return len(b.Roles) == 0 || slices.ContainsFunc(b.Roles, holds) },
+		Admits: func(b flowcfg.Branch) bool {
+			ok := len(b.Roles) == 0 || slices.ContainsFunc(b.Roles, holds)
+			admitted = admitted || ok
+			return ok
+		},
 		Holds: func(b flowcfg.Branch) (bool, error) {
 			if b.When == nil {
 				return true, nil
@@ -196,7 +207,7 @@ func (e *Engine) change(ctx context.Context, id flow.RunID, gen int64, by string
 		return Changed{State: cur.State}, ErrGuard
 	default:
 		e.release(ctx, run, tok)
-		return Changed{State: cur.State}, nil
+		return Changed{State: cur.State, Blocked: d.Outcome == flow.NoMove && admitted}, nil
 	}
 	moved, err := e.take(ctx, f, run, tok, cur, d.Branch.Targets(), flowrun.Step{Via: flowrun.ViaChange, By: by},
 		e.now())

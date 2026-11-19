@@ -82,6 +82,7 @@
       "done": "Step completed.",
       "finished": "Step completed. The run has finished.",
       "problem": {
+        "blocked": "The run stays at this step: no condition of the next step holds yet. Your entries are kept.",
         "guard": "Your values were saved, but a condition of the next step could not be checked. The run stays where it is.",
         "moved": "Your values were saved, but the run had already moved on.",
         "settling": "Your values were saved and the run moved on, but a later step failed. It will be retried."

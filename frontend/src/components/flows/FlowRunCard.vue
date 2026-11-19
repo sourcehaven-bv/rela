@@ -137,10 +137,12 @@ const problemKeys: Record<NonNullable<FlowCompleted['problem']>, string> = {
   guard: 'flows.step.problem.guard',
   moved: 'flows.step.problem.moved',
   settling: 'flows.step.problem.settling',
+  blocked: 'flows.step.problem.blocked',
 }
 
 async function onCompleted(result: FlowCompleted) {
-  if (result.problem) ui.info(t(problemKeys[result.problem]))
+  if (result.problem === 'blocked') ui.warning(t(problemKeys.blocked))
+  else if (result.problem) ui.info(t(problemKeys[result.problem]))
   else ui.success(result.finished ? t('flows.step.finished') : t('flows.step.done'))
   await reload()
   emit('changed')
