@@ -175,6 +175,23 @@ export class EntityPage extends BasePage {
       .first();
   }
 
+  /** A detail-page section heading, matched exactly. */
+  private sectionHeading(heading: string) {
+    return this.page.locator('.view-section').getByRole('heading', { name: heading, exact: true });
+  }
+
+  /** Assert the page shows a section with this heading. */
+  async expectSectionShown(heading: string) {
+    await expect(this.sectionHeading(heading)).toBeVisible();
+  }
+
+  /** Assert the page has no section with this heading. Waits for the view
+   *  to render a section first, so an unloaded page cannot pass. */
+  async expectSectionAbsent(heading: string) {
+    await expect(this.page.locator('.view-section').first()).toBeVisible();
+    await expect(this.sectionHeading(heading)).toHaveCount(0);
+  }
+
   /** Assert the enum badges in a display section read exactly `texts`, in
    *  order. Badge text is the schema label when one is configured, else the
    *  raw value. */

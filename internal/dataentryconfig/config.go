@@ -2331,21 +2331,9 @@ type ViewSection struct {
 	EmptyMessage string             `yaml:"empty_message,omitempty" json:"empty_message,omitempty"`
 	Link         string             `yaml:"link,omitempty" json:"link,omitempty"`
 
-	// HideEmpty leaves the whole section, heading included, out of the view
-	// when its source collection is empty (TKT-JT101B). False keeps the default: an empty
-	// section renders its EmptyMessage (or "No items").
-	//
-	// Validation refuses it in three places where hiding would be wrong
-	// rather than merely unusual (see validateSectionHideEmpty):
-	//   - with EmptyMessage, which only ever shows on an empty section;
-	//   - with Create, whose button would vanish exactly when the section is
-	//     empty, which is when it is most needed;
-	//   - on a section whose source is the entry, which is never "empty",
-	//     or that has no source.
-	//
-	// A side-panel section refuses it too: that path never omits sections,
-	// and its Add and Link buttons would disappear with an empty section.
-	HideEmpty bool `yaml:"hide_empty,omitempty" json:"hide_empty,omitempty"`
+	// SectionVisibility holds the keys that leave the section out of the page
+	// for some readers: hide_empty and permission.
+	SectionVisibility `yaml:",inline"`
 
 	// Children names a SECOND collection to nest under each row of Source,
 	// making this section two levels deep. Required by `display: nested` and
@@ -2435,6 +2423,43 @@ type ViewSection struct {
 	Sort       []SortSpec `yaml:"sort,omitempty" json:"sort,omitempty"`
 	ParentSort []SortSpec `yaml:"parent_sort,omitempty" json:"parent_sort,omitempty"`
 	ChildSort  []SortSpec `yaml:"child_sort,omitempty" json:"child_sort,omitempty"`
+}
+
+// SectionVisibility is the part of a [ViewSection] that decides whether the
+// entity page shows the section at all. It is embedded inline, so its keys
+// sit directly on the section in YAML and JSON.
+type SectionVisibility struct {
+	// HideEmpty leaves the whole section, heading included, out of the view
+	// when its source collection is empty (TKT-JT101B). False keeps the default: an empty
+	// section renders its EmptyMessage (or "No items").
+	//
+	// Validation refuses it in three places where hiding would be wrong
+	// rather than merely unusual (see validateSectionHideEmpty):
+	//   - with EmptyMessage, which only ever shows on an empty section;
+	//   - with Create, whose button would vanish exactly when the section is
+	//     empty, which is when it is most needed;
+	//   - on a section whose source is the entry, which is never "empty",
+	//     or that has no source.
+	//
+	// A side-panel section refuses it too: that path never omits sections,
+	// and its Add and Link buttons would disappear with an empty section.
+	HideEmpty bool `yaml:"hide_empty,omitempty" json:"hide_empty,omitempty"`
+
+	// Permission optionally leaves the section, heading included, out of the
+	// entity page for principals who do not hold the named global ACL
+	// permission. Empty means the section is always shown.
+	//
+	// This is a UX filter, not an access control, exactly as on
+	// [NavigationEntry.Permission] and [DashboardCard.Permission]. The
+	// section's rows are row-gated and its field values are redacted by
+	// `visible:` whether it shows or not, and `/api/v1/_config` still serves
+	// the section to everyone ("The configuration is not a secret; the data
+	// is" in the root CLAUDE.md). Hiding it only removes a section the reader
+	// has no use for.
+	//
+	// A side-panel section refuses it, as it refuses HideEmpty: that path never
+	// omits sections.
+	Permission string `yaml:"permission,omitempty" json:"permission,omitempty"`
 }
 
 // SectionTotal is one line of a section's [ViewSection.Totals].

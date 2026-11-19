@@ -3034,6 +3034,7 @@ sections:
 | `group_by`      | string | Property to group entities by                           |
 | `empty_message` | string | Text shown when the collection is empty                 |
 | `hide_empty`    | bool   | Leave the section out when the collection is empty (see below) |
+| `permission`    | string | Show the section only to holders of this permission (see below) |
 | `link`          | string | `detail` links entity titles to their detail pages      |
 | `create`        | map    | Offer a "create related entity" button (see below)      |
 | `totals`        | list   | Entry properties shown under the table (`table` mode; see Editable table cells) |
@@ -3259,6 +3260,39 @@ one.
 - **Without `source:`.** The section has no collection to check.
 - **In a form's `side_panel`.** The side panel does not support it. Its
   sections carry Add and Link buttons, which would disappear with the section.
+
+### Sections the reader cannot use
+
+Set `permission:` to show a section only to principals who hold that global
+permission from `acl.yaml`. Other principals get the page without it, heading
+included:
+
+```yaml
+sections:
+  - heading: Bookkeeping
+    source: entry
+    display: properties
+    permission: staff.manage
+    fields:
+      - property: eb_relation_id
+      - property: org_id
+```
+
+This is a display filter, the same as `permission:` on a navigation entry or a
+dashboard card. It does not protect any data. Every principal can still read
+the section's configuration from `/api/v1/_config`, and can read the fields
+through the entity API if `acl.yaml` lets them. To hide field values, give the
+reader's role a `visible:` block in `acl.yaml`. Without an `acl.yaml`, or under
+`--read-only`, every section shows.
+
+The server also leaves out a `display: properties` section on `source: entry`
+when every field in it is a property that `visible:` hides from the reader.
+Such a section would show only a heading and empty labels. A section with at
+least one field the reader may see stays, and so does a section with a
+`relation:` field. No configuration is needed for this.
+
+A form's `side_panel` refuses `permission:` on a section, as it refuses
+`hide_empty`.
 
 ### Field Render Modes
 
