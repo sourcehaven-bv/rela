@@ -312,7 +312,10 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
 </template>
 
 <style scoped>
+/* `?run=` scrolls the card to the top of the pane; on a phone the entity
+   page's sticky top bar would cover it, so stop below the bar. */
 .flow-run-card {
+  scroll-margin-top: var(--rl-inline-edit-sticky-top, 0px);
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
