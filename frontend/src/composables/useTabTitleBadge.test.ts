@@ -1,8 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, type VueWrapper } from '@vue/test-utils'
 import { defineComponent, nextTick, ref } from 'vue'
 import type { InboxSummary } from '@/types/channels'
-import { badgedTitle, titleCount, useTabTitleBadge } from './useTabTitleBadge'
+import { titleCount, useTabTitleBadge } from './useTabTitleBadge'
+import { useDocumentTitle } from './useDocumentTitle'
 
 const summary = (mentions: number, waiting: number): InboxSummary => ({
   mentions,
@@ -12,7 +13,10 @@ const summary = (mentions: number, waiting: number): InboxSummary => ({
   degraded: false,
 })
 
+const mounted: VueWrapper[] = []
+
 afterEach(() => {
+  mounted.splice(0).forEach((w) => w.unmount())
   document.title = ''
 })
 
@@ -20,13 +24,19 @@ describe('useTabTitleBadge', () => {
   it('counts mentions and waiting entries, not unread channels', () => {
     expect(titleCount(undefined)).toBe(0)
     expect(titleCount(summary(2, 1))).toBe(3)
-    expect(badgedTitle('rela', 0)).toBe('rela')
-    expect(badgedTitle('rela', 3)).toBe('(3) rela')
   })
 
-  it('follows the summary and restores the title on unmount', async () => {
-    document.title = 'rela'
+  it('follows the summary and clears the count on unmount', async () => {
     const s = ref<InboxSummary | undefined>(summary(1, 0))
+    const shell = mount(
+      defineComponent({
+        setup() {
+          useDocumentTitle('Portal')
+          return () => null
+        },
+      })
+    )
+    mounted.push(shell)
     const w = mount(
       defineComponent({
         setup() {
@@ -35,17 +45,19 @@ describe('useTabTitleBadge', () => {
         },
       })
     )
-    expect(document.title).toBe('(1) rela')
+    await nextTick()
+    expect(document.title).toBe('(1) Portal')
     s.value = summary(0, 0)
     await nextTick()
-    expect(document.title).toBe('rela')
+    expect(document.title).toBe('Portal')
     s.value = undefined
     await nextTick()
-    expect(document.title).toBe('rela')
+    expect(document.title).toBe('Portal')
     s.value = summary(4, 2)
     await nextTick()
-    expect(document.title).toBe('(6) rela')
+    expect(document.title).toBe('(6) Portal')
     w.unmount()
-    expect(document.title).toBe('rela')
+    await nextTick()
+    expect(document.title).toBe('Portal')
   })
 })

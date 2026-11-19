@@ -6,6 +6,8 @@ import EntityDetail from './EntityDetail.vue'
 import EntityActionsMenu from './EntityActionsMenu.vue'
 import type { EntityAction } from './entityActions'
 import { useSchemaStore } from '@/stores/schema'
+import { defineComponent } from 'vue'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import type { Entity } from '@/types'
 import type { ViewResponse } from '@/api'
 
@@ -130,5 +132,39 @@ describe('EntityDetail header actions', () => {
     expect(ids).toContain('delete')
     expect(ids).toContain('convert:topic-naar-opdracht')
     expect(ids).not.toContain('edit')
+  })
+
+  // Only the entity route names the tab; a panel or preview must not.
+  describe('tab title', () => {
+    function shell() {
+      return mount(
+        defineComponent({
+          setup() {
+            useDocumentTitle('Portal')
+            return () => null
+          },
+        })
+      )
+    }
+
+    it('names the tab after the entity with names-tab', async () => {
+      const s = shell()
+      const w = mount(EntityDetail, {
+        props: { entityType: 'topic', entityId: 'TOPIC-1', namesTab: true },
+        global: { plugins: [pinia, PiniaColada] },
+      })
+      await flushPromises()
+      expect(document.title).toBe('Een topic · Portal')
+      w.unmount()
+      s.unmount()
+    })
+
+    it('leaves the tab alone without names-tab', async () => {
+      const s = shell()
+      const w = await mountDetail()
+      expect(document.title).toBe('Portal')
+      w.unmount()
+      s.unmount()
+    })
   })
 })

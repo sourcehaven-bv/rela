@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, shallowRef, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { usePageTitle } from '@/composables/useDocumentTitle'
 import {
   RouterLink,
   useRouter,
@@ -426,6 +427,7 @@ const title = computed(() => {
   const label = entityType.value?.label || formConfig.value.entity
   return isEdit.value ? t('form.editOfType', { type: label }) : t('form.newOfType', { type: label })
 })
+if (!props.embedded) usePageTitle(title)
 
 const allFields = computed((): FormFieldOrRelation[] => {
   if (!formConfig.value) return []

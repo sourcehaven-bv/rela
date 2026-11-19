@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
-import { useUIStore } from '@/stores'
+import { useSchemaStore, useUIStore } from '@/stores'
+import { usePageTitle } from '@/composables/useDocumentTitle'
 import { dispatchBridgeRequest, type BridgeRequest } from '@/bridge/relaBridge'
 
 const HANDSHAKE_TYPE = 'rela:port'
@@ -18,7 +19,14 @@ const iframeRef = ref<HTMLIFrameElement | null>(null)
 // :key on the iframe (the app id) gives each app a fresh element, so switching
 // apps tears down cleanly with no stale `load` events.
 const appId = computed(() => (typeof route.params.id === 'string' ? route.params.id : ''))
-const appSrc = computed(() => (appId.value ? `/api/v1/_apps/${encodeURIComponent(appId.value)}/` : ''))
+const schemaStore = useSchemaStore()
+usePageTitle(() => {
+  const app = schemaStore.apps.get(appId.value)
+  return app?.title || app?.label || appId.value
+})
+const appSrc = computed(() =>
+  appId.value ? `/api/v1/_apps/${encodeURIComponent(appId.value)}/` : ''
+)
 
 // The host owns one MessageChannel per loaded app. port1 stays here and runs
 // the dispatcher; port2 is handed to the iframe. handshakeDone gates the
@@ -88,7 +96,7 @@ watch(
   () => uiStore.isDark,
   (dark) => {
     appWindow?.postMessage({ type: THEME_TYPE, dark }, '*')
-  },
+  }
 )
 
 window.addEventListener('message', onHostMessage)

@@ -389,6 +389,13 @@ app:
 | `description` | Subtitle shown below the title   |
 | `default_world` | Deprecated alias for the schema's `default_world:`; must name the same world. See [Worlds in the web app and API](#worlds-in-the-web-app-and-api) |
 
+The browser tab title reads `<page> · <name>`, for example
+`Orders · Support Tickets`. The page part is the title the page shows: the
+list, board, dashboard, document, form or custom app title, the entity title
+on an entity page, or the name of a built-in screen such as Search. A page
+without a title shows `name` alone. When the inbox has mentions or entries
+waiting on you, their count comes first: `(3) Orders · Support Tickets`.
+
 ### Interface language
 
 The web app's menus, buttons and messages are available in English and Dutch.

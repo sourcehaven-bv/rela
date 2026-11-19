@@ -2,6 +2,7 @@
 import { intlLocale } from '@/i18n/locale'
 import { useI18n } from 'vue-i18n'
 import { ref, computed, onMounted } from 'vue'
+import { usePageTitle } from '@/composables/useDocumentTitle'
 import { RouterLink, useRoute } from 'vue-router'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
@@ -24,6 +25,7 @@ import {
 import { useVersionSelectionSync, type Side } from '@/composables/useVersionSelectionSync'
 
 const { t } = useI18n()
+usePageTitle(() => t('history.relationTitle'))
 const route = useRoute()
 const uiStore = useUIStore()
 

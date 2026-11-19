@@ -18,6 +18,7 @@ import { intlLocale } from '@/i18n/locale'
  * are table-tested rather than asserted through a mounted grid.
  */
 import { computed, ref, watch } from 'vue'
+import { usePageTitle } from '@/composables/useDocumentTitle'
 import { useRouter } from 'vue-router'
 import { useMutation, useQueryCache } from '@pinia/colada'
 import { listAllEntities, updateEntity, getErrorMessage } from '@/api'
@@ -71,6 +72,7 @@ const { worldParam } = useWorld()
 const queryCache = useQueryCache()
 
 const config = computed(() => schemaStore.getCalendar(props.id) as CalendarConfig | undefined)
+usePageTitle(() => config.value?.title || props.id)
 const timezone = computed(() => uiStore.effectiveTimezone)
 
 // View and anchor are URL state: without it a refresh loses your place and

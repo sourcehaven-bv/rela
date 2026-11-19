@@ -15,6 +15,7 @@
  * All geometry lives in utils/ganttLayout.ts as pure functions.
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { usePageTitle } from '@/composables/useDocumentTitle'
 import { useRoute, useRouter } from 'vue-router'
 import { fromPageQuery } from '@/utils/pageContext'
 import { getGantt, getErrorMessage, type GanttNode, type GanttResponse } from '@/api'
@@ -63,6 +64,7 @@ const { t } = useI18n()
 const queryCache = useQueryCache()
 
 const config = computed(() => schemaStore.getGantt(props.id))
+usePageTitle(() => config.value?.title || props.id)
 
 const data = ref<GanttResponse | null>(null)
 /** The root id `data` was fetched for; null means the full forest. */

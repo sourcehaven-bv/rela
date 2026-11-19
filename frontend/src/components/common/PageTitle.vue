@@ -5,10 +5,14 @@
  * Subtitle is hidden on mobile (<=768px) so the topbar stays compact.
  * Default slot overrides the title prop for non-string composite titles.
  */
-defineProps<{
+import { usePageTitle } from '@/composables/useDocumentTitle'
+
+const props = defineProps<{
   title?: string
   subtitle?: string
 }>()
+
+usePageTitle(() => props.title)
 </script>
 
 <template>

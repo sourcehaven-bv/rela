@@ -20,6 +20,7 @@ import {
 import { useConfirmHost } from '@/composables/useConfirm'
 import { useDetailPanelOutlet } from '@/composables/useDetailPanel'
 import { usePageHeaderOutlet } from '@/composables/usePageHeader'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { usePresentationOutlet } from '@/composables/usePresentation'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { unknownWorldQuery } from '@/composables/useWorld'
@@ -87,6 +88,7 @@ const showHamburger = computed(
 )
 
 const schemaStore = useSchemaStore()
+useDocumentTitle(() => schemaStore.app?.name)
 
 // The library's own strings follow the interface language (TKT-ZL1QAO),
 // and the project default from app.language feeds the resolution.

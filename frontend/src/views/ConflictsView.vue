@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { usePageTitle } from '@/composables/useDocumentTitle'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getConflicts, getConflictDetail, resolveConflict, getErrorMessage, type ConflictItem, type ConflictDetail } from '@/api'
@@ -13,6 +14,7 @@ import RlKbd from 'rela-components/components/data/RlKbd.vue'
 const router = useRouter()
 const gitStore = useGitStore()
 const { t } = useI18n()
+usePageTitle(() => t('conflicts.title'))
 
 // The conflict routes need git:sync. Their refusal is a permission_required
 // problem, not a failure a retry would fix, so it gets its own message and no
