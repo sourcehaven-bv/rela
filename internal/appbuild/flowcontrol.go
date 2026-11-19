@@ -44,7 +44,10 @@ type FlowControl struct {
 		GetAddress(ctx context.Context, addr string) (*entity.Entity, error)
 		ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 		ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+		ResolveHeadersErr(ctx context.Context, refs []entity.Ref) (map[entity.Ref]visibility.ResolvedHeader, error)
 	}
+	// meta names a run's subject by its display title.
+	meta *metamodel.Metamodel
 	// holders reads run headers through the row gate with store predicates.
 	holders *visibility.HolderLookup
 	// raw answers which subjects confer a role on the caller, the store
@@ -80,7 +83,7 @@ func FlowControlFor(s *Services) *FlowControl {
 	}
 	reader, _, holders := scriptReads(s.store, s.aclDeclarative, s.fieldReads, s.worlds)
 	return &FlowControl{
-		eng: s.flowEngine, d: s.aclDeclarative, rows: reader, holders: holders, raw: s.store,
+		eng: s.flowEngine, d: s.aclDeclarative, rows: reader, holders: holders, raw: s.store, meta: s.meta,
 		writer: entitymanager.FieldGated(s.entityManager), now: time.Now,
 	}
 }

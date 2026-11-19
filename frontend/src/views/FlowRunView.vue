@@ -78,7 +78,7 @@ on('entity:changed', (data) => {
     <template v-if="run">
       <p class="flow-run-view__subject">
         <RouterLink v-if="subjectLink" :to="subjectLink" data-testid="flow-run-subject">
-          {{ t('flows.run.openSubject', { subject: run.subject }) }}
+          {{ t('flows.run.openSubject', { subject: run.subject_title || run.subject }) }}
         </RouterLink>
         <span v-else>{{ t('flows.list.hiddenSubject') }}</span>
       </p>

@@ -145,6 +145,8 @@ export interface FlowRun {
   version: string
   /** The subject address; absent when the caller cannot read the subject. */
   subject?: string
+  /** The subject's display title; absent when the caller cannot read the subject. */
+  subject_title?: string
   state: string
   state_label: string
   status: FlowRunStatus | string
@@ -173,6 +175,8 @@ export interface FlowTask {
   state: string
   state_label: string
   subject: string
+  /** The subject's display title, as in {@link FlowRun.subject_title}. */
+  subject_title?: string
   started?: string
   /** The parallel branch whose step waits. */
   branch?: string

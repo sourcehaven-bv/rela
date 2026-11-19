@@ -30,14 +30,18 @@ type Flow struct {
 
 // Run is one run as the caller may see it.
 type Run struct {
-	ID         string `json:"id"`
-	Flow       string `json:"flow"`
-	FlowLabel  string `json:"flow_label"`
-	Version    string `json:"version"`
-	Subject    string `json:"subject,omitempty"`
-	State      string `json:"state"`
-	StateLabel string `json:"state_label"`
-	Status     string `json:"status"`
+	ID        string `json:"id"`
+	Flow      string `json:"flow"`
+	FlowLabel string `json:"flow_label"`
+	Version   string `json:"version"`
+	Subject   string `json:"subject,omitempty"`
+	// SubjectTitle is the subject's display title as the caller reads it;
+	// the address when a property the title is made of is hidden from the
+	// caller; empty when the caller cannot read the subject.
+	SubjectTitle string `json:"subject_title,omitempty"`
+	State        string `json:"state"`
+	StateLabel   string `json:"state_label"`
+	Status       string `json:"status"`
 	// Generation counts the run's moves; a step names the one it saw. It
 	// is 0 while the run is in parallel branches: each branch has its own.
 	Generation int64     `json:"generation"`
@@ -165,13 +169,15 @@ type Actions struct {
 
 // Task is a run that waits for a role the caller holds on its subject.
 type Task struct {
-	Run        string    `json:"run"`
-	Flow       string    `json:"flow"`
-	FlowLabel  string    `json:"flow_label"`
-	State      string    `json:"state"`
-	StateLabel string    `json:"state_label"`
-	Subject    string    `json:"subject"`
-	Started    time.Time `json:"started,omitzero"`
+	Run        string `json:"run"`
+	Flow       string `json:"flow"`
+	FlowLabel  string `json:"flow_label"`
+	State      string `json:"state"`
+	StateLabel string `json:"state_label"`
+	Subject    string `json:"subject"`
+	// SubjectTitle is as in [Run.SubjectTitle].
+	SubjectTitle string    `json:"subject_title,omitempty"`
+	Started      time.Time `json:"started,omitzero"`
 	// Branch names the parallel branch whose step it is; empty for the
 	// run's own step.
 	Branch string `json:"branch,omitempty"`

@@ -104,7 +104,7 @@ function subjectLink(flow: string, subject: string): string {
             data-testid="flow-task-row"
           >
             <td>
-              <RouterLink :to="space.href(runHref(task.run))">
+              <RouterLink class="flow-list__link" :to="space.href(runHref(task.run))">
                 {{ task.flow_label || task.flow }}
               </RouterLink>
             </td>
@@ -121,11 +121,15 @@ function subjectLink(flow: string, subject: string): string {
             <td>
               <RouterLink
                 v-if="subjectLink(task.flow, task.subject)"
+                class="flow-list__link"
                 :to="subjectLink(task.flow, task.subject)"
+                data-testid="flow-task-subject"
               >
-                {{ task.subject }}
+                {{ task.subject_title || task.subject }}
               </RouterLink>
-              <span v-else>{{ task.subject }}</span>
+              <span v-else data-testid="flow-task-subject">{{
+                task.subject_title || task.subject
+              }}</span>
             </td>
             <td>{{ formatInstant(task.started) }}</td>
           </tr>
