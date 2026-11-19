@@ -50,6 +50,9 @@ func (h *viewsHandler) handleV1Dashboard(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if cfg == nil {
+		// No `dashboard:` configured: the validation card shows, as it
+		// always has.
+		resp.Validation = true
 		writeV1JSON(w, http.StatusOK, resp)
 		return
 	}
@@ -67,6 +70,12 @@ func (h *viewsHandler) handleV1Dashboard(w http.ResponseWriter, r *http.Request)
 	resp.Title = cfg.Title
 	resp.Description = cfg.Description
 	resp.Cards = cards
+	// The card covers the whole project, so an entity dashboard never shows
+	// it. Like the card filter above, this is a UX affordance.
+	ctx := r.Context()
+	resp.Validation = !cfg.IsEntityDashboard() && cfg.Validation.Shown(func(perm string) bool {
+		return permitsGatedUIElement(ctx, aclImpl, perm)
+	})
 
 	writeV1JSON(w, http.StatusOK, resp)
 }

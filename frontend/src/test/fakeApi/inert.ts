@@ -19,7 +19,12 @@ interface InertRoute {
 }
 
 export const INERT_ROUTES: readonly InertRoute[] = [
-  { method: 'GET', path: /^\/_dashboard$/, example: '/_dashboard', data: { cards: [] } },
+  {
+    method: 'GET',
+    path: /^\/_dashboard$/,
+    example: '/_dashboard',
+    data: { cards: [], validation: true },
+  },
   { method: 'GET', path: /^\/_transforms$/, example: '/_transforms', data: [] },
   {
     method: 'GET',

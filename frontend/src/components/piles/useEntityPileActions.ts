@@ -14,8 +14,16 @@ import { t } from '@/i18n'
  * `address` is the page's served address (`ID@face`), never the route id: a
  * pile holds the face on screen. `onRemoved` runs after the row left the
  * pile being stepped through, so the page can move on to a neighbour.
+ *
+ * `addOffered` is false when `header_buttons.add_to_pile` hides "Add to pile"
+ * from this principal (TKT-31822PN). The add entries are then left out;
+ * "Remove from pile" while stepping through a pile stays.
  */
-export function useEntityPileActions(address: () => string | null, onRemoved: () => void) {
+export function useEntityPileActions(
+  address: () => string | null,
+  onRemoved: () => void,
+  addOffered: () => boolean = () => true
+) {
   const route = useRoute()
   const piles = usePiles()
   const newPileOpen = ref(false)
@@ -39,20 +47,25 @@ export function useEntityPileActions(address: () => string | null, onRemoved: ()
   const actions = computed<EntityAction[]>(() => {
     const addr = address()
     if (!piles.available.value || addr === null) return []
-    const out: EntityAction[] = piles.collected.value.map((p) => ({
-      id: `pile:${p.id}`,
-      label: t('piles.addTo', { name: p.name }),
-      group: 'manage',
-      icon: pileIcon(p.icon),
-      run: () => void piles.addItems(p, [addr]),
-    }))
-    out.push({
-      id: 'pile:new',
-      label: t('piles.addToNew'),
-      group: 'manage',
-      icon: 'plus',
-      run: () => (newPileOpen.value = true),
-    })
+    const out: EntityAction[] = []
+    if (addOffered()) {
+      for (const p of piles.collected.value) {
+        out.push({
+          id: `pile:${p.id}`,
+          label: t('piles.addTo', { name: p.name }),
+          group: 'manage',
+          icon: pileIcon(p.icon),
+          run: () => void piles.addItems(p, [addr]),
+        })
+      }
+      out.push({
+        id: 'pile:new',
+        label: t('piles.addToNew'),
+        group: 'manage',
+        icon: 'plus',
+        run: () => (newPileOpen.value = true),
+      })
+    }
     if (scopePileId.value) {
       out.push({
         id: 'pile:remove',

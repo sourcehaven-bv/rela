@@ -100,10 +100,10 @@ func (d Direction) IsIncoming() bool {
 // accretion. Splitting it would churn the YAML shape for no design gain —
 // a breaking change to every project's config file, made to satisfy a lint.
 // A genuinely new top-level key therefore raises the pin by one; `account`
-// (TKT-MJTD12), `pages` (TKT-ITQ0HL), `piles` (TKT-K3RJLH) and `channels`
-// (TKT-91BK6F) are the most recent.
+// (TKT-MJTD12), `pages` (TKT-ITQ0HL), `piles` (TKT-K3RJLH), `channels`
+// (TKT-91BK6F) and `header_buttons` (TKT-31822PN) are the most recent.
 //
-//plimsoll:max-fields=30
+//plimsoll:max-fields=31
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -163,6 +163,10 @@ type Config struct {
 	// Piles configures what a pile panel offers. Nil: accepted, means piles
 	// offer no actions and every registered transform. See [PilesConfig].
 	Piles *PilesConfig `yaml:"piles,omitempty" json:"piles,omitempty"`
+
+	// HeaderButtons hides built-in buttons of the entity page header. Its
+	// zero value shows them all. See [HeaderButtonsConfig].
+	HeaderButtons HeaderButtonsConfig `yaml:"header_buttons,omitempty" json:"header_buttons,omitzero"`
 
 	// Channels presents the message types of realtime.yaml, keyed by
 	// channel type. Nil: accepted, means every message type is presented
@@ -2121,6 +2125,11 @@ type DashboardConfig struct {
 	// overriding next_action_surfaces. Nil: accepted, means inherit. See
 	// [Config.NextActionsEnabled].
 	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
+	// Validation shows or hides the validation card, which summarizes the
+	// project-wide analysis (TKT-31822PN). The zero value shows it, as
+	// before the key existed. Not allowed on an entity dashboard, which
+	// never shows the card. See [ChromeToggle].
+	Validation ChromeToggle `yaml:"validation,omitempty" json:"validation,omitzero"`
 }
 
 // DashboardCard defines a single card on the dashboard. Its rows come from a

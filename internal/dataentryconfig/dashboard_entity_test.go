@@ -30,6 +30,16 @@ func TestValidateEntityDashboards(t *testing.T) {
 		{"direction inferred", func(c *Config) {
 			c.Dashboards["cat"].Cards[0].Scope.Direction = ""
 		}, ""},
+		{"validation shown on an entity dashboard", func(c *Config) {
+			d := c.Dashboards["cat"]
+			d.Validation = ChromeToggle{}
+			c.Dashboards["cat"] = d
+		}, ""},
+		{"validation off on an entity dashboard", func(c *Config) {
+			d := c.Dashboards["cat"]
+			d.Validation = ChromeToggle{Off: true}
+			c.Dashboards["cat"] = d
+		}, "dashboards[cat]: validation has no effect on an entity dashboard"},
 		{"unknown entity type", func(c *Config) {
 			d := c.Dashboards["cat"]
 			d.EntityType = "nope"
