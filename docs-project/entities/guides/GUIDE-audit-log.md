@@ -217,6 +217,7 @@ Every record is one line of JSON:
 | `purge-version` | An operator hard-delete of version history for compliance redaction. Never contains the purged content |
 | `data-migration`, `data-gc` | Schema-driven data migration and garbage collection |
 | `audit-prune`, `audit-import` | Maintenance of the database audit log: `rela audit prune` and `rela audit import`. The summary carries the counts and, for a prune, the last deleted `seq` and the cutoff |
+| `audit-read` | A page of the global audit view (`GET /api/v1/_audit`) was served. The summary carries the cursor, the page size and the number of records served; the records themselves are not copied |
 | `idp-roles-set` | The IdP webhook stored or cleared the asserted roles of one principal, for background jobs (see [ACL security](acl-security.md) "Stored asserted roles"), or the stored roles were erased with the person (delete, rename, `rela acl forget-idp-roles`); an erasure records `roles=0`. Subject is the bound user entity, absent when the subject resolved to none; the summary is `roles=<count>`. The IdP subject and the role names are not recorded |
 
 ### Conversion records
@@ -258,8 +259,11 @@ For relation writes the `subject` carries `relation_type` instead of
 
 ### Subject shape
 
-- **Entity ops:** `{"kind":"entity", "type":..., "id":...}`
-- **Relation ops:** `{"kind":"relation", "relation_type":..., "from_id":..., "to_id":...}`
+- **Entity ops:** `{"kind":"entity", "type":..., "id":..., "face":...}`
+- **Relation ops:** `{"kind":"relation", "relation_type":..., "from_id":..., "from_face":..., "to_id":...}`
+- `face` and `from_face` are present only on a type with faces. A relation's
+  far end has no face, because a relation leads to the entity, not to one of
+  its faces.
 - **Rename and conversion:** `subject` is absent from the JSON; `before` and
   `after` carry the old and new entity identities. A conversion preserves the
   entity's history lineage under its new id.
@@ -499,6 +503,36 @@ find .rela/audit -name '*.jsonl' -mtime +1095 -delete
 
 ## Reading the log
 
+### In the web app
+
+On the database builds (PostgreSQL and SQLite), the data-entry app reads
+the audit log in two places. The filesystem build keeps JSONL files, which
+cannot be paged, so it offers neither.
+
+- **The Changes tab** on an entity page lists the writes to that entity and
+  its relations, newest first (`GET /api/v1/_changes/<type>/<id>`). It is
+  gated like the entity's [version history](acl-security.md#version-history-read-gating-historyread):
+  a live entity needs read access, a deleted one needs `history:read`. On a
+  type with faces the list is per face. The list starts at the entity's
+  latest creation, so a new entity that reuses a deleted entity's id does not
+  show the old one's records. A record that names another entity the reader
+  cannot read now (a relation's far end, a rename's other id) is left out.
+  The record's summary is kept only when it names no entity, and names only
+  the properties the reader sees on every row of the type. Only the kind of
+  `triggered_by` is shown, plus the automation or schedule name.
+- **The global audit view** (`/audit`, `GET /api/v1/_audit`) pages through the
+  whole log, newest first, including deleted entities and `denied-write`
+  records. It needs the `audit:read` permission under an ACL policy; without
+  a policy, and under `--read-only`, it is refused. Records are served whole
+  and ungated, so treat `audit:read` like `history:read`: grant it only to
+  audit and compliance roles. Every page served writes an `audit-read`
+  record.
+
+Both routes page with `?limit=` (1 to 200, default 50) and `?before=`, the
+`next_before` value of the previous page.
+
+### With SQL
+
 On the database builds, query the tables directly. For example, every
 record that names `TKT-001`:
 
@@ -507,6 +541,12 @@ SELECT l.seq, l.doc FROM audit_log l
 JOIN audit_subjects s ON s.seq = l.seq
 WHERE s.entity_id = 'TKT-001' ORDER BY l.seq;
 ```
+
+`audit_subjects` also has `face` (empty when the record names every face)
+and `starts`, which marks the record that created the id or renamed or
+converted an entity into it.
+
+### With jq
 
 On the filesystem build, `jq` is the easiest tool for reading JSONL streams. Common queries:
 

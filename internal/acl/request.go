@@ -3,7 +3,6 @@ package acl
 import (
 	"context"
 	"errors"
-	"slices"
 	"strings"
 	"sync"
 
@@ -31,7 +30,7 @@ type GlobalRoles struct {
 // let it go out of scope when the operation completes. It is safe for
 // concurrent use: it travels by pointer on ctx, so a goroutine spawned
 // within the operation may share it. Its fields are fixed at construction,
-// except for a memo that a mutex guards.
+// except for two memos, each guarded by its own mutex.
 //
 // Its global roles are computed at construction from the [Identity] and
 // the policy; no Request method walks membership. The principal is bound
@@ -54,7 +53,7 @@ type Request struct {
 	// clamps the role, so a list page would otherwise clamp the same role
 	// once per row. Allocated on first use, and guarded by roleVerbMu: a
 	// Request travels by pointer on ctx, so any goroutine that inherits the
-	// ctx can ask. It is the only state a Request mutates after construction.
+	// ctx can ask.
 	roleVerbMu      sync.Mutex
 	roleVerbAnswers map[roleVerbQuestion]bool
 	// unmatchedVerified is set by [Declarative.ForIdentity] when the
@@ -64,6 +63,9 @@ type Request struct {
 	// conds is the role relations' `when:` conditions bound to the
 	// identity's read time, once. See [GrantCondition].
 	conds grantConds
+	// relationRoles memoises the roles the principal holds through a role
+	// relation on some entity.
+	relationRoles heldRelationRoles
 }
 
 // ForIdentity opens a Request scope for a resolved [Identity]. The global
@@ -331,7 +333,7 @@ func isBlankOrUnknown(s string) bool {
 // The membership closure is resolved before the Request exists, and a walk
 // failure there is an error at the edge ([IdentityResolver.ResolveDirect]),
 // so the global roles read here are never partial. The error this method
-// returns comes from the per-subject probes in permitsWorldThroughRelations.
+// returns comes from reading the role relation edges ([heldRelationRoles]).
 func (r *Request) PermitsWorld(ctx context.Context, world string) (bool, error) {
 	if !r.ceiling.permitsWorld(world) {
 		return false, nil
@@ -356,37 +358,21 @@ func (r *Request) PermitsWorld(ctx context.Context, world string) (bool, error) 
 	// see drafts at all" — the world is a convenience filter, not a
 	// per-entity right — and it is what the load-time refusal for an ungated
 	// conferring relation defends against (membershiprefusal.go).
-	return r.permitsWorldThroughRelations(ctx, globals.Members, world)
-}
-
-// permitsWorldThroughRelations reports whether any role conferred by a
-// relation the principal (or a group it belongs to) holds ANYWHERE grants
-// world. The graph lookup errors propagate: a partial answer here would
-// silently deny a principal who holds the grant.
-func (r *Request) permitsWorldThroughRelations(ctx context.Context, members []string, world string) (bool, error) {
-	rels := make([]string, 0, len(r.d.policy.RoleRelations))
-	for rel := range r.d.policy.RoleRelations {
-		rels = append(rels, rel)
-	}
-	slices.Sort(rels)
-	for _, rel := range rels {
-		role, ok := r.roleFor(r.d.policy.RoleRelations[rel].Confers)
-		if !ok || !roleGrantsWorldRead(role, world, r.d.policy.DefaultWorld()) {
-			continue
-		}
-		cond, live := r.conds.edge(rel)
-		if !live {
-			continue
-		}
-		for _, m := range members {
-			targets, err := r.d.graph.OutgoingRelations(ctx, m, rel, cond)
-			if err != nil {
-				return false, err
-			}
-			if len(targets) > 0 {
-				return true, nil
+	grantsWorld := func(attrs []RoleAttribution) bool {
+		for _, a := range attrs {
+			role, ok := r.roleFor(a.Role)
+			if ok && roleGrantsWorldRead(role, world, r.d.policy.DefaultWorld()) {
+				return true
 			}
 		}
+		return false
 	}
-	return false, nil
+	if !grantsWorld(conferrableRoles(r)) {
+		return false, nil // no role relation could open it: skip the read
+	}
+	held, err := r.relationRoles.get(ctx, r)
+	if err != nil {
+		return false, err
+	}
+	return grantsWorld(held), nil
 }

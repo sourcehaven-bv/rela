@@ -21,8 +21,18 @@ import type { DenseHintKind, WidgetRoutingHint } from './types'
 // :propertyName (with the row's entity type) so Badge resolves the enum
 // label and the style deterministically (RR-UD2D). Not propType: that is
 // the type name, which matches no property def, so labels would not resolve.
-export function viewFieldRoutingHint(field: ViewSectionField): WidgetRoutingHint {
+//
+// propertyDef, when the caller has it, only adds the link format: a string
+// with `display: {link: true}` routes to 'url' (TKT-0101IO4). It is checked
+// first because the server sets propType on every schema-declared field.
+export function viewFieldRoutingHint(
+  field: ViewSectionField,
+  propertyDef?: PropertyDef
+): WidgetRoutingHint {
   const propertyName = field.property ?? ''
+  if (propertyDef?.display?.link === true) {
+    return { kind: 'url', propertyName }
+  }
   if (field.propType) {
     return { kind: 'enum-list', propertyName }
   }
@@ -30,6 +40,19 @@ export function viewFieldRoutingHint(field: ViewSectionField): WidgetRoutingHint
     return { kind: 'text-list', propertyName }
   }
   return { kind: 'text', propertyName }
+}
+
+// viewFieldRoutingHintFor is viewFieldRoutingHint for a field of an entity of
+// `entityType`, with the property def looked up through `lookup`. The cards
+// and list sections of EntityDetail call this, so the def reaches the routing
+// and a link-formatted property renders as a link there too (TKT-0101IO4).
+export function viewFieldRoutingHintFor(
+  field: ViewSectionField,
+  entityType: string,
+  lookup: (entityType: string, property: string) => PropertyDef | undefined
+): WidgetRoutingHint {
+  const def = field.property ? lookup(entityType, field.property) : undefined
+  return viewFieldRoutingHint(field, def)
 }
 
 // DenseRoutingHint extends the widget-routing decision with the SHAPE the
@@ -142,6 +165,10 @@ function denseHintKind(propertyDef: PropertyDef | undefined): DenseHintKind {
       return 'datetime'
     case 'rrule':
       return 'rrule'
+    // A link is one anchor per cell: no network request, and the value
+    // stays selectable text.
+    case 'string':
+      return propertyDef.display?.link === true ? 'url' : 'text'
 
     // --- Deliberate exceptions. Do not "simplify" these to the matching
     // widget; each is load-bearing and pinned by a test. ---

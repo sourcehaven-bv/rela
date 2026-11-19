@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
@@ -96,7 +97,7 @@ func (h *Host) provisionLazily(w http.ResponseWriter, r *http.Request, orgID str
 	_, err := h.prov.start(r.Context(), orgID)
 	var held *heldFailureError
 	switch {
-	case errors.Is(err, errProvisionElsewhere):
+	case errors.Is(err, errProvisionElsewhere), errors.Is(err, errProvisionedRecently):
 		writeProvisioning(w, r, code)
 	case errors.Is(err, errProvisionBusy):
 		slog.WarnContext(r.Context(), "tenant host: provisioning at its limit", "org_id", orgID)
@@ -147,6 +148,12 @@ func (h *Host) provisionFromWebhook(w http.ResponseWriter, r *http.Request, clai
 		// Another server is creating the tenant, as for a run that found
 		// it so below.
 		w.WriteHeader(http.StatusAccepted)
+		return
+	case errors.Is(err, errProvisionedRecently):
+		// Not acknowledged: this request read the tenant as absent, and
+		// the retry after the hold reads it again (see successHold).
+		w.Header().Set("Retry-After", strconv.Itoa(int(successHold/time.Second)))
+		http.Error(w, "tenant provisioned moments ago; retry", http.StatusServiceUnavailable)
 		return
 	case err != nil:
 		webhookProvisionFailed(w, err)

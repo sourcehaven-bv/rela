@@ -307,6 +307,9 @@ type App struct {
 	// which is the "feature absent" signal; its methods accept a nil
 	// receiver.
 	records *recordsHandler
+	// auditRead owns the audit routes (TKT-X1ZFO04). Nil until
+	// [SetAuditLog], which is the "feature absent" signal.
+	auditRead *auditHandler
 	// channels owns the channel routes (TKT-ZU7P13). Nil until
 	// [SetChannels], which is the "feature absent" signal; its methods
 	// accept a nil receiver.
@@ -1853,6 +1856,8 @@ func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 		affordances: app.affordances,
 		// Late-bound: SetPiles runs after this point in NewApp.
 		pilesAvailable: func(ctx context.Context) bool { return app.piles.available(ctx) },
+		// Late-bound: SetAuditLog runs after this point in NewApp.
+		audit:          func(ctx context.Context) (bool, bool) { return sidebarAudit(ctx, app.auditRead, app.acl) },
 		viewReader:     app.viewReader,
 		visible:        app.visibleReader,
 		services:       app.Services,

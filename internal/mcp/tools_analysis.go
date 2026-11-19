@@ -348,7 +348,9 @@ func (s *Server) handleAnalyzeProperties(
 		if err != nil {
 			break
 		}
-		errs := metaValidator.ValidateEntity(e.ID, e.Type, e.Properties)
+		// Under a policy the store is gated: findings on hidden fields are
+		// dropped.
+		errs := metaValidator.ValidateReadable(e.ID, e.Type, e.Properties, e.Redacted)
 		if len(errs) > 0 {
 			errStrings := make([]string, len(errs))
 			for i, ve := range errs {

@@ -274,6 +274,23 @@ export class KanbanPage extends BasePage {
     await expect(this.cards.filter({ hasText: cardTitle }).locator('.card-field')).toHaveText(text);
   }
 
+  /** A url-widget card field; `href` null means plain text. */
+  async expectCardUrl(cardTitle: string, text: string, href: string | null) {
+    await this.expectUrlValue(this.cards.filter({ hasText: cardTitle }).locator('.card-field'), text, href);
+  }
+
+  /** Clicks the url-widget link on a card and returns the URL of the tab it
+   *  opened. The card itself must not open: the page URL stays the same. */
+  async clickCardUrl(cardTitle: string, text: string): Promise<string> {
+    const before = this.page.url();
+    const link = this.cards.filter({ hasText: cardTitle }).locator('.card-field a', { hasText: text });
+    const [popup] = await Promise.all([this.page.context().waitForEvent('page'), link.click()]);
+    const url = popup.url();
+    await popup.close();
+    await expect(this.page).toHaveURL(before);
+    return url;
+  }
+
   /** The enum badges on a card's field lines, in order, with their colours
    * (the badge--<colour> class of each). */
   async expectCardBadges(cardTitle: string, badges: Array<{ text: string; color: string }>) {

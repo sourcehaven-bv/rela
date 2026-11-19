@@ -796,14 +796,15 @@ type PropertyDef struct {
 	// (TKT-SM20FG). The value is read-only on every interactive surface.
 	System string `json:"system,omitempty"`
 	// Display is the property's display format, such as a currency
-	// (TKT-SVLQQ6). The SPA applies it wherever it renders the value for
-	// reading; inputs stay plain. Omitted when unset.
+	// (TKT-SVLQQ6) or a link (TKT-0101IO4). The SPA applies it wherever it
+	// renders the value. Omitted when unset.
 	Display *PropertyDisplay `json:"display,omitempty"`
 }
 
 // PropertyDisplay is the wire form of metamodel.PropertyDisplay.
 type PropertyDisplay struct {
 	Currency string `json:"currency,omitempty"`
+	Link     bool   `json:"link,omitempty"`
 }
 
 // RelationType is the JSON representation of a relation type.
@@ -855,9 +856,9 @@ type CustomType struct {
 // Config is the JSON representation of the UI config.
 //
 // It mirrors the top-level keys of data-entry.yaml, so a new key raises the
-// pin by one; `channels` (TKT-91BK6F) is the most recent.
+// pin by one; `builtins` (TKT-JEAR2UA) is the most recent.
 //
-//plimsoll:max-fields=22
+//plimsoll:max-fields=23
 type Config struct {
 	App AppConfig `json:"app"`
 	// AboutDescription is the deployment description shown by the SPA's global
@@ -884,6 +885,7 @@ type Config struct {
 	Actions     map[string]dataentryconfig.Action              `json:"actions,omitempty"`
 	Navigation  []dataentryconfig.NavigationEntry              `json:"navigation"`
 	Spaces      []dataentryconfig.Space                        `json:"spaces,omitempty"`
+	Builtins    dataentryconfig.Builtins                       `json:"builtins,omitempty"`
 	Pages       map[string]dataentryconfig.Page                `json:"pages,omitempty"`
 	Documents   map[string]dataentryconfig.DocumentConfig      `json:"documents,omitempty"`
 	Apps        map[string]App                                 `json:"apps,omitempty"`
@@ -1329,6 +1331,12 @@ type DashboardResponse struct {
 	// entity dashboard by that, and passes `?anchor=` on
 	// /api/v1/_dashboard/card.
 	Cards []DashboardCardEntry `json:"cards"`
+	// Validation reports whether this principal is shown the validation
+	// card: the dashboard's `validation:` toggle, resolved for the caller
+	// (TKT-31822PN). Always false on an entity dashboard, which never shows
+	// the card. A UX filter, not access control: `/api/v1/_analyze` keeps
+	// its own gate.
+	Validation bool `json:"validation"`
 }
 
 // DashboardCardEntry is one card of a DashboardResponse: its config plus its
@@ -1447,6 +1455,12 @@ type SidebarResponse struct {
 	// the principal may create and for which a create form resolves. A UI
 	// hint, like InlineCreate; the create endpoint re-authorizes.
 	Create []SidebarCreate `json:"create,omitempty"`
+	// HiddenBuiltins names the built-in sidebar rows ("search", "inbox",
+	// "flow_tasks", "flow_runs", "analysis") the current space, or the
+	// top-level sidebar without spaces, leaves out for this principal
+	// ([dataentryconfig.Builtins]). Absent when every row is shown. A UX
+	// filter: the pages behind the rows stay reachable by URL.
+	HiddenBuiltins []dataentryconfig.BuiltinRow `json:"hidden_builtins,omitempty"`
 
 	// Pages are the config's `pages:`, keyed by page id, each with the tabs
 	// this principal may see. Absent when the config declares no pages.
@@ -1488,6 +1502,34 @@ type SidebarResponse struct {
 	// both piles fields from this one boot payload. Null when the block is
 	// absent.
 	Piles *dataentryconfig.PilesConfig `json:"piles"`
+	// HeaderButtons says which built-in buttons the entity page header shows
+	// this principal: `header_buttons:` of data-entry.yaml, resolved for the
+	// caller (TKT-31822PN). It rides here for the reason PilesAvailable
+	// does. A UX filter, not access control: the history and pile APIs keep
+	// their own ACL.
+	HeaderButtons SidebarHeaderButtons `json:"header_buttons"`
+	// Audit says which audit views the SPA offers (TKT-X1ZFO04). A UI hint,
+	// never authorization: the audit endpoints check again.
+	Audit SidebarAudit `json:"audit"`
+}
+
+// SidebarHeaderButtons is [SidebarResponse.HeaderButtons]. Each field is true
+// when the button may show. The SPA still applies its own preconditions: the
+// History button needs a deployment with version history, and "Add to pile"
+// needs piles to be available.
+type SidebarHeaderButtons struct {
+	History   bool `json:"history"`
+	AddToPile bool `json:"add_to_pile"`
+}
+
+// SidebarAudit is [SidebarResponse.Audit].
+type SidebarAudit struct {
+	// Changes reports that a database audit log is wired, so an entity
+	// page offers its Changes tab.
+	Changes bool `json:"changes"`
+	// Global reports that the log is wired and this principal may read the
+	// global audit view (the audit:read permission).
+	Global bool `json:"global"`
 }
 
 // ConflictItem represents a conflicted file.

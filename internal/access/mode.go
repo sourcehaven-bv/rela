@@ -92,10 +92,24 @@ type PermissionHolder interface {
 	HoldsPermission(ctx context.Context, permission string) bool
 }
 
+// UIPermissionHolder answers whether the request's principal holds a named
+// permission for a gate that only decides what to render: through a global
+// role, or through a role a role relation confers on any entity. The
+// request's read gate implements it.
+type UIPermissionHolder interface {
+	HoldsPermissionOnAnyEntity(ctx context.Context, permission string) bool
+}
+
 // PermitsGatedUIElement reports whether a UI element (a navigation entry, a
-// space, a dashboard card) that declares `permission:` is shown. An element
-// without a permission is always shown. This is presentation, not access
-// control: the rows behind an element are gated by the read path.
+// page tab, a space, a dashboard card) that declares `permission:` is shown.
+// An element without a permission is always shown. This is presentation, not
+// access control: the rows behind an element are gated by the read path.
+//
+// So a role held through a role relation counts here (TKT-CBRLZWU): a
+// customer who holds `customer` on one account sees the menu that role's
+// permission opens. The decisions below that allow an operation
+// ([Mode.PermitsElevatedRead], [Mode.PermitsProjectWrite]) take a
+// [PermissionHolder] and count global roles only.
 //
 // No policy and read-only both show gated elements. Neither can answer
 // whether a principal holds a permission, and hiding an entry under
@@ -108,7 +122,7 @@ type PermissionHolder interface {
 // happened (RR-CWWJGW).
 //
 // A configured policy asks holder. Every other mode hides the element.
-func (m Mode) PermitsGatedUIElement(ctx context.Context, holder PermissionHolder, permission string) bool {
+func (m Mode) PermitsGatedUIElement(ctx context.Context, holder UIPermissionHolder, permission string) bool {
 	if permission == "" {
 		return true
 	}
@@ -116,7 +130,7 @@ func (m Mode) PermitsGatedUIElement(ctx context.Context, holder PermissionHolder
 	case modeNoPolicy, modeReadOnly:
 		return true
 	case modePolicy:
-		return holder.HoldsPermission(ctx, permission)
+		return holder.HoldsPermissionOnAnyEntity(ctx, permission)
 	default:
 		return false
 	}

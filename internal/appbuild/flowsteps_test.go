@@ -294,3 +294,29 @@ func TestFlowControl_RunList(t *testing.T) {
 		})
 	}
 }
+
+// TestFlowControl_FinishedRunNamesSubject pins BUG-TVU9HRT: a finished run
+// keeps only its header, and its detail still names the subject for a
+// reader of the subject, from the `_carries` edge as the run list does.
+// The run page links the subject with it.
+func TestFlowControl_FinishedRunNamesSubject(t *testing.T) {
+	svc, ctl := stepProject(t)
+	addFlowPerson(t, svc, "PER-1", map[string]any{"name": "Ada"})
+	alice, bob := flowUser(t, svc, "alice"), flowUser(t, svc, "bob")
+	id, err := ctl.Start(alice, "onboarding", "PER-1")
+	require.NoError(t, err)
+	require.NoError(t, ctl.Cancel(alice, id))
+
+	for _, user := range []context.Context{alice, bob} {
+		run, rerr := ctl.Run(user, id)
+		require.NoError(t, rerr)
+		require.False(t, run.Active)
+		require.Equal(t, "PER-1", run.Subject)
+		runs, rerr := ctl.SubjectRuns(user, "PER-1")
+		require.NoError(t, rerr)
+		require.Len(t, runs, 1)
+		require.Equal(t, "PER-1", runs[0].Subject)
+	}
+	_, err = ctl.Run(flowUser(t, svc, "eve"), id)
+	require.ErrorIs(t, err, flowview.ErrNotFound)
+}

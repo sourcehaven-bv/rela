@@ -197,3 +197,48 @@ func TestGraph_EdgeCondition(t *testing.T) {
 		t.Error("no condition must admit every edge")
 	}
 }
+
+func TestGraph_HasOutgoingEdge(t *testing.T) {
+	ctx := context.Background()
+	ms := seed(ctx, t)
+	// PERS-2's only watches edge sits at a faced tail, which HasEdge does not
+	// read either.
+	draft := entity.Face("draft")
+	if _, err := ms.CreateRelation(ctx,
+		entity.RelationKey{From: "PERS-2", FromFace: draft, Type: "watches", To: "TEAM-1"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ms.CreateRelation(ctx, entity.RelationKey{From: "PERS-3", Type: "grants", To: "TEAM-1"},
+		&store.RelationData{Properties: map[string]any{"until": "2026-01-01"}}); err != nil {
+		t.Fatal(err)
+	}
+	live := []store.PropPredicate{{Property: "until", Op: store.PropGreaterEqual, Value: "2026-11-16"}}
+	g := aclstore.MustNewGraph(ms)
+	tests := []struct {
+		name string
+		rel  string
+		cond []store.PropPredicate
+		from []string
+		want bool
+	}{
+		{"one source holds it", "owns", nil, []string{"PERS-2", "PERS-1"}, true},
+		{"no source holds it", "owns", nil, []string{"PERS-2", "PERS-3"}, false},
+		{"empty sources", "owns", nil, []string{}, false},
+		{"nil sources", "owns", nil, nil, false},
+		{"faced tail is not read", "watches", nil, []string{"PERS-2"}, false},
+		{"edge fails the condition", "grants", live, []string{"PERS-3"}, false},
+		{"edge without a condition", "grants", nil, []string{"PERS-3"}, true},
+		{"target is not a source", "owns", nil, []string{"TEAM-1"}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := g.HasOutgoingEdge(ctx, tc.rel, tc.cond, tc.from)
+			if err != nil {
+				t.Fatalf("HasOutgoingEdge: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("HasOutgoingEdge(%s, %v) = %v, want %v", tc.rel, tc.from, got, tc.want)
+			}
+		})
+	}
+}

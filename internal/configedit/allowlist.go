@@ -76,6 +76,7 @@ var editable = map[File][]string{
 		"entities.*.properties.*.default",
 		"entities.*.properties.*.description",
 		"entities.*.properties.*.display.currency",
+		"entities.*.properties.*.display.link",
 		"entities.*.properties.*.label",
 		"entities.*.properties.*.format",
 		"entities.*.properties.*.labels.*",
@@ -105,6 +106,7 @@ var editable = map[File][]string{
 		"relations.*.properties.*.default",
 		"relations.*.properties.*.description",
 		"relations.*.properties.*.display.currency",
+		"relations.*.properties.*.display.link",
 		"relations.*.properties.*.label",
 		"relations.*.properties.*.format",
 		"relations.*.properties.*.labels.*",
@@ -398,6 +400,9 @@ var locked = map[File][]string{
 		// Access control and actions.
 		"nav.permission", "nav.action", "spaces.[].permission", "dashboard.cards.[].permission",
 		"dashboards.*.cards.[].permission",
+		// Page chrome toggles (TKT-31822PN): true, false or {permission}.
+		// Not in the Configure space yet; locked with the other permissions.
+		"dashboard.validation.**", "dashboards.*.validation.**", "header_buttons.**",
 		// Not in the Configure space yet: list-sourced, matrix and ratio cards
 		// (TKT-2SGPJZ). The Configure dashboard page edits query cards only.
 		"dashboard.cards.[].list", "dashboard.cards.[].rows", "dashboard.cards.[].tone_by",
@@ -427,6 +432,8 @@ var locked = map[File][]string{
 		"git.**", "palette.**",
 		"documents.**", "feeds.**", "caldav.**", "commands.**", "actions.**", "webhooks.**",
 		"pages.**", "next_action_bands.**", "next_actions.**", "account.**", "lists.*.create_world",
+		// Built-in sidebar rows (TKT-JEAR2UA): not in the Configure space yet.
+		"builtins.**", "spaces.[].builtins.**",
 		// Where suggestions appear (TKT-6EEXXE), locked like next_actions.
 		// Calendars and gantts carry the key too, but those trees are
 		// editable whole (calendars.**, gantts.**).
@@ -466,6 +473,7 @@ var protective = map[File][]string{
 		"app.disable_custom_injection", "app.max_attachment_bytes",
 		"nav.permission", "spaces.[].permission", "dashboard.cards.[].permission",
 		"dashboards.*.cards.[].permission",
+		"dashboard.validation.**", "dashboards.*.validation.**", "header_buttons.**",
 	},
 	// A script may stamp what acl.yaml decides access by; removing it
 	// would drop that stamp from every record written afterwards.

@@ -184,6 +184,25 @@ describe('useNextAction page scoping', () => {
       expect(mockGet).toHaveBeenCalledTimes(1)
     })
 
+    // A page with a context source and a flow_tasks source refreshes on
+    // both types: completing a step changes only the run.
+    it('re-resolves on every type in refresh_types', async () => {
+      navigate('entity', { type: 'task', id: 'TASK-1' })
+      mockGet.mockResolvedValue({
+        suggestion: suggestion(),
+        context_type: 'task',
+        refresh_types: ['task', '_flow-run'],
+      })
+      const na = useNextAction()
+      await na.loadOnce()
+      na.refreshForChange('_flow-run')
+      await vi.advanceTimersByTimeAsync(REFRESH_DEBOUNCE_MS)
+      expect(mockGet).toHaveBeenCalledTimes(2)
+      na.refreshForChange('project')
+      await vi.advanceTimersByTimeAsync(REFRESH_DEBOUNCE_MS)
+      expect(mockGet).toHaveBeenCalledTimes(2)
+    })
+
     // Mutation: drop forgetAnswered from acknowledge. The refresh then sends
     // the acknowledged suggestion as current and the server keeps it.
     it('does not ask to keep a suggestion the reader acknowledged', async () => {

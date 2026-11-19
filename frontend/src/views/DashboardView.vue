@@ -118,6 +118,14 @@ const cards = computed(() => dashboardConfig.value?.cards || [])
 const entityDashboard = computed(() => cards.value.some((c) => !!c.scope))
 // An entity dashboard needs its anchor; without one no card is asked for.
 const anchorMissing = computed(() => entityDashboard.value && !props.anchor)
+// Whether the validation card shows. The server resolves the dashboard's
+// `validation:` toggle for this principal (TKT-31822PN); an older server
+// sends nothing and the card shows. The card covers the whole project, so an
+// entity dashboard, which is about one entity, never shows it. Hiding it is a
+// UX choice, not access control: /analyze keeps its own gate.
+const showValidation = computed(
+  () => !entityDashboard.value && dashboardConfig.value?.validation !== false
+)
 
 // Methods
 // Bumped on every load, so a slow load for a dashboard the user has already
@@ -182,11 +190,10 @@ async function loadData() {
       })
     })
 
-    // The validation card covers the whole project, so an entity dashboard,
-    // which is about one entity, does not show it.
-    const analysisPromise = entityDashboard.value
-      ? Promise.resolve()
-      : analyze().then((r) => (analysisResult.value = r))
+    // A hidden validation card has nothing to load.
+    const analysisPromise = showValidation.value
+      ? analyze().then((r) => (analysisResult.value = r))
+      : Promise.resolve()
 
     await Promise.all([...cardPromises, analysisPromise])
   } catch (err) {
@@ -542,7 +549,7 @@ watch([() => props.name, () => props.anchor, worldParam], () => void loadData())
       </div>
 
       <!-- Validation card -->
-      <div v-if="!entityDashboard" class="validation-card">
+      <div v-if="showValidation" class="validation-card" data-testid="dashboard-validation">
         <div class="card-header">
           <h3>&#9888; {{ t('dashboardView.validation') }}</h3>
           <router-link to="/analyze" class="card-link" :title="t('dashboardView.viewAnalysis')">

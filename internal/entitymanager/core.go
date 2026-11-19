@@ -180,12 +180,24 @@ func createCoreOnce(
 	// `unique: true` natural keys are enforced atomically with the write.
 	// excludeSelfID is empty: on create there is no prior version of this
 	// entity to exclude.
-	err = writeWithUniqueCheck(ctx, deps, e, "", func(ctx context.Context, st store.Store) error {
+	// A watched create always runs in a transaction, so the hook can join
+	// it: the no-op check only forces one.
+	var txCheck func(context.Context) error
+	if watchesCreate(deps, e.Type) {
+		txCheck = func(context.Context) error { return nil }
+	}
+	err = writeChecked(ctx, deps, e, "", txCheck, func(ctx context.Context, st store.Store) error {
 		if cErr := st.CreateEntity(ctx, e); cErr != nil {
 			return cErr
 		}
-		return opts.record(ctx, st, e)
+		if rErr := opts.record(ctx, st, e); rErr != nil {
+			return rErr
+		}
+		return runCreateHook(ctx, deps, st, e)
 	})
+	if isCreateHookError(err) {
+		return e, warnings, err
+	}
 	if err != nil {
 		// A derived unique-property index (pgstore, TKT-3Q0GP1) rejects a
 		// duplicate PROPERTY value; surface it as the same 422 the pre-write

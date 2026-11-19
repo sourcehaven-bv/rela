@@ -27,6 +27,8 @@ import type {
   DocumentConfig,
   ActionConfig,
   PilesConfig,
+  SidebarAudit,
+  SidebarHeaderButtons,
 } from '@/types'
 
 export const useSchemaStore = defineStore('schema', () => {
@@ -102,6 +104,15 @@ export const useSchemaStore = defineStore('schema', () => {
   // availability depends on who is asking, which `/_config` cannot know.
   const pilesAvailable = ref(false)
   const pilesConfig = ref<PilesConfig | null>(null)
+  // The audit views (TKT-X1ZFO04), from the principal-scoped `/_sidebar`.
+  // Both default to off, so an older server shows neither.
+  const auditChanges = ref(false)
+  const auditGlobal = ref(false)
+  // Which built-in entity header buttons this principal is shown
+  // (`header_buttons:`, TKT-31822PN), fed by the principal-scoped `/_sidebar`.
+  // Shown until it says otherwise, as before the block existed. A UX filter:
+  // the history and pile APIs keep their own ACL.
+  const headerButtons = ref<SidebarHeaderButtons>({ history: true, add_to_pile: true })
   const loaded = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -531,6 +542,17 @@ export const useSchemaStore = defineStore('schema', () => {
     if (data.piles !== undefined) pilesConfig.value = data.piles ?? null
   }
 
+  /** Takes the audit flags from `/_sidebar`; absent means both off. */
+  function setAudit(audit: SidebarAudit | undefined) {
+    auditChanges.value = audit?.changes === true
+    auditGlobal.value = audit?.global === true
+  }
+
+  /** Takes `header_buttons` from `/_sidebar`; an older server sends none. */
+  function setHeaderButtons(header: SidebarHeaderButtons | undefined) {
+    if (header) headerButtons.value = header
+  }
+
   function setInlineCreate(map: Record<string, string>) {
     inlineCreate.value = map
   }
@@ -580,6 +602,8 @@ export const useSchemaStore = defineStore('schema', () => {
     logoUrl,
     inlineCreate,
     pilesAvailable,
+    auditChanges,
+    auditGlobal,
     pilesConfig,
     loaded,
     loading,
@@ -594,6 +618,7 @@ export const useSchemaStore = defineStore('schema', () => {
     worldLabel,
     faceLabel,
     historyEnabled,
+    headerButtons,
     collabEnabled,
     collabEpoch,
     getInverseName,
@@ -621,5 +646,7 @@ export const useSchemaStore = defineStore('schema', () => {
     setLogoUrl,
     setInlineCreate,
     setPiles,
+    setAudit,
+    setHeaderButtons,
   }
 })

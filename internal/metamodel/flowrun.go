@@ -25,6 +25,7 @@ const (
 	FlowRunPropStarted   = "started"
 	FlowRunPropCompleted = "completed"
 	FlowRunPropDeadline  = "deadline"
+	FlowRunPropDepth     = "depth"
 )
 
 // FlowRunStatuses are the values of the status property: the statuses of
@@ -170,10 +171,15 @@ func flowRunEntityDef() EntityDef {
 			FlowRunPropStarted:   dt("Started", "When the run started."),
 			FlowRunPropCompleted: dt("Completed", "When the run reached a final state."),
 			FlowRunPropDeadline:  dt("Deadline", "When the run is due, from the flow's deadline."),
+			FlowRunPropDepth: {
+				Label: "Depth", Type: PropertyTypeInteger,
+				Description: "For a run started on create: how many runs led to the create, one through " +
+					"the other's outputs. Empty for any other run.",
+			},
 		},
 		PropertyOrder: []string{
 			FlowRunPropFlow, FlowRunPropVersion, FlowRunPropStatus, FlowRunPropState,
-			FlowRunPropStarted, FlowRunPropCompleted, FlowRunPropDeadline,
+			FlowRunPropStarted, FlowRunPropCompleted, FlowRunPropDeadline, FlowRunPropDepth,
 		},
 		DisplayProperty: FlowRunPropFlow,
 	}

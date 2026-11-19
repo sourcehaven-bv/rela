@@ -6,7 +6,7 @@ import { getSidebar, runAction } from '@/api'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { useActionFeedback } from '@/composables/useActionFeedback'
 import { useEvents } from '@/composables/useEvents'
-import type { Entity, SidebarCreate, SidebarGroup, SidebarItem } from '@/types'
+import type { BuiltinRow, Entity, SidebarCreate, SidebarGroup, SidebarItem } from '@/types'
 import type { NavGroup, NavItem } from 'rela-components/types'
 import type { ThemeChoice } from 'rela-components/components/layout/RlThemeToggle.vue'
 import RlThemeToggle from 'rela-components/components/layout/RlThemeToggle.vue'
@@ -247,30 +247,56 @@ const inboxStatusFor = (key: string | undefined) =>
  */
 const { hasFlows } = useFlowList()
 
-const pinnedGroups = computed(() =>
-  toNavGroups(
-    inSpace([
-      {
-        items: [
-          { label: t('nav.search'), href: '/search', icon: 'search' },
-          ...(hasChannels.value && !inbox.hidden.value
-            ? [{ label: t('nav.inbox'), href: '/inbox', icon: 'inbox', status_key: 'inbox' }]
-            : []),
-          ...(hasFlows.value
-            ? [
-                { label: t('nav.flowTasks'), href: '/flows/tasks', icon: 'checklist' },
-                { label: t('nav.flowRuns'), href: '/flows/runs', icon: 'workflow' },
-              ]
-            : []),
-          { label: t('nav.analysis'), href: '/analyze', icon: 'warning' },
-        ],
-      },
-    ]),
+/*
+ * The built-in rows that `builtins:` leaves out for this principal, in the
+ * current space (or the top-level sidebar). The server decides, from the
+ * row's `hidden:` or `permission:`; like a navigation entry's `permission:`
+ * it is a UX filter, and the pages behind the rows stay reachable by URL.
+ */
+const hiddenBuiltins = ref<ReadonlySet<BuiltinRow>>(new Set())
+const showsBuiltin = (row: BuiltinRow) => !hiddenBuiltins.value.has(row)
+
+const pinnedGroups = computed(() => {
+  const rows: { row: BuiltinRow; item: SidebarItem; when: boolean }[] = [
+    {
+      row: 'search',
+      item: { label: t('nav.search'), href: '/search', icon: 'search' },
+      when: true,
+    },
+    {
+      row: 'inbox',
+      item: { label: t('nav.inbox'), href: '/inbox', icon: 'inbox', status_key: 'inbox' },
+      when: hasChannels.value && !inbox.hidden.value,
+    },
+    {
+      row: 'flow_tasks',
+      item: { label: t('nav.flowTasks'), href: '/flows/tasks', icon: 'checklist' },
+      when: hasFlows.value,
+    },
+    {
+      row: 'flow_runs',
+      item: { label: t('nav.flowRuns'), href: '/flows/runs', icon: 'workflow' },
+      when: hasFlows.value,
+    },
+    {
+      row: 'analysis',
+      item: { label: t('nav.analysis'), href: '/analyze', icon: 'warning' },
+      when: true,
+    },
+  ]
+  const items = rows.filter((r) => r.when && showsBuiltin(r.row)).map((r) => r.item)
+  // The audit view is not a `builtins:` row: the server offers it only to a
+  // holder of audit:read on a database backend.
+  if (schemaStore.auditGlobal) {
+    items.push({ label: t('nav.audit'), href: '/audit', icon: 'history' })
+  }
+  return toNavGroups(
+    inSpace(items.length ? [{ items }] : []),
     RouterLink,
     undefined,
     inboxStatusFor
   )
-)
+})
 
 /*
  * The highlighted row, resolved across the pinned entries as well as the nav.
@@ -317,12 +343,16 @@ async function loadSidebar() {
     }
     sidebarAppName.value = data.app.name
     sidebarGroups.value = data.navigation
+    hiddenBuiltins.value = new Set(data.hidden_builtins ?? [])
     schemaStore.setLogoUrl(data.logoUrl ?? null)
     // Principal-scoped inline-create offers ride on this payload; see
     // SidebarData.inline_create for why the sidebar carries them.
     schemaStore.setInlineCreate(data.inline_create ?? {})
     // So is whether this principal may use piles (TKT-K3RJLH).
     schemaStore.setPiles(data)
+    schemaStore.setAudit(data.audit)
+    // And which entity header buttons it is shown (TKT-31822PN).
+    schemaStore.setHeaderButtons(data.header_buttons)
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
     // (see BUG-6C3V and src/composables/usePageData.ts).
@@ -347,6 +377,8 @@ function handleKeydown(e: KeyboardEvent) {
   if (isInputFocused()) return
   if (hasVisibleSearchBox()) return
   if (document.querySelector('.rl-sidebar .rl-search-box input')) return
+  // A sidebar without its Search row has no shortcut to it either.
+  if (!showsBuiltin('search')) return
   e.preventDefault()
   router.push('/search')
 }
@@ -507,7 +539,8 @@ async function handleAction(item: SidebarItem, ev?: Event) {
       Search, Inbox and Analysis sit above the config-driven nav and never scroll out
       of reach, which is why they are a slot rather than a first group.
     -->
-    <template #pinned>
+    <!-- Without a pinned row the band and its gap are left out too. -->
+    <template v-if="pinnedGroups.length" #pinned>
       <RlSidebarGroup
         v-for="group in pinnedGroups"
         :key="group.id"

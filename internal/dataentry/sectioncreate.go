@@ -104,7 +104,9 @@ func (h *viewsHandler) resolveSectionCreate(
 	}
 	s := h.schema()
 	for i, cfgSec := range viewConfig.Sections {
-		if i >= len(sections) || cfgSec.Create == nil {
+		// A withheld section is dropped by omitHiddenSections; skipping it
+		// only saves the create-target ACL work.
+		if i >= len(sections) || cfgSec.Create == nil || sections[i].withheld {
 			continue
 		}
 		// The relation is what the new entity gets linked by. A section with no

@@ -174,17 +174,44 @@ func (e *Engine) Start(ctx context.Context, name string, subject entity.Ref) (fl
 		return "", fmt.Errorf("%w: %s is a %s, flow %s carries a %s", ErrSubjectNotFound, subj.ID, subj.Type,
 			f.Name(), f.Subject())
 	}
+	run, err := begin(ctx, e, e.d.Runs, f, subj, 0)
+	if err != nil {
+		return "", err
+	}
+	id := run.ID
+	// A delete of the subject that raced the start must not leave a run on
+	// a missing subject (RR-DTSDBII).
+	if _, err := e.d.Subjects.Subject(ctx, subj.Ref()); errors.Is(err, ErrSubjectNotFound) {
+		if ferr := e.finish(ctx, f, run, flow.StatusCancelled); ferr != nil {
+			slog.WarnContext(ctx, "flowengine: a run on a deleted subject was not cancelled", "run", id,
+				"error", ferr)
+		}
+		return "", err
+	}
+	if left, err := e.settle(ctx, f, run, ""); err != nil {
+		e.backoff(ctx, left)
+		return id, err
+	}
+	return id, nil
+}
+
+// begin writes the header and stores the run of f on subj, in its initial
+// state with a pending mark, on runs. It settles nothing. depth, when not
+// zero, is stored on the header ([metamodel.FlowRunPropDepth]). A function
+// rather than a method: Engine is at its method cap.
+func begin(ctx context.Context, e *Engine, runs flowrun.Store, f *flowcfg.Flow, subj *entity.Entity,
+	depth int) (flowrun.Run, error) {
 	singleton := f.PerSubject() != flowcfg.PerSubjectMany
 	if singleton {
 		// A cheap refusal before anything is written. The store's create
 		// is the authority; this only spares a header write and delete.
-		open, lerr := e.d.Runs.List(ctx, flowrun.Query{Flow: f.Name(), SubjectID: subj.ID, Limit: flowrun.MaxPage})
+		open, lerr := runs.List(ctx, flowrun.Query{Flow: f.Name(), SubjectID: subj.ID, Limit: flowrun.MaxPage})
 		if lerr != nil {
-			return "", lerr
+			return flowrun.Run{}, lerr
 		}
 		for _, r := range open {
 			if r.Singleton {
-				return "", ErrSubjectBusy
+				return flowrun.Run{}, ErrSubjectBusy
 			}
 		}
 	}
@@ -202,9 +229,12 @@ func (e *Engine) Start(ctx context.Context, name string, subject entity.Ref) (fl
 	if !f.Deadline().IsZero() {
 		props[metamodel.FlowRunPropDeadline] = f.Deadline().AddTo(now)
 	}
+	if depth > 0 {
+		props[metamodel.FlowRunPropDepth] = depth
+	}
 	id, err := e.d.Headers.CreateHeader(ctx, subj.Ref(), props)
 	if err != nil {
-		return "", fmt.Errorf("flowengine: write run header: %w", err)
+		return flowrun.Run{}, fmt.Errorf("flowengine: write run header: %w", err)
 	}
 	ctx = audit.WithFlowStep(ctx, audit.FlowStep{Flow: f.Name(), Run: string(id), Step: f.Initial(), By: by})
 	// Every new run is unsettled in its initial state, so a crash before
@@ -216,28 +246,15 @@ func (e *Engine) Start(ctx context.Context, name string, subject entity.Ref) (fl
 		Log:     []flowrun.Step{{At: now, State: initial.Name, Via: flowrun.ViaStart, By: clip(by)}},
 	}
 	nr.Instance.NextDueAt = now
-	run, err := e.d.Runs.Create(ctx, nr)
+	run, err := runs.Create(ctx, nr)
 	if err != nil {
 		e.dropHeader(ctx, id)
 		if errors.Is(err, flowrun.ErrSubjectBusy) {
-			return "", ErrSubjectBusy
+			return flowrun.Run{}, ErrSubjectBusy
 		}
-		return "", fmt.Errorf("flowengine: store run: %w", err)
+		return flowrun.Run{}, fmt.Errorf("flowengine: store run: %w", err)
 	}
-	// A delete of the subject that raced the start must not leave a run on
-	// a missing subject (RR-DTSDBII).
-	if _, err := e.d.Subjects.Subject(ctx, subj.Ref()); errors.Is(err, ErrSubjectNotFound) {
-		if ferr := e.finish(ctx, f, run, flow.StatusCancelled); ferr != nil {
-			slog.WarnContext(ctx, "flowengine: a run on a deleted subject was not cancelled", "run", id,
-				"error", ferr)
-		}
-		return "", err
-	}
-	if left, err := e.settle(ctx, f, run, ""); err != nil {
-		e.backoff(ctx, left)
-		return id, err
-	}
-	return id, nil
+	return run, nil
 }
 
 // byOf returns the By of the flow step ctx carries.

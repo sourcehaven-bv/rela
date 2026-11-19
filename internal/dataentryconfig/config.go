@@ -46,6 +46,10 @@ const (
 	// WidgetExternalRef is the read-only display of an external ref
 	// (TKT-SM20FG). It never writes: refs change only through sync.
 	WidgetExternalRef = "external-ref"
+	// WidgetURL renders a string as a link in display mode and a URL input
+	// in edit mode (TKT-0101IO4). It is the default for a string property
+	// with `display: {link: true}`.
+	WidgetURL = "url"
 )
 
 // Direction represents the edge direction for relation columns and form relations.
@@ -96,10 +100,10 @@ func (d Direction) IsIncoming() bool {
 // accretion. Splitting it would churn the YAML shape for no design gain —
 // a breaking change to every project's config file, made to satisfy a lint.
 // A genuinely new top-level key therefore raises the pin by one; `account`
-// (TKT-MJTD12), `pages` (TKT-ITQ0HL), `piles` (TKT-K3RJLH) and `channels`
-// (TKT-91BK6F) are the most recent.
+// (TKT-MJTD12), `pages` (TKT-ITQ0HL), `piles` (TKT-K3RJLH), `channels`
+// (TKT-91BK6F) and `header_buttons` (TKT-31822PN) are the most recent.
 //
-//plimsoll:max-fields=29
+//plimsoll:max-fields=31
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -131,6 +135,12 @@ type Config struct {
 	// non-empty Navigation. See [Space].
 	Spaces []Space `yaml:"spaces,omitempty" json:"spaces,omitempty"`
 
+	// Builtins hides or gates the built-in sidebar rows (Search, Inbox, Flow
+	// tasks, Flow runs, Analysis) of the top-level sidebar. Mutually
+	// exclusive with Spaces, which set [Space.Builtins]. Nil: accepted,
+	// means every row is shown. See [BuiltinConfig].
+	Builtins Builtins `yaml:"builtins,omitempty" json:"builtins,omitempty"`
+
 	// Pages are tabbed screens, keyed by page id, that a `page:` navigation
 	// entry links to. See [Page].
 	Pages map[string]Page `yaml:"pages,omitempty" json:"pages,omitempty"`
@@ -153,6 +163,10 @@ type Config struct {
 	// Piles configures what a pile panel offers. Nil: accepted, means piles
 	// offer no actions and every registered transform. See [PilesConfig].
 	Piles *PilesConfig `yaml:"piles,omitempty" json:"piles,omitempty"`
+
+	// HeaderButtons hides built-in buttons of the entity page header. Its
+	// zero value shows them all. See [HeaderButtonsConfig].
+	HeaderButtons HeaderButtonsConfig `yaml:"header_buttons,omitempty" json:"header_buttons,omitzero"`
 
 	// Channels presents the message types of realtime.yaml, keyed by
 	// channel type. Nil: accepted, means every message type is presented
@@ -2111,6 +2125,11 @@ type DashboardConfig struct {
 	// overriding next_action_surfaces. Nil: accepted, means inherit. See
 	// [Config.NextActionsEnabled].
 	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
+	// Validation shows or hides the validation card, which summarizes the
+	// project-wide analysis (TKT-31822PN). The zero value shows it, as
+	// before the key existed. Not allowed on an entity dashboard, which
+	// never shows the card. See [ChromeToggle].
+	Validation ChromeToggle `yaml:"validation,omitempty" json:"validation,omitzero"`
 }
 
 // DashboardCard defines a single card on the dashboard. Its rows come from a
@@ -2321,21 +2340,9 @@ type ViewSection struct {
 	EmptyMessage string             `yaml:"empty_message,omitempty" json:"empty_message,omitempty"`
 	Link         string             `yaml:"link,omitempty" json:"link,omitempty"`
 
-	// HideEmpty leaves the whole section, heading included, out of the view
-	// when its source collection is empty (TKT-JT101B). False keeps the default: an empty
-	// section renders its EmptyMessage (or "No items").
-	//
-	// Validation refuses it in three places where hiding would be wrong
-	// rather than merely unusual (see validateSectionHideEmpty):
-	//   - with EmptyMessage, which only ever shows on an empty section;
-	//   - with Create, whose button would vanish exactly when the section is
-	//     empty, which is when it is most needed;
-	//   - on a section whose source is the entry, which is never "empty",
-	//     or that has no source.
-	//
-	// A side-panel section refuses it too: that path never omits sections,
-	// and its Add and Link buttons would disappear with an empty section.
-	HideEmpty bool `yaml:"hide_empty,omitempty" json:"hide_empty,omitempty"`
+	// SectionVisibility holds the keys that leave the section out of the page
+	// for some readers: hide_empty and permission.
+	SectionVisibility `yaml:",inline"`
 
 	// Children names a SECOND collection to nest under each row of Source,
 	// making this section two levels deep. Required by `display: nested` and
@@ -2425,6 +2432,43 @@ type ViewSection struct {
 	Sort       []SortSpec `yaml:"sort,omitempty" json:"sort,omitempty"`
 	ParentSort []SortSpec `yaml:"parent_sort,omitempty" json:"parent_sort,omitempty"`
 	ChildSort  []SortSpec `yaml:"child_sort,omitempty" json:"child_sort,omitempty"`
+}
+
+// SectionVisibility is the part of a [ViewSection] that decides whether the
+// entity page shows the section at all. It is embedded inline, so its keys
+// sit directly on the section in YAML and JSON.
+type SectionVisibility struct {
+	// HideEmpty leaves the whole section, heading included, out of the view
+	// when its source collection is empty (TKT-JT101B). False keeps the default: an empty
+	// section renders its EmptyMessage (or "No items").
+	//
+	// Validation refuses it in three places where hiding would be wrong
+	// rather than merely unusual (see validateSectionHideEmpty):
+	//   - with EmptyMessage, which only ever shows on an empty section;
+	//   - with Create, whose button would vanish exactly when the section is
+	//     empty, which is when it is most needed;
+	//   - on a section whose source is the entry, which is never "empty",
+	//     or that has no source.
+	//
+	// A side-panel section refuses it too: that path never omits sections,
+	// and its Add and Link buttons would disappear with an empty section.
+	HideEmpty bool `yaml:"hide_empty,omitempty" json:"hide_empty,omitempty"`
+
+	// Permission optionally leaves the section, heading included, out of the
+	// entity page for principals who do not hold the named global ACL
+	// permission. Empty means the section is always shown.
+	//
+	// This is a UX filter, not an access control, exactly as on
+	// [NavigationEntry.Permission] and [DashboardCard.Permission]. The
+	// section's rows are row-gated and its field values are redacted by
+	// `visible:` whether it shows or not, and `/api/v1/_config` still serves
+	// the section to everyone ("The configuration is not a secret; the data
+	// is" in the root CLAUDE.md). Hiding it only removes a section the reader
+	// has no use for.
+	//
+	// A side-panel section refuses it, as it refuses HideEmpty: that path never
+	// omits sections.
+	Permission string `yaml:"permission,omitempty" json:"permission,omitempty"`
 }
 
 // SectionTotal is one line of a section's [ViewSection.Totals].

@@ -61,6 +61,12 @@ type Graph interface {
 	//
 	// cond restricts the edges as in [Graph.HasEdge].
 	OutgoingRelations(ctx context.Context, from, relType string, cond []store.PropPredicate) ([]string, error)
+
+	// HasOutgoingEdge reports whether any of fromIDs is the source of a
+	// relType edge that matches cond, reading the zero tail as
+	// [Graph.HasEdge] does. It is one store read that may stop at the first
+	// match. Errors propagate: the caller decides how to fail.
+	HasOutgoingEdge(ctx context.Context, relType string, cond []store.PropPredicate, fromIDs []string) (bool, error)
 }
 
 // PrincipalLookup resolves a raw principal string to entity ids by a
@@ -89,6 +95,11 @@ func (NullGraph) HasEdge(context.Context, string, string, string, []store.PropPr
 // OutgoingRelations always returns nil, nil.
 func (NullGraph) OutgoingRelations(context.Context, string, string, []store.PropPredicate) ([]string, error) {
 	return nil, nil
+}
+
+// HasOutgoingEdge always returns false, nil.
+func (NullGraph) HasOutgoingEdge(context.Context, string, []store.PropPredicate, []string) (bool, error) {
+	return false, nil
 }
 
 // NullGraphQueryer implements [store.GraphQueryer] with empty results.

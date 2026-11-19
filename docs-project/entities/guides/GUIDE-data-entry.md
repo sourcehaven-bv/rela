@@ -327,6 +327,10 @@ dashboards:                # Optional named dashboards, same shape
     title: "Pipeline"
     cards: [...]
 
+header_buttons:            # Optional: hide built-in entity page buttons
+  history: true
+  add_to_pile: false
+
 kanbans:                   # Kanban board views
   board_name:
     entity_type: task
@@ -3034,6 +3038,7 @@ sections:
 | `group_by`      | string | Property to group entities by                           |
 | `empty_message` | string | Text shown when the collection is empty                 |
 | `hide_empty`    | bool   | Leave the section out when the collection is empty (see below) |
+| `permission`    | string | Show the section only to holders of this permission (see below) |
 | `link`          | string | `detail` links entity titles to their detail pages      |
 | `create`        | map    | Offer a "create related entity" button (see below)      |
 | `totals`        | list   | Entry properties shown under the table (`table` mode; see Editable table cells) |
@@ -3260,6 +3265,39 @@ one.
 - **In a form's `side_panel`.** The side panel does not support it. Its
   sections carry Add and Link buttons, which would disappear with the section.
 
+### Sections the reader cannot use
+
+Set `permission:` to show a section only to principals who hold that global
+permission from `acl.yaml`. Other principals get the page without it, heading
+included:
+
+```yaml
+sections:
+  - heading: Bookkeeping
+    source: entry
+    display: properties
+    permission: staff.manage
+    fields:
+      - property: eb_relation_id
+      - property: org_id
+```
+
+This is a display filter, the same as `permission:` on a navigation entry or a
+dashboard card. It does not protect any data. Every principal can still read
+the section's configuration from `/api/v1/_config`, and can read the fields
+through the entity API if `acl.yaml` lets them. To hide field values, give the
+reader's role a `visible:` block in `acl.yaml`. Without an `acl.yaml`, or under
+`--read-only`, every section shows.
+
+The server also leaves out a `display: properties` section on `source: entry`
+when every field in it is a property that `visible:` hides from the reader.
+Such a section would show only a heading and empty labels. A section with at
+least one field the reader may see stays, and so does a section with a
+`relation:` field. No configuration is needed for this.
+
+A form's `side_panel` refuses `permission:` on a section, as it refuses
+`hide_empty`.
+
 ### Field Render Modes
 
 A view section field renders as a **view-oriented display value** by default.
@@ -3391,6 +3429,13 @@ fields:
 | `multi-select` | enum, string (list values)    |
 | `rrule`        | rrule                         |
 | `file`         | file                          |
+| `url`          | string                        |
+
+`url` edits the value in a text input with the URL keyboard, and shows it as
+a link. It is the default for a string with `display: {link: true}` in
+`schema.yaml` (see the metamodel guide). Prefer that setting: it applies on
+every surface. `widget: url` applies only where a field override applies,
+which is a form or an inline-edit section (`render: input`).
 
 Rules worth knowing:
 
@@ -3722,6 +3767,46 @@ and history move with the entity, so everyone who can read the new type and
 face can read those comments. The history timeline of the new entity lists only
 versions of its new type and face; the conversion version names the old id.
 
+### Entity header buttons (`header_buttons`)
+
+The header of an entity page shows built-in buttons next to Edit and Delete.
+The `header_buttons:` block hides two of them:
+
+| Key           | Button                                                         |
+| ------------- | -------------------------------------------------------------- |
+| `history`     | **History**: the entity's version history.                     |
+| `add_to_pile` | **Add to pile**: the menu that adds the entity to a [pile](#piles). |
+
+Each key takes the same values as a dashboard's
+[`validation:`](#hiding-the-validation-card-validation): `true` (the
+default), `false`, or `{permission: <name>}`.
+
+```yaml
+header_buttons:
+  history:
+    permission: staff.manage   # only staff see History
+  add_to_pile: false           # nobody sees Add to pile
+```
+
+The setting applies to the desktop header row and to the overflow menu on a
+phone. It does not affect:
+
+- the pile buttons of [`piles.toggles`](#configuring-piles), which you
+  configure separately;
+- **Remove from pile**, shown while you step through a pile;
+- "Add to pile" on lists and search results.
+
+A key can only hide a button. History still needs a deployment with version
+history (PostgreSQL or SQLite), and Add to pile still needs piles to be
+available to the reader.
+
+**This is a UX filter, not an access control.** A hidden History button does
+not stop anyone from opening `/history/...` or calling `/api/v1/_history`.
+Those keep their own ACL, as the pile endpoints do. `/api/v1/_config` serves
+the block to every principal, and `/api/v1/_sidebar` serves the result for the
+current principal as `header_buttons: {history, add_to_pile}`. With no
+`acl.yaml`, and under `--read-only`, a gated button shows.
+
 ### How navigation resolves
 
 For each clickable entity reference, the SPA picks the destination URL using
@@ -3794,6 +3879,7 @@ dashboard:
 | `description` | string | Subtitle shown below the heading       |
 | `cards`       | list   | Card definitions                       |
 | `entity_type` | string | Named dashboards only: makes it an [entity dashboard](#entity-dashboards) |
+| `validation`  | toggle | Shows or hides the [validation card](#hiding-the-validation-card-validation). Default: shown |
 
 ### Card Options
 
@@ -4104,6 +4190,51 @@ same one shown when no cards are configured at all.
 > roles in `acl.yaml` first. This applies equally to `permission:` on
 > commands, documents, and navigation entries.
 
+### Hiding the validation card (`validation`)
+
+Below its cards, the dashboard shows a validation card. It counts the errors
+and warnings of the project-wide analysis and links to the Analysis page.
+That suits a team that maintains the data. It does not suit a customer
+portal, where the reader cannot act on those findings.
+
+Set `validation:` on a dashboard to change this. It takes one of three values:
+
+| Value                     | Effect                                                 |
+| ------------------------- | ------------------------------------------------------ |
+| `true`                    | The card shows. This is the default.                   |
+| `false`                   | The card never shows.                                  |
+| `{permission: <name>}`    | The card shows only to holders of that permission.     |
+
+```yaml
+dashboard:
+  title: "Overview"
+  validation:
+    permission: staff.manage   # only staff see the validation card
+  cards: [...]
+
+dashboards:
+  portal:
+    title: "My account"
+    validation: false          # customers never see it here
+    cards: [...]
+```
+
+Each dashboard has its own setting, so a space whose `home:` opens a named
+dashboard can show or hide the card for that space alone.
+
+A hidden card also skips its call to the analysis endpoint.
+
+**This is a UX filter, not an access control.** The permission gate works like
+a card's [`permission:`](#hiding-cards-a-user-cannot-use-permission): it keeps
+an element that a reader cannot use out of the way. It does not protect the
+analysis. The Analysis page and `/api/v1/_analyze` keep their own gate, and
+`/api/v1/_config` serves the `validation:` value to every principal. With no
+`acl.yaml`, and under `--read-only`, a gated card shows.
+
+An entity dashboard never shows the validation card, because the card covers
+the whole project. Setting `validation: false` or a permission on an entity
+dashboard is a configuration error.
+
 ### Named dashboards (`dashboards`)
 
 A project can have more dashboards than the default one. Each space can then
@@ -4361,6 +4492,8 @@ next_actions:
 | `condition` | Refines `query`'s candidates with a predicate expression — the only place date arithmetic works. See below. |
 | `context` | Instead of `query`: an entity type. The candidate is the entity the page shows, on pages about an entity of that type. See [Where suggestions appear](#where-suggestions-appear). |
 | `count` | Instead of `query`: fires on `"<entity_type> == 0"` — the first-run case. |
+| `source` | Instead of `query`: a built-in candidate list. `flow_tasks` offers your waiting flow steps. See [`source: flow_tasks`](#waiting-flow-steps-source-flow_tasks). |
+| `flows` | With `source: flow_tasks`: the flows whose steps count. Unset counts every flow. |
 | `suggest` | **Required.** The message. `{property}` inserts a stored property of the candidate, and `{id}` its id. Only stored properties exist, so a computed value such as a day count cannot be inserted. An enum value reads as its label. A date reads in the property's `format:`, otherwise as `2026-11-03`, or `2026-11-03 14:05` when it has a time of day. A placeholder that names no value stays as written. |
 | `actions` | The affordances offered. See below. |
 | `cooldown` | How long after being *shown* to stay quiet. Defaults to 24h. On a `context` source: how long "Seen it" hides the suggestion. |
@@ -4370,7 +4503,7 @@ next_actions:
 | `defer_scope` | What "not now" covers: `entity` (default) or `source` — see below. |
 | `visible_on` | Pages the suggestion may appear on. Unset matches every page. See [Where suggestions appear](#where-suggestions-appear). |
 
-Exactly one of `query`, `context` or `count` must be set.
+Exactly one of `query`, `context`, `count` or `source` must be set.
 
 #### `condition` — dwell time and other typed comparisons
 
@@ -4524,6 +4657,63 @@ genuinely operator-level check ("has this deployment been set up at all?") —
 it discloses that entities of a type exist to someone permitted to read none
 of them.
 
+#### Waiting flow steps (`source: flow_tasks`)
+
+A `flow_tasks` source suggests the flow steps that wait for you. Its
+candidates are exactly the tasks of the **Flow tasks** page: the same read
+gate and the same roles, globally or through a role relation. See
+[Doing a step](flows.md#doing-a-step). It adds no rule of its own.
+
+```yaml
+next_action_bands:
+  - id: todo
+    label: To do
+    prominence: banner
+
+next_actions:
+  signup-step:
+    band: todo
+    source: flow_tasks
+    flows: [signup]
+    suggest: "Complete {step} for {subject}"
+    actions:
+      - label: Open step
+        navigate: "/entity/{type}/{id}?run={run}"
+      - snooze: ["1d"]
+```
+
+This is the shape for a customer portal: a customer whose `signup` run
+waits in its `details` state sees a banner such as "Complete Company
+details for Northwind Demo B.V." on every page. The button opens the
+company's page with the step form of that run in view.
+
+- **The message.** `{flow}` is the flow's label, `{step}` the label of the
+  state the run waits in, and `{subject}` the title of the subject. Any
+  other `{property}` inserts a property of the subject, as on a `query`
+  source. A subject you cannot read is named by its id.
+- **The button.** A `navigate` offer fills `{type}` and `{id}` with the
+  subject and `{run}` with the run. Without a `navigate` offer, rela adds
+  an "Open" button to `/entity/<type>/<id>?run=<run>`. On the entity page,
+  `?run=` scrolls to that run in the Flows panel and focuses it.
+- **Which task.** The source offers its oldest waiting task, by start of
+  the run. A snoozed or dismissed task gives way to the next oldest.
+  Other sources in the same band still compete with it as usual.
+- **Snooze and dismiss** hide the hint only. The task stays on the Flow
+  tasks page and in the Flows panel. Each step of a run is its own
+  suggestion, so when the run moves on to another waiting state, the hint
+  comes back for the new step.
+- **Done is gone.** A completed step leaves the task list, so the hint is
+  gone on the next resolve. The page asks again after any change to a
+  flow run.
+- **No cooldown by default.** A waiting step is work you have to do, so
+  being shown does not hide it. Set `cooldown:` to make it rest after it
+  was shown.
+
+`condition`, `key_props`, `source_world`, `pick` and `pick_one` offers do
+not apply to this source and fail the load. `flows:` names are checked
+when the suggestion is resolved, because `flows.yaml` reloads on its own:
+a name it does not declare is logged and skipped.
+
 ### Where suggestions appear
 
 The suggestion slot sits at the top of every page: the dashboard, lists,
@@ -4668,8 +4858,10 @@ The GET takes these query parameters, all optional:
 | `current_source`, `current_entity`, `current_variant` | The suggestion the reader has on screen, so it can stay. See [Navigating keeps the suggestion](#navigating-keeps-the-suggestion). |
 
 The answer is `{"suggestion": …}`, with `null` when nothing is owed. When a
-context source can apply to the page, `context_type` names its entity type;
-the SPA asks again when an entity of that type changes.
+context source can apply to the page, `context_type` names its entity type.
+`refresh_types` lists every type whose changes can change the answer: that
+context type, and `_flow-run` when a `flow_tasks` source can apply. The SPA
+asks again when an entity of one of those types changes.
 
 The POST body names the suggestion (`source`, `entity_id`, `variant`) and a
 `kind`: `snooze` (with `duration`), `dismiss`, `mute`, `unmute`, `shown` or
@@ -6151,6 +6343,39 @@ A group whose every item is hidden disappears with them, so you never get a
 heading with nothing under it. `permission:` is not valid **on** a group —
 gate the items instead.
 
+A principal holds the permission when one of its roles grants it. That role
+may be global (an assignment, a group, an asserted claim). It may also come
+from a `role_relations:` edge on any entity. So a role that applies to some
+records can also show the menu entries for those records. In this example a
+customer holds the `customer` role on its own account through `customer-of`,
+and that role's `portal.use` permission shows the "My account" entry:
+
+```yaml
+# acl.yaml
+roles:
+  staff:
+    permissions: [customers.manage]
+  customer:
+    read: [account, invoice]
+    permissions: [portal.use]
+role_relations:
+  customer-of:
+    confers: customer
+    requires_permission: customers.manage
+
+# data-entry.yaml
+navigation:
+  - label: "My account"
+    list: my_accounts
+    permission: portal.use
+```
+
+The principal, or a group it belongs to, must hold at least one such edge
+whose `when:` holds. This rule applies to the `permission:` of navigation
+entries, page tabs, spaces and dashboard cards. Gates that allow an action
+(commands, actions, documents and the built-in permissions such as
+`history:read`) count global roles only.
+
 Behaviour without a policy: with no `acl.yaml`, every entry is shown — nothing
 is denied when nothing is configured. The same applies under `--read-only`,
 which restricts *writes* and leaves reads untouched, so there is no permission
@@ -6175,6 +6400,48 @@ menu item has vanished, check the spelling against the `permissions:` list on
 your roles first.
 
 Direct items and groups can be freely mixed in any order.
+
+### Built-in sidebar rows (`builtins:`)
+
+Above the navigation, the sidebar pins rows that rela adds itself: Search,
+Inbox, Flow tasks, Flow runs and Analysis. Inbox appears only when the project
+has channels, and the two flow rows only when it has flows. By default every
+row is shown.
+
+`builtins:` hides a row, or shows it only to users who hold a permission:
+
+```yaml
+builtins:
+  search: { hidden: true }              # hidden for everyone
+  analysis: { permission: admin:read }  # only holders see it
+```
+
+| Row name     | Row        |
+| ------------ | ---------- |
+| `search`     | Search     |
+| `inbox`      | Inbox      |
+| `flow_tasks` | Flow tasks |
+| `flow_runs`  | Flow runs  |
+| `analysis`   | Analysis   |
+
+Each entry sets exactly one of `hidden: true` or `permission:`. An unknown row
+name, an entry with both or neither, and a top-level `builtins:` next to
+`spaces:` all fail to load. With [spaces](#spaces), set `builtins:` on each
+space instead.
+
+When the Search row is hidden, the `/` shortcut to the search page is off too.
+When every row is hidden, the pinned band is left out.
+
+`permission:` here works like [`permission:` on a navigation
+entry](#hiding-entries-a-user-cannot-act-on-permission), including the
+behaviour without `acl.yaml`, where every row is shown. Both settings only
+tidy the sidebar. The pages behind the rows stay reachable by URL, under the
+normal ACL, and the configuration is not a secret: `/api/v1/_config` serves it
+to every user.
+
+The sidebar endpoint names the rows it leaves out for the current user in
+`hidden_builtins`, for example `"hidden_builtins": ["search", "analysis"]`. The
+field is absent when every row is shown.
 
 ## Spaces
 
@@ -6215,6 +6482,7 @@ spaces:
 | `home`       | no       | The page the space opens on: one navigation destination |
 | `create`     | no       | Entity types the Create menu offers in this space, in order |
 | `navigation` | no       | The space's sidebar, in the same shape as [Navigation](#navigation) |
+| `builtins`   | no       | Hide or gate the built-in sidebar rows in this space; see [Built-in sidebar rows](#built-in-sidebar-rows-builtins) |
 
 `spaces:` is a list, and its order is the order of the switcher.
 
@@ -6264,6 +6532,40 @@ is no setting for this.
 the permission. It works like `permission:` on a navigation entry. It is a
 convenience, not a security control: the lists and entities of a hidden space
 stay reachable by URL, under the normal ACL.
+
+**The app root** (`/`) opens the home of the current space: the space the user
+is in, else the space this browser was last in, else the first space the user
+may see. Without `spaces:` the root opens the dashboard. `/dashboard` always opens the dashboard.
+
+A portal for customers next to a back office for staff, where each group lands
+in its own space:
+
+```yaml
+spaces:
+  - id: staff
+    label: "Back office"
+    permission: staff:manage
+    home: { list: accounts }
+    navigation:
+      - label: "Accounts"
+        list: accounts
+  - id: portal
+    label: "My account"
+    permission: portal:use
+    home: { dashboard: true }
+    builtins:
+      search: { hidden: true }
+      flow_tasks: { hidden: true }
+      flow_runs: { hidden: true }
+      analysis: { hidden: true }
+    navigation:
+      - label: "Invoices"
+        list: my_invoices
+```
+
+A customer who holds only `portal:use` opens the app root and lands on the
+portal's home, with no Search, flow or Analysis rows. Staff land in the back
+office and keep every row.
 
 ### The current space
 
@@ -8965,6 +9267,11 @@ separate click target that reveals more about the failure. For a
 listing exactly which required headers the entity is missing (only exact-match
 headers; regex `pattern:` checks are not listed). A validation whose Lua script
 failed instead opens the script-error dialog from the same message click.
+
+The page shows only what you may read. A property finding starts with the
+field's `label` from the schema, or with its property name when it has none,
+such as "Summary: This field is required". A field that `visible:` hides from
+you is not checked, because you cannot see or fix it.
 
 No configuration is needed — the analysis page is always available in the sidebar.
 

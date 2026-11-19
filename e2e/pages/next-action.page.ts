@@ -42,6 +42,17 @@ export class NextActionPage extends BasePage {
     );
   }
 
+  /** Follows the card's navigate offer labelled `label`. */
+  async openOffer(label: string) {
+    await this.card.getByRole('link', { name: label }).click();
+  }
+
+  /** Snoozes the suggestion through "Not now" for `duration` (e.g. "1d"). */
+  async snoozeFor(duration: string) {
+    await this.card.getByRole('button', { name: 'Not now' }).click();
+    await this.card.getByRole('menuitem', { name: `Remind me in ${duration}` }).click();
+  }
+
   async entityId(): Promise<string | null> {
     return this.card.getAttribute('data-entity-id');
   }

@@ -210,7 +210,8 @@ func (l *loader) refType(ref, subjectType string) (typ, reason string) {
 	}
 	if l.policy != nil && l.policy.FieldRestricted(subjectType, name) {
 		return "", fmt.Sprintf("names {{%s}}, which a visible: grant in acl.yaml restricts; the output would "+
-			"copy its value where its readers may not see it", ref)
+			"copy its value where its readers may not see it. A template may read it once every role's "+
+			"visible: block for %s lists it without a when: and no client baseline hides it", ref, subjectType)
 	}
 	return pd.Type, ""
 }

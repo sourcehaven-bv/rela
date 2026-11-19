@@ -20,6 +20,7 @@ import RruleWidget from './RruleWidget.vue'
 import FileWidget from './FileWidget.vue'
 import FileCellWidget from './FileCellWidget.vue'
 import ExternalRefWidget from './ExternalRefWidget.vue'
+import UrlWidget from './UrlWidget.vue'
 
 // defaultWidgetFor reproduces FieldRenderer's historical dispatch order
 // exactly (RR-0Z1P6). Order matters: `list` wins over `values`, which
@@ -35,6 +36,9 @@ export function defaultWidgetFor(propertyDef?: PropertyDef): string {
   if (propertyDef?.type === 'rrule') return 'rrule'
   if (propertyDef?.type === 'file') return 'file'
   if (propertyDef?.type === 'external_ref') return 'external-ref'
+  // The schema admits a link format only on a single-valued string without
+  // values, so the list and values rules above never shadow it.
+  if (propertyDef?.display?.link === true) return 'url'
   return 'text'
 }
 
@@ -51,6 +55,7 @@ const hintKindToWidgetName: Record<WidgetHintKind, string> = {
   datetime: 'datetime',
   integer: 'number',
   rrule: 'rrule',
+  url: 'url',
 }
 
 // Hint kinds served by a dense-only component. These are NOT registered
@@ -158,6 +163,7 @@ export const WIDGET_REGISTRATIONS: ReadonlyArray<{
     component: ExternalRefWidget,
     supportedPropertyTypes: ['external_ref'],
   },
+  { name: 'url', component: UrlWidget, supportedPropertyTypes: ['string'] },
 ]
 
 function buildDefaultRegistry(): WidgetRegistry {

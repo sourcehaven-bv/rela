@@ -40,6 +40,11 @@ export interface Config {
   dashboard?: DashboardConfig
   /** Named dashboards (TKT-5LQNLY), reached at `/dashboard/<name>`. */
   dashboards?: Record<string, DashboardConfig>
+  /**
+   * The `header_buttons:` toggles as configured (TKT-31822PN). Never evaluated
+   * here; `/_sidebar` serves the per-principal answer as `header_buttons`.
+   */
+  header_buttons?: { history?: ChromeToggle; add_to_pile?: ChromeToggle }
   actions?: Record<string, ActionConfig>
   navigation: NavigationEntry[]
   /** Tabbed screens keyed by page id (TKT-ITQ0HL). Absent without `pages:`. */
@@ -62,6 +67,14 @@ export interface Config {
   piles_available?: boolean
   /** The `piles:` block of data-entry.yaml; null or absent when not declared. */
   piles?: PilesConfig | null
+}
+
+/** Which audit views the sidebar offers (TKT-X1ZFO04). */
+export interface SidebarAudit {
+  /** A database audit log is wired, so an entity page shows its Changes panel. */
+  changes: boolean
+  /** The log is wired and this principal holds audit:read. */
+  global: boolean
 }
 
 /** The `piles:` block: what the pile panel offers beyond its own controls. */
@@ -846,6 +859,25 @@ export interface DashboardConfig {
    * anchor, and is shown as a `scope: root` tab of an entity page.
    */
   entity_type?: string
+  /**
+   * The validation card toggle as configured: true, false or
+   * `{permission}`. Never evaluated here; `/_dashboard` serves the
+   * per-principal answer as `DashboardResponse.validation`.
+   */
+  validation?: ChromeToggle
+}
+
+/** A built-in element's toggle in data-entry.yaml (TKT-31822PN). */
+export type ChromeToggle = boolean | { permission: string }
+
+/**
+ * Which built-in entity header buttons the server shows this principal
+ * (TKT-31822PN). A UX filter, not access control: the history and pile APIs
+ * keep their own ACL.
+ */
+export interface SidebarHeaderButtons {
+  history: boolean
+  add_to_pile: boolean
 }
 
 /** The `records:` block of a `display: line` dashboard card. */
@@ -937,6 +969,13 @@ export interface DashboardResponse {
   description?: string
   /** On an entity dashboard every card has a `scope` and needs an anchor. */
   cards: DashboardCardEntry[]
+  /**
+   * Whether this principal is shown the validation card: the dashboard's
+   * `validation:` toggle, resolved by the server (TKT-31822PN). Always false
+   * on an entity dashboard. Absent from an older server, where the card
+   * shows. A UX filter, not access control.
+   */
+  validation?: boolean
 }
 
 /**
@@ -1097,6 +1136,12 @@ export interface NextActionResponse {
    * of that type and no other.
    */
   context_type?: string
+  /**
+   * Every entity type whose changes can change this page's answer: the
+   * context type, and the flow run type when a flow_tasks source can apply.
+   * Supersedes `context_type`.
+   */
+  refresh_types?: string[]
 }
 
 /** How a user answered a suggestion. */
@@ -1288,6 +1333,12 @@ export interface SidebarData {
   /** The current space's Create menu: types the principal may create. */
   create?: SidebarCreate[]
   /**
+   * The built-in sidebar rows that `builtins:` leaves out for this principal,
+   * in the current space or the top-level sidebar. Absent when every row is
+   * shown. A UX filter: the pages behind the rows stay reachable by URL.
+   */
+  hidden_builtins?: BuiltinRow[]
+  /**
    * Every page of `pages:`, keyed by page id, with the tabs this principal
    * may see (TKT-ITQ0HL). Absent when the config declares no pages.
    */
@@ -1300,6 +1351,13 @@ export interface SidebarData {
   piles_available?: boolean
   /** The `piles:` block of data-entry.yaml; null or absent when not declared. */
   piles?: PilesConfig | null
+  /** The audit views this principal is offered; absent from an older server. */
+  audit?: SidebarAudit
+  /**
+   * The `header_buttons:` toggles resolved for this principal (TKT-31822PN).
+   * Absent from an older server, where every button shows.
+   */
+  header_buttons?: SidebarHeaderButtons
 }
 
 /**
@@ -1421,6 +1479,9 @@ export interface SidebarSpace {
   icon?: string
   home: string
 }
+
+/** A built-in sidebar row, as `builtins:` in data-entry.yaml names it. */
+export type BuiltinRow = 'search' | 'inbox' | 'flow_tasks' | 'flow_runs' | 'analysis'
 
 /** One row of a space's Create menu. */
 export interface SidebarCreate {

@@ -16,7 +16,8 @@
     "inboxMentions": "{n} vermelding | {n} vermeldingen",
     "inboxUnread": "{n} ongelezen kanaal | {n} ongelezen kanalen",
     "flowTasks": "Mijn flowtaken",
-    "flowRuns": "Flowruns"
+    "flowRuns": "Flowruns",
+    "audit": "Auditlog"
   },
   "flows": {
     "status": {
@@ -1585,5 +1586,24 @@
     "addOutput": "Uitvoer toevoegen",
     "removeOutput": "{name} verwijderen",
     "usedBy": "Deze automatiseringen gebruiken haar: {names}."
+  },
+  "audit": {
+    "title": "Auditlog",
+    "empty": "Het auditlog is leeg.",
+    "forbidden": "Je hebt de permissie audit:read nodig om het auditlog te zien.",
+    "loadMore": "Meer laden",
+    "triggeredBy": "Gestart door {trigger}",
+    "col": {
+      "time": "Tijd",
+      "user": "Gebruiker",
+      "op": "Bewerking",
+      "subject": "Onderwerp",
+      "summary": "Samenvatting",
+      "trigger": "Gestart door"
+    },
+    "changes": {
+      "title": "Wijzigingen",
+      "empty": "Geen wijzigingen vastgelegd."
+    }
   }
 }

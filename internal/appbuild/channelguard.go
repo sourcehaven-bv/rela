@@ -78,6 +78,8 @@ type guardInputs struct {
 	dueWake  *realtime.DueWake
 	marker   channelMarker
 	flowRuns flowrun.Store
+	// flowStarts is nil when no flow starts on create.
+	flowStarts *flowCreateStarts
 }
 
 // newChannelGuard returns the guard over in.store, reading the realtime

@@ -843,6 +843,39 @@ describe('DashboardView', () => {
     })
   })
 
+  // The validation card follows the server's per-principal `validation`
+  // (TKT-31822PN); the view never evaluates the configured toggle itself.
+  describe('validation card', () => {
+    it.each([
+      ['absent (older server)', undefined, true],
+      ['true', true, true],
+      ['false', false, false],
+    ])('with validation %s shown is %s', async (_name, validation, shown) => {
+      const store = seedDashboard([card()])
+      store.dashboard = { ...store.dashboard!, validation }
+
+      const wrapper = await mountView()
+
+      expect(wrapper.find('[data-testid="dashboard-validation"]').exists()).toBe(shown)
+      // A hidden card loads nothing.
+      expect(analyzeMock).toHaveBeenCalledTimes(shown ? 1 : 0)
+    })
+
+    it('hides the card on a named dashboard that turns it off', async () => {
+      seedDashboard([card()])
+      getDashboardMock.mockResolvedValue({ title: 'Portal', cards: [card()], validation: false })
+
+      const wrapper = mount(DashboardView, {
+        props: { name: 'portal' },
+        global: { stubs: { RouterLink: RouterLinkStub, 'router-link': RouterLinkStub } },
+      })
+      await flushPromises()
+
+      expect(wrapper.find('.validation-card').exists()).toBe(false)
+      expect(analyzeMock).not.toHaveBeenCalled()
+    })
+  })
+
   // Entity dashboards: a dashboard whose cards have a scope counts for the
   // anchor an entity page tab passes in.
   describe('entity dashboard', () => {

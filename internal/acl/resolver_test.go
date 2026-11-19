@@ -55,6 +55,7 @@ type fakeGraph struct {
 
 	outgoingCalls int
 	hasEdgeCalls  int
+	anyEdgeCalls  int
 	outgoingByRel map[string]int // OutgoingRelations calls bucketed by relType
 }
 
@@ -84,6 +85,19 @@ func (g *fakeGraph) OutgoingRelations(_ context.Context, from, relType string, _
 		return nil, g.err
 	}
 	return slices.Clone(g.edges[edgeKey{from, relType}]), nil
+}
+
+func (g *fakeGraph) HasOutgoingEdge(_ context.Context, relType string, _ []store.PropPredicate, fromIDs []string) (bool, error) {
+	g.anyEdgeCalls++
+	if g.err != nil {
+		return false, g.err
+	}
+	for _, from := range fromIDs {
+		if len(g.edges[edgeKey{from, relType}]) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // helpers -----------------------------------------------------------------

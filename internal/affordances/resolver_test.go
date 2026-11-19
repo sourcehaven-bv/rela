@@ -694,6 +694,11 @@ func (g *countingGraph) OutgoingRelations(_ context.Context, _, _ string, _ []st
 	return nil, nil
 }
 
+func (g *countingGraph) HasOutgoingEdge(context.Context, string, []store.PropPredicate, []string) (bool, error) {
+	g.outgoingCalls++
+	return false, nil
+}
+
 // The membership walk runs once, at the request edge (acl.BindRequest).
 // The affordance resolver reuses the bound Request for every entity and
 // never walks member-of itself (RR-JJYW). A ctx with no bound Request gets

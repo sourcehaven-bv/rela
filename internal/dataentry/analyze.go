@@ -520,13 +520,14 @@ func (svc analyzeService) analyzeProperties(ctx context.Context, meta *metamodel
 		if err != nil {
 			break
 		}
-		for _, verr := range metaValidator.ValidateEntity(h.ID, h.Type, h.Properties) {
+		// The row is redacted: findings on hidden fields are dropped.
+		for _, verr := range metaValidator.ValidateReadable(h.ID, h.Type, h.Properties, h.Redacted) {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   h.ID,
 				Face:       h.Face,
 				EntityType: h.Type,
 				Title:      safeHeaderTitle(meta, h),
-				Message:    verr.Error(),
+				Message:    verr.Message,
 				Severity:   "error",
 			})
 		}
