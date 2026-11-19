@@ -631,8 +631,11 @@ run stays where it is.
 Once the values are saved, the step is not refused any more. If the run
 then does not follow cleanly, the answer says why in `problem`: `guard`
 (a `when` could not be evaluated, so the run stays), `moved` (the run had
-already moved on, for example by a timer) or `settling` (the run moved,
-but a later output step failed and is retried).
+already moved on, for example by a timer), `settling` (the run moved,
+but a later output step failed and is retried) or `blocked` (you may take
+a branch, but no branch's `when` holds, so the run stays and waits for the
+step again; this also applies when you sent no values). The panel shows `blocked` as a warning, so that the person
+who completed the step knows that it did not go through.
 
 The panel also offers a Start button for each flow with an `on: manual`
 start whose `permission:` you hold for the entity. A flow with

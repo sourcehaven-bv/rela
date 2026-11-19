@@ -70,10 +70,12 @@ func TestFlowControl_CompleteStep(t *testing.T) {
 		gen     int64 // added to the run's generation
 		wantErr error
 		moved   bool
+		problem string
 	}{
 		{name: "holder moves the run", user: "alice", props: map[string]any{"documents": true}, moved: true},
-		{name: "holder, no branch applies", user: "alice", props: map[string]any{"documents": false}},
-		{name: "holder, nothing written", user: "alice"},
+		{name: "holder, no branch applies", user: "alice", props: map[string]any{"documents": false},
+			problem: flowview.ProblemBlocked},
+		{name: "holder, nothing written", user: "alice", problem: flowview.ProblemBlocked},
 		{name: "non-holder", user: "bob", props: map[string]any{"documents": true}, wantErr: flowview.ErrForbidden},
 		{name: "hidden run", user: "eve", props: map[string]any{"documents": true}, wantErr: flowview.ErrNotFound},
 		{name: "property outside writes", user: "alice", props: map[string]any{"stage": "x"},
@@ -102,6 +104,7 @@ func TestFlowControl_CompleteStep(t *testing.T) {
 				return
 			}
 			require.Equal(t, tc.moved, got.Moved)
+			require.Equal(t, tc.problem, got.Problem)
 			if tc.props != nil {
 				require.Equal(t, tc.props["documents"], subj.Properties["documents"])
 			}

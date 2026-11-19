@@ -641,6 +641,9 @@ func (c *FlowControl) complete(ctx context.Context, id flow.RunID, gen int64,
 	}
 	changed, err := c.eng.Change(wctx, id, gen, cl.user, holds)
 	out := flowview.Completed{Written: names, Moved: changed.Moved, State: changed.State, Finished: changed.Finished}
+	if err == nil && changed.Blocked {
+		out.Problem = flowview.ProblemBlocked
+	}
 	if err == nil || (len(props) == 0 && !changed.Moved) {
 		return out, err
 	}

@@ -4,7 +4,7 @@ import { mount, flushPromises, RouterLinkStub, enableAutoUnmount } from '@vue/te
 import FlowRunCard from './FlowRunCard.vue'
 import { ApiError } from '@/api/errors'
 import type { FlowRun } from '@/api/flows'
-import { useSchemaStore } from '@/stores'
+import { useSchemaStore, useUIStore } from '@/stores'
 import type { EntityType } from '@/types'
 
 const getFlowRunMock = vi.fn()
@@ -139,6 +139,27 @@ describe('FlowRunCard', () => {
     expect(getFlowRunMock).toHaveBeenCalledWith('R1', expect.any(AbortSignal))
     expect(wrapper.find('[data-testid="flow-run-state"]').text()).toBe('Review')
     expect(wrapper.emitted('changed')).toHaveLength(1)
+  })
+
+  it('warns when no condition of the next step holds', async () => {
+    completeFlowStepMock.mockResolvedValue({
+      written: ['documents'],
+      moved: false,
+      state: 'collect',
+      finished: false,
+      problem: 'blocked',
+    })
+    getFlowRunMock.mockResolvedValue(run())
+    const wrapper = mountCard(run())
+    await flushPromises()
+
+    await wrapper.find('[data-testid="flow-step-form"]').trigger('submit')
+    await flushPromises()
+
+    const toasts = useUIStore().toasts
+    expect(toasts).toHaveLength(1)
+    expect(toasts[0]).toMatchObject({ type: 'warning' })
+    expect(toasts[0].message).toContain('no condition of the next step holds')
   })
 
   it('reloads the run when the step answers that the run moved on', async () => {
