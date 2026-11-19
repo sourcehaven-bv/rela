@@ -153,6 +153,19 @@ export class MobileLayoutPage extends BasePage {
     return this.mainPane.evaluate((el) => el.scrollTop);
   }
 
+  /**
+   * The alpha of an element's computed background colour: 0 when content
+   * under it shows through, 1 when it is opaque.
+   */
+  async backgroundAlpha(locator: Locator): Promise<number> {
+    return locator.evaluate((el) => {
+      const probe = document.createElement("canvas").getContext("2d")!;
+      probe.fillStyle = getComputedStyle(el).backgroundColor;
+      probe.fillRect(0, 0, 1, 1);
+      return probe.getImageData(0, 0, 1, 1).data[3] / 255;
+    });
+  }
+
   /** Top edge of an element, in viewport coordinates. */
   async topOf(locator: Locator): Promise<number> {
     const box = await locator.boundingBox();

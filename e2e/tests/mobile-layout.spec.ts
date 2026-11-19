@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures";
+import { test, expect, SEED } from "./fixtures";
 import { MobileLayoutPage } from "../pages";
 
 /**
@@ -165,6 +165,26 @@ test.describe("Mobile app shell", () => {
     // Still on screen: it is sticky within the pane, so it does not scroll
     // away and strand the user with no way back to the navigation.
     await expect(mobile.hamburger).toBeInViewport();
+  });
+
+  /*
+   * On a page that renders its header inline, the hamburger floats over the
+   * content as it scrolls. It needs its own opaque surface, or the text
+   * under it shows through the icon and both become unreadable.
+   */
+  test("the hamburger keeps its own surface over scrolled content", async ({
+    appPage,
+  }) => {
+    const mobile = new MobileLayoutPage(appPage);
+    await mobile.navigateTo(`/entity/feature/${SEED.features.authentication}`);
+    const button = appPage.locator(".mobile-menu-btn");
+    await expect(button).toBeVisible();
+
+    await mobile.growPaneContent();
+    await mobile.scrollPane(400);
+
+    await expect(button).toBeInViewport();
+    expect(await mobile.backgroundAlpha(button)).toBe(1);
   });
 
   /**
