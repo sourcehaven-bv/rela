@@ -116,6 +116,17 @@ export class BasePage {
     }
   }
 
+  /** Close every open toast with its dismiss button. */
+  async dismissToasts() {
+    const close = this.toastContainer.getByRole("button", {
+      name: "Dismiss notification",
+    });
+    while ((await close.count()) > 0) {
+      await close.first().click();
+    }
+    await expect(this.toastContainer).toHaveCount(0);
+  }
+
   async expectHeading(text: string) {
     await expect(
       this.page.locator("h1, h2").filter({ hasText: text }).first(),

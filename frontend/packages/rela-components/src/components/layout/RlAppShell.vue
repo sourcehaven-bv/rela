@@ -199,13 +199,17 @@ onBeforeUnmount(() => {
  * home indicator, so the frame stops short of it. The top edge is left to
  * the header and the sides to the page gutters, each of which sits closer to
  * the content it protects.
+ *
+ * `clip`, not `hidden`: a hidden box is still a scroll container, so
+ * scrollIntoView on anything inside scrolled the frame too, shifting the
+ * layout up and hiding the top bar on a phone. Only the pane scrolls.
  */
 .rl-app-shell__frame {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-width: 0;
-  overflow: hidden;
+  overflow: clip;
   padding-bottom: var(--rl-safe-inset-bottom);
 }
 
