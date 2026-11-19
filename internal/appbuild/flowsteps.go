@@ -292,16 +292,44 @@ func (c *FlowControl) RunList(ctx context.Context, flowName, status string, page
 	if err != nil {
 		return flowview.Runs{}, err
 	}
+	var unfinished []flow.RunID
+	for _, k := range order {
+		if !flow.Status(views[k].Status).Terminal() {
+			unfinished = append(unfinished, flow.RunID(views[k].ID))
+		}
+	}
+	failed, err := c.failedJobs(ctx, unfinished)
+	if err != nil {
+		return flowview.Runs{}, err
+	}
 	for _, k := range order {
 		v := c.labeled(views[k])
 		v.Subject = subjects[v.ID]
 		v.Active = !flow.Status(v.Status).Terminal()
+		if failed[flow.RunID(v.ID)] {
+			v.Status = string(flow.StatusFailed)
+		}
 		out.Runs = append(out.Runs, v)
 	}
 	if err := c.nameSubjects(ctx, out.Runs); err != nil {
 		return flowview.Runs{}, err
 	}
 	return out, nil
+}
+
+// failedJobs reads the stored state of the unfinished runs ids in one run
+// store read and returns those that wait on a failed job step. Their
+// headers still say working, so without this the list would disagree with
+// the run's page (BUG-S5VV0N0).
+func (c *FlowControl) failedJobs(ctx context.Context, ids []flow.RunID) (map[flow.RunID]bool, error) {
+	if len(ids) == 0 {
+		return map[flow.RunID]bool{}, nil
+	}
+	runs, err := c.eng.RunsByID(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	return c.eng.FlowCache().FailedJobs(ctx, runs), nil
 }
 
 // defaultFlowPage is the page size when the caller names none.
