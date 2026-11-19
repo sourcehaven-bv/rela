@@ -12,7 +12,8 @@ why4: The run view tests read finished runs only through the list, never through
 why5: Two read paths (list and detail) each derive the subject in their own way, and no test compares them on a finished run.
 prevention: TestFlowControl_FinishedRunNamesSubject reads a finished run through Run and SubjectRuns for two readers and a non-reader.
 started: "2026-11-19"
-status: in-progress
+completed: "2026-11-19"
+status: done
 ---
 
 ## Description
