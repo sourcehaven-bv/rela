@@ -172,6 +172,33 @@ GET /api/v1/_search?q=type:ticket,feature sort:modified:desc&limit=8
 
 The editor's `@` mention menu uses this form to list recently modified entities.
 
+## Reading a past instant (`as_of`)
+
+A read can name an instant with `?as_of=`, an RFC 3339 timestamp with an
+explicit zone. The response shows the data as it stood then, gated by
+today's ACL. It combines with `world`. Only the PostgreSQL and SQLite
+backends support it.
+
+```text
+GET /api/v1/controls?world=published&as_of=2025-12-31T23:59:59Z
+```
+
+Lists, entity detail and its relations, views, dashboard cards, search,
+gantt charts and documents accept it. The caller needs the `history:read`
+permission. Under `as_of` every `_actions` verb is
+`false`, and `_schema` reports `capabilities.as_of`.
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| 400 | `as_of_invalid` | Not an RFC 3339 timestamp with a zone. |
+| 400 | `as_of_duplicated` | `as_of` given more than once. |
+| 403 | `as_of_forbidden` | The caller lacks the `history:read` permission. |
+| 422 | `as_of_read_only` | The request writes. |
+| 422 | `as_of_unsupported` | This endpoint cannot read a past state. |
+| 501 | `as_of_backend_unsupported` | The backend keeps no version history. |
+
+The guide `docs/point-in-time-reads.md` covers the behaviour in full.
+
 ## Relation context on collection reads
 
 A relation picker can ask `GET /api/v1/_search` or `GET /api/v1/{plural}`

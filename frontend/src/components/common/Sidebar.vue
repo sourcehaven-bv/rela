@@ -17,6 +17,7 @@ import RlSidebarGroup from 'rela-components/components/layout/RlSidebarGroup.vue
 import ProjectSwitcher from './ProjectSwitcher.vue'
 import SpaceSwitcher from './SpaceSwitcher.vue'
 import WorldSwitcher from './WorldSwitcher.vue'
+import AsOfPicker from './AsOfPicker.vue'
 import AccountMenu from './AccountMenu.vue'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { spaceOf, stripSpace, useSpaceStore, withSpace } from '@/stores/space'
@@ -537,6 +538,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
         </template>
       </SpaceSwitcher>
       <WorldSwitcher />
+      <AsOfPicker />
     </template>
 
     <!--

@@ -73,6 +73,7 @@ import FlowRunsPanel from '@/components/flows/FlowRunsPanel.vue'
 import { withAboveRelationsBlock } from '@/components/entity/channels/channelPlacement'
 import MentionedByPanel from '@/components/entity/MentionedByPanel.vue'
 import ChangesPanel from '@/components/entity/ChangesPanel.vue'
+import { currentAsOf } from '@/api/asOf'
 import CommentIndicator from '@/components/entity/CommentIndicator.vue'
 import TextSelectionComment from '@/components/entity/TextSelectionComment.vue'
 import TextCommentPopover from '@/components/entity/TextCommentPopover.vue'
@@ -176,6 +177,9 @@ const route = useRoute()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const { t } = useI18n()
+// Backlinks come from the mention index, which keeps no history, so a
+// page reading a past instant does not show them.
+const readingPast = currentAsOf() !== undefined
 const { confirm } = useConfirm()
 // The world is read from the URL, the same source EntityList reads, so a
 // detail page reached from a world-bound list stays in that world and a
@@ -3487,7 +3491,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
              Left out when the view shows backlinks itself or the operator
              turned it off; the server decides (hideMentionedByPanel). -->
         <MentionedByPanel
-          v-if="!viewData.hideMentionedByPanel"
+          v-if="!viewData.hideMentionedByPanel && !readingPast"
           :entity-type="entityType"
           :entity-id="entityRef(entry)"
         />

@@ -9,6 +9,7 @@ import {
 import { isCancelledFetch } from '@/composables/usePageData'
 import { useNavigationPending } from '@/composables/useNavigationPending'
 import { relaBase } from '@/api/base'
+import { currentAsOf } from '@/api/asOf'
 import { getSidebar } from '@/api/schema'
 import { lastSpace, homeTarget, spaceOf, useSpaceStore, withSpace } from '@/stores/space'
 import { CONFIGURE_PREFIX, configureRoute, isConfigurePath } from '@/configure/routes'
@@ -506,6 +507,17 @@ router.beforeEach((to) => {
   const space = useSpaceStore()
   if (!space.enabled || !space.current || spaceOf(to.path) || isConfigurePath(to.path)) return
   return { path: withSpace(to.path, space.current), query: to.query, hash: to.hash }
+})
+
+/**
+ * A page reading at a past instant stays there: a link or a navigation
+ * without `?as_of=` gets the page's instant (TKT-6KLUT3U). The way back to
+ * the present is `useAsOf().setAsOf(undefined)`, which reloads the page.
+ */
+router.beforeEach((to) => {
+  const at = currentAsOf()
+  if (!at || to.query.as_of === at) return
+  return { path: to.path, query: { ...to.query, as_of: at }, hash: to.hash }
 })
 
 router.onError((err, to, from) => {

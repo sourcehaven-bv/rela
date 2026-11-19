@@ -1604,5 +1604,12 @@
       "title": "Changes",
       "empty": "No changes recorded."
     }
+  },
+  "asOf": {
+    "pickerAria": "Show the state on a date",
+    "pickerTitle": "Show the data as it stood at the end of a date. Leave empty for now.",
+    "banner": "Showing the state as of {when}. This view is read-only.",
+    "backToNow": "Back to now",
+    "readOnly": "This page shows a past state and is read-only. Go back to now to make changes."
   }
 }

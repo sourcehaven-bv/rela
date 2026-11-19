@@ -51,6 +51,9 @@ export const useSchemaStore = defineStore('schema', () => {
   // renders, so it defaults to FALSE — an unset flag hides a button rather
   // than shipping one that can only 501.
   const historyEnabled = ref<boolean>(false)
+  // The storage keeps version history and serves reads at a past instant
+  // (`?as_of=`). Only the database backends do.
+  const asOfEnabled = ref<boolean>(false)
   // Whether this server runs the co-editing relay (TKT-CJL604; see
   // AppConfig.collab_enabled). False keeps the single-writer editor.
   const collabEnabled = ref<boolean>(false)
@@ -452,6 +455,7 @@ export const useSchemaStore = defineStore('schema', () => {
       customTypes.value = new Map(Object.entries(schemaData.types || {}))
       worlds.value = new Map(Object.entries(schemaData.worlds || {}))
       worldOrder.value = schemaData.world_order || []
+      asOfEnabled.value = schemaData.capabilities?.as_of === true
 
       // Feed the API layer's plural registry so it doesn't have to import
       // this store (B1a). Mirror the server's GetPlural fallback (type+'s')
@@ -619,6 +623,7 @@ export const useSchemaStore = defineStore('schema', () => {
     faceLabel,
     historyEnabled,
     headerButtons,
+    asOfEnabled,
     collabEnabled,
     collabEpoch,
     getInverseName,
