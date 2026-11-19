@@ -313,3 +313,57 @@ func TestUpdateEntity_FacedBareIDNamesReadableFaces(t *testing.T) {
 		})
 	}
 }
+
+// analyze properties checks the row as the caller reads it: a required
+// field that `visible:` hides holds no value there, so it is not reported,
+// and a finding names its field (BUG-7928QLO).
+func TestAnalyzeProperties_SkipsHiddenFields(t *testing.T) {
+	t.Parallel()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {
+				Label: "Ticket", IDPrefix: "TKT", DisplayProperty: "title",
+				Properties: map[string]metamodel.PropertyDef{
+					"title":   {Type: "string", Required: true},
+					"owner":   {Type: "string", Required: true, Label: "Owner"},
+					"summary": {Type: "string", Required: true, Label: "Summary"},
+				},
+			},
+		},
+	}
+	st := memstore.New()
+	ctx := context.Background()
+	if err := st.CreateEntity(ctx, &entity.Entity{ID: "TKT-1", Type: "ticket",
+		Properties: map[string]any{"title": "One", "owner": "someone"}}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	d, err := acl.NewDeclarative(&acl.Policy{
+		Roles: map[string]acl.RoleDef{"reader": {
+			Read:    []string{"ticket"},
+			Visible: map[string][]acl.FieldGrant{"ticket": {{Field: "title"}, {Field: "summary"}}},
+		}},
+		Assignments: map[string]string{"alice": "reader"},
+	}, aclstore.MustNewGraph(st), st)
+	if err != nil {
+		t.Fatalf("acl.NewDeclarative: %v", err)
+	}
+	svc := appbuildtest.New(meta, appbuildtest.WithStore(st), appbuildtest.WithDeclarative(d))
+	t.Cleanup(func() { _ = svc.Close() })
+	reads := svc.GatedReads()
+	s := &Server{logger: slog.New(slog.DiscardHandler)}
+	setDeps(s, Deps{Store: reads.Reader, Meta: meta, Validator: reads.Validator,
+		World: store.TrivialScope(), Families: store.TrivialScope()})
+	ctx = acltest.Bind(principal.With(ctx, principal.Principal{User: "alice", Tool: principal.ToolMCP}), t, d)
+
+	res, err := s.handleAnalyze(ctx, makeToolRequest(map[string]any{"check": checkProperties}))
+	if err != nil || isErrorResult(res) {
+		t.Fatalf("analyze properties: %v %v", err, res)
+	}
+	text := getResultText(t, res)
+	if !strings.Contains(text, "Summary: This field is required") {
+		t.Errorf("result %q does not report the visible missing field by its label", text)
+	}
+	if strings.Contains(text, "Owner") || strings.Count(text, "This field is required") != 1 {
+		t.Errorf("result %q reports the hidden field", text)
+	}
+}

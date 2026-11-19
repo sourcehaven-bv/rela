@@ -277,6 +277,42 @@ func (v Validator) ValidateProperties(props map[string]any, schema PropertySchem
 	return errs
 }
 
+// ValidateReadable is [Validator.ValidateEntity] for a row as one reader sees
+// it. hidden names the properties withheld from that reader
+// (the Redacted list of a gated row). Every finding on a hidden property is dropped:
+// the redacted row holds no value there, so the check would report the field
+// as missing, and the reader can neither see nor fix it. Each remaining
+// property finding names its field ([Validator.FindingMessage]).
+func (v Validator) ValidateReadable(id, entityType string, properties map[string]any,
+	hidden []string) []*ValidationError {
+	all := v.ValidateEntity(id, entityType, properties)
+	out := make([]*ValidationError, 0, len(all))
+	for _, e := range all {
+		if e.Property != "" && slices.Contains(hidden, e.Property) {
+			continue
+		}
+		out = append(out, &ValidationError{Type: e.Type, Property: e.Property,
+			Message: v.FindingMessage(entityType, e)})
+	}
+	return out
+}
+
+// FindingMessage is e's message, led by the field it is about: the
+// property's label, or its name when it has none (labels are not derived,
+// DEC-6C1NAA). A finding on the entity as a whole keeps its message.
+func (v Validator) FindingMessage(entityType string, e *ValidationError) string {
+	if e.Property == "" {
+		return e.Message
+	}
+	name := e.Property
+	if def, ok := v.meta.GetEntityDef(entityType); ok {
+		if p, ok := def.Properties[e.Property]; ok && p.Label != "" {
+			name = p.Label
+		}
+	}
+	return name + ": " + e.Message
+}
+
 // ValidateEntity validates an entity's type, properties, and ID prefix against the metamodel.
 func (v Validator) ValidateEntity(id, entityType string, properties map[string]any) []*ValidationError {
 	var errs []*ValidationError

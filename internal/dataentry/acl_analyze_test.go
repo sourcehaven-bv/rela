@@ -303,3 +303,62 @@ func TestACLAnalyze_RedactsHiddenViolatorTitle(t *testing.T) {
 		t.Errorf("LEAK: hidden display property in the response: %s", rec.Body)
 	}
 }
+
+// The Properties check runs on the redacted row, so a required field the
+// reader cannot see reads as missing. The check must not report a field the
+// reader cannot read, and a finding on a visible field names its label.
+func TestACLAnalyze_PropertiesSkipsHiddenFields(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {
+				Label:    "Ticket",
+				IDPrefix: "TKT-",
+				Properties: map[string]metamodel.PropertyDef{
+					"title":   {Type: "string", Required: true},
+					"owner":   {Type: "string", Required: true, Label: "Owner"},
+					"summary": {Type: "string", Required: true, Label: "Summary"},
+				},
+				PropertyOrder: []string{"title", "owner", "summary"},
+			},
+		},
+	}
+	app := newAppFromParts(&Config{}, meta, newFixture())
+	app.broker = newEventBroker()
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
+		Visible: map[string]bool{"owner": false},
+	}})
+	// owner holds a value but is hidden; summary is visible and missing.
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-001", Type: "ticket",
+		Properties: map[string]any{"title": "visible title", "owner": "someone"},
+	})
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	setTestACL(t, app, d)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
+	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
+	rec := httptest.NewRecorder()
+	app.handleV1Analyze(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("_analyze: got %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	var result APIAnalysisResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode _analyze response: %v", err)
+	}
+	var msgs []string
+	for _, iss := range result.Issues {
+		if iss.CheckType == "Properties" && iss.EntityID == "TKT-001" {
+			msgs = append(msgs, iss.Message)
+		}
+	}
+	want := "Summary: This field is required"
+	if len(msgs) != 1 || msgs[0] != want {
+		t.Errorf("Properties findings for TKT-001 = %q, want only %q", msgs, want)
+	}
+}
