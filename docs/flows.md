@@ -407,6 +407,47 @@ reader cannot see, a flow condition is held to a smaller set:
   restricts. acl.yaml must key `visible:` by the type's own name; a key
   that names an alias fails to load, because it would restrict nothing.
 
+A property is restricted when some reader of the subject may not see it:
+
+- a role's `visible:` block for the type leaves it out, or lists it only
+  with a `when:`;
+- a client baseline leaves it out of its `visible:` or names it in its
+  `redact:`.
+
+A role without a `visible:` block for the type sees every property. So a
+condition may read a property that every role's `visible:` block for the
+type lists without a `when:`. A block may still leave other properties
+out. For example, the signup flow below reads `terms_accepted`, and the
+customer role hides the account's internal ids:
+
+```yaml
+# acl.yaml
+roles:
+  staff:
+    read: ["*"]
+  customer:
+    read: [account]
+    visible:
+      account:
+        - field: name
+        - field: terms_accepted
+```
+
+```yaml
+# flows.yaml
+flows:
+  signup:
+    subject: account
+    states:
+      details:
+        on:
+          change:
+            - when: "entity.terms_accepted == true"
+              to: accepted
+```
+
+The same rule applies to a template's `{{subject.<property>}}`.
+
 ## Versions
 
 Each flow has a version: a hash of its definition. A change to a flow
