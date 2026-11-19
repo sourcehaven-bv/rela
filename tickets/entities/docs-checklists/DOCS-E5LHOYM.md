@@ -10,7 +10,7 @@ status: done
 ## Code Documentation
 
 - [x] Comments where logic isn't obvious: why a gate is a UX filter and not access control, why an entity dashboard never shows the validation card, why toggle errors carry the line number
-- [x] Function/type docs if public API: godoc on `ChromeToggle`, `EntityHeaderConfig`, `SidebarEntityHeader` and `DashboardResponse.Validation`; comment-lint `doclink` gate clean
+- [x] Function/type docs if public API: godoc on `ChromeToggle`, `HeaderButtonsConfig`, `SidebarHeaderButtons` and `DashboardResponse.Validation`; comment-lint `doclink` gate clean
 
 ## Project Documentation
 
@@ -20,7 +20,7 @@ status: done
 
 ## User-facing Documentation
 
-- [x] `GUIDE-data-entry.md`: `validation` row in the dashboard fields table, sections "Hiding the validation card (`validation`)" and "Entity header buttons (`entity_header`)", `entity_header` in the file structure; both say the permission gate is a UX filter; regenerated with `just docs`
+- [x] `GUIDE-data-entry.md`: `validation` row in the dashboard fields table, sections "Hiding the validation card (`validation`)" and "Entity header buttons (`header_buttons`)", `header_buttons` in the file structure; both say the permission gate is a UX filter; regenerated with `just docs`
 - [x] ~~Security guide~~ (N/A: no ACL change; the history and pile endpoints keep their own ACL)
 
 ## External Documentation

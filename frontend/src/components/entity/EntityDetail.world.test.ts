@@ -1593,14 +1593,14 @@ describe('EntityDetail world binding', () => {
     })
   })
 
-  // `entity_header:` (TKT-31822PN): the operator hides History or Add to
+  // `header_buttons:` (TKT-31822PN): the operator hides History or Add to
   // pile, resolved per principal by `/_sidebar`. Asserted in both blocks for
   // the reason above.
-  describe('entity_header hides built-in buttons, in both blocks', () => {
-    it('hides History when entity_header.history is off', async () => {
+  describe('header_buttons hides built-in buttons, in both blocks', () => {
+    it('hides History when header_buttons.history is off', async () => {
       const store = useSchemaStore()
       store.historyEnabled = true
-      store.setEntityHeader({ history: false, add_to_pile: true })
+      store.setHeaderButtons({ history: false, add_to_pile: true })
       const w = await mountDetail(viewResponse({ _copies: [promoteOffer()] }))
       rendersProof(w)
       expect(w.find('.desktop-actions').text()).not.toContain('History')
@@ -1608,7 +1608,7 @@ describe('EntityDetail world binding', () => {
       expect(overflowText(w)).not.toContain('History')
     })
 
-    it('shows Add to pile by default and hides it when entity_header.add_to_pile is off', async () => {
+    it('shows Add to pile by default and hides it when header_buttons.add_to_pile is off', async () => {
       const store = useSchemaStore()
       store.setPiles({ piles_available: true })
       const shown = await mountDetail(viewResponse())
@@ -1617,7 +1617,7 @@ describe('EntityDetail world binding', () => {
       expect(overflowText(shown)).toContain('Add to new pile')
       shown.unmount()
 
-      store.setEntityHeader({ history: true, add_to_pile: false })
+      store.setHeaderButtons({ history: true, add_to_pile: false })
       const hidden = await mountDetail(viewResponse({ _copies: [promoteOffer()] }))
       rendersProof(hidden)
       expect(hidden.find('.desktop-actions').text()).not.toContain('Add to pile')

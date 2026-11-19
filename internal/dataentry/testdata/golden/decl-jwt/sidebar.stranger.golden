@@ -64,7 +64,7 @@ body:
   },
   "piles_available": false,
   "piles": null,
-  "entity_header": {
+  "header_buttons": {
     "history": true,
     "add_to_pile": true
   }

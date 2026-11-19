@@ -321,7 +321,7 @@ dashboards:                # Optional named dashboards, same shape
     title: "Pipeline"
     cards: [...]
 
-entity_header:             # Optional: hide built-in entity header buttons
+header_buttons:            # Optional: hide built-in entity page buttons
   history: true
   add_to_pile: false
 
@@ -3727,10 +3727,10 @@ and history move with the entity, so everyone who can read the new type and
 face can read those comments. The history timeline of the new entity lists only
 versions of its new type and face; the conversion version names the old id.
 
-### Entity header buttons (`entity_header`)
+### Entity header buttons (`header_buttons`)
 
 The header of an entity page shows built-in buttons next to Edit and Delete.
-The `entity_header:` block hides two of them:
+The `header_buttons:` block hides two of them:
 
 | Key           | Button                                                         |
 | ------------- | -------------------------------------------------------------- |
@@ -3742,7 +3742,7 @@ Each key takes the same values as a dashboard's
 default), `false`, or `{permission: <name>}`.
 
 ```yaml
-entity_header:
+header_buttons:
   history:
     permission: staff.manage   # only staff see History
   add_to_pile: false           # nobody sees Add to pile
@@ -3764,7 +3764,7 @@ available to the reader.
 not stop anyone from opening `/history/...` or calling `/api/v1/_history`.
 Those keep their own ACL, as the pile endpoints do. `/api/v1/_config` serves
 the block to every principal, and `/api/v1/_sidebar` serves the result for the
-current principal as `entity_header: {history, add_to_pile}`. With no
+current principal as `header_buttons: {history, add_to_pile}`. With no
 `acl.yaml`, and under `--read-only`, a gated button shows.
 
 ### How navigation resolves

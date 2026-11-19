@@ -41,10 +41,10 @@ export interface Config {
   /** Named dashboards (TKT-5LQNLY), reached at `/dashboard/<name>`. */
   dashboards?: Record<string, DashboardConfig>
   /**
-   * The `entity_header:` toggles as configured (TKT-31822PN). Never evaluated
-   * here; `/_sidebar` serves the per-principal answer as `entity_header`.
+   * The `header_buttons:` toggles as configured (TKT-31822PN). Never evaluated
+   * here; `/_sidebar` serves the per-principal answer as `header_buttons`.
    */
-  entity_header?: { history?: ChromeToggle; add_to_pile?: ChromeToggle }
+  header_buttons?: { history?: ChromeToggle; add_to_pile?: ChromeToggle }
   actions?: Record<string, ActionConfig>
   navigation: NavigationEntry[]
   /** Tabbed screens keyed by page id (TKT-ITQ0HL). Absent without `pages:`. */
@@ -867,7 +867,7 @@ export type ChromeToggle = boolean | { permission: string }
  * (TKT-31822PN). A UX filter, not access control: the history and pile APIs
  * keep their own ACL.
  */
-export interface SidebarEntityHeader {
+export interface SidebarHeaderButtons {
   history: boolean
   add_to_pile: boolean
 }
@@ -1344,10 +1344,10 @@ export interface SidebarData {
   /** The `piles:` block of data-entry.yaml; null or absent when not declared. */
   piles?: PilesConfig | null
   /**
-   * The `entity_header:` toggles resolved for this principal (TKT-31822PN).
+   * The `header_buttons:` toggles resolved for this principal (TKT-31822PN).
    * Absent from an older server, where every button shows.
    */
-  entity_header?: SidebarEntityHeader
+  header_buttons?: SidebarHeaderButtons
 }
 
 /**

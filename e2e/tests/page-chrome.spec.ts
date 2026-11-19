@@ -6,7 +6,7 @@ import { DashboardPage, EntityPage, PilesPage } from '../pages';
 /**
  * Page chrome toggles (TKT-31822PN). An operator hides the dashboard's
  * validation card with `validation:` and the entity header's "Add to pile"
- * with `entity_header.add_to_pile`, or gates either on a permission.
+ * with `header_buttons.add_to_pile`, or gates either on a permission.
  *
  * A permission gate is a UX filter, not access control. With no acl.yaml
  * there is no permission model, so a gated element shows.
@@ -20,7 +20,7 @@ dashboards:
       - title: "Features"
         query: "type:feature"
         display: count
-entity_header:
+header_buttons:
   add_to_pile:
     permission: staff.manage
 `;

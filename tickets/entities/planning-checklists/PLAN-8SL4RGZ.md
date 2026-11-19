@@ -16,7 +16,7 @@ status: done
 - [x] Acceptance criteria documented with specific test scenarios
 
 **Scope:** In: a `validation:` toggle on `dashboard:` and each `dashboards:`
-entry; an `entity_header:` block with `history:` and `add_to_pile:`. Each toggle
+entry; an `header_buttons:` block with `history:` and `add_to_pile:`. Each toggle
 takes `true`, `false` or `{permission: <name>}`. Out: other header buttons, list
 and search "Add to pile", `piles.toggles`, the root redirect and pinned sidebar
 rows (other portal gaps).
@@ -53,7 +53,7 @@ rows (other portal gaps).
 **Technical Approach:** `dataentryconfig.ChromeToggle` (Off, Permission) with
 YAML and JSON (un)marshalling. The server resolves it with
 `permitsGatedUIElement`: `/_dashboard` gains `validation: bool`, `/_sidebar`
-gains `entity_header: {history, add_to_pile}`. The SPA reads only the resolved
+gains `header_buttons: {history, add_to_pile}`. The SPA reads only the resolved
 values. `/_config` stays principal-independent.
 
 Alternatives: two keys per element (`show_x`, `x_permission`), rejected as
@@ -99,7 +99,7 @@ keys.
 - Unquoted `yes`/`no`: refused.
 
 **Negative Tests:** `validation: hidden`, `{role: x}`, `{}`, `{permission: ""}`,
-`entity_header: {histroy: false}` all fail config load.
+`header_buttons: {histroy: false}` all fail config load.
 
 ## Risk Assessment
 
@@ -117,7 +117,7 @@ keys.
 - [x] Docs-checklist will be created when entering implementation
 
 **Documentation Impact:**
-- [x] docs/data-entry.md (via docs-project GUIDE-data-entry): dashboard `validation`, `entity_header`.
+- [x] docs/data-entry.md (via docs-project GUIDE-data-entry): dashboard `validation`, `header_buttons`.
 
 ## Design Review
 

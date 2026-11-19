@@ -279,19 +279,19 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	resp.InlineCreate = h.inlineCreateForms(ctx)
 	resp.PilesAvailable = h.pilesAvailable != nil && h.pilesAvailable(ctx)
 	resp.Piles = pilesWire(s.Cfg.Piles)
-	resp.EntityHeader = entityHeaderWire(ctx, aclImpl, s.Cfg.EntityHeader)
+	resp.HeaderButtons = headerButtonsWire(ctx, aclImpl, s.Cfg.HeaderButtons)
 
 	writeV1JSON(w, http.StatusOK, resp)
 }
 
-// entityHeaderWire resolves `entity_header:` for this principal. A UX
+// headerButtonsWire resolves `header_buttons:` for this principal. A UX
 // filter like permitsGatedUIElement: the history and pile endpoints keep
 // their own ACL whatever it says.
-func entityHeaderWire(
-	ctx context.Context, aclImpl acl.ACL, cfg dataentryconfig.EntityHeaderConfig,
-) v1.SidebarEntityHeader {
+func headerButtonsWire(
+	ctx context.Context, aclImpl acl.ACL, cfg dataentryconfig.HeaderButtonsConfig,
+) v1.SidebarHeaderButtons {
 	permits := func(perm string) bool { return permitsGatedUIElement(ctx, aclImpl, perm) }
-	return v1.SidebarEntityHeader{
+	return v1.SidebarHeaderButtons{
 		History:   cfg.History.Shown(permits),
 		AddToPile: cfg.AddToPile.Shown(permits),
 	}

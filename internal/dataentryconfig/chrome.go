@@ -13,7 +13,7 @@ import (
 )
 
 // ChromeToggle switches a built-in element of the SPA on or off, such as the
-// dashboard's validation card or the History button of an entity header
+// dashboard's validation card or the History button of an entity page header
 // (TKT-31822PN). In YAML it is written in one of three ways:
 //
 //	validation: true                      # shown (the default)
@@ -159,13 +159,13 @@ func (t ChromeToggle) wire() any {
 	}
 }
 
-// EntityHeaderConfig is the `entity_header:` block of data-entry.yaml: which
+// HeaderButtonsConfig is the `header_buttons:` block of data-entry.yaml: which
 // built-in buttons the header of an entity page shows (TKT-31822PN). Every
 // key is optional, and so is the block; an absent key shows its button as
 // before.
 //
 // A hidden button is a UX choice, not access control; see [ChromeToggle].
-type EntityHeaderConfig struct {
+type HeaderButtonsConfig struct {
 	// History is the History button. It shows only where the deployment
 	// keeps version history at all (`app.history_enabled` on /_config); this
 	// toggle can only hide it further.
@@ -178,20 +178,20 @@ type EntityHeaderConfig struct {
 	AddToPile ChromeToggle `yaml:"add_to_pile,omitempty" json:"add_to_pile,omitzero"`
 }
 
-// entityHeaderKeys are the keys the entity_header block accepts.
-var entityHeaderKeys = []string{"history", "add_to_pile"}
+// headerButtonsKeys are the keys the header_buttons block accepts.
+var headerButtonsKeys = []string{"history", "add_to_pile"}
 
-// entityHeaderUnknownKeys reports keys under `entity_header:` that the block
+// headerButtonsUnknownKeys reports keys under `header_buttons:` that the block
 // does not define. The decoder ignores unknown nested keys, so a typo such as
 // `histroy: false` would silently hide nothing.
-func entityHeaderUnknownKeys(data []byte) []string {
+func headerButtonsUnknownKeys(data []byte) []string {
 	var raw struct {
-		EntityHeader map[string]any `yaml:"entity_header"`
+		HeaderButtons map[string]any `yaml:"header_buttons"`
 	}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil // the struct unmarshal reports malformed YAML
 	}
-	return unknownKeysIn("entity_header", raw.EntityHeader, entityHeaderKeys)
+	return unknownKeysIn("header_buttons", raw.HeaderButtons, headerButtonsKeys)
 }
 
 // validateDashboardValidation refuses `validation: false` or a permission on

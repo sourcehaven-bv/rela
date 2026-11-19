@@ -1502,19 +1502,19 @@ type SidebarResponse struct {
 	// both piles fields from this one boot payload. Null when the block is
 	// absent.
 	Piles *dataentryconfig.PilesConfig `json:"piles"`
-	// EntityHeader says which built-in buttons the entity page header shows
-	// this principal: `entity_header:` of data-entry.yaml, resolved for the
+	// HeaderButtons says which built-in buttons the entity page header shows
+	// this principal: `header_buttons:` of data-entry.yaml, resolved for the
 	// caller (TKT-31822PN). It rides here for the reason PilesAvailable
 	// does. A UX filter, not access control: the history and pile APIs keep
 	// their own ACL.
-	EntityHeader SidebarEntityHeader `json:"entity_header"`
+	HeaderButtons SidebarHeaderButtons `json:"header_buttons"`
 }
 
-// SidebarEntityHeader is [SidebarResponse.EntityHeader]. Each field is true
+// SidebarHeaderButtons is [SidebarResponse.HeaderButtons]. Each field is true
 // when the button may show. The SPA still applies its own preconditions: the
 // History button needs a deployment with version history, and "Add to pile"
 // needs piles to be available.
-type SidebarEntityHeader struct {
+type SidebarHeaderButtons struct {
 	History   bool `json:"history"`
 	AddToPile bool `json:"add_to_pile"`
 }

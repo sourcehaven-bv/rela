@@ -156,17 +156,17 @@ dashboards:
 `,
 		},
 		{
-			name: "entity header history",
+			name: "entity page header history",
 			yaml: `
-entity_header:
+header_buttons:
   history:
     permission: report:sales
 `,
 		},
 		{
-			name: "entity header add to pile",
+			name: "entity page header add to pile",
 			yaml: `
-entity_header:
+header_buttons:
   add_to_pile:
     permission: report:sales
 `,

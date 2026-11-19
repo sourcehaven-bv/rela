@@ -252,7 +252,7 @@ const pileActions = useEntityPileActions(
     if (target) void router.push(target)
     else void loadScopeNav()
   },
-  () => schemaStore.entityHeader.add_to_pile
+  () => schemaStore.headerButtons.add_to_pile
 )
 const backTarget = useBackTarget()
 
@@ -1756,10 +1756,10 @@ watch([viewData, worldInfo], ([, info]) => {
 // it is ABSENT when the capability is — never disabled, which would still
 // advertise a feature this deployment cannot provide.
 //
-// The operator may also hide it with `entity_header.history` (TKT-31822PN),
+// The operator may also hide it with `header_buttons.history` (TKT-31822PN),
 // which the server resolves per principal. That is a UX choice, not access
 // control: `/_history` keeps its own ACL.
-const showHistory = computed(() => schemaStore.historyEnabled && schemaStore.entityHeader.history)
+const showHistory = computed(() => schemaStore.historyEnabled && schemaStore.headerButtons.history)
 
 // The export formats, for the action list. ExportMenu fetches the same cached
 // registry for the desktop button.
@@ -2714,12 +2714,12 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           -->
             <ExportMenu :url-for="exportUrlFor(entityRef(entry))" />
             <!--
-            Hidden by `entity_header.add_to_pile` (TKT-31822PN), a UX choice
+            Hidden by `header_buttons.add_to_pile` (TKT-31822PN), a UX choice
             the server resolves per principal; the action list gates on the
             same flag through useEntityPileActions.
           -->
             <AddToPileMenu
-              v-if="schemaStore.entityHeader.add_to_pile"
+              v-if="schemaStore.headerButtons.add_to_pile"
               :addresses="() => (entry ? [entityRef(entry)] : [])"
               size="md"
               :new-label="t('entity.addToNewPile')"

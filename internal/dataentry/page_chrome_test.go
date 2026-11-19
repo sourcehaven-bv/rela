@@ -14,17 +14,17 @@ import (
 )
 
 // Page chrome toggles (TKT-31822PN): the dashboard's validation card and the
-// entity header's History and Add to pile buttons, resolved per principal.
+// entity page's History and Add to pile buttons, resolved per principal.
 // UX filters only, like a card's `permission:`.
 
 // installPageChrome publishes a default dashboard with the given validation
-// toggle and an entity_header block.
-func installPageChrome(app *App, validation dataentryconfig.ChromeToggle, header dataentryconfig.EntityHeaderConfig) {
+// toggle and an header_buttons block.
+func installPageChrome(app *App, validation dataentryconfig.ChromeToggle, header dataentryconfig.HeaderButtonsConfig) {
 	cur := app.State()
 	next := *cur
 	cfg := *cur.Cfg
 	cfg.Dashboard = &dataentryconfig.DashboardConfig{Title: "Overview", Validation: validation}
-	cfg.EntityHeader = header
+	cfg.HeaderButtons = header
 	next.Cfg = &cfg
 	app.schema.Publish(&next)
 }
@@ -39,7 +39,7 @@ func dashboardValidation(ctx context.Context, t *testing.T, app *App) bool {
 	return resp.Validation
 }
 
-func sidebarEntityHeader(ctx context.Context, t *testing.T, app *App) v1.SidebarEntityHeader {
+func sidebarHeaderButtons(ctx context.Context, t *testing.T, app *App) v1.SidebarHeaderButtons {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody).WithContext(ctx)
 	rec := httptest.NewRecorder()
@@ -51,7 +51,7 @@ func sidebarEntityHeader(ctx context.Context, t *testing.T, app *App) v1.Sidebar
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode sidebar: %v", err)
 	}
-	return resp.EntityHeader
+	return resp.HeaderButtons
 }
 
 func TestPageChrome_ResolvedPerPrincipal(t *testing.T) {
@@ -61,39 +61,39 @@ func TestPageChrome_ResolvedPerPrincipal(t *testing.T) {
 	cases := []struct {
 		name       string
 		validation dataentryconfig.ChromeToggle
-		header     dataentryconfig.EntityHeaderConfig
+		header     dataentryconfig.HeaderButtonsConfig
 		policy     bool   // a configured acl.yaml (gatedNavPolicy)
 		principal  string // with policy: alice holds admin:read, bob does not
-		want       v1.SidebarEntityHeader
+		want       v1.SidebarHeaderButtons
 		wantValid  bool
 	}{
-		{name: "default shows everything", want: v1.SidebarEntityHeader{History: true, AddToPile: true}, wantValid: true},
+		{name: "default shows everything", want: v1.SidebarHeaderButtons{History: true, AddToPile: true}, wantValid: true},
 		{
 			name:       "off hides from everyone",
 			validation: off,
-			header:     dataentryconfig.EntityHeaderConfig{History: off, AddToPile: off},
+			header:     dataentryconfig.HeaderButtonsConfig{History: off, AddToPile: off},
 			policy:     true, principal: "alice",
-			want: v1.SidebarEntityHeader{}, wantValid: false,
+			want: v1.SidebarHeaderButtons{}, wantValid: false,
 		},
 		{
 			name:       "holder sees gated",
 			validation: gated,
-			header:     dataentryconfig.EntityHeaderConfig{History: gated, AddToPile: gated},
+			header:     dataentryconfig.HeaderButtonsConfig{History: gated, AddToPile: gated},
 			policy:     true, principal: "alice",
-			want: v1.SidebarEntityHeader{History: true, AddToPile: true}, wantValid: true,
+			want: v1.SidebarHeaderButtons{History: true, AddToPile: true}, wantValid: true,
 		},
 		{
 			name:       "non-holder does not",
 			validation: gated,
-			header:     dataentryconfig.EntityHeaderConfig{History: gated},
+			header:     dataentryconfig.HeaderButtonsConfig{History: gated},
 			policy:     true, principal: "bob",
-			want: v1.SidebarEntityHeader{History: false, AddToPile: true}, wantValid: false,
+			want: v1.SidebarHeaderButtons{History: false, AddToPile: true}, wantValid: false,
 		},
 		{
 			name:       "no acl.yaml shows gated",
 			validation: gated,
-			header:     dataentryconfig.EntityHeaderConfig{History: gated, AddToPile: gated},
-			want:       v1.SidebarEntityHeader{History: true, AddToPile: true}, wantValid: true,
+			header:     dataentryconfig.HeaderButtonsConfig{History: gated, AddToPile: gated},
+			want:       v1.SidebarHeaderButtons{History: true, AddToPile: true}, wantValid: true,
 		},
 	}
 	for _, tc := range cases {
@@ -108,8 +108,8 @@ func TestPageChrome_ResolvedPerPrincipal(t *testing.T) {
 			} else {
 				setTestACL(t, app, acl.NopACL{})
 			}
-			if got := sidebarEntityHeader(ctx, t, app); got != tc.want {
-				t.Errorf("entity_header = %+v, want %+v", got, tc.want)
+			if got := sidebarHeaderButtons(ctx, t, app); got != tc.want {
+				t.Errorf("header_buttons = %+v, want %+v", got, tc.want)
 			}
 			if got := dashboardValidation(ctx, t, app); got != tc.wantValid {
 				t.Errorf("validation = %v, want %v", got, tc.wantValid)

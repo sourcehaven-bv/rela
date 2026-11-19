@@ -114,13 +114,13 @@ func TestChromeToggle_OmittedWhenUnset(t *testing.T) {
 		t.Errorf("unset validation serialized: %s", b)
 	}
 	y, err := yaml.Marshal(struct {
-		EntityHeader EntityHeaderConfig `yaml:"entity_header,omitempty"`
+		HeaderButtons HeaderButtonsConfig `yaml:"header_buttons,omitempty"`
 	}{})
 	if err != nil {
 		t.Fatalf("marshal yaml: %v", err)
 	}
-	if strings.Contains(string(y), "entity_header") {
-		t.Errorf("unset entity_header serialized: %s", y)
+	if strings.Contains(string(y), "header_buttons") {
+		t.Errorf("unset header_buttons serialized: %s", y)
 	}
 }
 
@@ -155,9 +155,9 @@ func TestValidateConfig_PageChrome(t *testing.T) {
 		{"dashboard validation off", "dashboard: {title: Home, validation: false}", ""},
 		{"dashboard validation gated", "dashboard: {title: Home, validation: {permission: staff.manage}}", ""},
 		{"named dashboard validation off", "dashboards: {portal: {title: Portal, validation: false}}", ""},
-		{"entity header", "entity_header: {history: false, add_to_pile: {permission: staff.manage}}", ""},
-		{"empty entity header", "entity_header: {}", ""},
-		{"entity header unknown key", "entity_header: {histroy: false}", `entity_header: unknown key "histroy"`},
+		{"entity page header", "header_buttons: {history: false, add_to_pile: {permission: staff.manage}}", ""},
+		{"empty entity page header", "header_buttons: {}", ""},
+		{"entity page header unknown key", "header_buttons: {histroy: false}", `header_buttons: unknown key "histroy"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

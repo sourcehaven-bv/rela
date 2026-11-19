@@ -15,7 +15,7 @@ import { t } from '@/i18n'
  * pile holds the face on screen. `onRemoved` runs after the row left the
  * pile being stepped through, so the page can move on to a neighbour.
  *
- * `addOffered` is false when `entity_header.add_to_pile` hides "Add to pile"
+ * `addOffered` is false when `header_buttons.add_to_pile` hides "Add to pile"
  * from this principal (TKT-31822PN). The add entries are then left out;
  * "Remove from pile" while stepping through a pile stays.
  */
