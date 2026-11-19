@@ -38,7 +38,7 @@ func TestFailedJobs_AgreesWithExplain(t *testing.T) {
 			xs, err := h.eng.Explain(ctx, run)
 			require.NoError(t, err)
 			require.Equal(t, tc.fail, xs[0].Status == flow.StatusFailed)
-			require.Equal(t, tc.fail, h.eng.FailedJobs(ctx, []flowrun.Run{run})[id])
+			require.Equal(t, tc.fail, h.eng.FlowCache().FailedJobs(ctx, []flowrun.Run{run})[id])
 		})
 	}
 }

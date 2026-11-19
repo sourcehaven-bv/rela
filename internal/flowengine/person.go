@@ -573,11 +573,10 @@ func jobFailed(st flowcfg.State, cur flow.Current, p *flowrun.Pending) bool {
 // subjects or guards, so a list can ask it of every run on a page. A run
 // whose flow version cannot be read, or whose state is gone, is left out,
 // as Explain reads it as stranded.
-func (e *Engine) FailedJobs(ctx context.Context, runs []flowrun.Run) map[flow.RunID]bool {
-	flows := FlowCache{e: e}
+func (c *FlowCache) FailedJobs(ctx context.Context, runs []flowrun.Run) map[flow.RunID]bool {
 	out := map[flow.RunID]bool{}
 	for _, run := range runs {
-		f, err := flows.Of(ctx, run)
+		f, err := c.Of(ctx, run)
 		if err != nil {
 			continue
 		}

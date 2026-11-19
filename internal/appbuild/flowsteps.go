@@ -325,7 +325,7 @@ func (c *FlowControl) failedJobs(ctx context.Context, ids []flow.RunID) (map[flo
 	if err != nil {
 		return nil, err
 	}
-	return c.eng.FailedJobs(ctx, runs), nil
+	return c.eng.FlowCache().FailedJobs(ctx, runs), nil
 }
 
 // defaultFlowPage is the page size when the caller names none.
