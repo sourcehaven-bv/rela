@@ -1,6 +1,12 @@
 {
   "version": 1,
   "findings": {
+    "concepts.data_clump-7ffefbef34b0": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose; id moved when TKT-31822PN added a key.",
+      "at": "2026-11-19T00:00:00Z",
+      "title": "The fields actions, app, calendars, channels, dashboard, … and views appear together in 2 types across 2 components."
+    },
     "concepts.missing_operation-d60f02f07da6": {
       "state": "accepted",
       "reason": "By design: one reader per backend for the same store contract (Go walk, PostgreSQL SQL, SQLite SQL). The shared plan and aggregation already live in store (PlanElementRange, RangeSumFromAggregates); a single store operation cannot run backend SQL.",
