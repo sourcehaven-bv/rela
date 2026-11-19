@@ -162,6 +162,35 @@ func (g *Graph) EdgesBetween(
 	return out, nil
 }
 
+// HasOutgoingEdge implements acl.Graph with ONE store query over every id in
+// fromIDs, stopping at the first edge that matches cond.
+func (g *Graph) HasOutgoingEdge(
+	ctx context.Context, relType string, cond []store.PropPredicate, fromIDs []string,
+) (bool, error) {
+	if len(fromIDs) == 0 {
+		return false, nil
+	}
+	zero := entity.Face("")
+	for rel, err := range g.s.ListRelations(ctx, store.RelationQuery{
+		Type:      relType,
+		EntityIDs: fromIDs,
+		Direction: store.DirectionOutgoing,
+		FromFace:  &zero,
+	}) {
+		if err != nil {
+			return false, err
+		}
+		ok, err := matchEdge(rel, cond)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // OutgoingFrom implements the acl edge batcher with ONE store query. Like
 // [Graph.OutgoingRelations] it reads every tail.
 func (g *Graph) OutgoingFrom(

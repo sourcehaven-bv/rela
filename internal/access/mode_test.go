@@ -8,14 +8,22 @@ import (
 )
 
 // holderFunc answers HoldsPermission from a fixed set and counts the calls.
+// HoldsPermissionOnAnyEntity also counts the set in anywhere, which stands for
+// a permission granted by a role relation on some entity.
 type holderFunc struct {
-	held  map[string]bool
-	calls *int
+	held     map[string]bool
+	anywhere map[string]bool
+	calls    *int
 }
 
 func (h holderFunc) HoldsPermission(_ context.Context, permission string) bool {
 	*h.calls++
 	return h.held[permission]
+}
+
+func (h holderFunc) HoldsPermissionOnAnyEntity(_ context.Context, permission string) bool {
+	*h.calls++
+	return h.held[permission] || h.anywhere[permission]
 }
 
 // otherACL is an implementation ModeOf does not know.
@@ -117,6 +125,25 @@ func TestMode_Decisions(t *testing.T) {
 				t.Errorf("holder consulted %d times, want %d", calls, wantCalls)
 			}
 		})
+	}
+}
+
+// TestMode_RoleRelationPermissionShowsUIOnly: a permission held only through
+// a role relation shows a gated UI element, and allows neither an elevated
+// read nor a project write (TKT-CBRLZWU).
+func TestMode_RoleRelationPermissionShowsUIOnly(t *testing.T) {
+	const perm = "portal.use"
+	calls := 0
+	holder := holderFunc{held: map[string]bool{}, anywhere: map[string]bool{perm: true}, calls: &calls}
+	ctx := context.Background()
+	if !modePolicy.PermitsGatedUIElement(ctx, holder, perm) {
+		t.Error("PermitsGatedUIElement = false, want true for a permission held through a role relation")
+	}
+	if modePolicy.PermitsElevatedRead(ctx, holder, perm) {
+		t.Error("PermitsElevatedRead = true, want false: it counts global roles only")
+	}
+	if modePolicy.PermitsProjectWrite(ctx, holder, perm) {
+		t.Error("PermitsProjectWrite = true, want false: it counts global roles only")
 	}
 }
 

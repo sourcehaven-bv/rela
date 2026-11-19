@@ -52,6 +52,11 @@ type readGate interface {
 	// permission (e.g. acl.PermHistoryRead). Used to gate deleted-entity
 	// history reads, which have no per-entity verdict to evaluate.
 	HoldsPermission(ctx context.Context, perm string) bool
+	// HoldsPermissionOnAnyEntity also counts a role the principal holds
+	// through a role relation on any entity. Only gates that decide what to
+	// render use it (permitsGatedUIElement); see
+	// [acl.HoldsPermissionOnAnyEntity].
+	HoldsPermissionOnAnyEntity(ctx context.Context, perm string) bool
 	// PermitsWorld reports whether the principal may READ the named world
 	// (TKT-DN37J2). Checked at `?world=` selection, BEFORE a world-resolved
 	// reader is constructed; the per-entity gates above still run after, on
@@ -100,6 +105,10 @@ func (g aclReadGate) HoldsPermission(ctx context.Context, perm string) bool {
 	return g.req.HoldsPermission(ctx, perm)
 }
 
+func (g aclReadGate) HoldsPermissionOnAnyEntity(ctx context.Context, perm string) bool {
+	return acl.HoldsPermissionOnAnyEntity(ctx, g.req, perm)
+}
+
 func (g aclReadGate) PermitsWorld(ctx context.Context, world string) (bool, error) {
 	return g.req.PermitsWorld(ctx, world)
 }
@@ -146,6 +155,9 @@ func (nopReadGate) ReadQuery(context.Context, string) acl.ReadQueryResult {
 // nop gate's allow-all posture (no policy configured ⇒ no restrictions), so
 // deleted-entity history is readable exactly as it would be pre-ACL.
 func (nopReadGate) HoldsPermission(context.Context, string) bool { return true }
+
+// HoldsPermissionOnAnyEntity grants every permission, as HoldsPermission does.
+func (nopReadGate) HoldsPermissionOnAnyEntity(context.Context, string) bool { return true }
 
 // PermitsWorld under no ACL permits every world, matching every other
 // method here: the nop gate is the "no policy loaded" case, where the
@@ -291,5 +303,7 @@ func (denyReadGate) SearchScope(context.Context, []string) map[string]search.Typ
 }
 
 func (denyReadGate) HoldsPermission(context.Context, string) bool { return false }
+
+func (denyReadGate) HoldsPermissionOnAnyEntity(context.Context, string) bool { return false }
 
 func (denyReadGate) PermitsWorld(context.Context, string) (bool, error) { return false, nil }

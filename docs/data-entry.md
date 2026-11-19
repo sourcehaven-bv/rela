@@ -6213,6 +6213,39 @@ A group whose every item is hidden disappears with them, so you never get a
 heading with nothing under it. `permission:` is not valid **on** a group —
 gate the items instead.
 
+A principal holds the permission when one of its roles grants it. That role
+may be global (an assignment, a group, an asserted claim). It may also come
+from a `role_relations:` edge on any entity. So a role that applies to some
+records can also show the menu entries for those records. In this example a
+customer holds the `customer` role on its own account through `customer-of`,
+and that role's `portal.use` permission shows the "My account" entry:
+
+```yaml
+# acl.yaml
+roles:
+  staff:
+    permissions: [customers.manage]
+  customer:
+    read: [account, invoice]
+    permissions: [portal.use]
+role_relations:
+  customer-of:
+    confers: customer
+    requires_permission: customers.manage
+
+# data-entry.yaml
+navigation:
+  - label: "My account"
+    list: my_accounts
+    permission: portal.use
+```
+
+The principal, or a group it belongs to, must hold at least one such edge
+whose `when:` holds. This rule applies to the `permission:` of navigation
+entries, page tabs, spaces and dashboard cards. Gates that allow an action
+(commands, actions, documents and the built-in permissions such as
+`history:read`) count global roles only.
+
 Behaviour without a policy: with no `acl.yaml`, every entry is shown — nothing
 is denied when nothing is configured. The same applies under `--read-only`,
 which restricts *writes* and leaves reads untouched, so there is no permission

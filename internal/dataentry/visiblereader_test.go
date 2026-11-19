@@ -47,7 +47,8 @@ func (configGate) SearchScope(context.Context, []string) map[string]search.TypeS
 	return map[string]search.TypeScope{search.WildcardType: {AllowAll: true}}
 }
 
-func (configGate) HoldsPermission(context.Context, string) bool { return false }
+func (configGate) HoldsPermission(context.Context, string) bool            { return false }
+func (configGate) HoldsPermissionOnAnyEntity(context.Context, string) bool { return false }
 
 func (configGate) PermitsWorld(context.Context, string) (bool, error) { return true, nil }
 
