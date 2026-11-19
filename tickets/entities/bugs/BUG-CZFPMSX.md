@@ -10,7 +10,7 @@ why2: start keys single flight on runs that are in progress only. It remembered 
 why3: The host reads the tenant (Acquire) and asks for a run (start) in two separate steps without one lock, so the answer from Acquire can be stale by the time start runs. The design treated a finished run as needing no memory because the next Acquire would see the tenant active.
 why4: TestProvision_LazySingleFlight only exercises concurrent requests while the run is gated, so the window after the run ends was hit only by chance through the polls that follow, about once in 200 runs.
 why5: Check-then-act seams between a read outside the runner's lock and a decision inside it were not pinned by a test that holds a request between the two steps.
-prevention: start now remembers a successful run for successHold (5 s) and returns it. TestProvision_LazyNoRerunAfterSuccess holds a request between Acquire and start while the run finishes, so the window is tested deterministically.
+prevention: 'start now remembers a successful run for successHold (5 s) and starts no run during it: a lazy request answers 202 provisioning, and a webhook answers 503 with Retry-After so the IdP retries and no event is acknowledged without a tenant. TestProvision_NoRerunAfterSuccess holds a request between Acquire and start while the run finishes, so the window is tested deterministically.'
 started: "2026-11-17"
 completed: "2026-11-17"
 status: done

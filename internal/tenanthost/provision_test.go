@@ -369,7 +369,8 @@ func newRacingHost(t *testing.T, c *controlTable, p *stubProvisioner) (*tenantho
 // read the tenant as absent while a run was going, and reaches the runner
 // only after that run succeeded, starts no second run (BUG-CZFPMSX). The
 // lazy answer is the same 202 as during the run, so the call count carries
-// the test.
+// that case. The webhook is not acknowledged, so the IdP retries and the
+// retry reads the tenant again.
 func TestProvision_NoRerunAfterSuccess(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -381,7 +382,7 @@ func TestProvision_NoRerunAfterSuccess(t *testing.T) {
 		{name: "lazy request", method: http.MethodGet, path: "/api/v1/tickets", token: "tok-org-new",
 			want: http.StatusAccepted},
 		{name: "webhook", method: http.MethodPost, path: tenanthost.WebhookPath,
-			body: "organization.created|org-new", want: http.StatusOK},
+			body: "organization.created|org-new", want: http.StatusServiceUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -393,8 +394,10 @@ func TestProvision_NoRerunAfterSuccess(t *testing.T) {
 				t.Fatalf("first request: status = %d, want 202", w.Code)
 			}
 			armed.Store(true)
-			if w := do(h, tc.method, tc.path, tc.token, tc.body); w.Code != tc.want {
-				t.Fatalf("racing the run's end: status = %d, want %d", w.Code, tc.want)
+			w := do(h, tc.method, tc.path, tc.token, tc.body)
+			if w.Code != tc.want || w.Header().Get("Retry-After") == "" {
+				t.Fatalf("racing the run's end: status = %d (Retry-After %q), want %d with Retry-After",
+					w.Code, w.Header().Get("Retry-After"), tc.want)
 			}
 			h.Close() // waits for any run the racing call started
 			if got := p.calls.Load(); got != 1 {
