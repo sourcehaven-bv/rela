@@ -35,10 +35,18 @@ func stepProjectWith(t *testing.T, extra string) (*appbuild.Services, *appbuild.
 func stepProjectEdit(t *testing.T, display string, edit func(string) string) (*appbuild.Services,
 	*appbuild.FlowControl) {
 	t.Helper()
+	return stepProjectSchema(t, display, func(s string) string { return s }, edit)
+}
+
+// stepProjectSchema is stepProjectEdit with schema.yaml passed through
+// editSchema too.
+func stepProjectSchema(t *testing.T, display string, editSchema, edit func(string) string) (*appbuild.Services,
+	*appbuild.FlowControl) {
+	t.Helper()
 	root := writeFlowProject(t)
 	schema, err := os.ReadFile(filepath.Join("..", "flowcfg", "testdata", "schema.yaml"))
 	require.NoError(t, err)
-	named := strings.Replace(string(schema), "    label: Person\n",
+	named := strings.Replace(editSchema(string(schema)), "    label: Person\n",
 		"    label: Person\n    display_property: "+display+"\n", 1)
 	writeMetamodelBody(t, root, named+"  buddy:\n    label: buddy\n    from: [person]\n    to: [person]\n")
 	policy, err := os.ReadFile(filepath.Join(root, "acl.yaml"))
@@ -125,6 +133,53 @@ func TestFlowControl_CompleteStep(t *testing.T) {
 			}
 			require.Equal(t, "collect", after.State)
 			require.Empty(t, after.Waiting.ClaimedBy, "a step that moves nothing releases its claim")
+		})
+	}
+}
+
+// TestFlowControl_TimelineNamesActor pins that a timeline entry names the
+// person who caused it by the title the reader may see. Only a principal
+// mapped onto a person (principal_property) is named; a login that
+// happens to equal an entity id, or a person whose title the reader may
+// not see, keeps only its id.
+func TestFlowControl_TimelineNamesActor(t *testing.T) {
+	// The viewer sees every person field but the email.
+	hidden := "        - field: name\n        - field: status\n        - field: documents\n" +
+		"        - field: stage\n        - field: started\n        - field: salary\n        - field: task_count\n"
+	mapped := func(p string) string {
+		p = strings.Replace(p, "assignments:\n", "assignments:\n  PER-9: hr\n  dan: viewer\n", 1)
+		p = strings.Replace(p, "roles:\n", "roles:\n  viewer:\n    read: [person, task]\n"+
+			"    visible:\n      person:\n"+hidden, 1)
+		return "user_entity_type: person\nprincipal_property: email\n" + p
+	}
+	withEmail := func(s string) string {
+		return strings.Replace(s, "      name:\n        type: string\n",
+			"      name:\n        type: string\n      email:\n        type: string\n        unique: true\n", 1)
+	}
+	tests := []struct {
+		name, reader, want string
+		policy             func(string) string
+	}{
+		{name: "mapped person, reader sees the title", reader: "alice", want: "nina@example.org", policy: mapped},
+		{name: "mapped person, title hidden from the reader", reader: "dan", want: "", policy: mapped},
+		{name: "no person mapping: a login is not looked up", reader: "alice", want: "",
+			policy: func(p string) string { return strings.Replace(p, "assignments:\n", "assignments:\n  PER-9: hr\n", 1) }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// The email is the title, so a reader without it sees only the id.
+			svc, ctl := stepProjectSchema(t, "email", withEmail, tc.policy)
+			addFlowPerson(t, svc, "PER-1", map[string]any{"name": "Ada", "email": "ada@example.org"})
+			addFlowPerson(t, svc, "PER-9", map[string]any{"name": "Nina", "email": "nina@example.org"})
+			// The data-entry edge stamps a matched principal as its entity
+			// id (access.Restamp), so the run records PER-9.
+			id, err := ctl.Start(flowUser(t, svc, "PER-9"), "onboarding", "PER-1")
+			require.NoError(t, err)
+
+			run, err := ctl.Run(flowUser(t, svc, tc.reader), id)
+			require.NoError(t, err)
+			require.Equal(t, "PER-9", run.Log[0].By)
+			require.Equal(t, tc.want, run.Log[0].ByTitle)
 		})
 	}
 }

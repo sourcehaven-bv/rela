@@ -49,7 +49,7 @@
       "jobRunning": "The job of this step runs: attempt {n} of {max}.",
       "jobWaiting": "The job of this step waits for attempt {n} of {max}.",
       "jobWaitingAt": "The job of this step waits for attempt {n} of {max}, at {at}.",
-      "jobFailed": "The job of this step failed after {n} failed attempts: {why}. Retry the run to start again.",
+      "jobFailed": "The job of this step failed after {n} failed attempt: {why}. Retry the run to start again. | The job of this step failed after {n} failed attempts: {why}. Retry the run to start again.",
       "jobFailKind": {
         "exhausted": "no attempts are left",
         "permanent": "another attempt cannot fix the error",

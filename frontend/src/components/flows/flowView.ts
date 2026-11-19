@@ -89,7 +89,7 @@ export function timelineEntries(run: FlowRun, t: Translate): TimelineEntry[] {
     .map((e, i) => ({
       id: `${i}`,
       summary: eventSummary(e, t),
-      actor: e.by || undefined,
+      actor: e.by_title || e.by || undefined,
       timestamp: formatInstant(e.at),
       datetime: e.at,
       tone: (e.via === 'timer' ? 'amber' : 'grey') as StatusColor,

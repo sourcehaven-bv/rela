@@ -149,6 +149,9 @@ type Event struct {
 	Via   string `json:"via"`
 	Timer string `json:"timer,omitempty"`
 	By    string `json:"by,omitempty"`
+	// ByTitle is the title of By when By is an entity the caller may
+	// read, as the subject title is; empty otherwise.
+	ByTitle string `json:"by_title,omitempty"`
 	// Branch names the parallel branch that moved; empty for the run.
 	Branch string `json:"branch,omitempty"`
 }

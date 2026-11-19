@@ -79,6 +79,16 @@ describe('FlowRunCard', () => {
     } as unknown as EntityType)
   })
 
+  it('leaves the flow label out when the page already names the flow', async () => {
+    const wrapper = mount(FlowRunCard, {
+      props: { run: run(), subjectType: 'person', hideTitle: true },
+      global: { stubs: { RouterLink: RouterLinkStub } },
+    })
+    await flushPromises()
+    expect(wrapper.find('.flow-run-card__title').exists()).toBe(false)
+    expect(mountCard(run()).find('.flow-run-card__title').exists()).toBe(true)
+  })
+
   it('says why the run waits: roles, branches with their verdict and timers', async () => {
     const wrapper = mountCard(run())
     await flushPromises()
@@ -100,6 +110,7 @@ describe('FlowRunCard', () => {
     expect(line.text()).toContain('attempt 2 of 3')
     expect(line.attributes('role')).toBeUndefined()
     expect(wrapper.find('[data-testid="flow-waiting-pending"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Waits for no one')
 
     wrapper = mountCard(
       run({ waiting: waiting({ phase: 'failed', failed: 1, attempts: 3, fail_kind: 'permanent' }) })
@@ -107,7 +118,16 @@ describe('FlowRunCard', () => {
     await flushPromises()
     line = wrapper.find('[data-testid="flow-waiting-job"]')
     expect(line.text()).toContain('another attempt cannot fix the error')
+    expect(line.text()).toContain('after 1 failed attempt:')
     expect(line.attributes('role')).toBe('alert')
+    // A failed step does not wait for anyone: it waits for a retry.
+    expect(wrapper.text()).not.toContain('Waits for no one')
+
+    wrapper = mountCard(run({ waiting: waiting({ phase: 'failed', failed: 3, attempts: 3 }) }))
+    await flushPromises()
+    expect(wrapper.find('[data-testid="flow-waiting-job"]').text()).toContain(
+      'after 3 failed attempts:'
+    )
   })
 
   it('shows the step form only when complete is allowed', async () => {

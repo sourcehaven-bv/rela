@@ -102,6 +102,8 @@ export interface FlowEvent {
   via: 'start' | 'done' | 'change' | 'timer' | 'join' | string
   timer?: string
   by?: string
+  /** The title of `by` when it is an entity the reader may see. */
+  by_title?: string
   /** The parallel branch the move was in. */
   branch?: string
 }
