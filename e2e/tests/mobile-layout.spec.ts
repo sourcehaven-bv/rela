@@ -177,14 +177,13 @@ test.describe("Mobile app shell", () => {
   }) => {
     const mobile = new MobileLayoutPage(appPage);
     await mobile.navigateTo(`/entity/feature/${SEED.features.authentication}`);
-    const button = appPage.locator(".mobile-menu-btn");
-    await expect(button).toBeVisible();
+    await expect(mobile.hamburger).toBeVisible();
 
     await mobile.growPaneContent();
     await mobile.scrollPane(400);
 
-    await expect(button).toBeInViewport();
-    expect(await mobile.backgroundAlpha(button)).toBe(1);
+    await expect(mobile.hamburger).toBeInViewport();
+    expect(await mobile.backgroundAlpha(mobile.hamburger)).toBe(1);
   });
 
   /**
