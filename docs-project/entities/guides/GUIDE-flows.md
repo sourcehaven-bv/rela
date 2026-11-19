@@ -388,6 +388,11 @@ the same for every attempt) let a receiver drop a repeat.
 
 **A failed job** leaves the run in its state, with status `failed` in the
 run's view and the reason: `exhausted`, `permanent`, `timeout` or `lost`.
+The run list shows the run as `failed` too. Its header keeps the status of
+the state, because a retry can move the run on. So the list's status filter
+finds the run under that status, `working` for example, and not under
+`failed`.
+
 In a fork, the other branches go on. A branch whose job waits or failed
 has not arrived: a join that needs it waits, and one that does not (`any`,
 a `when:` that holds, or another branch that reaches a final state) goes

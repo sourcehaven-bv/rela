@@ -142,6 +142,10 @@ func buildJobProject(t *testing.T, hook *hookServer, dataEntry string) (*appbuil
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rela"), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".rela", "secrets.yaml"), []byte("hook_key: s3cret\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "data-entry.yaml"), []byte(dataEntry), 0o600))
+	// alice reads every run, as an operator looking at the run list.
+	policy, err := os.ReadFile(filepath.Join(root, "acl.yaml"))
+	require.NoError(t, err)
+	writePolicy(t, root, strings.Replace(string(policy), "assignments:\n", "assignments:\n  alice: auditor\n", 1))
 	svc, err := appbuildOnDiskWithOpts(t, root, appbuild.WithBackgroundAutomationJobs(),
 		appbuild.WithHTTPClient(srv.Client()))
 	if err == nil {
@@ -267,4 +271,26 @@ func TestFlowJob_WebhookClientErrorFails(t *testing.T) {
 	require.Equal(t, flowrun.JobFailedPermanent, run.Pending.Job.FailKind)
 	require.Equal(t, 1, hook.calls(), "a permanent error is not tried again")
 	require.Equal(t, "send", header(t, svc, id)["state"])
+}
+
+// TestFlowJob_RunListShowsFailedJob pins BUG-S5VV0N0: a run whose job
+// failed for good reads failed in the run list, as on its own page,
+// though its header still says working.
+func TestFlowJob_RunListShowsFailedJob(t *testing.T) {
+	hook := &hookServer{status: http.StatusBadRequest}
+	svc := jobProject(t, hook)
+	id, _ := startJob(t, svc, "hook")
+	waitJobFailed(t, svc, id)
+	require.Equal(t, string(flow.StatusWorking), header(t, svc, id)["status"])
+
+	ctl := appbuild.FlowControlFor(svc)
+	alice := flowUser(t, svc, "alice")
+	detail, err := ctl.Run(alice, id)
+	require.NoError(t, err)
+	require.Equal(t, string(flow.StatusFailed), detail.Status)
+	list, err := ctl.RunList(alice, "hook", "", 1, 50)
+	require.NoError(t, err)
+	require.Len(t, list.Runs, 1)
+	require.Equal(t, detail.Status, list.Runs[0].Status)
+	require.True(t, list.Runs[0].Active, "a failed job can still be retried")
 }

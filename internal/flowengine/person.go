@@ -543,7 +543,7 @@ func (ex *explainer) place(ctx context.Context, f *flowcfg.Flow, run flowrun.Run
 		if job, ok := st.Job(); ok && p.Job != nil && p.State == cur.State && p.Generation == cur.Generation {
 			x.Pending.Job = &JobStep{Phase: p.Job.Phase, Failed: p.Job.Failed, Attempts: job.Retry.Attempts,
 				FailKind: p.Job.FailKind}
-			if p.Job.Phase == flowrun.JobFailed {
+			if jobFailed(st, cur, p) {
 				// The run waits for an operator: it reads as failed, though its
 				// header does not, since a retry can still move it on.
 				x.Status = flow.StatusFailed
@@ -555,4 +555,50 @@ func (ex *explainer) place(ctx context.Context, f *flowcfg.Flow, run flowrun.Run
 		x.Claim = &cp
 	}
 	return x, nil
+}
+
+// jobFailed reports whether the place at cur, in state st, waits for an
+// operator: st has a job step and mark p records that it failed for good
+// on this entry of the state.
+func jobFailed(st flowcfg.State, cur flow.Current, p *flowrun.Pending) bool {
+	_, hasJob := st.Job()
+	return hasJob && p != nil && p.Job != nil && p.Job.Phase == flowrun.JobFailed &&
+		p.State == cur.State && p.Generation == cur.Generation
+}
+
+// FailedJobs returns the runs among runs that [Engine.Explain] reads as
+// failed because a job step failed for good: on the run, or for a forked
+// run on one of its branches. Their headers still say working, since a
+// retry can move them on. It applies Explain's rule without reading
+// subjects or guards, so a list can ask it of every run on a page. A run
+// whose flow version cannot be read, or whose state is gone, is left out,
+// as Explain reads it as stranded.
+func (e *Engine) FailedJobs(ctx context.Context, runs []flowrun.Run) map[flow.RunID]bool {
+	flows := FlowCache{e: e}
+	out := map[flow.RunID]bool{}
+	for _, run := range runs {
+		f, err := flows.Of(ctx, run)
+		if err != nil {
+			continue
+		}
+		at := func(inst flow.Instance, p *flowrun.Pending) bool {
+			cur := flow.Read(f.Definition(), inst, run.CreatedAt)
+			if cur.Stranded {
+				return false
+			}
+			st, _ := f.State(cur.State)
+			return jobFailed(st, cur, p)
+		}
+		if forked(run) {
+			out[run.ID] = slices.ContainsFunc(run.Branches, func(b flowrun.Branch) bool {
+				return at(b.Instance, b.Pending)
+			})
+		} else {
+			out[run.ID] = at(run.Instance, run.Pending)
+		}
+		if !out[run.ID] {
+			delete(out, run.ID)
+		}
+	}
+	return out
 }
