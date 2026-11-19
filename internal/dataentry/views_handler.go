@@ -267,9 +267,11 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 			resp.Space = sp.ID
 			resp.Navigation = sidebarNavigation(ctx, aclImpl, s.Cfg, s.Meta, sp.Navigation, sp.ID)
 			resp.Create = h.spaceCreate(ctx, sp)
+			resp.HiddenBuiltins = hiddenBuiltins(ctx, aclImpl, sp.Builtins)
 		}
 	} else {
 		resp.Navigation = sidebarNavigation(ctx, aclImpl, s.Cfg, s.Meta, s.Cfg.Navigation, "")
+		resp.HiddenBuiltins = hiddenBuiltins(ctx, aclImpl, s.Cfg.Builtins)
 	}
 	h.setItemsCreate(ctx, resp.Navigation)
 	resp.Pages = sidebarPages(ctx, aclImpl, s.Cfg, s.Meta)
@@ -342,6 +344,17 @@ func sidebarNavigation(
 		}
 	}
 	return navigation
+}
+
+// hiddenBuiltins returns the built-in sidebar rows this principal does not
+// get. A row's `permission:` is the same UX filter as a navigation entry's
+// (permitsGatedUIElement): it tidies the sidebar and gates nothing behind it.
+func hiddenBuiltins(
+	ctx context.Context, aclImpl acl.ACL, builtins dataentryconfig.Builtins,
+) []dataentryconfig.BuiltinRow {
+	return builtins.Hidden(func(permission string) bool {
+		return permitsGatedUIElement(ctx, aclImpl, permission)
+	})
 }
 
 // permittedSpaces returns the spaces the principal may enter, in config

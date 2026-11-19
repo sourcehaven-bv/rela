@@ -2175,6 +2175,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Actions:          s.Cfg.Actions,
 		Navigation:       s.Cfg.Navigation,
 		Spaces:           s.Cfg.Spaces,
+		Builtins:         s.Cfg.Builtins,
 		Pages:            s.Cfg.Pages,
 		Documents:        s.Cfg.Documents,
 		Apps:             appsToV1(a.scanAppsOrLog(r.Context())),

@@ -6176,6 +6176,48 @@ your roles first.
 
 Direct items and groups can be freely mixed in any order.
 
+### Built-in sidebar rows (`builtins:`)
+
+Above the navigation, the sidebar pins rows that rela adds itself: Search,
+Inbox, Flow tasks, Flow runs and Analysis. Inbox appears only when the project
+has channels, and the two flow rows only when it has flows. By default every
+row is shown.
+
+`builtins:` hides a row, or shows it only to users who hold a permission:
+
+```yaml
+builtins:
+  search: { hidden: true }              # hidden for everyone
+  analysis: { permission: admin:read }  # only holders see it
+```
+
+| Row name     | Row        |
+| ------------ | ---------- |
+| `search`     | Search     |
+| `inbox`      | Inbox      |
+| `flow_tasks` | Flow tasks |
+| `flow_runs`  | Flow runs  |
+| `analysis`   | Analysis   |
+
+Each entry sets exactly one of `hidden: true` or `permission:`. An unknown row
+name, an entry with both or neither, and a top-level `builtins:` next to
+`spaces:` all fail to load. With [spaces](#spaces), set `builtins:` on each
+space instead.
+
+When the Search row is hidden, the `/` shortcut to the search page is off too.
+When every row is hidden, the pinned band is left out.
+
+`permission:` here works like [`permission:` on a navigation
+entry](#hiding-entries-a-user-cannot-act-on-permission), including the
+behaviour without `acl.yaml`, where every row is shown. Both settings only
+tidy the sidebar. The pages behind the rows stay reachable by URL, under the
+normal ACL, and the configuration is not a secret: `/api/v1/_config` serves it
+to every user.
+
+The sidebar endpoint names the rows it leaves out for the current user in
+`hidden_builtins`, for example `"hidden_builtins": ["search", "analysis"]`. The
+field is absent when every row is shown.
+
 ## Spaces
 
 A space is a named entry point onto the same graph. Each space has its own
@@ -6215,6 +6257,7 @@ spaces:
 | `home`       | no       | The page the space opens on: one navigation destination |
 | `create`     | no       | Entity types the Create menu offers in this space, in order |
 | `navigation` | no       | The space's sidebar, in the same shape as [Navigation](#navigation) |
+| `builtins`   | no       | Hide or gate the built-in sidebar rows in this space; see [Built-in sidebar rows](#built-in-sidebar-rows-builtins) |
 
 `spaces:` is a list, and its order is the order of the switcher.
 
@@ -6264,6 +6307,40 @@ is no setting for this.
 the permission. It works like `permission:` on a navigation entry. It is a
 convenience, not a security control: the lists and entities of a hidden space
 stay reachable by URL, under the normal ACL.
+
+**The app root** (`/`) opens the home of the current space: the space the user
+is in, else the space this browser was last in, else the first space the user
+may see. Without `spaces:` the root opens the dashboard. `/dashboard` always opens the dashboard.
+
+A portal for customers next to a back office for staff, where each group lands
+in its own space:
+
+```yaml
+spaces:
+  - id: staff
+    label: "Back office"
+    permission: staff:manage
+    home: { list: accounts }
+    navigation:
+      - label: "Accounts"
+        list: accounts
+  - id: portal
+    label: "My account"
+    permission: portal:use
+    home: { dashboard: true }
+    builtins:
+      search: { hidden: true }
+      flow_tasks: { hidden: true }
+      flow_runs: { hidden: true }
+      analysis: { hidden: true }
+    navigation:
+      - label: "Invoices"
+        list: my_invoices
+```
+
+A customer who holds only `portal:use` opens the app root and lands on the
+portal's home, with no Search, flow or Analysis rows. Staff land in the back
+office and keep every row.
 
 ### The current space
 
