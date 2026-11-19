@@ -181,6 +181,7 @@
     "signOut": "Afmelden"
   },
   "settings": {
+    "title": "Instellingen",
     "language": {
       "title": "Taal",
       "description": "De taal van menu's, knoppen en meldingen, alleen in deze browser. Namen en labels uit de projectconfiguratie worden niet vertaald.",

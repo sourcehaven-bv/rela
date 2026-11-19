@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { ref, computed, onMounted, watch } from 'vue'
+import { usePageTitle } from '@/composables/useDocumentTitle'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { searchEntities, analyze, getDashboard, getDashboardCard, ApiError } from '@/api'
 import { useWorld } from '@/composables/useWorld'
@@ -112,6 +113,7 @@ function valueMatches(card: DashboardCardEntry, value: DashboardCardValue): bool
 // Computed
 const dashboardConfig = computed(() => (props.name ? named.value : schemaStore.dashboard))
 const title = computed(() => dashboardConfig.value?.title || t('dashboardView.title'))
+usePageTitle(title)
 const description = computed(() => dashboardConfig.value?.description)
 const cards = computed(() => dashboardConfig.value?.cards || [])
 // Every card of an entity dashboard has a scope, and no other card does.

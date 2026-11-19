@@ -2,6 +2,7 @@
 import { intlLocale } from '@/i18n/locale'
 import { useI18n } from 'vue-i18n'
 import { ref, computed, onMounted } from 'vue'
+import { usePageTitle } from '@/composables/useDocumentTitle'
 import { RouterLink, useRoute, type RouteLocationRaw } from 'vue-router'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
@@ -25,6 +26,7 @@ import Badge from '@/components/ui/Badge.vue'
 import type { Entity } from '@/types'
 
 const { t } = useI18n()
+usePageTitle(() => t('history.title'))
 const route = useRoute()
 const uiStore = useUIStore()
 const schemaStore = useSchemaStore()

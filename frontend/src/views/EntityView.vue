@@ -8,5 +8,5 @@ defineProps<{
 </script>
 
 <template>
-  <EntityDetail :entity-type="type" :entity-id="id" />
+  <EntityDetail :entity-type="type" :entity-id="id" names-tab />
 </template>

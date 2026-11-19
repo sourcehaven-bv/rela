@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { usePageTitle } from '@/composables/useDocumentTitle'
 import { I18nT, useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import RlButton from 'rela-components/components/common/RlButton.vue'
@@ -160,8 +161,14 @@ const props = withDefaults(
      * entity itself with a link to its owner instead of navigating the host.
      */
     followOwner?: boolean
+    /**
+     * Name the browser tab after this entity. Only the entity route sets it;
+     * a panel or preview leaves the tab to the page around it. Read at setup
+     * time and never reactive afterwards, like DynamicForm's `embedded`.
+     */
+    namesTab?: boolean
   }>(),
-  { hideActions: false, followOwner: true }
+  { hideActions: false, followOwner: true, namesTab: false }
 )
 
 const emit = defineEmits<{
@@ -391,6 +398,8 @@ const entryTitle = computed(() => {
   if (!entry.value) return props.entityId
   return entityDisplayTitle(entry.value)
 })
+// Until the entity loads the tab shows the app name alone, not the raw id.
+if (props.namesTab) usePageTitle(() => (entry.value ? entryTitle.value : undefined))
 
 // inaccessibleByName maps each inaccessible field's name to its reason
 // (e.g. 'git-crypt'), letting consumers render per-property tooltips
@@ -1513,10 +1522,17 @@ const faceOptions = computed<Face[] | undefined>(() => entry.value?._faces)
 // from its host, and the detail panel takes the faces as actions.
 const faceToggle = computed(() =>
   faceOptions.value && !props.hideActions
-    ? faceToggleOptions(bareEntityId.value, servedFace.value, faceOptions.value, typeDef.value?.faces)
-    : null,
+    ? faceToggleOptions(
+        bareEntityId.value,
+        servedFace.value,
+        faceOptions.value,
+        typeDef.value?.faces
+      )
+    : null
 )
-const menuFaces = computed<Face[] | undefined>(() => (faceToggle.value ? undefined : faceOptions.value))
+const menuFaces = computed<Face[] | undefined>(() =>
+  faceToggle.value ? undefined : faceOptions.value
+)
 
 // The face's address, for an older server that sends no `ref`: the stored
 // coordinate appended to the bare id is that face's spelling for every

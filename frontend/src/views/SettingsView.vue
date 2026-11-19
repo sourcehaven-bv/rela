@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { usePageTitle } from '@/composables/useDocumentTitle'
+import { useI18n } from 'vue-i18n'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useConfirm } from '@/composables/useConfirm'
 import {
@@ -46,6 +48,8 @@ import type { SelectOption } from 'rela-components/components/form/types'
 const HEX_INPUT_RE = /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/
 
 const schemaStore = useSchemaStore()
+const { t } = useI18n()
+usePageTitle(() => t('settings.title'))
 const uiStore = useUIStore()
 const { confirm } = useConfirm()
 
@@ -766,7 +770,7 @@ onMounted(() => {
   <div class="settings-view">
     <div class="page-header">
       <div>
-        <h1>Settings</h1>
+        <h1>{{ t('settings.title') }}</h1>
         <p class="subtitle">Configure default values for new entities</p>
         <p class="file-path">.rela/user-defaults.yaml</p>
       </div>

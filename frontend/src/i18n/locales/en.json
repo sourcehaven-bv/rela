@@ -181,6 +181,7 @@
     "signOut": "Sign out"
   },
   "settings": {
+    "title": "Settings",
     "language": {
       "title": "Language",
       "description": "The language of menus, buttons and messages, for this browser only. Names and labels from the project configuration are not translated.",
