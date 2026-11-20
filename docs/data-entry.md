@@ -3804,8 +3804,9 @@ phone. It does not affect:
   [`list_buttons`](#list-and-search-buttons-list_buttons).
 
 A key can only hide a button. History still needs a deployment with version
-history (PostgreSQL or SQLite), and Add to pile still needs piles to be
-available to the reader.
+history (PostgreSQL or SQLite) and at least one recorded version of the face
+on screen, and Add to pile still needs piles to be available to the reader.
+The history page names the entity by its title.
 
 **This is a UX filter, not an access control.** A hidden History button does
 not stop anyone from opening `/history/...` or calling `/api/v1/_history` or

@@ -2301,8 +2301,10 @@ wrong type, or a deleted entity without `history:read`. Each entry is
 Records that name another entity the caller cannot read are left out, and so
 are records of `_` relation types and updates of only hidden or `_`
 properties, so a page can be shorter than `limit` while `next_before` is set.
-`titles` maps the ids of the other entities a page names to their titles as
-the caller sees them; an id it leaves out shows as the id.
+`titles` maps the ids of the other entities a page names, and each record's
+`user` when it is an entity id, to their titles as the caller sees them; an
+id it leaves out shows as the id. Reserved (`system:`, `integration:`) and
+webhook users are never looked up.
 `audit.changes` is true whenever the route exists.
 
 `GET /api/v1/_audit` returns `{records: [{seq, record}], next_before?}`,

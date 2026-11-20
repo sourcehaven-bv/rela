@@ -99,9 +99,10 @@ type changesResponse struct {
 	// WorldFaceAbsent mirrors the history timeline: the request's world
 	// resolves no face, so there is no change list in it.
 	WorldFaceAbsent bool `json:"world_face_absent,omitempty"`
-	// Titles names the other entities the page's records name, by id, as
-	// the reader sees them now (BUG-XR1DUQA). An id the reader cannot read, or
-	// whose title is hidden, is absent or falls back to the id.
+	// Titles names the other entities the page's records name, and the users
+	// who made them when a user is an entity id, by id, as the reader sees
+	// them now (BUG-XR1DUQA, BUG-9WCZYOX). An id the reader cannot read, or
+	// whose title is hidden, is absent.
 	Titles map[string]string `json:"titles,omitempty"`
 }
 
@@ -168,22 +169,35 @@ func handleV1Changes(a *App, w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// changeTitles resolves the titles of the far ends of the relations page
-// names, through the gated resolver in the request's world, as mentions do.
+// changeTitles resolves, in one batch, the titles of the far ends of the
+// relations page names and of the users who made its records, through the
+// gated resolver in the request's world, as mentions do. A user is looked
+// up as an entity id (the person a principal_property resolves to) unless
+// it is a reserved or webhook identity, which the panel names by kind; a
+// user that names no entity the reader may read is absent from the result.
 // A title is served only whole: when the reader cannot see every property
 // it is made of, the id is left out and the list shows the id (BUG-R9EHKV).
 // A failed lookup is logged and serves no titles.
 func changeTitles(ctx context.Context, a *App, self string, page []visibility.ChangeRecord) map[string]string {
 	seen := map[string]bool{}
 	var ids []string
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
 	for _, c := range page {
+		// The entity on screen may itself be the person who made a change.
+		if actorMayBeEntity(c.User) {
+			add(c.User)
+		}
 		if c.Subject == nil || !c.Subject.IsRelation() {
 			continue
 		}
 		for _, id := range []string{c.Subject.FromID, c.Subject.ToID} {
-			if id != "" && id != self && !seen[id] {
-				seen[id] = true
-				ids = append(ids, id)
+			if id != self {
+				add(id)
 			}
 		}
 	}
@@ -203,6 +217,20 @@ func changeTitles(ctx context.Context, a *App, self string, page []visibility.Ch
 		}
 	}
 	return out
+}
+
+// idpWebhookUserPrefix is the [principal.Principal.User] prefix the
+// identity provider webhook runs as: `webhook:<event>`.
+const idpWebhookUserPrefix = "webhook:"
+
+// actorMayBeEntity reports whether a record's user is worth looking up as an
+// entity id: not empty, not "unknown", and not a reserved or webhook
+// identity.
+func actorMayBeEntity(user string) bool {
+	if user == "" || user == "unknown" || principal.IsReserved(user) {
+		return false
+	}
+	return !strings.HasPrefix(user, idpWebhookUserPrefix)
 }
 
 // readableIDs adapts a readableTypes function to [visibility.ReadableIDs].

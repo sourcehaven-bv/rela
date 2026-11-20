@@ -526,8 +526,14 @@ cannot be paged, so it offers neither.
 
   The tab names relations, properties and entity types by their labels, and
   other entities by their title as the reader sees it (the response's
-  `titles` map). A change made by a `system:` or `integration:` principal
-  shows as "System", and a trigger shows only as "By an automation", "By a
+  `titles` map). A relation seen from its target uses the relation's
+  `inverse.label`; without one it reads "Label, from Other". The person who
+  made a change shows by title when their principal is an entity id the
+  reader may read (the same `titles` map), and as sent otherwise. The
+  identity provider webhook shows as "Identity provider (event)", a
+  `system:webhook:<id>` principal as "Webhook id", and an `integration:<name>`
+  principal as "Integration name". Any other `system:` principal shows as
+  "System", and a trigger shows only as "By an automation", "By a
   schedule" or "Automatically". The labels are applied in the browser: the
   response still carries the raw names, which are configuration, not data.
   The global audit view keeps the raw values.

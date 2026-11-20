@@ -29,6 +29,7 @@ const schema: ChangeSchema = {
           inverse: { id: 'affected-by', label: 'Affected by' },
         },
         blocks: { label: 'Blocks', from: [], to: [] },
+        tracks: { label: 'Tracks', from: [], to: [], inverse: { id: 'tracked-by' } },
       }) as Record<string, RelationType>
     )[name],
 }
@@ -55,11 +56,15 @@ describe('changeText', () => {
   it.each([
     [{ user: 'alice' }, 'alice'],
     [{ user: 'system:scheduler' }, 'System'],
-    [{ user: 'integration:crm' }, 'System'],
+    [{ user: 'integration:crm' }, 'Integration crm'],
+    [{ user: 'webhook:membership.created' }, 'Identity provider (membership.created)'],
+    [{ user: 'system:webhook:hub' }, 'Webhook hub'],
     [{ user: 'unknown', tool: 'mcp' }, 'System'],
     [{ tool: 'cli' }, 'System'],
+    [{ user: 'PSN-19' }, 'Ada Lovelace'],
+    [{ user: 'PSN-20' }, 'PSN-20'],
   ])('names actor %o as %s', (over, want) => {
-    expect(actorText(rec(over))).toBe(want)
+    expect(actorText(rec(over), { 'PSN-19': 'Ada Lovelace' })).toBe(want)
   })
 
   it.each([
@@ -73,7 +78,16 @@ describe('changeText', () => {
       rel('affects', 'BUG-3', 'TKT-1'),
       'Affected by → BUG-3',
     ],
-    ['an incoming relation without an inverse', rel('blocks', 'BUG-3', 'TKT-1'), 'Blocks ← BUG-3'],
+    [
+      'an incoming relation without an inverse as from its source',
+      rel('blocks', 'BUG-3', 'TKT-1'),
+      'Blocks, from BUG-3',
+    ],
+    [
+      'an incoming relation whose inverse has no label as from its source',
+      rel('tracks', 'CON-7', 'TKT-1'),
+      'Tracks, from Login',
+    ],
     ['an unknown relation type by its name', rel('refs', 'TKT-1', 'CON-7'), 'refs → Login'],
     [
       'a conversion by the type labels',

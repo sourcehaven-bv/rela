@@ -1615,6 +1615,12 @@
       "title": "Wijzigingen",
       "empty": "Geen wijzigingen vastgelegd.",
       "system": "Systeem",
+      "actor": {
+        "idp": "Identiteitsprovider ({event})",
+        "webhook": "Webhook {name}",
+        "integration": "Integratie {name}"
+      },
+      "incoming": "{label}, vanaf {source}",
       "changedFields": "Gewijzigd: {fields}",
       "op": {
         "created": "Aangemaakt",

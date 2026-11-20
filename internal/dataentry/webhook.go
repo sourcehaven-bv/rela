@@ -405,7 +405,7 @@ func dispatchWebhookAction(ctx context.Context, h *writeHandler, rec *webhookRec
 	// to the callback, not to the default data-entry "unknown". The action path
 	// reads principal.From(ctx).
 	ctx = principal.With(ctx, principal.Principal{
-		User: "webhook:" + claims.Event,
+		User: idpWebhookUserPrefix + claims.Event,
 		Tool: principal.ToolWebhookReceiver,
 	})
 	// The webhook route is outside /api/, so attachACLRequest did not run:
