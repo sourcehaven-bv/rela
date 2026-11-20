@@ -371,6 +371,15 @@ func (h flowHeaders) PatchHeader(ctx context.Context, id flow.RunID, props map[s
 	return err
 }
 
+func (h flowHeaders) EndHeader(ctx context.Context, id flow.RunID, props map[string]any, body string) error {
+	ctx, err := h.engine(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = h.mgr.PatchEntity(ctx, string(id), entity.Patch{Properties: props, Content: &body})
+	return err
+}
+
 func (h flowHeaders) DeleteHeader(ctx context.Context, id flow.RunID) error {
 	ctx, err := h.engine(ctx)
 	if err != nil {

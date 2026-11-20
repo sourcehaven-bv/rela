@@ -72,6 +72,8 @@ function moveSummary(e: FlowEvent, t: Translate): string {
       })
     case 'join':
       return t('flows.log.join', { state: labelOf(e.label, e.state) })
+    case 'cancel':
+      return t('flows.log.cancel', { state: labelOf(e.label, e.state) })
     default:
       return t('flows.log.moved', { state: labelOf(e.label, e.state) })
   }

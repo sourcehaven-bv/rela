@@ -34,6 +34,7 @@
       "timer": "moved to {state} when timer {timer} ran out",
       "moved": "moved to {state}",
       "join": "joined in {state}",
+      "cancel": "cancelled in {state}",
       "inBranch": "{summary} (branch {branch})"
     },
     "waiting": {

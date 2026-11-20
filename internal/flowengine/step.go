@@ -363,9 +363,13 @@ func (e *Engine) move(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, tok
 // whose mark makes the next round finish it again, never a running header
 // over no run.
 func (e *Engine) finish(ctx context.Context, f *flowcfg.Flow, run flowrun.Run, status flow.Status) error {
+	body, err := endBody(run, nil)
+	if err != nil {
+		return err
+	}
 	props := endProps(status, e.now())
 	props[metamodel.FlowRunPropState] = flow.Read(f.Definition(), run.Instance, run.CreatedAt).State
-	if err := e.d.Headers.PatchHeader(ctx, run.ID, props); err != nil {
+	if err := e.d.Headers.EndHeader(ctx, run.ID, props, body); err != nil {
 		return fmt.Errorf("flowengine: record end of run %s: %w", run.ID, err)
 	}
 	if err := e.d.Runs.Delete(ctx, run.ID, run.Rev); err != nil && !isLost(err) {
@@ -379,6 +383,21 @@ func endProps(status flow.Status, at time.Time) map[string]any {
 		metamodel.FlowRunPropStatus:    string(status),
 		metamodel.FlowRunPropCompleted: at,
 	}
+}
+
+// endBody is the header body of run as it ends: its log, with last added
+// when it is not nil. The header keeps the timeline, because the run's
+// state goes when it ends.
+func endBody(run flowrun.Run, last *flowrun.Step) (string, error) {
+	log := run.Log
+	if last != nil {
+		log = flowrun.AppendLog(log, *last)
+	}
+	body, err := flowrun.LogBody(log)
+	if err != nil {
+		return "", fmt.Errorf("flowengine: record end of run %s: %w", run.ID, err)
+	}
+	return body, nil
 }
 
 func (e *Engine) patchHeader(ctx context.Context, id flow.RunID, props map[string]any) {

@@ -92,11 +92,14 @@ const (
 	ViaTimer  Via = "timer"
 	// ViaJoin: the parallel branches continued as one run at the join.
 	ViaJoin Via = "join"
+	// ViaCancel: the run was cancelled in State. Only the log a header
+	// keeps ends with it; a stored run is never cancelled.
+	ViaCancel Via = "cancel"
 )
 
 // Step is one entry of a run's timeline: the run entered State at At.
-// The log lives in the run's stored state, so a finished run, whose state
-// is dropped, keeps only what its header records.
+// The log lives in the run's stored state; when the run ends, its header
+// keeps it ([LogBody]).
 type Step struct {
 	At    time.Time `json:"at"`
 	State string    `json:"state"`
@@ -623,7 +626,7 @@ func checkLog(log []Step) error {
 			return invalid("log entry out of range")
 		}
 		switch s.Via {
-		case ViaStart, ViaDone, ViaChange, ViaTimer, ViaJoin:
+		case ViaStart, ViaDone, ViaChange, ViaTimer, ViaJoin, ViaCancel:
 		default:
 			return invalid("log cause %q", s.Via)
 		}
@@ -639,6 +642,50 @@ func AppendLog(log []Step, s Step) []Step {
 		out = append(out[:1], out[len(out)-MaxLog+1:]...)
 	}
 	return out
+}
+
+// The fence around the log in a run header's body.
+const (
+	logBodyOpen  = "```json\n"
+	logBodyClose = "\n```"
+)
+
+// LogBody is log as the body a run header keeps when the run ends, so its
+// timeline outlives the run's state: JSON in a fenced code block. It is
+// the body and not a property because header list reads carry no body,
+// and the run list needs no timeline.
+func LogBody(log []Step) (string, error) {
+	b, err := json.Marshal(log)
+	if err != nil {
+		return "", fmt.Errorf("flowrun: encode log: %w", err)
+	}
+	return logBodyOpen + string(b) + logBodyClose, nil
+}
+
+// ParseLogBody reads a log that [LogBody] wrote. An empty body is no log,
+// as on a run that ended before headers kept it. Any other body that is
+// not a valid log is an error. Whitespace around the fence is ignored,
+// because the store may trim the body.
+func ParseLogBody(body string) ([]Step, error) {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return nil, nil
+	}
+	text, ok := strings.CutPrefix(body, logBodyOpen)
+	if ok {
+		text, ok = strings.CutSuffix(text, logBodyClose)
+	}
+	if !ok {
+		return nil, invalid("run header body is not a log")
+	}
+	var log []Step
+	if err := json.Unmarshal([]byte(text), &log); err != nil {
+		return nil, fmt.Errorf("flowrun: decode log: %w", err)
+	}
+	if err := checkLog(log); err != nil {
+		return nil, err
+	}
+	return log, nil
 }
 
 // CheckNewRun checks every field of nr.
