@@ -3,17 +3,18 @@ id: REV-AEFV81D
 type: review-checklist
 title: 'Review: The Changes list shows raw actors and relation names; History opens empty'
 started: "2026-11-20"
-status: in-progress
+completed: "2026-11-20"
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test`) (internal/dataentry and the full frontend suite (444 files) pass locally; CI runs the rest)
+- [x] Lint clean (`just lint`) (golangci-lint on internal/dataentry: 0 issues; ESLint and vue-tsc clean)
+- [x] Comment lint gate clean (`just comment-lint`) (no unresolvable doc links)
+- [x] ~~Coverage maintained (`just coverage-check`)~~ (N/A locally: the CI coverage job gates it; every new function has tests)
 
 **Comment findings.** `just comment-report` lists the advisory rules
 (duplication, nil-contract, param-contract, restatement). They are not a merge
@@ -34,41 +35,40 @@ unexplained suppression is a finding nobody can re-evaluate later.
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (invokes cranky-code-reviewer agent) (critical review of the diff done inline in the worker session, which may not start agents; four findings recorded)
+- [x] All critical review-responses addressed (none)
+- [x] All significant review-responses addressed (none)
+- [x] Self-reviewed the diff for unrelated changes (Prettier reformatting of unrelated files reverted; only the touched test file keeps its new line breaks)
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** RR-FSSDLLW (deferred), RR-06QZPK2 (wont-fix), RR-FYVHJYT (addressed), RR-C2LIL6B (wont-fix)
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist) (see the implementation checklist IMPL-C66G7EP)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+Actor titles PASS (TestChangeTitles_NamesActorsByTitle, ChangesPanel). Identity labels PASS (changeText cases). Incoming relations PASS (changeText cases). History hidden PASS (EntityDetail.world, useHasHistory). Title on history page PASS (HistoryView subject tests). Docs PASS (audit-log, data-entry, api-reference).
 
 ## Documentation (enhancements only)
 
 Skip this section for bugs and internal refactors.
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+- [x] ~~Docs-checklist created and linked via `has-docs`~~ (N/A: bug)
+- [x] User-facing documentation updated (docs/audit-log.md, docs/data-entry.md, docs/data-entry/api-reference.md and the guide mirrors)
+- [x] ~~Docs-checklist marked as done~~ (N/A: bug)
 
 **Docs Checklist:** <!-- e.g., DOCS-xxxx -->
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what (minimal commit message by the owner's rule; the bug carries the why)
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] ~~Run `/pr` command to create PR and monitor CI~~ (N/A here: the PR follows done, see TKT-UFV01M)
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.

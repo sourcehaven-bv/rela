@@ -38,6 +38,8 @@ export function opText(op: string): string {
  * person's entity id the reader may read) shows by title. A webhook or an
  * integration shows by kind and name: the names are configuration, not data.
  * Any other `system:` principal, and a write with no known user, is "System".
+ * `webhook:<event>` is the identity provider webhook's user
+ * (`idpWebhookUserPrefix` in internal/dataentry/audit_handler.go).
  */
 export function actorText(c: ChangeRecord, titles: Record<string, string> = {}): string {
   const user = c.user ?? ''

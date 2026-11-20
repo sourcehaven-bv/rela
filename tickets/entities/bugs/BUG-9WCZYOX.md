@@ -10,8 +10,10 @@ why2: BUG-XR1DUQA built the titles map for relation ends only and named principa
 why3: The panel's tests used plain user names and inverse-labelled relations, and no fixture had a principal that is an entity id, a webhook identity or a relation without an inverse label.
 why4: Projects whose principal_property resolves people to entity ids, and webhook identities outside the reserved prefixes, were not considered when the reader-facing panel was designed.
 why5: Reader-facing labels were derived from the shapes in rela's own fixtures rather than from every principal and relation shape a project can produce.
+prevention: Tests pin actor titles from the gated batch, labels for webhook and integration identities, incoming relations without an inverse label, and History hidden for an empty timeline in both header blocks.
 started: "2026-11-20"
-status: review
+completed: "2026-11-20"
+status: done
 ---
 
 ## Description
