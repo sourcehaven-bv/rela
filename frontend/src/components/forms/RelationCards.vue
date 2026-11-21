@@ -27,7 +27,7 @@ import { ORDER_PROPERTY_OUT, ORDER_PROPERTY_IN, isNumericProperty } from '@/type
 import { computeNewOrder, extractFiniteNumber } from '@/composables/useRelationReorder'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlSpinner from 'rela-components/components/common/RlSpinner.vue'
-import { entityRef, refBareId } from '@/utils/entityRef'
+import { entityRef } from '@/utils/entityRef'
 
 // Re-export so existing `import type { RelationCardState } from './RelationCards.vue'`
 // callers keep working without a churn rename.
@@ -89,6 +89,12 @@ function picksFace(sourceType: string): boolean {
 
 function candidateKey(e: Entity): string {
   return picksFace(e.type) ? entityRef(e) : e.id
+}
+
+// The schema label of the entity type a card points at, or '' when unknown.
+function entryTypeLabel(entry: RelationEntry): string {
+  if (!entry.type) return ''
+  return schemaStore.getEntityType(entry.type)?.label || entry.type
 }
 
 // The face label of a card, or '' for an edge that belongs to no face.
@@ -634,19 +640,21 @@ function onDragEnd() {
             >⋮⋮</span
           >
           <div class="card-identity">
-            <template v-if="entityTarget(entry.id)">
-              <RouterLink class="entity-id" :to="entityTarget(entry.id)!" draggable="false">
-                {{ refBareId(entry.id) }}
-              </RouterLink>
-              <RouterLink class="entity-title" :to="entityTarget(entry.id)!" draggable="false">
-                {{ getEntityTitle(entry.id) }}
-              </RouterLink>
-            </template>
-            <template v-else>
-              <span class="entity-id">{{ refBareId(entry.id) }}</span>
-              <span class="entity-title">{{ getEntityTitle(entry.id) }}</span>
-            </template>
-            <span v-if="entry.face" class="entry-face">{{ entryFaceLabel(entry) }}</span>
+            <RouterLink
+              v-if="entityTarget(entry.id)"
+              class="entity-title"
+              :to="entityTarget(entry.id)!"
+              draggable="false"
+            >
+              {{ getEntityTitle(entry.id) }}
+            </RouterLink>
+            <span v-else class="entity-title">{{ getEntityTitle(entry.id) }}</span>
+            <span class="entity-meta">
+              <span v-if="entryTypeLabel(entry)" class="entity-type">{{
+                entryTypeLabel(entry)
+              }}</span>
+              <span v-if="entry.face" class="entry-face">{{ entryFaceLabel(entry) }}</span>
+            </span>
           </div>
           <button
             v-if="!isIncoming"
@@ -984,27 +992,16 @@ function onDragEnd() {
 
 .card-identity {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
-.entity-id {
-  font-family: monospace;
-  font-size: 12px;
-  color: var(--rl-color-accent, #6366f1);
-  white-space: nowrap;
-  /* Real links now; keep the previous resting appearance. */
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.entity-id:hover {
-  text-decoration: underline;
-}
-
 .entity-title {
+  display: block;
+  width: 100%;
   font-size: 14px;
   color: var(--rl-color-text);
   overflow: hidden;
@@ -1012,6 +1009,17 @@ function onDragEnd() {
   white-space: nowrap;
   text-decoration: none;
   cursor: pointer;
+}
+
+.entity-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.entity-type {
+  font-size: 12px;
+  color: var(--rl-color-text-muted);
 }
 
 .entity-title:hover {

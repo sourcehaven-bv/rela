@@ -165,6 +165,19 @@ describe('RelationCards affordance plumbing', () => {
     wrapper.unmount()
   })
 
+  it('card shows the title and the type label below it, without the entity id', async () => {
+    const wrapper = await mountCards({ links: ['FEAT-001'] })
+    const identity = wrapper.find('.card-identity')
+    expect(identity.text()).not.toContain('FEAT-001-')
+    expect(wrapper.find('.entity-id').exists()).toBe(false)
+    expect(wrapper.find('.entity-title').text()).toBe('FEAT-001')
+    expect(wrapper.find('.entity-type').text()).toBe('Feature')
+    const kids = Array.from(identity.element.children).map((c) => (c as HTMLElement).className)
+    expect(kids[0]).toContain('entity-title')
+    expect(kids[1]).toContain('entity-meta')
+    wrapper.unmount()
+  })
+
   it('creatable=false: + Add button absent; remove still visible', async () => {
     const wrapper = await mountCards({
       verdict: { creatable: false },
