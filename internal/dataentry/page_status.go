@@ -135,7 +135,7 @@ func pageStepDone(
 	if listCfg.Condition == "" {
 		ctx = primeVerdicts(ctx, a.fieldResolver, rows)
 	}
-	kept, err := applyViewCondition(ctx, rows, m, a.redactedForSuggestion, a.Services().Store)
+	kept, err := applyViewCondition(ctx, rows, m, suggestionRedactor(a.affordances), a.Services().Store)
 	if err != nil {
 		return false, err
 	}

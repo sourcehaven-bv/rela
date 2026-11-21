@@ -219,7 +219,7 @@ func scopeListCondition(
 		return rows, err
 	}
 	ctx = primeVerdicts(ctx, a.fieldResolver, rows)
-	return applyViewCondition(ctx, rows, n.cond, a.redactedForSuggestion, a.Services().Store)
+	return applyViewCondition(ctx, rows, n.cond, suggestionRedactor(a.affordances), a.Services().Store)
 }
 
 // entityTypeChecker is the narrow capability scopeFromParam needs: confirm a

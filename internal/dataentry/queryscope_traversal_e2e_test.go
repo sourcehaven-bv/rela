@@ -173,7 +173,7 @@ func TestQueryScopeTraversal_CountZeroHintAppliesTheDefault(t *testing.T) {
 		// carol reads no ticket, so no feature passes the default scope.
 		{"carol", true},
 	} {
-		zero, err := app.countIsZero(gateCtxFor(principalCtx(tc.user), t, d), "feature", false)
+		zero, err := app.nextActions.countIsZero(gateCtxFor(principalCtx(tc.user), t, d), "feature", false)
 		if err != nil {
 			t.Fatalf("%s: countIsZero: %v", tc.user, err)
 		}

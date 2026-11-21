@@ -39,7 +39,7 @@ func withNextActions(
 
 	st := memuserstate.New()
 	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(t, app.SetUserState(st))
+	require.NoError(t, app.nextActions.setUserState(st))
 }
 
 // seedTickets puts entities in the store: newTestAppV1 starts empty, so a
@@ -58,7 +58,7 @@ func getNextAction(ctx context.Context, t *testing.T, app *App) (resp nextAction
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_next_action", http.NoBody).WithContext(ctx)
-	app.handleV1NextAction(rec, req)
+	app.nextActions.handleV1NextAction(rec, req)
 
 	if rec.Code == http.StatusOK {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
@@ -71,7 +71,7 @@ func postFeedback(ctx context.Context, t *testing.T, app *App, body string) int 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_next_action",
 		strings.NewReader(body)).WithContext(ctx)
-	app.handleV1NextAction(rec, req)
+	app.nextActions.handleV1NextAction(rec, req)
 	return rec.Code
 }
 
@@ -253,7 +253,7 @@ func TestNextAction_MethodNotAllowed(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/_next_action", http.NoBody).
 		WithContext(aliceCtx())
-	app.handleV1NextAction(rec, req)
+	app.nextActions.handleV1NextAction(rec, req)
 	require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 }
 

@@ -58,7 +58,7 @@ type QueryScopeResolverFunc func(
 
 // SetQueryScopeResolver injects the compiler backing `query_scopes:`.
 //
-// Rejects nil for the reason [App.SetNextActionMatchers] does: a silently
+// Rejects nil for the reason [App.SetNextActions] does: a silently
 // absent resolver would leave every scope unapplied, showing rows the
 // operator's default explicitly hides — and nothing on screen would say so.
 func (a *App) SetQueryScopeResolver(fn QueryScopeResolverFunc) error {

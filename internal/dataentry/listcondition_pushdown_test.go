@@ -178,7 +178,7 @@ func conditionGoPath(
 	if m == nil {
 		t.Fatalf("list %q has no compiled condition", list)
 	}
-	kept, err := applyViewCondition(ctx, all, m, app.redactedForSuggestion, app.Services().Store)
+	kept, err := applyViewCondition(ctx, all, m, suggestionRedactor(app.affordances), app.Services().Store)
 	if err != nil {
 		t.Fatal(err)
 	}

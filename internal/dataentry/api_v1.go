@@ -174,7 +174,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_search", a.handleV1Search)
 	mux.HandleFunc("/api/v1/_position", a.handleV1EntityPosition)
 	mux.HandleFunc("/api/v1/_analyze", a.handleV1Analyze)
-	mux.HandleFunc("/api/v1/_next_action", a.handleV1NextAction)
+	mux.HandleFunc("/api/v1/_next_action", a.nextActions.handleV1NextAction)
 	mux.HandleFunc("/api/v1/_git/status", a.handleGitStatus)
 	mux.HandleFunc("/api/v1/_git/sync", a.handleGitSync)
 	registerAppearanceRoutes(mux, a)
@@ -453,7 +453,8 @@ func (a *App) listPage(
 	if cond != nil {
 		ctx = primeVerdicts(ctx, a.fieldResolver, all)
 	}
-	if all, err = applyViewCondition(ctx, all, cond, a.redactedForSuggestion, a.Services().Store); err != nil {
+	all, err = applyViewCondition(ctx, all, cond, suggestionRedactor(a.affordances), a.Services().Store)
+	if err != nil {
 		return nil, 0, nil, err
 	}
 	total = len(all)
