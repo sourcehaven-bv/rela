@@ -1,11 +1,6 @@
 import { type Locator, expect } from "@playwright/test";
 import { BasePage } from "./base.page";
 
-/** Escape a string for safe embedding in a RegExp (entity ids are hyphenated). */
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /** Page object for the relation history view
  *  (`/relation-history/:fromType/:from/:relType/:to`, RelationHistoryView.vue)
  *  and the per-relation History affordance on relation cards
@@ -15,14 +10,11 @@ function escapeRegExp(s: string): string {
 export class RelationHistoryPage extends BasePage {
   /** The History button rendered on an outgoing relation card whose target is
    *  `targetId`. Absent on incoming cards (the FROM entity owns the history).
-   *  The `.entity-id` text is matched EXACTLY (anchored regex), not as a
-   *  substring — with sequential ids a substring `FEAT-3` would also match the
-   *  card for `FEAT-30`. */
+   *  The card is matched by its exact `data-entity-id`, not a substring, so
+   *  `FEAT-3` never matches the card for `FEAT-30`. */
   historyButtonForCard(targetId: string): Locator {
-    const exactId = new RegExp(`^\\s*${escapeRegExp(targetId)}\\s*$`);
     return this.page
-      .locator(".relation-card")
-      .filter({ has: this.page.locator(".entity-id", { hasText: exactId }) })
+      .locator(`.relation-card[data-entity-id="${targetId}"]`)
       .locator(".history-btn");
   }
 
@@ -65,7 +57,10 @@ export class RelationHistoryPage extends BasePage {
   /** Choose the two compared versions in the diff pane and read back the
    *  rendered property changes. Accepts the `latest` sentinel, which is
    *  spelled `current` in the option value and the URL. */
-  async compare(baseVersion: number | "current", targetVersion: number | "current") {
+  async compare(
+    baseVersion: number | "current",
+    targetVersion: number | "current",
+  ) {
     const selects = this.page.locator(".compare-select");
     await selects.nth(0).selectOption(String(baseVersion));
     await selects.nth(1).selectOption(String(targetVersion));
@@ -91,7 +86,10 @@ export class RelationHistoryPage extends BasePage {
 
   /** Wait until the URL reflects a specific pair (the write is a
    *  router.replace, so it lands a tick after the interaction). */
-  async expectUrlSelection(base: number | "current", target: number | "current") {
+  async expectUrlSelection(
+    base: number | "current",
+    target: number | "current",
+  ) {
     await expect
       .poll(() => this.urlSelection())
       .toEqual({ base: String(base), target: String(target) });
@@ -115,7 +113,9 @@ export class RelationHistoryPage extends BasePage {
   }
 
   async propDiffLabels(): Promise<string[]> {
-    return this.page.locator(".prop-diff .prop-row .prop-label").allTextContents();
+    return this.page
+      .locator(".prop-diff .prop-row .prop-label")
+      .allTextContents();
   }
 
   /** Click Restore on a specific version row (rows for op=delete have none). */
@@ -129,7 +129,9 @@ export class RelationHistoryPage extends BasePage {
   /** The "backend does not support version history" state (fsstore). */
   async expectUnsupported() {
     await expect(
-      this.page.locator(".rl-status-region--info", { hasText: /does not support/i }),
+      this.page.locator(".rl-status-region--info", {
+        hasText: /does not support/i,
+      }),
     ).toBeVisible();
   }
 }

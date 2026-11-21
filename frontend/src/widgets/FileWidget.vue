@@ -142,7 +142,6 @@ function persistedCard(att: AttachmentInfo): Attachment {
     kind: attachmentKind(att.filename, att.contentType),
     href,
     preview: isImage(att) ? href : undefined,
-    checksum: att.sha256,
   }
 }
 

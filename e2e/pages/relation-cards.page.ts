@@ -3,7 +3,7 @@ import { BasePage } from "./base.page";
 
 /** Helpers for the `widget: cards` relation UI on an edit form. Each widget
  *  renders as `.relation-cards`; each linked target as `.relation-card` with
- *  `.entity-id`, `.card-properties`, and a `.remove-btn`. */
+ *  `data-entity-id`, `.card-properties`, and a `.remove-btn`. */
 export class RelationCardsPage extends BasePage {
   constructor(page: Page) {
     super(page);
@@ -27,9 +27,7 @@ export class RelationCardsPage extends BasePage {
 
   cardByTargetId(targetId: string): Locator {
     return this.page
-      .locator(".relation-card", {
-        has: this.page.locator(`.entity-id:has-text("${targetId}")`),
-      })
+      .locator(`.relation-card[data-entity-id="${targetId}"]`)
       .first();
   }
 
@@ -83,11 +81,11 @@ export class RelationCardsPage extends BasePage {
   }
 
   async getFirstCardEntityId(widget: Locator): Promise<string> {
-    const text = await widget
-      .locator(".relation-card .entity-id")
+    const id = await widget
+      .locator(".relation-card")
       .first()
-      .textContent();
-    return text?.trim() ?? "";
+      .getAttribute("data-entity-id");
+    return id ?? "";
   }
 
   async expectCardHasClass(card: Locator, cls: string | RegExp) {
@@ -162,9 +160,7 @@ export class RelationCardsPage extends BasePage {
     await link.click();
 
     return widget
-      .locator(".relation-card", {
-        has: this.page.locator(`.entity-id:has-text("${targetId}")`),
-      })
+      .locator(`.relation-card[data-entity-id="${targetId}"]`)
       .first();
   }
 
