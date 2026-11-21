@@ -2144,7 +2144,7 @@ type DashboardConfig struct {
 // The plimsoll directive is the format-mirror exception documented on
 // [Config]: each exported field is one key of a card in data-entry.yaml.
 //
-//plimsoll:max-fields=22
+//plimsoll:max-fields=23
 type DashboardCard struct {
 	Title string `yaml:"title" json:"title"`
 	// List names a `lists:` entry. The card shows exactly the rows that list

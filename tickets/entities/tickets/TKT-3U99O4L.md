@@ -35,3 +35,9 @@ an unsafe URL raises.
 or query has no rows for the reader. A failed card still shows. `hide_empty` on
 a line card is refused at load.
 - Documented in the flows, mail, Lua and data-entry guides.
+
+## CI follow-up
+
+- The God-object lint (plimsoll) failed on the extra `HideEmpty` field.
+The `max-fields` directive on `DashboardCard` went from 22 to 23, under the
+format-mirror exception documented on `Config`.
