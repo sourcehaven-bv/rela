@@ -33,7 +33,7 @@ func ReadOnly(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		writeError(w, r, http.StatusForbidden, "tenant_read_only", "The tenant is read-only")
+		writeError(w, r, http.StatusForbidden, "tenant_read_only", "This workspace is read-only")
 	})
 }
 

@@ -1030,7 +1030,9 @@ provisioned, which is not done yet.
 **Read-only.** A read-only tenant serves `GET`, `HEAD`, `OPTIONS` and the
 WebDAV reads `PROPFIND` and `REPORT`. It refuses every other request with
 403 `tenant_read_only`, including remote MCP calls, actions, comments,
-piles, leases, presence, settings and collaborative-editing saves. Two
+piles, leases, presence, settings and collaborative-editing saves. The
+message reads "This workspace is read-only". In the web app a create form
+says so and shows no Create button; edit forms are unchanged. Two
 writes pass because they change no tenant data: the `PUT` of a live-update
 stream's subscriptions, and the IdP webhook. Background work the server
 starts itself, such as scheduled flows, still runs. Export works, because
