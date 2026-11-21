@@ -132,23 +132,44 @@ test.describe("Mobile app shell", () => {
   });
 
   /*
-   * Safe-area insets moved from the shell onto the pane, because the shell
-   * clips its overflow and padding there would not scroll with the content.
-   * Pixel 7 reports no inset, so `env()` resolves to its fallback — which is
-   * exactly the arithmetic under test: the fallback must leave the hamburger's
-   * 60px of headroom rather than collapsing to zero.
+   * A list puts its title and the drawer toggle in the shell's header, so
+   * App.vue renders no hamburger row. The pane must not keep the 60px it
+   * reserves for that row: it showed as an empty band under the header.
    */
-  test("the pane reserves headroom for the hamburger and the notch", async ({
+  test("a list leaves no empty band under its header", async ({ appPage }) => {
+    const mobile = new MobileLayoutPage(appPage);
+    await mobile.openList("features");
+
+    const padding = await mobile.panePadding();
+    expect(parseFloat(padding.top)).toBeLessThanOrEqual(20);
+    // Room for the home indicator below the last card.
+    expect(parseFloat(padding.bottom)).toBeGreaterThanOrEqual(24);
+  });
+
+  // The header's tools hold the list's search, sort and filter. A phone
+  // needs them as much as a desktop does.
+  test("a list keeps its search box on a phone", async ({ appPage }) => {
+    const mobile = new MobileLayoutPage(appPage);
+    await mobile.openList("features");
+
+    await expect(mobile.listSearch).toBeVisible();
+    await expect(mobile.listSearch).toBeInViewport();
+  });
+
+  // A closed drawer sits just off the left edge. Its shadow fell onto the
+  // content as a grey strip.
+  test("the closed drawer casts no shadow onto the content", async ({
     appPage,
   }) => {
     const mobile = new MobileLayoutPage(appPage);
     await mobile.openList("features");
 
-    const padding = await mobile.panePadding();
-    // 60px at <=768px, 56px at <=480px; both leave the hamburger its row.
-    expect(parseFloat(padding.top)).toBeGreaterThanOrEqual(56);
-    // Room for the home indicator below the last card.
-    expect(parseFloat(padding.bottom)).toBeGreaterThanOrEqual(24);
+    await mobile.expectDrawerOffScreen();
+    expect(await mobile.drawerShadow()).toBe("none");
+
+    await mobile.openDrawer();
+    await mobile.expectDrawerOnScreen();
+    expect(await mobile.drawerShadow()).not.toBe("none");
   });
 
   test("the hamburger clears the notch and stays reachable while scrolling", async ({

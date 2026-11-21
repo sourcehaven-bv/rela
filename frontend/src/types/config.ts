@@ -372,6 +372,8 @@ export interface ListConfig {
   footer?: string
   /** Fallback for `header`; the previously-unused field, used when `header` is unset. */
   description?: string
+  /** Text an empty list shows, replacing the built "No People found.". */
+  empty_message?: string
   columns: ListColumn[]
   filters?: ListFilter[]
   filter_controls?: FilterControl[]

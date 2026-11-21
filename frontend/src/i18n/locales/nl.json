@@ -923,6 +923,7 @@
     "sortDropped": "Ongesorteerd getoond: {reason}",
     "noMatches": "Geen resultaten voor “{query}”.",
     "noEntities": "Geen {entity} gevonden.",
+    "noItems": "Niets gevonden.",
     "createOne": "Aanmaken",
     "inaccessible": "niet toegankelijk",
     "unknownList": "De lijst \"{id}\" bestaat niet in de configuratie.",

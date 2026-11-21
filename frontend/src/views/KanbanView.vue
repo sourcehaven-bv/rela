@@ -153,6 +153,11 @@ const projectionNote = computed<string>(() => {
 
 // Computed
 const kanbanConfig = computed(() => schemaStore.getKanban(props.id) as KanbanConfig | undefined)
+// The search box names the type by its plural label, or leaves it out.
+const searchPlaceholder = computed(() => {
+  const plural = schemaStore.pluralLabel(kanbanConfig.value?.entity ?? '')
+  return plural ? t('list.searchEntities', { entity: plural }) : t('list.searchPlaceholder')
+})
 
 // The board's filter controls are the list's: the same FilterBar, the same
 // URL sync, and the same server-side `filter[...]` params, so a relation
@@ -1379,7 +1384,7 @@ async function quickAdd(
         <SearchBox
           ref="searchBoxRef"
           :model-value="searchQuery"
-          :placeholder="t('list.searchEntities', { entity: kanbanConfig?.entity ?? '' })"
+          :placeholder="searchPlaceholder"
           @update:model-value="handleSearchUpdate"
         />
         <FilterBar

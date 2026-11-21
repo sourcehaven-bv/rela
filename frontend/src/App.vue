@@ -332,7 +332,9 @@ watch(
         The hamburger sits inside the shell's main pane rather than fixed to the
         viewport: the shell owns the drawer, so the trigger belongs to the pane
         the drawer covers. It sits in a bar of its own, so content scrolls
-        under the bar rather than past a floating button.
+        under the bar rather than past a floating button. Not `raised`: the
+        bar or the page's topbar is the surface, and a raised border and
+        shadow drew a box around the button that crossed the topbar's rule.
       -->
       <div
         v-if="showHamburger && !navOpen && !presentation.presenting.value"
@@ -341,7 +343,6 @@ watch(
         <RlIconButton
           class="mobile-menu-btn"
           icon="menu"
-          raised
           :label="t('shell.toggleNav')"
           :aria-expanded="navOpen"
           aria-controls="main-sidebar"
@@ -510,10 +511,25 @@ body {
 }
 
 /* A 44px touch target. Two classes so the size outranks RlIconButton's own
-   scoped rule on specificity alone. */
-.app-layout .mobile-menu-btn.rl-icon-button {
+   scoped rule on specificity alone.
+
+   The button is flat, in the page's background: no border, no shadow. Where
+   the bar is see-through (below) it still covers what scrolls under it. The
+   hover fill applies only where a pointer can hover: a phone keeps :hover
+   after a tap, which left a grey box around the button once the drawer
+   closed. Three classes, so this outranks the library's scoped :hover. */
+.app-layout .mobile-menu-bar .mobile-menu-btn.rl-icon-button {
   width: 44px;
   height: 44px;
+  align-items: center;
+  justify-content: center;
+  background: var(--rl-color-bg);
+}
+
+@media (hover: hover) {
+  .app-layout .mobile-menu-bar .mobile-menu-btn.rl-icon-button:hover {
+    background: var(--rl-color-bg-hover);
+  }
 }
 
 @media (max-width: 768px) {
@@ -535,6 +551,14 @@ body {
     padding-bottom: 24px;
   }
 
+  /* A screen that fills the shell's header slot (a list, a board) has the
+     drawer toggle in that header, and App.vue renders no hamburger bar.
+     The 60px reservation would be an empty band under the header, so the
+     pane keeps a small gap instead. */
+  .app-layout .rl-app-shell__frame:has(> .rl-app-shell__header) .rl-app-shell__main {
+    --pane-padding-top: var(--rl-space-3);
+  }
+
   /* A sticky topbar has its own safe-area and top spacing. Keep the shell's
      60px reservation only on pages without one; otherwise the sticky bar
      starts a full header-slot below the viewport edge. */
@@ -546,7 +570,12 @@ body {
      is see-through and lies over the topbar instead of taking a row. Only
      the button takes taps. */
   .app-layout .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky) > .mobile-menu-bar {
-    margin-bottom: -60px;
+    /* 2px rather than 8px at the top: the button then sits inside the
+       topbar, level with its title, instead of hanging over the topbar's
+       bottom rule. The negative margin is the bar's own height (2px + 44px +
+       8px), so the topbar starts at the top of the pane. */
+    padding-top: 2px;
+    margin-bottom: -54px;
     background: none;
     pointer-events: none;
   }
@@ -562,6 +591,7 @@ body {
     .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky):has(> .na, > .as-of-banner)
     > .mobile-menu-bar {
     margin-bottom: var(--rl-space-2, 8px);
+    padding-top: 8px;
   }
 
   /* Hide keyboard shortcut hints on mobile: a touch device has no keys to

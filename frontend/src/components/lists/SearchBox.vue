@@ -132,6 +132,8 @@ defineExpose({ focus })
 
 input {
   flex: 1;
+  /* Without this the input keeps its default width and overflows a phone. */
+  min-width: 0;
   height: var(--rl-control-height);
   padding: 0 36px 0 36px;
   border: 1px solid var(--rl-color-border);
@@ -175,5 +177,13 @@ input::-webkit-search-decoration {
 .clear-btn:hover {
   background: var(--rl-color-border);
   color: var(--rl-color-text);
+}
+
+/* On a phone the tools row wraps: the box keeps 10rem, so the buttons move
+   to the next line instead of crushing it. */
+@media (max-width: 768px) {
+  .search-box {
+    flex-basis: 10rem;
+  }
 }
 </style>

@@ -311,6 +311,11 @@ const previewSections = computed<Section<{ id: string; title: string }>[]>(() =>
             label="Description"
             @update:model-value="setting('description', $event)"
           />
+          <RlTextField
+            :model-value="list.emptyMessage"
+            label="Text when empty"
+            @update:model-value="setting('empty_message', $event)"
+          />
         </section>
         <ConfigPreview subject="Table header">
           <RlTable

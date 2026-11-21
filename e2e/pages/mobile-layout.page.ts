@@ -67,6 +67,16 @@ export class MobileLayoutPage extends BasePage {
     return this.page.locator(".rl-kbd");
   }
 
+  /** The list's search box, in the header's tools row. */
+  get listSearch(): Locator {
+    return this.page.locator(".rl-page-header__tools .search-box input");
+  }
+
+  /** The drawer's computed box-shadow. */
+  async drawerShadow(): Promise<string> {
+    return this.drawer.evaluate((el) => getComputedStyle(el).boxShadow);
+  }
+
   /** Whether this screen renders a sticky topbar at all. */
   async hasTopbar(): Promise<boolean> {
     return (await this.topbar.count()) > 0;

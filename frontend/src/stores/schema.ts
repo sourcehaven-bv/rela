@@ -135,6 +135,13 @@ export const useSchemaStore = defineStore('schema', () => {
 
   // Getters
   const getEntityType = computed(() => (name: string) => entityTypes.value.get(name))
+  // The schema's `label_plural:` for a type ("People"), or undefined when it
+  // sets none. Interface text that names a type in the plural falls back to
+  // a wording without the type then: the type name with an "s" misreads for
+  // many words ("persons") and in any other language.
+  const pluralLabel = computed(
+    () => (name: string) => entityTypes.value.get(name)?.label_plural?.trim() || undefined
+  )
   // Whether this caller may select the named world (`''`/`'default'` = the
   // default world). Drives affordances that NAVIGATE to a world, so it must
   // not manufacture a denial the server would not make.
@@ -652,6 +659,7 @@ export const useSchemaStore = defineStore('schema', () => {
 
     // Getters
     getEntityType,
+    pluralLabel,
     getRelationType,
     worldReadable,
     defaultWorld,
