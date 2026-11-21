@@ -2630,7 +2630,6 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 
       <header ref="headerEl" class="detail-header">
         <div ref="headerInfoEl" class="header-info">
-          <span class="entity-type-badge">{{ typeDef?.label || entityType }}</span>
           <RouterLink v-if="ownerHref" :to="ownerHref" class="owner-link">
             {{ t('entity.partOf', { title: viewData?.entry?._owner?.title }) }}
           </RouterLink>
@@ -3715,15 +3714,6 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   /* The title never gets narrower than this beside the actions.
      useActionsFit reads this value to decide when the row collapses. */
   min-width: min(16rem, 100%);
-}
-
-.entity-type-badge {
-  display: inline-block;
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--rl-color-text-muted);
 }
 
 .header-presence {
