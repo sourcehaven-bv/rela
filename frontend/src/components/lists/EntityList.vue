@@ -285,8 +285,23 @@ const entityNoun = computed(() => {
   const type = listConfig.value?.entity ?? ''
   const def = schemaStore.getEntityType(type)
   const singular = def?.label || type || t('list.item')
-  return { singular, plural: def?.label_plural || def?.plural || undefined }
+  return { singular, plural: schemaStore.pluralLabel(type) || def?.plural || undefined }
 })
+
+// The empty list and the search box name the type by its plural label
+// ("No people found."), or leave it out when the schema has none.
+const typePlural = computed(() => schemaStore.pluralLabel(listConfig.value?.entity ?? ''))
+// A list's own `empty_message:` wins over both.
+const emptyTitle = computed(() => {
+  const own = listConfig.value?.empty_message?.trim()
+  if (own) return own
+  return typePlural.value ? t('list.noEntities', { entity: typePlural.value }) : t('list.noItems')
+})
+const searchPlaceholder = computed(() =>
+  typePlural.value
+    ? t('list.searchEntities', { entity: typePlural.value })
+    : t('list.searchPlaceholder')
+)
 
 const listIdRef = computed(() => props.listId)
 const batchAction = useBatchAction()
@@ -1429,7 +1444,7 @@ watch(searchQuery, () => {
         <SearchBox
           ref="searchBoxRef"
           :model-value="searchQuery"
-          :placeholder="t('list.searchEntities', { entity: listConfig.entity })"
+          :placeholder="searchPlaceholder"
           @update:model-value="handleSearchUpdate"
         />
         <FilterBar
@@ -1527,7 +1542,7 @@ watch(searchQuery, () => {
         :title="
           searchQuery
             ? t('list.noMatches', { query: searchQuery })
-            : t('list.noEntities', { entity: listConfig.entity })
+            : emptyTitle
         "
       >
         <template #actions>

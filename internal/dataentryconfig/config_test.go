@@ -384,6 +384,32 @@ func TestList_EmptyHeaderFooterOmittedFromJSON(t *testing.T) {
 	}
 }
 
+// TestList_EmptyMessage pins that a list's empty_message decodes from YAML
+// and reaches the SPA under the same name, and is absent when unset.
+func TestList_EmptyMessage(t *testing.T) {
+	var list List
+	if err := yaml.Unmarshal([]byte("entity_type: person\nempty_message: Nobody yet.\n"), &list); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if list.EmptyMessage != "Nobody yet." {
+		t.Errorf("empty_message: got %q", list.EmptyMessage)
+	}
+	data, err := json.Marshal(list)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"empty_message":"Nobody yet."`) {
+		t.Errorf("json missing empty_message: %s", data)
+	}
+	data, err = json.Marshal(List{EntityType: "person"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(data), "empty_message") {
+		t.Errorf("expected no empty_message key, got %s", data)
+	}
+}
+
 func TestKanbanHeaderFooter_YAMLAndJSON(t *testing.T) {
 	// Kanban info regions mirror the list ones: they decode from YAML and reach
 	// the SPA over _config, which resolves and renders them client-side.

@@ -457,13 +457,14 @@ func (g *Generator) addCommonSchemas(spec *Spec) {
 	spec.Components.Schemas["EntityType"] = &Schema{
 		Type: "object",
 		Properties: map[string]*Schema{
-			"label":       StringSchema(),
-			"plural":      StringSchema(),
-			"description": StringSchema(),
-			"primary":     StringSchema(),
-			"id_type":     StringSchema(),
-			"id_prefix":   StringSchema(),
-			"properties":  {Type: "object", AdditionalProperties: Ref("PropertyDef")},
+			"label":        StringSchema(),
+			"label_plural": StringSchema(),
+			"plural":       StringSchema(),
+			"description":  StringSchema(),
+			"primary":      StringSchema(),
+			"id_type":      StringSchema(),
+			"id_prefix":    StringSchema(),
+			"properties":   {Type: "object", AdditionalProperties: Ref("PropertyDef")},
 		},
 	}
 

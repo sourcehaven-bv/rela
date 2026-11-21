@@ -677,7 +677,12 @@ type World struct {
 
 // EntityType is the JSON representation of an entity type.
 type EntityType struct {
-	Label       string                 `json:"label"`
+	Label string `json:"label"`
+	// LabelPlural is the schema's `label_plural:`, the plural display name
+	// ("People"). Absent when the schema sets none: the SPA then uses a
+	// wording without the type rather than a guessed plural such as
+	// "Persons".
+	LabelPlural string                 `json:"label_plural,omitempty"`
 	Plural      string                 `json:"plural"`
 	Description string                 `json:"description,omitempty"`
 	Primary     string                 `json:"primary,omitempty"`

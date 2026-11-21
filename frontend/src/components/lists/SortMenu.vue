@@ -71,13 +71,17 @@ function cycleKey(index: number) {
   <RlMenu v-if="options.length" class="sort-menu" align="start">
     <template #trigger="{ toggle, attrs }">
       <RlButton variant="secondary" data-testid="sort-menu-button" v-bind="attrs" @click="toggle">
-        <RlIcon
-          :name="
-            active?.direction === 'desc' ? 'arrow-down' : active ? 'arrow-up' : 'arrow-up-down'
-          "
-          :size="14"
-          aria-hidden="true"
-        />
+        <!-- In the icon slot, beside the label: inside the label the block
+             icon took a line of its own, above the word. -->
+        <template #icon>
+          <RlIcon
+            :name="
+              active?.direction === 'desc' ? 'arrow-down' : active ? 'arrow-up' : 'arrow-up-down'
+            "
+            :size="14"
+            aria-hidden="true"
+          />
+        </template>
         {{
           multi
             ? t('list.sort.buttonMulti', { property: activeLabel, count: extraKeys })

@@ -106,6 +106,7 @@ const SETTING_LABELS: Record<string, string> = {
   mode: 'Mode',
   header: 'Text above',
   footer: 'Text below',
+  empty_message: 'Text when empty',
   sort: 'Sorted by',
   filter_controls: 'Filters',
   card: 'Cards',

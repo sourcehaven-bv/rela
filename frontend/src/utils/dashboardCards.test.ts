@@ -7,6 +7,7 @@ import {
   queryBreakdown,
   summaryText,
   tableRows,
+  isShortToken,
   type CardSchema,
 } from './dashboardCards'
 
@@ -203,6 +204,34 @@ describe('tableRows', () => {
     expect(r.cells[0]).toMatchObject({ link: '/entity/deal/D-1', text: 'Big' })
     expect(r.cells[1].widget?.modelValue).toBe('won')
     expect(r.cells[1].text).toBe('')
+  })
+
+  // An id-like value must not break at its hyphen in a narrow column.
+  it('keeps a short one-word text on one line, and lets a name wrap', () => {
+    const card: DashboardCardEntry = {
+      title: 'T',
+      display: 'table',
+      index: 0,
+      columns: [{ property: 'title', link: 'detail' }],
+    }
+    const rows = tableRows(
+      schema,
+      card,
+      [row('D-1', { title: 'HM021-0001' }), row('D-2', { title: 'Round Six Testing B.V.' })],
+      'UTC'
+    )
+    expect(rows.map((r) => r.cells[0].nowrap)).toEqual([true, false])
+  })
+})
+
+describe('isShortToken', () => {
+  it.each([
+    ['HM021-0001', true],
+    ['', false],
+    ['two words', false],
+    ['a-very-long-identifier-that-goes-on', false],
+  ])('%s → %s', (text, want) => {
+    expect(isShortToken(text)).toBe(want)
   })
 })
 

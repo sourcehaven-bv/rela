@@ -915,14 +915,15 @@
     "item": "item",
     "actionConfirm": "Apply {label} to {n} selected entities?",
     "searchPlaceholder": "Search...",
-    "searchEntities": "Search {entity}s...",
+    "searchEntities": "Search {entity}...",
     "searchView": "Search...",
     "clearSearch": "Clear search",
     "removeFilter": "Remove {property} filter",
     "groupTruncated": "Showing the first {shown} of {total} rows. Filter the list to see the rest.",
     "sortDropped": "Shown unsorted: {reason}",
     "noMatches": "No matches for “{query}”.",
-    "noEntities": "No {entity}s found.",
+    "noEntities": "No {entity} found.",
+    "noItems": "Nothing found.",
     "createOne": "Create one",
     "inaccessible": "inaccessible",
     "unknownList": "The list \"{id}\" does not exist in the configuration.",
@@ -1585,6 +1586,9 @@
       "actionFailed": "The action failed",
       "busy": "A sync is running on this remote. Try again shortly."
     }
+  },
+  "configureList": {
+    "emptyMessage": "Text when empty"
   },
   "configureAutomations": {
     "title": "Automations",
