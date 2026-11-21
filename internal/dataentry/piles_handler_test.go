@@ -357,7 +357,7 @@ func TestPiles_SidebarAndConfigBootstrap(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Config(rec, req)
+	app.schemaAPI.handleV1Config(rec, req)
 	var conf map[string]json.RawMessage
 	if err := json.Unmarshal(rec.Body.Bytes(), &conf); err != nil {
 		t.Fatal(err)

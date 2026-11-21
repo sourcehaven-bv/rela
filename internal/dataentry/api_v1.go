@@ -9,13 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"io/fs"
 	"log/slog"
 	"maps"
 	"net/http"
-	"path/filepath"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -23,7 +20,6 @@ import (
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
-	"github.com/Sourcehaven-BV/rela/internal/conflict"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
@@ -31,7 +27,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -163,9 +158,9 @@ func toV1CustomType(ct metamodel.CustomType) v1.CustomType {
 // router_walk_test.go so registration stays covered.
 func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	// System endpoints (underscore prefix)
-	mux.HandleFunc("/api/v1/_schema", a.handleV1Schema)
-	mux.HandleFunc("/api/v1/_schema/", a.handleV1SchemaRoutes)
-	mux.HandleFunc("/api/v1/_config", a.handleV1Config)
+	mux.HandleFunc("/api/v1/_schema", a.schemaAPI.handleV1Schema)
+	mux.HandleFunc("/api/v1/_schema/", a.schemaAPI.handleV1SchemaRoutes)
+	mux.HandleFunc("/api/v1/_config", a.schemaAPI.handleV1Config)
 	configure := serveConfigure(a)
 	mux.HandleFunc(ConfigurePath, configure)
 	mux.HandleFunc(ConfigurePath+"/", configure)
@@ -176,7 +171,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("/api/v1/_search", a.handleV1Search)
 	mux.HandleFunc("/api/v1/_position", a.handleV1EntityPosition)
-	mux.HandleFunc("/api/v1/_analyze", a.handleV1Analyze)
+	mux.HandleFunc("/api/v1/_analyze", a.analyzeAPI.handleV1Analyze)
 	mux.HandleFunc("/api/v1/_next_action", a.nextActions.handleV1NextAction)
 	mux.HandleFunc("/api/v1/_git/status", a.gitAPI.handleGitStatus)
 	mux.HandleFunc("/api/v1/_git/sync", a.gitAPI.handleGitSync)
@@ -190,16 +185,16 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_dashboard/card", func(w http.ResponseWriter, r *http.Request) {
 		handleV1DashboardCard(a, w, r)
 	})
-	mux.HandleFunc("/api/v1/_conflicts", a.handleV1Conflicts)
-	mux.HandleFunc("/api/v1/_conflicts/", a.handleV1ConflictRoutes)
+	mux.HandleFunc("/api/v1/_conflicts", a.conflictsAPI.handleV1Conflicts)
+	mux.HandleFunc("/api/v1/_conflicts/", a.conflictsAPI.handleV1ConflictRoutes)
 	mux.HandleFunc("/api/v1/_documents/", a.handleV1Documents)
 	mux.HandleFunc("/api/v1/_history/", func(w http.ResponseWriter, r *http.Request) { handleV1History(a, w, r) })
 	mux.HandleFunc("/api/v1/_changes/", func(w http.ResponseWriter, r *http.Request) { handleV1Changes(a, w, r) })
 	mux.HandleFunc("/api/v1/_audit", func(w http.ResponseWriter, r *http.Request) { handleV1Audit(a, w, r) })
 	mux.HandleFunc("/api/v1/_relation_history/",
 		func(w http.ResponseWriter, r *http.Request) { handleV1RelationHistory(a, w, r) })
-	mux.HandleFunc(openAPISpecPath, a.handleV1OpenAPI)
-	mux.HandleFunc("/api/v1/_commands", a.handleV1Commands)
+	mux.HandleFunc(openAPISpecPath, a.schemaAPI.handleV1OpenAPI)
+	mux.HandleFunc("/api/v1/_commands", a.commands.handleV1Commands)
 	mux.HandleFunc("/api/v1/_transforms", a.export.handleV1Transforms)
 	mux.HandleFunc("/api/v1/_comments/", a.comments.handleV1Comments)
 	mux.HandleFunc("/api/v1/_piles", a.piles.handleV1Piles)
@@ -219,7 +214,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc(flowsPath+"/", a.flows.handleV1Flows)
 	mux.HandleFunc(remotesPath, a.remotes.handleV1Remotes)
 	mux.HandleFunc(remotesPath+"/", a.remotes.handleV1Remotes)
-	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
+	mux.HandleFunc("/api/v1/_templates/", a.schemaAPI.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.views.handleV1Views)
 	a.registerCopyRoutes(mux)
 	if a.conversions != nil {
@@ -1814,385 +1809,6 @@ func (a *App) handleV1EntityAction(w http.ResponseWriter, r *http.Request, typeN
 	}
 }
 
-// --- System Handlers ---
-
-//archplan:auth=required reason="metamodel; config is not a secret"
-func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-		return
-	}
-
-	s := a.State()
-	schema := v1.Schema{
-		Entities:   make(map[string]v1.EntityType),
-		Relations:  make(map[string]v1.RelationType),
-		Types:      make(map[string]v1.CustomType),
-		Worlds:     schemaWorlds(r.Context(), s.Meta),
-		WorldOrder: metamodel.WorldOrderOf(s.Meta),
-		// Fixed by the store the app was wired with (TKT-ZMPDZ3R).
-		Capabilities: v1.Capabilities{
-			AtomicBatch: store.TxRollsBack(a.store),
-			AsOf:        store.SupportsReadInstant(a.store),
-			Git:         a.gitOps != nil,
-		},
-	}
-
-	for name, def := range s.Meta.Entities {
-		schema.Entities[name] = toV1EntityType(s.Meta, name, def)
-	}
-
-	for name, def := range s.Meta.Relations {
-		rt := v1.RelationType{
-			Label:       def.Label,
-			Description: def.Description,
-			From:        def.From,
-			To:          def.To,
-			Symmetric:   def.Symmetric,
-			Owning:      def.Owning,
-			MinOutgoing: def.MinOutgoing,
-			MaxOutgoing: def.MaxOutgoing,
-			MinIncoming: def.MinIncoming,
-			MaxIncoming: def.MaxIncoming,
-		}
-		if def.Inverse != nil && def.Inverse.ID != "" {
-			rt.Inverse = &v1.InverseDef{ID: def.Inverse.ID, Label: def.Inverse.Label}
-		}
-		if def.Scope.IsContent() {
-			rt.Scope = "content"
-		}
-		if len(def.Properties) > 0 {
-			rt.Properties = make(map[string]v1.PropertyDef, len(def.Properties))
-			for propName, propDef := range def.Properties {
-				rt.Properties[propName] = toV1PropertyDef(s.Meta, propDef)
-			}
-		}
-		if def.OutgoingOrderProperty() != "" || def.IncomingOrderProperty() != "" {
-			rt.Orderable = &v1.RelationOrderable{
-				Outgoing: def.OutgoingOrderProperty() != "",
-				Incoming: def.IncomingOrderProperty() != "",
-			}
-		}
-		schema.Relations[name] = rt
-	}
-
-	for name, def := range s.Meta.Types {
-		schema.Types[name] = toV1CustomType(def)
-	}
-
-	schema.Abstract = toV1AbstractTypes(s.Meta)
-
-	writeV1JSON(w, http.StatusOK, schema)
-}
-
-//archplan:auth=required reason="metamodel; config is not a secret"
-func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
-	s := a.State()
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_schema/")
-
-	switch {
-	case path == "types":
-		// List entity type names
-		names := make([]string, 0, len(s.Meta.Entities))
-		for name := range s.Meta.Entities {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		writeV1JSON(w, http.StatusOK, names)
-
-	case strings.HasPrefix(path, "types/"):
-		// Get specific entity type
-		typeName := strings.TrimPrefix(path, "types/")
-		def, ok := s.Meta.Entities[typeName]
-		if !ok {
-			detail := ""
-			if err := metamodel.CheckConcreteType(s.Meta, typeName); err != nil {
-				detail = err.Error()
-			}
-			writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity type not found", detail)
-			return
-		}
-		writeV1JSON(w, http.StatusOK, toV1EntityType(s.Meta, typeName, def))
-
-	case path == "relations":
-		writeV1JSON(w, http.StatusOK, s.Meta.Relations)
-
-	case path == "channels":
-		serveChannelSchema(w, r, a.channels.describer())
-
-	default:
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
-	}
-}
-
-// resolveFormRelations returns a copy of rels with server-derived defaults
-// filled in, for both the flat and wizard-step relation lists in handleV1Config.
-//
-// Widget: an empty Widget becomes "cards" when the relation type has edge
-// properties/content.
-//
-// Direction: an absent `direction:` is inferred from the metamodel — the SPA
-// widgets test `direction === 'incoming'` literally (RelationCards.vue,
-// RelationPicker.vue), so the inference MUST happen here rather than in the
-// browser, or a to-side binding would validate clean on the server and still
-// render the wrong side. Resolving once on the way out keeps the two consumers
-// agreeing by construction. The ambiguous case (entity type on both sides) is
-// rejected by ValidateConfig at load, so it cannot reach this point.
-func resolveFormRelations(
-	s *Schema, entityType string, rels []dataentryconfig.FormRelation,
-) []dataentryconfig.FormRelation {
-	resolved := make([]dataentryconfig.FormRelation, len(rels))
-	copy(resolved, rels)
-	for i := range resolved {
-		if resolved[i].Widget == "" {
-			if def, ok := s.Meta.GetRelationDef(resolved[i].Relation); ok && def.HasAdvancedFeatures() {
-				resolved[i].Widget = WidgetCards
-			}
-		}
-		resolved[i].Direction = resolveConfigDirection(
-			s, entityType, resolved[i].Relation, resolved[i].Direction)
-	}
-	return resolved
-}
-
-// resolveConfigDirection fills in an absent `direction:` from the metamodel,
-// for any relation binding anchored to entityType.
-//
-// Unrelated to [resolveDirection], which maps a PATCH wire key to a canonical
-// relation name; this one is about config bindings served to the SPA.
-//
-// Every SPA consumer of a direction tests the literal string (`direction ===
-// 'incoming'` in RelationCards, RelationPicker, FilterBar, EntityList and
-// KanbanView), so an inferred direction has to be materialized here or the
-// browser silently falls back to outgoing. Validation rejects the ambiguous
-// case at load, so only Resolved changes anything; everything else keeps the
-// historical reading, which is also what the SPA would have assumed.
-func resolveConfigDirection(
-	s *Schema, entityType, relation string, dir dataentryconfig.Direction,
-) dataentryconfig.Direction {
-	if dir != "" || relation == "" {
-		return dir
-	}
-	inferred, res := dataentryconfig.InferDirection(entityType, relation, s.Meta)
-	switch res {
-	case dataentryconfig.DirectionResolved:
-		return inferred
-	case dataentryconfig.DirectionAmbiguous:
-		// ValidateConfig rejects an ambiguous binding at load, so the app
-		// should not have started. Reaching here means that gate was bypassed;
-		// say so rather than silently picking a side.
-		slog.Warn("relation binding direction is ambiguous but reached the config handler; serving outgoing",
-			"entity_type", entityType, "relation", relation)
-	case dataentryconfig.DirectionNoSide, dataentryconfig.DirectionUnknown:
-		// A wrong-side or unreadable binding — both already reported by
-		// validation. Serve the historical reading rather than inventing one;
-		// the SPA needs a non-empty value either way.
-	}
-	return dataentryconfig.DirectionOutgoing
-}
-
-// resolveListDirections returns a copy of lists with relation-column and
-// filter-control directions materialized, and empty column labels filled
-// from the schema (withSchemaLabels). Copy-on-serve, like
-// resolveFormRelations: the in-memory config keeps what the operator wrote.
-func resolveListDirections(s *Schema, lists map[string]dataentryconfig.List) map[string]dataentryconfig.List {
-	out := make(map[string]dataentryconfig.List, len(lists))
-	for id, list := range lists {
-		l := list
-		if len(l.Columns) > 0 {
-			cols := make([]dataentryconfig.ListColumn, len(l.Columns))
-			copy(cols, l.Columns)
-			for i := range cols {
-				cols[i].Direction = resolveConfigDirection(s, l.EntityType, cols[i].Relation, cols[i].Direction)
-			}
-			l.Columns = withSchemaLabels(s.Meta, []string{l.EntityType}, cols)
-		}
-		l.FilterControls = resolveFilterControlDirections(s, l.EntityType, l.FilterControls)
-		out[id] = l
-	}
-	return out
-}
-
-// resolveFilterControlDirections materializes directions on a filter-control
-// list. Shared by lists and kanbans, which carry the same control type.
-func resolveFilterControlDirections(
-	s *Schema, entityType string, controls []dataentryconfig.FilterControl,
-) []dataentryconfig.FilterControl {
-	if len(controls) == 0 {
-		return controls
-	}
-	out := make([]dataentryconfig.FilterControl, len(controls))
-	copy(out, controls)
-	for i := range out {
-		out[i].Direction = resolveConfigDirection(s, entityType, out[i].Relation, out[i].Direction)
-	}
-	return out
-}
-
-// resolveKanbanDirections returns a copy of kanbans with card-field and
-// filter-control directions materialized, and each cell color's style class.
-func resolveKanbanDirections(s *Schema, kanbans map[string]dataentryconfig.Kanban) map[string]dataentryconfig.Kanban {
-	var operator map[string]dataentryconfig.OperatorColor
-	if s.Cfg != nil {
-		operator = s.Cfg.OperatorColors()
-	}
-	out := make(map[string]dataentryconfig.Kanban, len(kanbans))
-	for id, kanban := range kanbans {
-		k := kanban
-		k.CellColors = dataentryconfig.ResolveKanbanCellClasses(k.CellColors, operator)
-		if len(k.Card.Fields) > 0 {
-			fields := make([]dataentryconfig.KanbanCardField, len(k.Card.Fields))
-			copy(fields, k.Card.Fields)
-			for i := range fields {
-				fields[i].Direction = resolveConfigDirection(s, k.EntityType, fields[i].Relation, fields[i].Direction)
-			}
-			k.Card.Fields = fields
-		}
-		k.FilterControls = resolveFilterControlDirections(s, k.EntityType, k.FilterControls)
-		out[id] = k
-	}
-	return out
-}
-
-// resolveCalendarDirections fills in each calendar's relation directions, the
-// same treatment resolveKanbanDirections gives a board (TKT-QXY8CQ).
-//
-// Calendars need it for the same reason: an event chip's relation field is
-// resolved client-side against the relation's inverse key, and an unresolved
-// direction leaves the SPA computing the wrong key and rendering nothing. The
-// per-source entity type is what a field resolves against, so a chip field is
-// resolved once per source rather than once per calendar — a calendar may
-// project several types, and a relation's direction is only meaningful
-// relative to one of them.
-func resolveCalendarDirections(
-	s *Schema, calendars map[string]dataentryconfig.Calendar,
-) map[string]dataentryconfig.Calendar {
-	out := make(map[string]dataentryconfig.Calendar, len(calendars))
-	for id, calendar := range calendars {
-		c := calendar
-		// A field's direction depends on the type it hangs off, so resolve
-		// against the first source that actually declares the relation.
-		if len(c.Event.Fields) > 0 {
-			fields := make([]dataentryconfig.KanbanCardField, len(c.Event.Fields))
-			copy(fields, c.Event.Fields)
-			for i := range fields {
-				fields[i].Direction = resolveCalendarFieldDirection(s, c.Sources, fields[i])
-			}
-			c.Event = dataentryconfig.CalendarEvent{Fields: fields}
-		}
-		if len(c.Sources) > 0 && len(c.FilterControls) > 0 {
-			c.FilterControls = resolveFilterControlDirections(s, c.Sources[0].EntityType, c.FilterControls)
-		}
-		out[id] = c
-	}
-	return out
-}
-
-// resolveCalendarFieldDirection resolves one chip field's direction against the
-// calendar's sources, taking the first that yields a direction.
-//
-// Nil: an empty result is returned unchanged when no source declares the
-// relation — the field simply renders nothing for those sources, which is the
-// documented best-effort behavior for a heterogeneous calendar.
-func resolveCalendarFieldDirection(
-	s *Schema, sources []dataentryconfig.CalendarSource, field dataentryconfig.KanbanCardField,
-) dataentryconfig.Direction {
-	if field.Relation == "" {
-		return field.Direction
-	}
-	for _, src := range sources {
-		if d := resolveConfigDirection(s, src.EntityType, field.Relation, field.Direction); d != "" {
-			return d
-		}
-	}
-	return field.Direction
-}
-
-// aboutDescription is the deployment description shown by the SPA's global
-// "About" help (TKT-DUQBD0). The data-entry.yaml `app.description` wins when set
-// (it is the UI-app-specific text); otherwise it falls back to the metamodel's
-// top-level `description` (the schema-level prose added in TKT-0YBFT8). Empty
-// when neither is set — the SPA hides the About button.
-//
-// This is a SEPARATE field from AppConfig.Description on the wire: that field is
-// also rendered by SettingsView as a plain one-line value, and pushing the
-// (possibly multi-paragraph markdown) metamodel description into it would
-// regress that view. The About surface gets its own field, `about_description`.
-func aboutDescription(s *Schema) string {
-	if s.Cfg != nil && s.Cfg.App.Description != "" {
-		return s.Cfg.App.Description
-	}
-	if s.Meta != nil {
-		return s.Meta.Description
-	}
-	return ""
-}
-
-//archplan:auth=required reason="navigation config, served verbatim"
-func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-		return
-	}
-	s := a.State()
-	// Resolve relation widgets: auto-detect "cards" for relations with
-	// properties/content, for both single-page (flat) and wizard (step) forms.
-	forms := make(map[string]dataentryconfig.Form, len(s.Cfg.Forms))
-	for id, form := range s.Cfg.Forms {
-		f := form
-		f.Relations = resolveFormRelations(s, form.EntityType, f.Relations)
-		if len(f.Steps) > 0 {
-			steps := make([]dataentryconfig.FormStep, len(f.Steps))
-			copy(steps, f.Steps)
-			for i := range steps {
-				steps[i].Relations = resolveFormRelations(s, form.EntityType, steps[i].Relations)
-			}
-			f.Steps = steps
-		}
-		forms[id] = f
-	}
-
-	config := v1.Config{
-		NextActionBands: s.Cfg.NextActionBands,
-		Piles:           pilesWire(s.Cfg.Piles),
-		App: v1.AppConfig{
-			Name:              s.Cfg.App.Name,
-			Description:       s.Cfg.App.Description,
-			Language:          s.Cfg.App.Language,
-			PlantUMLServerURL: s.Cfg.App.PlantUMLServerURL,
-			DefaultWorld:      declaredDefaultWorld(s.Meta),
-			WorldSwitcher:     worldSwitcherWire(s.Cfg.App.WorldSwitcher),
-			// The same nil check the history handler gates on, so the
-			// affordance and the endpoint cannot disagree.
-			HistoryEnabled: a.versions != nil,
-			CollabEnabled:  a.collab != nil,
-			CollabEpoch:    collabEpoch(a.collab),
-		},
-		AboutDescription: aboutDescription(s),
-		Styles:           s.StyleMap,
-		Forms:            forms,
-		Channels:         s.Cfg.Channels,
-		Lists:            resolveListDirections(s, s.Cfg.Lists),
-		Views:            s.Cfg.Views,
-		EntityViews:      s.Cfg.EntityViews,
-		Kanbans:          resolveKanbanDirections(s, s.Cfg.Kanbans),
-		Calendars:        resolveCalendarDirections(s, s.Cfg.Calendars),
-		Gantts:           s.Cfg.Gantts,
-		Dashboard:        s.Cfg.Dashboard,
-		Dashboards:       s.Cfg.Dashboards,
-		Actions:          s.Cfg.Actions,
-		Navigation:       s.Cfg.Navigation,
-		Spaces:           s.Cfg.Spaces,
-		Builtins:         s.Cfg.Builtins,
-		Pages:            s.Cfg.Pages,
-		Documents:        s.Cfg.Documents,
-		Apps:             appsToV1(a.scanAppsOrLog(r.Context())),
-		Palette:          a.palette.Resolved(),
-	}
-
-	writeV1JSON(w, http.StatusOK, config)
-}
-
 // maxSearchLimit bounds the `limit` parameter of /_search. It matches the
 // list endpoint's per_page ceiling.
 const maxSearchLimit = 100
@@ -2310,93 +1926,6 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeV1JSON(w, http.StatusOK, resp)
-}
-
-//archplan:auth=required
-func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-		return
-	}
-
-	analysisResult := a.analyze.runAnalysis(r.Context(), a.State().Meta)
-
-	// runAnalysis now reads GATED per the requesting principal (TKT-3FL2S6), so
-	// a hidden entity never enters a check and a visible entity is redacted
-	// before its value can reach an issue title or message. No post-hoc output
-	// filter is needed — the issues are already the requester's visible slice.
-	// Flatten sections to (issue, section) pairs for the wire builder.
-	visible := flattenIssues(analysisResult.Sections)
-
-	result := APIAnalysisResult{
-		Issues:  make([]APIIssue, 0, len(visible)),
-		ByCheck: make(map[string]int),
-	}
-
-	// Carry each section's truncation flag onto the flat response, so a
-	// capped check is visibly incomplete rather than silently short.
-	for _, section := range analysisResult.Sections {
-		if section.Truncated {
-			result.TruncatedChecks = append(result.TruncatedChecks, section.Name)
-		}
-	}
-
-	// Loopback gate: same policy as action / document surfaces.
-	// Non-loopback callers get a degraded envelope on script-error
-	// issues (no source slice, no stack, no captured output).
-	fullDetail := a.allowFullScriptDetail(r)
-
-	for _, vi := range visible {
-		issue, section := vi.issue, vi.section
-		api := APIIssue{
-			EntityID:    issue.EntityID,
-			Face:        string(issue.Face),
-			EntityType:  issue.EntityType,
-			Title:       issue.Title,
-			Message:     issue.Message,
-			RuleMessage: issue.RuleMessage,
-			Severity:    issue.Severity,
-			CheckType:   section,
-			Detail:      issue.Detail,
-		}
-		if issue.ScriptError != nil {
-			env := buildScriptErrorEnvelope(issue.ScriptError, fullDetail, "")
-			api.ScriptError = &env
-		}
-		result.Issues = append(result.Issues, api)
-		result.ByCheck[section]++
-		switch issue.Severity {
-		case "error":
-			result.Errors++
-		case "warning":
-			result.Warnings++
-		}
-	}
-
-	writeV1JSON(w, http.StatusOK, result)
-}
-
-// visibleIssue pairs an analysis issue with its section name, carried
-// through the ACL filter so the wire builder keeps the issue→check
-// association without re-walking sections.
-type visibleIssue struct {
-	issue   AnalysisIssue
-	section string
-}
-
-// flattenIssues walks the analysis sections into (issue, section) pairs for the
-// wire builder. No filtering: runAnalysis already read gated, so the issues are
-// the requester's visible slice — a hidden entity produced no issue and a
-// visible entity was redacted before its value could reach a title or message
-// (TKT-3FL2S6, replacing the former visibleAnalysisIssues output filter).
-func flattenIssues(sections []AnalysisSection) []visibleIssue {
-	var out []visibleIssue
-	for _, section := range sections {
-		for _, issue := range section.Issues {
-			out = append(out, visibleIssue{issue: issue, section: section.Name})
-		}
-	}
-	return out
 }
 
 // --- Helper Functions ---
@@ -3007,151 +2536,6 @@ func writeV1Error(w http.ResponseWriter, r *http.Request, status int, errType, t
 
 // --- Sidebar API ---
 
-// --- Conflicts API ---
-
-// handleV1Conflicts returns the list of conflicted files as JSON. It is
-// served only to a principal who may sync (git:sync); everyone else gets a
-// 403 (BUG-T6HNKS). The list is also row-gated: a file that names an entity
-// or relation the principal may not read is left out (BUG-Q3Z15V; see
-// conflictsReadable).
-//
-//archplan:auth=authz reason="requires git:sync via permitsGitSync, then row-gates each file"
-func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-		return
-	}
-	if !permitsGitSync(a.acl, r) {
-		writeGitSyncForbidden(w, r, "Listing merge conflicts")
-		return
-	}
-
-	ctx := &project.Context{
-		Root:         a.paths.Root,
-		EntitiesDir:  a.paths.EntitiesDir,
-		RelationsDir: a.paths.RelationsDir,
-	}
-
-	result, err := conflict.DetectAll(ctx)
-	if err != nil {
-		writeInternalError(w, r, "conflict_detection_failed", "Failed to detect conflicts", err)
-		return
-	}
-
-	// Parse each file for the identities it names, then gate them all in
-	// one batch. A file that no longer parses as conflicted is left out:
-	// resolved since the scan, or unreadable, which the log records.
-	meta := a.State().Meta
-	files := make([]conflict.ConflictedFile, 0, len(result.Files))
-	ids := make([]conflictIdentity, 0, len(result.Files))
-	for _, cf := range result.Files {
-		parsed, perr := conflict.ParseConflictedFile(cf.Path, meta)
-		if perr != nil {
-			if !errors.Is(perr, fs.ErrNotExist) {
-				slog.Warn("dataentry: skipping a conflicted file that does not parse", "path", cf.Path, "err", perr)
-			}
-			continue
-		}
-		files = append(files, cf)
-		ids = append(ids, identifyConflict(a.paths, meta, parsed))
-	}
-	readable, err := conflictsReadable(r.Context(), a.visibleReader, ids)
-	if err != nil {
-		writeGateError(w, r, err)
-		return
-	}
-
-	items := make([]v1.ConflictItem, 0, len(files))
-	for i, cf := range files {
-		if !readable[i] {
-			continue
-		}
-		relPath, _ := filepath.Rel(ctx.Root, cf.Path)
-		items = append(items, v1.ConflictItem{
-			Path:        relPath,
-			EntityType:  cf.EntityType,
-			EntityID:    cf.EntityID,
-			MarkerCount: len(cf.Markers),
-		})
-	}
-
-	writeV1JSON(w, http.StatusOK, v1.ConflictsResponse{
-		Conflicts: items,
-		Count:     len(items),
-	})
-}
-
-// handleV1ConflictRoutes handles GET /api/v1/_conflicts/{path} and POST /api/v1/_conflicts/resolve.
-// Both require git:sync, like the list. The detail checks it here, before the
-// path is resolved. It then row-gates the file, answering a hidden one with
-// the same 404 as a missing one, and leaves out every property `visible:`
-// hides on either side (BUG-Q3Z15V). Resolve is gated in
-// [writeHandler.handleV1ConflictResolve].
-//
-//archplan:auth=authz reason="detail requires git:sync, then row-gates and redacts; resolve is gated in its handler"
-func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_conflicts/")
-
-	if path == "resolve" && r.Method == http.MethodPost {
-		a.write.handleV1ConflictResolve(w, r)
-		return
-	}
-
-	if r.Method != http.MethodGet {
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-		return
-	}
-	if !permitsGitSync(a.acl, r) {
-		writeGitSyncForbidden(w, r, "Viewing a merge conflict")
-		return
-	}
-
-	// Get conflict details. The path is caller-supplied — contain it to
-	// the project root before any filesystem access.
-	absPath, ok := resolveConflictPath(a.paths, w, r, path)
-	if !ok {
-		return
-	}
-
-	meta := a.State().Meta
-	cf, ok := parseConflictOr404(w, r, absPath, meta)
-	if !ok {
-		return
-	}
-	id := identifyConflict(a.paths, meta, cf)
-	if !conflictReadableOr404(w, r, a.visibleReader, id) {
-		return
-	}
-
-	info := conflict.AnalyzeConflict(cf)
-	hidden := a.affordances.conflictHiddenProperties(r.Context(), cf, id.face())
-
-	diffs := make([]v1.PropertyDiff, 0, len(info.PropertyDiffs))
-	for _, d := range info.PropertyDiffs {
-		if _, ok := hidden[d.Property]; ok {
-			continue
-		}
-		diffs = append(diffs, v1.PropertyDiff{
-			Property:    d.Property,
-			OursValue:   fmt.Sprintf("%v", d.OursValue),
-			TheirsValue: fmt.Sprintf("%v", d.TheirsValue),
-			IsSame:      d.IsSame,
-		})
-	}
-
-	detail := v1.ConflictDetail{
-		Path:          path,
-		EntityType:    cf.EntityType,
-		EntityID:      cf.EntityID,
-		PropertyDiffs: diffs,
-		ContentSame:   info.ContentSame,
-		ContentOurs:   info.ContentDiffOurs,
-		ContentTheirs: info.ContentDiffTheirs,
-	}
-
-	writeV1JSON(w, http.StatusOK, detail)
-}
-
 // resolveConflictPath contains the caller-supplied conflict-file path
 // to the project root. On failure it writes the error response (404
 // when the path is inside the project but missing, 403 when it escapes
@@ -3350,108 +2734,6 @@ func extractEntityIDs(entities []*entityPkg.Entity) []string {
 		ids[i] = e.ID
 	}
 	return ids
-}
-
-// --- Commands API ---
-
-// handleV1Commands returns available commands for a given page context.
-// Query params:
-//   - page_type: "entity", "list", "view", or "dashboard"
-//   - qualifier: specific list ID or view ID (optional)
-//   - entity_type: the entity type shown on the page (optional)
-//
-//archplan:auth=required reason="command list; exec is gated per command"
-func (a *App) handleV1Commands(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-		return
-	}
-
-	query := r.URL.Query()
-	pageType := query.Get("page_type")
-	qualifier := query.Get("qualifier")
-	entityType := query.Get("entity_type")
-
-	resolved := a.commands.resolveCommands(r.Context(), pageType, qualifier, entityType)
-
-	commands := make([]v1.Command, 0, len(resolved))
-	for _, cmd := range resolved {
-		commands = append(commands, v1.Command(cmd))
-	}
-
-	writeV1JSON(w, http.StatusOK, commands)
-}
-
-// handleV1Templates returns templates for an entity type.
-// GET /api/v1/_templates/{entityType}
-//
-//archplan:auth=required
-func (a *App) handleV1Templates(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-		return
-	} // Extract entity type from path: /api/v1/_templates/{entityType}
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_templates/")
-	entityType := strings.TrimSuffix(path, "/")
-
-	if entityType == "" {
-		writeV1Error(w, r, http.StatusBadRequest, "missing_entity_type", "Entity type is required", "")
-		return
-	}
-
-	// Check if entity type exists
-	meta := a.State().Meta
-	if _, ok := meta.Entities[entityType]; !ok {
-		writeV1Error(w, r, http.StatusNotFound, "entity_type_not_found",
-			fmt.Sprintf("Entity type '%s' not found", entityType), "")
-		return
-	}
-
-	templates, _ := templating.EntityTemplatesFor(r.Context(), a.templater, meta, entityType)
-	result := make([]v1.Template, 0, len(templates))
-
-	for _, t := range templates {
-		relations := make([]v1.TemplateRelation, 0, len(t.Relations))
-		for _, rel := range t.Relations {
-			relations = append(relations, v1.TemplateRelation{
-				Relation: rel.Type,
-				Target:   rel.Target,
-			})
-		}
-		result = append(result, v1.Template{
-			Name:       t.Name,
-			Properties: t.Properties,
-			Content:    t.Content,
-			Relations:  relations,
-		})
-	}
-
-	writeV1JSON(w, http.StatusOK, result)
-}
-
-// --- OpenAPI Spec ---
-
-// handleV1OpenAPI serves the OpenAPI 3.1 specification.
-//
-//archplan:auth=required reason="API description"
-func (a *App) handleV1OpenAPI(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-		return
-	}
-
-	data, err := a.State().OpenAPIGen.GenerateJSON()
-	if err != nil {
-		writeInternalError(w, r, "generation_failed", "Failed to generate OpenAPI spec", err)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	// no-cache, not no-store: a client may keep the spec (it is configuration,
-	// not data) but must fetch it again before reuse, since it changes when the
-	// schema is reloaded. There is no validator, so that fetch is a full one.
-	w.Header().Set("Cache-Control", "no-cache")
-	_, _ = w.Write(data)
 }
 
 // --- Views API ---

@@ -187,7 +187,7 @@ func TestNamedDashboard_ConfigWireShape(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Config(rec, req)
+	app.schemaAPI.handleV1Config(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var raw struct {
 		Dashboards map[string]json.RawMessage `json:"dashboards"`

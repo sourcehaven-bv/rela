@@ -351,7 +351,7 @@ func TestNavPermission_ConfigUnfiltered(t *testing.T) {
 	bodyFor := func(t *testing.T, ctx context.Context) string {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		app.handleV1Config(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody).
+		app.schemaAPI.handleV1Config(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody).
 			WithContext(ctx))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("_config: got %d, want 200; body=%s", rec.Code, rec.Body)

@@ -124,7 +124,7 @@ func TestV1ConflictDetailPathTraversal(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/_conflicts/"+tc.path, http.NoBody)
 			rec := httptest.NewRecorder()
-			app.handleV1ConflictRoutes(rec, req)
+			app.conflictsAPI.handleV1ConflictRoutes(rec, req)
 
 			if rec.Code != http.StatusForbidden {
 				t.Errorf("expected 403, got %d: %s", rec.Code, rec.Body.String())
@@ -142,7 +142,7 @@ func TestV1ConflictDetailContainedPath(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_conflicts/entities/ticket/TKT-001.md", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ConflictRoutes(rec, req)
+	app.conflictsAPI.handleV1ConflictRoutes(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -157,7 +157,7 @@ func TestV1ConflictDetailMissingFile(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_conflicts/entities/ticket/MISSING.md", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ConflictRoutes(rec, req)
+	app.conflictsAPI.handleV1ConflictRoutes(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d: %s", rec.Code, rec.Body.String())
@@ -312,13 +312,13 @@ func TestV1Conflicts_GitSyncGate(t *testing.T) {
 	}{
 		{"list", func(app *App, ctx context.Context) *httptest.ResponseRecorder {
 			rec := httptest.NewRecorder()
-			app.handleV1Conflicts(rec, httptest.NewRequestWithContext(ctx, http.MethodGet,
+			app.conflictsAPI.handleV1Conflicts(rec, httptest.NewRequestWithContext(ctx, http.MethodGet,
 				"/api/v1/_conflicts", http.NoBody))
 			return rec
 		}},
 		{"detail", func(app *App, ctx context.Context) *httptest.ResponseRecorder {
 			rec := httptest.NewRecorder()
-			app.handleV1ConflictRoutes(rec, httptest.NewRequestWithContext(ctx, http.MethodGet,
+			app.conflictsAPI.handleV1ConflictRoutes(rec, httptest.NewRequestWithContext(ctx, http.MethodGet,
 				"/api/v1/_conflicts/"+rel, http.NoBody))
 			return rec
 		}},
@@ -326,19 +326,19 @@ func TestV1Conflicts_GitSyncGate(t *testing.T) {
 		// answer would tell a caller without git:sync which files exist.
 		{"detail of a missing file", func(app *App, ctx context.Context) *httptest.ResponseRecorder {
 			rec := httptest.NewRecorder()
-			app.handleV1ConflictRoutes(rec, httptest.NewRequestWithContext(ctx, http.MethodGet,
+			app.conflictsAPI.handleV1ConflictRoutes(rec, httptest.NewRequestWithContext(ctx, http.MethodGet,
 				"/api/v1/_conflicts/entities/ticket/NOPE.md", http.NoBody))
 			return rec
 		}},
 		{"resolve of a missing file", func(app *App, ctx context.Context) *httptest.ResponseRecorder {
 			rec := httptest.NewRecorder()
-			app.handleV1ConflictRoutes(rec, httptest.NewRequestWithContext(ctx, http.MethodPost,
+			app.conflictsAPI.handleV1ConflictRoutes(rec, httptest.NewRequestWithContext(ctx, http.MethodPost,
 				"/api/v1/_conflicts/resolve", strings.NewReader(`{"path":"entities/ticket/NOPE.md"}`)))
 			return rec
 		}},
 		{"resolve", func(app *App, ctx context.Context) *httptest.ResponseRecorder {
 			rec := httptest.NewRecorder()
-			app.handleV1ConflictRoutes(rec, httptest.NewRequestWithContext(ctx, http.MethodPost,
+			app.conflictsAPI.handleV1ConflictRoutes(rec, httptest.NewRequestWithContext(ctx, http.MethodPost,
 				"/api/v1/_conflicts/resolve", strings.NewReader(`{"path":"`+rel+`","content_choice":"theirs"}`)))
 			return rec
 		}},
@@ -438,7 +438,7 @@ var conflictedImplements = strings.NewReplacer("TKT-002", "FEAT-001", "blocks", 
 func conflictDetailAs(t *testing.T, app *App, d *acl.Declarative, rel string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	app.handleV1ConflictRoutes(rec, asAlice(t, d,
+	app.conflictsAPI.handleV1ConflictRoutes(rec, asAlice(t, d,
 		httptest.NewRequest(http.MethodGet, "/api/v1/_conflicts/"+rel, http.NoBody)))
 	return rec
 }
@@ -462,7 +462,7 @@ func TestV1Conflicts_ReadGate(t *testing.T) {
 	app, _, d, _ := conflictReadGateApp(t)
 
 	rec := httptest.NewRecorder()
-	app.handleV1Conflicts(rec, asAlice(t, d, httptest.NewRequest(http.MethodGet, "/api/v1/_conflicts", http.NoBody)))
+	app.conflictsAPI.handleV1Conflicts(rec, asAlice(t, d, httptest.NewRequest(http.MethodGet, "/api/v1/_conflicts", http.NoBody)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list = %d: %s", rec.Code, rec.Body)
 	}
@@ -562,7 +562,7 @@ func TestV1ConflictDetail_RedactsHiddenProperties(t *testing.T) {
 	writeProjectFile(t, root, "entities/ticket/TKT-001.md", conflictedTicket)
 
 	rec := httptest.NewRecorder()
-	app.handleV1ConflictRoutes(rec,
+	app.conflictsAPI.handleV1ConflictRoutes(rec,
 		httptest.NewRequest(http.MethodGet, "/api/v1/_conflicts/entities/ticket/TKT-001.md", http.NoBody))
 
 	if rec.Code != http.StatusOK {
@@ -666,7 +666,7 @@ func TestV1Conflicts_KindFollowsDirectory(t *testing.T) {
 
 		detail := func(rel string) *httptest.ResponseRecorder {
 			rec := httptest.NewRecorder()
-			app.handleV1ConflictRoutes(rec,
+			app.conflictsAPI.handleV1ConflictRoutes(rec,
 				httptest.NewRequest(http.MethodGet, "/api/v1/_conflicts/"+rel, http.NoBody))
 			return rec
 		}
@@ -691,7 +691,7 @@ func TestV1Conflicts_KindFollowsDirectory(t *testing.T) {
 		writeProjectFile(t, root, "entities/ticket/TKT-001.md", conflictedTicket)
 
 		rec := httptest.NewRecorder()
-		app.handleV1ConflictRoutes(rec,
+		app.conflictsAPI.handleV1ConflictRoutes(rec,
 			httptest.NewRequest(http.MethodGet, "/api/v1/_conflicts/entities/ticket/TKT-001.md", http.NoBody))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("detail = %d: %s", rec.Code, rec.Body)

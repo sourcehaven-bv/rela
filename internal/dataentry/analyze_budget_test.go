@@ -144,7 +144,7 @@ var analyzeOp budgetOp = func(t *testing.T, app *App, d *acl.Declarative, ctx co
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
 	req = req.WithContext(gateCtxFor(ctx, t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1Analyze(rec, req)
+	app.analyzeAPI.handleV1Analyze(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("_analyze: %d %s", rec.Code, rec.Body)
 	}

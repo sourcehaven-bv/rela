@@ -348,7 +348,7 @@ func TestConfig_ServesChannels(t *testing.T) {
 		Session: &dataentryconfig.SessionPresentation{Display: dataentryconfig.SessionDisplayCompact},
 	}}
 	rec := httptest.NewRecorder()
-	app.handleV1Config(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody))
+	app.schemaAPI.handleV1Config(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody))
 	require.Equal(t, http.StatusOK, rec.Code)
 	var raw struct {
 		Channels json.RawMessage `json:"channels"`
