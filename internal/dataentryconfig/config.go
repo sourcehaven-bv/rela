@@ -2194,6 +2194,13 @@ type DashboardCard struct {
 	// viewport, which the operator cannot know.
 	Width string `yaml:"width,omitempty" json:"width,omitempty"`
 
+	// HideEmpty leaves the card off the dashboard when its list or query
+	// has no rows for the reader. A card that failed to load still shows,
+	// so an error is not mistaken for "nothing to show". Refused on a line
+	// card, which has no rows. A UX filter, like Permission: the card's
+	// rows are ACL-gated either way.
+	HideEmpty bool `yaml:"hide_empty,omitempty" json:"hide_empty,omitempty"`
+
 	// Permission optionally hides this card from the dashboard for principals
 	// who do not hold the named global ACL permission (TKT-53KICM). Empty —
 	// the overwhelmingly common case — means the card is always shown.

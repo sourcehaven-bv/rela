@@ -1,6 +1,7 @@
 package mailrender
 
 import (
+	"errors"
 	"fmt"
 	"html/template"
 	"strings"
@@ -93,6 +94,14 @@ const contentWidth = "600"
 //
 // Adding the meta tag is not a free win; it is the trap. See TKT-1GA2PG.
 //
+// # The button is a link in a colored cell
+//
+// A call to action is an <a> inside a single-cell table whose cell carries
+// the color and the padding, the "bulletproof button" shape: Outlook
+// Windows drops padding and display on an <a>, so a padded link would lose
+// its shape there. The cell keeps it everywhere. It stays a link, not a
+// role="button": it navigates.
+//
 // # .prose scopes the markdown table styling
 //
 // Table rules for markdown content are keyed on .prose, not on .pad, because
@@ -147,6 +156,8 @@ table { border-collapse:collapse; }
 .foot { padding:16px 24px 24px 24px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:12px; line-height:1.5; color:{{.C.muted}}; }
 .foot a { color:{{.C.muted}}; }
 .logo { display:block; border:0; outline:none; text-decoration:none; max-height:32px; }
+.btn-cell { background-color:{{.C.accent}}; border-radius:6px; padding:12px 24px; }
+.pad a.btn { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:16px; font-weight:600; line-height:1.2; color:{{.C.card}}; text-decoration:none; }
 .empty { color:{{.C.muted}}; font-style:italic; padding:8px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:14px; }
 @media (prefers-color-scheme: dark) {
 .wrap { background-color:{{.C.darkBg}} !important; }
@@ -159,6 +170,8 @@ table { border-collapse:collapse; }
 .th, .foot, .foot a, .empty { color:{{.C.darkMuted}} !important; }
 .th, .td { border-color:{{.C.darkBorder}} !important; }
 .card, .pad, .foot, .sect-title, .empty { background-color:{{.C.darkCard}} !important; }
+.btn-cell { background-color:{{.C.darkAccent}} !important; }
+.pad a.btn { color:{{.C.darkCard}} !important; }
 }
 </style>
 </head>
@@ -172,6 +185,7 @@ table { border-collapse:collapse; }
 <tr><td class="pad">
 <h1>{{.Subject}}</h1>
 {{if .Intro}}<div class="prose">{{.Intro}}</div>{{end}}
+{{if .Button}}<table class="sect" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td style="padding:4px 0 16px 0;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td class="btn-cell" align="center" bgcolor="{{.C.accent}}"><a class="btn" href="{{.Button.Href}}">{{.Button.Label}}</a></td></tr></table></td></tr></table>{{end}}
 {{range .Sections}}
 <table class="sect" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
 {{if .Title}}<tr><td class="sect-title">{{.Title}}</td></tr>{{end}}
@@ -209,8 +223,15 @@ type tmplSection struct {
 	Empty    string
 }
 
+// tmplButton is a call to action; Href has passed safeHref.
+type tmplButton struct {
+	Label string
+	Href  string
+}
+
 type tmplDoc struct {
 	Subject    string
+	Button     *tmplButton
 	Lang       string
 	MSOOpen    template.HTML
 	MSOClose   template.HTML
@@ -245,6 +266,15 @@ func (r *Renderer) buildDocument(m *Message) (string, error) {
 		sections = append(sections, s)
 	}
 
+	var button *tmplButton
+	if m.Button != nil {
+		b, btnErr := r.buildButton(m.Button)
+		if btnErr != nil {
+			return "", btnErr
+		}
+		button = &b
+	}
+
 	alt := r.opts.LogoAlt
 	if alt == "" {
 		alt = "logo"
@@ -257,6 +287,7 @@ func (r *Renderer) buildDocument(m *Message) (string, error) {
 
 	doc := tmplDoc{
 		Subject:    m.Subject,
+		Button:     button,
 		Lang:       lang,
 		Intro:      template.HTML(intro),  //nolint:gosec // G203: sanitized by bluemonday in markdownToSafeHTML
 		Footer:     template.HTML(footer), //nolint:gosec // G203: sanitized by bluemonday in markdownToSafeHTML
@@ -276,6 +307,20 @@ func (r *Renderer) buildDocument(m *Message) (string, error) {
 		return "", fmt.Errorf("mailrender: execute template: %w", err)
 	}
 	return buf.String(), nil
+}
+
+// ErrButton is returned by Render for a button without a label or with a
+// URL that safeHref refuses. A button that leads nowhere is a caller bug,
+// so it is refused rather than rendered as dead text.
+var ErrButton = errors.New("mailrender: button needs a label and an http(s) or root-relative URL")
+
+// buildButton vets b.
+func (r *Renderer) buildButton(b *Button) (tmplButton, error) {
+	href, ok := r.safeHref(b.URL)
+	if strings.TrimSpace(b.Label) == "" || !ok {
+		return tmplButton{}, ErrButton
+	}
+	return tmplButton{Label: b.Label, Href: href}, nil
 }
 
 // resolveLang picks the language tag for one message: the message's own, else

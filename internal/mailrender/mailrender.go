@@ -94,6 +94,16 @@ type Section struct {
 	Links []string
 }
 
+// Button is a call to action: a link styled as a button. Its text is
+// escaped, never markdown-rendered, and its URL must pass the same check
+// as a table link: http, https, or root-relative with a base URL.
+type Button struct {
+	// Label is the button text. Required.
+	Label string
+	// URL is where the button leads. Required.
+	URL string
+}
+
 // Message is the model a caller assembles and this package formats.
 type Message struct {
 	// Subject is the mail subject. Header-safety (no CR/LF) is the sending
@@ -105,6 +115,10 @@ type Message struct {
 
 	// Sections are rendered in order.
 	Sections []Section
+
+	// Button is an optional call to action shown below the intro, above the
+	// sections. UNTRUSTED. In the text part it is the label and the URL.
+	Button *Button
 
 	// Footer is optional markdown shown below the sections. UNTRUSTED.
 	Footer string

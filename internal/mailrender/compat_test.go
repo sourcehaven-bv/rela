@@ -109,6 +109,7 @@ func compatSample(t *testing.T) string {
 		Subject: "Weekly digest",
 		Lang:    "en",
 		Intro:   "You have **3** items. See [the board](https://app.example/board).",
+		Button:  &mailrender.Button{Label: "Open the board", URL: "/board"},
 		Sections: []mailrender.Section{{
 			Title:   "Overdue",
 			Body:    "These are _past_ due.",

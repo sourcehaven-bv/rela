@@ -51,6 +51,10 @@ var errFlowRequest = errors.New("flows: request not allowed by the flow")
 // errFlowBusy answers a cancel of a run that is still starting.
 var errFlowBusy = errors.New("flows: run busy")
 
+// errFlowCondition answers a manual start on a subject for which no
+// manual start's `when:` holds.
+var errFlowCondition = errors.New("flows: the start condition does not hold")
+
 // classify wraps err in the [flowview] kind a transport maps to a status.
 // Errors it does not know pass unchanged: the transport's own mapping of
 // write errors (validation, field gate) applies to them.
@@ -65,7 +69,8 @@ func classify(err error) error {
 	case errors.Is(err, flowengine.ErrStale), errors.Is(err, flowengine.ErrClaimed),
 		errors.Is(err, flowengine.ErrSettling), errors.Is(err, flowengine.ErrNotPending),
 		errors.Is(err, flowengine.ErrStranded), errors.Is(err, flowengine.ErrSubjectBusy),
-		errors.Is(err, flowengine.ErrGuard), errors.Is(err, errFlowBusy), errors.Is(err, flowengine.ErrJobRunning):
+		errors.Is(err, flowengine.ErrGuard), errors.Is(err, errFlowBusy), errors.Is(err, errFlowCondition),
+		errors.Is(err, flowengine.ErrJobRunning):
 		return fmt.Errorf("%w: %w", flowview.ErrConflict, err)
 	case errors.Is(err, ErrFlowPermission), isFieldWriteError(err):
 		return fmt.Errorf("%w: %w", flowview.ErrForbidden, err)

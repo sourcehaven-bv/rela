@@ -470,7 +470,7 @@ func (l *loader) starts(key string, raw []rawStart, subject string, per PerSubje
 				l.add(sk+".when", "is required for on: predicate")
 			}
 		case StartManual:
-			l.noKeys(sk, r, "when", "every")
+			l.noKeys(sk, r, "every")
 			s.Permission = l.permission(sk+".permission", r.Permission)
 		case StartSchedule:
 			l.noKeys(sk, r, "permission")
