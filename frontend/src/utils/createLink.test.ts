@@ -29,7 +29,9 @@ describe('buildCreateLinkQuery', () => {
   it('carries linkAs verbatim, since it decides the edge direction', () => {
     // 'from' and 'to' produce opposite edges. A builder that normalised or
     // defaulted this would silently reverse a relation.
-    expect(buildCreateLinkQuery({ relation: 'r', peer: 'P-1', linkAs: 'from' }).link_as).toBe('from')
+    expect(buildCreateLinkQuery({ relation: 'r', peer: 'P-1', linkAs: 'from' }).link_as).toBe(
+      'from'
+    )
     expect(buildCreateLinkQuery({ relation: 'r', peer: 'P-1', linkAs: 'to' }).link_as).toBe('to')
   })
 

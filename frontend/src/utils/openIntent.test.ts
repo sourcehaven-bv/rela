@@ -43,7 +43,7 @@ describe('safeInternalHref', () => {
     'accepts the same-origin path %s',
     (path) => {
       expect(safeInternalHref(path)).toBe(true)
-    },
+    }
   )
 
   it('rejects protocol-relative paths, which navigate off-origin', () => {
@@ -54,10 +54,14 @@ describe('safeInternalHref', () => {
     expect(safeInternalHref('/\\evil.com')).toBe(false)
   })
 
-  it.each(['javascript:alert(1)', 'JavaScript:alert(1)', 'data:text/html,x', 'https://evil.com', '', 'entity/x'])(
-    'rejects %s',
-    (path) => {
-      expect(safeInternalHref(path)).toBe(false)
-    },
-  )
+  it.each([
+    'javascript:alert(1)',
+    'JavaScript:alert(1)',
+    'data:text/html,x',
+    'https://evil.com',
+    '',
+    'entity/x',
+  ])('rejects %s', (path) => {
+    expect(safeInternalHref(path)).toBe(false)
+  })
 })

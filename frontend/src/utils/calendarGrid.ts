@@ -65,7 +65,11 @@ export function dayFromKey(key: string): CalendarDay | null {
  * rather than treating it as an error (an entity with no date is simply not on
  * the calendar).
  */
-export function eventDay(value: string | null | undefined, kind: DateKind, tz: string): CalendarDay | null {
+export function eventDay(
+  value: string | null | undefined,
+  kind: DateKind,
+  tz: string
+): CalendarDay | null {
   if (!value) return null
 
   if (kind === 'date') {
@@ -79,7 +83,11 @@ export function eventDay(value: string | null | undefined, kind: DateKind, tz: s
 
 /** Minutes past midnight of a timed value in the display timezone, for the
  * week-view hour axis. Returns null for all-day values, which have no time. */
-export function eventMinutes(value: string | null | undefined, kind: DateKind, tz: string): number | null {
+export function eventMinutes(
+  value: string | null | undefined,
+  kind: DateKind,
+  tz: string
+): number | null {
   if (!value || kind !== 'datetime') return null
   const d = new TZDate(value, tz)
   if (isNaN(d.getTime())) return null
@@ -171,7 +179,11 @@ export function isSameMonth(d: CalendarDay, anchor: CalendarDay): boolean {
 }
 
 /** The days a view covers, given its anchor. */
-export function visibleDays(view: CalendarView, anchor: CalendarDay, weekStart: WeekStart): CalendarDay[] {
+export function visibleDays(
+  view: CalendarView,
+  anchor: CalendarDay,
+  weekStart: WeekStart
+): CalendarDay[] {
   return view === 'month' ? monthGrid(anchor, weekStart) : weekGrid(anchor, weekStart)
 }
 

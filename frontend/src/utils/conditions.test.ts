@@ -91,7 +91,8 @@ describe('conditions', () => {
   })
 
   describe('value selection with and/or (TKT-WQJGPS)', () => {
-    const level = "(form.method == 'passkey' and 'high' or form.method == 'otp' and 'medium' or 'low') == "
+    const level =
+      "(form.method == 'passkey' and 'high' or form.method == 'otp' and 'medium' or 'low') == "
 
     it('chooses a value like predicate', () => {
       expect(evalWith(level + "'high'", { form: { method: 'passkey' } })).toBe(true)
@@ -121,7 +122,9 @@ describe('conditions', () => {
     it('a reference branch inside a selection is a value', () => {
       const src = "(form.flag and form.nick or 'anon') == 'ada'"
       expect(evalWith(src, { form: { flag: true, nick: 'ada' } })).toBe(true)
-      expect(evalWith("(form.flag and form.nick or 'anon') == 'anon'", { form: { flag: false } })).toBe(true)
+      expect(
+        evalWith("(form.flag and form.nick or 'anon') == 'anon'", { form: { flag: false } })
+      ).toBe(true)
       expect(evalWith("(form.flag and 'on') == nil", { form: { flag: false } })).toBe(true)
     })
 

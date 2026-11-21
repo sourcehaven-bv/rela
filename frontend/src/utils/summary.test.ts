@@ -19,14 +19,16 @@ describe('formatSummary', () => {
 
   it('aggregates the numeric values and skips the rest', () => {
     expect(formatSummary({ function: 'sum', property: 'v' }, set, int)).toBe('Total: 7')
-    expect(formatSummary({ function: 'avg', property: 'v' }, set, int)).toBe(`Average: ${formatAmount(7 / 3)}`)
+    expect(formatSummary({ function: 'avg', property: 'v' }, set, int)).toBe(
+      `Average: ${formatAmount(7 / 3)}`
+    )
     expect(formatSummary({ function: 'min', property: 'v' }, set, int)).toBe('Minimum: 1')
     expect(formatSummary({ function: 'max', property: 'v' }, set, int)).toBe('Maximum: 4')
   })
 
   it('uses the label when given', () => {
     expect(formatSummary({ function: 'sum', property: 'v', label: 'Totaal' }, set, eur)).toBe(
-      `Totaal: ${formatAmount(7, 'EUR')}`,
+      `Totaal: ${formatAmount(7, 'EUR')}`
     )
   })
 
@@ -34,27 +36,40 @@ describe('formatSummary', () => {
     expect(formatSummary({ function: 'count' }, [], undefined)).toBe('Count: 0')
     expect(formatSummary({ function: 'sum', property: 'v' }, [], int)).toBe('Total: 0')
     expect(formatSummary({ function: 'avg', property: 'v' }, [], int)).toBe(`Average: ${NO_VALUE}`)
-    expect(formatSummary({ function: 'min', property: 'v' }, [e({})], int)).toBe(`Minimum: ${NO_VALUE}`)
+    expect(formatSummary({ function: 'min', property: 'v' }, [e({})], int)).toBe(
+      `Minimum: ${NO_VALUE}`
+    )
   })
 
   it('picks the earliest and latest date and formats it like the property', () => {
-    const dates = [e({ d: '2026-03-01' }), e({ d: '2026-01-15' }), e({ d: '' }), e({ d: '2026-12-31' })]
+    const dates = [
+      e({ d: '2026-03-01' }),
+      e({ d: '2026-01-15' }),
+      e({ d: '' }),
+      e({ d: '2026-12-31' }),
+    ]
     const date: PropertyDef = { type: 'date' }
-    expect(formatSummary({ function: 'min', property: 'd' }, dates, date)).toBe(`Minimum: ${formatDate('2026-01-15')}`)
-    expect(formatSummary({ function: 'max', property: 'd' }, dates, date)).toBe(`Maximum: ${formatDate('2026-12-31')}`)
+    expect(formatSummary({ function: 'min', property: 'd' }, dates, date)).toBe(
+      `Minimum: ${formatDate('2026-01-15')}`
+    )
+    expect(formatSummary({ function: 'max', property: 'd' }, dates, date)).toBe(
+      `Maximum: ${formatDate('2026-12-31')}`
+    )
   })
 
   it('compares datetimes as instants, not as text', () => {
     const times = [e({ t: '2026-05-01T10:00:00+02:00' }), e({ t: '2026-05-01T09:30:00Z' })]
     const dt: PropertyDef = { type: 'datetime' }
     expect(formatSummary({ function: 'min', property: 't' }, times, dt, 'UTC')).toBe(
-      `Minimum: ${formatDatetime('2026-05-01T10:00:00+02:00', 'UTC')}`,
+      `Minimum: ${formatDatetime('2026-05-01T10:00:00+02:00', 'UTC')}`
     )
   })
 
   it('marks a summary partial when an entity hides the property', () => {
     const hidden = [e({ v: 3 }), e({}, ['v'])]
-    expect(formatSummary({ function: 'sum', property: 'v' }, hidden, int)).toBe('Total: 3 (partial)')
+    expect(formatSummary({ function: 'sum', property: 'v' }, hidden, int)).toBe(
+      'Total: 3 (partial)'
+    )
     expect(formatSummary({ function: 'count' }, hidden, undefined)).toBe('Count: 2')
   })
 
@@ -68,8 +83,12 @@ describe('formatSummary', () => {
     })
 
     it('averages with two digits more than the values', () => {
-      expect(formatSummary({ function: 'avg', property: 'p' }, [e({ p: '1' }), e({ p: '2' })], dec)).toBe('Average: 1.50')
-      expect(formatSummary({ function: 'avg', property: 'p' }, [], dec)).toBe(`Average: ${NO_VALUE}`)
+      expect(
+        formatSummary({ function: 'avg', property: 'p' }, [e({ p: '1' }), e({ p: '2' })], dec)
+      ).toBe('Average: 1.50')
+      expect(formatSummary({ function: 'avg', property: 'p' }, [], dec)).toBe(
+        `Average: ${NO_VALUE}`
+      )
     })
 
     it('picks the extremes numerically', () => {
@@ -80,10 +99,12 @@ describe('formatSummary', () => {
 
     it('honours the currency and the scale', () => {
       const money: PropertyDef = { type: 'decimal', scale: 2, display: { currency: 'EUR' } }
-      expect(formatSummary({ function: 'sum', property: 'p' }, prices, money)).toBe(`Total: ${formatDisplayNumber('0.60', money)}`)
-      expect(formatSummary({ function: 'avg', property: 'p' }, [e({ p: '1' }), e({ p: '2' })], money)).toBe(
-        `Average: ${formatDisplayNumber('1.50', money)}`,
+      expect(formatSummary({ function: 'sum', property: 'p' }, prices, money)).toBe(
+        `Total: ${formatDisplayNumber('0.60', money)}`
       )
+      expect(
+        formatSummary({ function: 'avg', property: 'p' }, [e({ p: '1' }), e({ p: '2' })], money)
+      ).toBe(`Average: ${formatDisplayNumber('1.50', money)}`)
     })
   })
 })

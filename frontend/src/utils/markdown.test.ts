@@ -15,9 +15,7 @@ import {
   encodePlantUMLHex,
   wrapTablesForScroll,
 } from './markdown'
-import { createPinia, setActivePinia } from 'pinia'
-import { useSpaceStore } from '@/stores/space'
-import type { SidebarSpace } from '@/types'
+import { setLinkSpace } from './spacePath'
 
 describe('markdown', () => {
   describe('renderMarkdown', () => {
@@ -224,17 +222,13 @@ describe('markdown', () => {
       })
 
       it('links into the current space', () => {
-        setActivePinia(createPinia())
-        useSpaceStore().set({
-          spaces: [{ id: 'portal', label: 'Portal' } as SidebarSpace],
-          space: 'portal',
-        })
+        setLinkSpace(() => 'portal')
         try {
           const resolver = makeResolver({ 'TKT-9': { type: 'ticket', title: 'Nine' } })
           const result = renderMarkdown('see `TKT-9`', { refResolver: resolver, world: 'w' })
           expect(result).toContain('href="/s/portal/entity/ticket/TKT-9?world=w"')
         } finally {
-          setActivePinia(createPinia())
+          setLinkSpace(() => undefined)
         }
       })
 

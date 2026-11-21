@@ -1,7 +1,7 @@
 import { Marked, type Tokens } from 'marked'
 import mermaid from 'mermaid'
 import DOMPurify from 'dompurify'
-import { spaceHref } from '@/stores/space'
+import { spaceHref } from './spacePath'
 import { ENTITY_ADDRESS } from './entityAddress'
 
 // Initialize mermaid with strict security

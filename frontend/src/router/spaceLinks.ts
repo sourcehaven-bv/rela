@@ -1,5 +1,5 @@
 import type { Router } from 'vue-router'
-import { spaceOf, withSpace } from '@/stores/space'
+import { spaceOf, withSpace } from '@/utils/spacePath'
 import { isConfigurePath } from '@/configure/routes'
 
 /**

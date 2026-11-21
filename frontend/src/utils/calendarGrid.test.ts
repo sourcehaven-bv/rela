@@ -39,14 +39,12 @@ describe('dayKey / dayFromKey', () => {
 describe('eventDay', () => {
   // An all-day date is a calendar date: the same day in every zone. This is the
   // rule that breaks if the value is ever pushed through a timezone.
-  it.each([
-    ['UTC'],
-    ['America/New_York'],
-    ['Asia/Tokyo'],
-    ['Pacific/Kiritimati'],
-  ])('places an all-day value on its literal date in %s', (tz) => {
-    expect(eventDay('2026-03-01', 'date', tz)).toEqual(d(2026, 3, 1))
-  })
+  it.each([['UTC'], ['America/New_York'], ['Asia/Tokyo'], ['Pacific/Kiritimati']])(
+    'places an all-day value on its literal date in %s',
+    (tz) => {
+      expect(eventDay('2026-03-01', 'date', tz)).toEqual(d(2026, 3, 1))
+    }
+  )
 
   // A timed value is an instant, so its day depends on the display zone. This
   // is the invariant that keeps a chip's cell agreeing with its printed time.

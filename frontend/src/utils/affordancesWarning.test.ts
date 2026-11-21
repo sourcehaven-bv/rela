@@ -105,10 +105,7 @@ describe('warnIfMissingActions', () => {
     const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     // List shape: { data: [...], meta: {...}, _actions: {create: true} }
-    warnIfMissingActions(
-      { data: [], _actions: { create: false } } as never,
-      '/api/v1/tickets',
-    )
+    warnIfMissingActions({ data: [], _actions: { create: false } } as never, '/api/v1/tickets')
 
     expect(spy).not.toHaveBeenCalled()
   })
@@ -138,7 +135,7 @@ describe('warnIfMissingActions', () => {
 
     warnIfMissingActions(
       { _actions: { noop: true, delete: false, update: true } },
-      '/api/v1/tickets/TKT-1',
+      '/api/v1/tickets/TKT-1'
     )
 
     expect(spy).not.toHaveBeenCalled()

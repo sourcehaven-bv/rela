@@ -79,7 +79,9 @@ export function listBaseParams(
  * Spread into a view's list params, and into its export URL, so every read
  * of the tab shows the same rows.
  */
-export function pageScopeParams(scope: PageScope | undefined): Pick<ListParams, 'scope_page' | 'scope_tab' | 'anchor'> {
+export function pageScopeParams(
+  scope: PageScope | undefined
+): Pick<ListParams, 'scope_page' | 'scope_tab' | 'anchor'> {
   if (!scope) return {}
   return { scope_page: scope.page, scope_tab: scope.tab, anchor: scope.entity }
 }
@@ -89,7 +91,10 @@ export function pageScopeParams(scope: PageScope | undefined): Pick<ListParams, 
  * relation-ordered tab, otherwise the list's `default_sort`, as a `sort`
  * param or undefined.
  */
-export function defaultSortParam(config: ListConfig | undefined, relationOrdered: boolean): string | undefined {
+export function defaultSortParam(
+  config: ListConfig | undefined,
+  relationOrdered: boolean
+): string | undefined {
   if (relationOrdered || !config?.default_sort?.length) return undefined
   return sortParam(config.default_sort)
 }

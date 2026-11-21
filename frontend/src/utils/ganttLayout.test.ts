@@ -34,7 +34,7 @@ describe('barSpan', () => {
       node('a', {
         planned: { start: '2026-02-01', end: '2026-03-01' },
         rolled: { start: '2026-01-15', end: '2026-04-01' },
-      }),
+      })
     )
     expect(s.start).toBe(parseDay('2026-01-15'))
     expect(s.end).toBe(parseDay('2026-04-01'))
@@ -49,9 +49,7 @@ describe('barSpan', () => {
 
 describe('forestSpan / pct', () => {
   it('pads the envelope and positions days within it', () => {
-    const axis = forestSpan([
-      node('a', { planned: { start: '2026-01-01', end: '2026-12-31' } }),
-    ])!
+    const axis = forestSpan([node('a', { planned: { start: '2026-01-01', end: '2026-12-31' } })])!
     expect(axis.start).toBeLessThan(parseDay('2026-01-01')!)
     expect(axis.end).toBeGreaterThan(parseDay('2026-12-31')!)
     expect(pct(axis.start, axis)).toBe(0)
@@ -164,10 +162,7 @@ describe('withToday', () => {
 
 describe('findNode', () => {
   it('locates nodes at any depth, or null', () => {
-    const forest = [
-      node('A', { children: [node('B', { children: [node('C')] })] }),
-      node('X'),
-    ]
+    const forest = [node('A', { children: [node('B', { children: [node('C')] })] }), node('X')]
     expect(findNode(forest, 'C')?.id).toBe('C')
     expect(findNode(forest, 'X')?.id).toBe('X')
     expect(findNode(forest, 'ghost')).toBeNull()

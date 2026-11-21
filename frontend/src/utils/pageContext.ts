@@ -61,7 +61,9 @@ export function currentPageTab(route: RouteLocationNormalizedLoaded): PageTabRef
 export function fromPageQuery(route: RouteLocationNormalizedLoaded): Record<string, string> {
   const ref = currentPageTab(route)
   if (!ref) return {}
-  return { [FROM_PAGE_KEY]: ref.entity ? `${ref.page}/${ref.entity}/${ref.tab}` : `${ref.page}/${ref.tab}` }
+  return {
+    [FROM_PAGE_KEY]: ref.entity ? `${ref.page}/${ref.entity}/${ref.tab}` : `${ref.page}/${ref.tab}`,
+  }
 }
 
 /**

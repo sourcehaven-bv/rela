@@ -13,7 +13,7 @@ describe('worldText', () => {
         face: 'Vastgesteld',
         world: 'actueel',
         title: 'Toegangsbeleid',
-      }),
+      })
     ).toBe('Je kijkt naar Vastgesteld van Toegangsbeleid (actueel).')
   })
 

@@ -21,6 +21,7 @@ import {
 } from '@/stores/space'
 import { CONFIGURE_PREFIX, configureRoute, isConfigurePath } from '@/configure/routes'
 import { prefixResolvedLinks } from './spaceLinks'
+import { setLinkSpace } from '@/utils/spacePath'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -517,8 +518,10 @@ router.beforeEach((to) => {
   return { path: withSpace(to.path, space.current), query: to.query, hash: to.hash }
 })
 
-// The guard above covers navigation; this gives a link's href the same space.
+// The guard above covers navigation; these give a link's href the same
+// space, for router links and for hrefs built outside the router.
 prefixResolvedLinks(router, currentSpace)
+setLinkSpace(currentSpace)
 
 /**
  * A page reading at a past instant stays there: a link or a navigation

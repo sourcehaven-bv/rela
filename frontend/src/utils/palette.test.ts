@@ -247,7 +247,10 @@ describe('assignPalette', () => {
 
   it('assigns green hue to success', () => {
     const colors = [
-      '#000000', '#ffffff', '#333333', '#666666', // structural
+      '#000000',
+      '#ffffff',
+      '#333333',
+      '#666666', // structural
       '#22c55e', // green → should map to success
       '#ef4444', // red → error
       '#3b82f6', // blue → info
@@ -261,10 +264,22 @@ describe('assignPalette', () => {
   it('assigns badge colors by hue with enough colors', () => {
     // 16 colors — enough for all 15 roles
     const colors = [
-      '#000000', '#ffffff', '#333333', '#666666',
-      '#22c55e', '#ef4444', '#3b82f6', '#f59e0b',
-      '#8b5cf6', '#f97316', '#eab308', '#6b7280',
-      '#cc3344', '#1e40af', '#15803d', '#c2410c',
+      '#000000',
+      '#ffffff',
+      '#333333',
+      '#666666',
+      '#22c55e',
+      '#ef4444',
+      '#3b82f6',
+      '#f59e0b',
+      '#8b5cf6',
+      '#f97316',
+      '#eab308',
+      '#6b7280',
+      '#cc3344',
+      '#1e40af',
+      '#15803d',
+      '#c2410c',
     ]
     const result = assignPalette(colors)
     // With 16 colors, all badge slots should be filled
@@ -277,8 +292,16 @@ describe('assignPalette', () => {
   })
 
   it('no duplicate UI role assignments', () => {
-    const colors = ['#111111', '#222222', '#333333', '#444444',
-      '#555555', '#666666', '#777777', '#888888']
+    const colors = [
+      '#111111',
+      '#222222',
+      '#333333',
+      '#444444',
+      '#555555',
+      '#666666',
+      '#777777',
+      '#888888',
+    ]
     const result = assignPalette(colors)
     // UI + semantic roles should be unique (no duplicates within theme colors)
     const themeColors = Object.values(result.colors)
@@ -331,8 +354,14 @@ describe('assignPalette', () => {
   it('handles red hue wrap-around (350° should match red)', () => {
     // #cc3344 has hue ~352° which should be close to red (0°)
     const colors = [
-      '#000000', '#ffffff', '#333333', '#666666',
-      '#22c55e', '#cc3344', '#3b82f6', '#f59e0b',
+      '#000000',
+      '#ffffff',
+      '#333333',
+      '#666666',
+      '#22c55e',
+      '#cc3344',
+      '#3b82f6',
+      '#f59e0b',
     ]
     const result = assignPalette(colors)
     expect(result.colors.error).toBe('#cc3344')
@@ -340,10 +369,22 @@ describe('assignPalette', () => {
 
   it('fading-16 palette assigns reasonable roles', () => {
     const fading16 = [
-      '#ddcf99', '#cca87b', '#b97a60', '#9c524e',
-      '#774251', '#4b3d44', '#4e5463', '#5b7d73',
-      '#8e9f7d', '#645355', '#8c7c79', '#a99c8d',
-      '#7d7b62', '#aaa25d', '#846d59', '#a88a5e',
+      '#ddcf99',
+      '#cca87b',
+      '#b97a60',
+      '#9c524e',
+      '#774251',
+      '#4b3d44',
+      '#4e5463',
+      '#5b7d73',
+      '#8e9f7d',
+      '#645355',
+      '#8c7c79',
+      '#a99c8d',
+      '#7d7b62',
+      '#aaa25d',
+      '#846d59',
+      '#a88a5e',
     ]
     const result = assignPalette(fading16)
     // Should have base (darkest), surface (lightest), and several others
@@ -371,8 +412,14 @@ describe('generateDark / generateDarkBadges (Go parity)', () => {
 
   it('returns empty strings for empty input fields', () => {
     expect(generateDark({})).toEqual({
-      base: '', surface: '', accent: '', text: '',
-      success: '', error: '', warning: '', info: '',
+      base: '',
+      surface: '',
+      accent: '',
+      text: '',
+      success: '',
+      error: '',
+      warning: '',
+      info: '',
     })
     expect(generateDarkBadges({})).toEqual({})
   })
@@ -388,12 +435,12 @@ describe('generateDark / generateDarkBadges (Go parity)', () => {
     // ' ' in state — truthy but not a valid hex. Earlier code passed
     // these into the HSL math and produced #NaNNaNNaN.
     const partials: Record<string, string> = {
-      base: ' ',           // whitespace only
-      surface: '#ab',      // truncated
-      accent: '#12345',    // wrong length (5 chars)
-      text: 'not-hex',     // not hex at all
-      success: '#xyzxyz',  // non-hex chars
-      error: '#abc',       // valid 3-digit hex (should NOT be empty)
+      base: ' ', // whitespace only
+      surface: '#ab', // truncated
+      accent: '#12345', // wrong length (5 chars)
+      text: 'not-hex', // not hex at all
+      success: '#xyzxyz', // non-hex chars
+      error: '#abc', // valid 3-digit hex (should NOT be empty)
       warning: '   #abc ', // padded hex (should pass after trim)
       info: '',
     }
@@ -411,11 +458,13 @@ describe('generateDark / generateDarkBadges (Go parity)', () => {
   })
 
   it('skips badge entries with partial hex values', () => {
-    expect(generateDarkBadges({
-      blue: '#3b82f6', // valid
-      red: '#ab',      // partial → skip
-      green: ' ',      // whitespace → skip
-    })).toEqual({
+    expect(
+      generateDarkBadges({
+        blue: '#3b82f6', // valid
+        red: '#ab', // partial → skip
+        green: ' ', // whitespace → skip
+      })
+    ).toEqual({
       blue: generateDarkBadges({ blue: '#3b82f6' }).blue,
     })
   })

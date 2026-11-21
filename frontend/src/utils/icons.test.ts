@@ -51,9 +51,22 @@ describe('icon registry', () => {
     // list; both are generated from one table, and this is the SPA half of
     // that contract.
     for (const required of [
-      'dashboard', 'list', 'kanban', 'search', 'calendar', 'warning',
-      'apps', 'settings', 'document', 'sun', 'moon', 'inbox', 'wrench',
-      'done', 'clock', 'status',
+      'dashboard',
+      'list',
+      'kanban',
+      'search',
+      'calendar',
+      'warning',
+      'apps',
+      'settings',
+      'document',
+      'sun',
+      'moon',
+      'inbox',
+      'wrench',
+      'done',
+      'clock',
+      'status',
     ]) {
       expect(isKnownIcon(required)).toBe(true)
     }

@@ -50,7 +50,7 @@ export function editFormRoute(
   formId: string,
   address: string,
   world?: string,
-  query: Record<string, string> = {},
+  query: Record<string, string> = {}
 ): EditFormRoute {
   return {
     name: 'form-edit',

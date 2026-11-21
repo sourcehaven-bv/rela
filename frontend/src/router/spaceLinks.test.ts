@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { prefixResolvedLinks } from './spaceLinks'
-import { spaceOf, withSpace } from '@/stores/space'
+import { spaceOf, withSpace } from '@/utils/spacePath'
 
 const Blank = { template: '<div />' }
 

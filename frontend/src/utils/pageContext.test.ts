@@ -24,7 +24,15 @@ describe('pageContext', () => {
 
   it('reads only a page id and a tab id back', () => {
     expect(readFromPage({ from_page: 'tickets/table' })).toEqual({ page: 'tickets', tab: 'table' })
-    for (const bad of ['//evil.com/x', '/p/tickets/table', 'tickets', 'a/b/c/d', 'A/b', 'a/b.c/d', 'a/-b/c']) {
+    for (const bad of [
+      '//evil.com/x',
+      '/p/tickets/table',
+      'tickets',
+      'a/b/c/d',
+      'A/b',
+      'a/b.c/d',
+      'a/-b/c',
+    ]) {
       expect(readFromPage({ from_page: bad })).toBeNull()
     }
     expect(readFromPage({ from_page: ['tickets/table'] })).toBeNull()
@@ -32,15 +40,23 @@ describe('pageContext', () => {
 
   it('builds the tab path', () => {
     expect(pageTabPath({ page: 'tickets', tab: 'board' })).toBe('/p/tickets/board')
-    expect(pageTabPath({ page: 'topic', entity: 'TOP-1', tab: 'board' })).toBe('/p/topic/TOP-1/board')
+    expect(pageTabPath({ page: 'topic', entity: 'TOP-1', tab: 'board' })).toBe(
+      '/p/topic/TOP-1/board'
+    )
   })
 
   it('carries the entity of an entity page', () => {
     const r = route('entity-page', { page: 'topic', entity: 'TOP-1', tab: 'board' })
     expect(currentPageTab(r)).toEqual({ page: 'topic', entity: 'TOP-1', tab: 'board' })
     expect(fromPageQuery(r)).toEqual({ from_page: 'topic/TOP-1/board' })
-    expect(readFromPage({ from_page: 'topic/TOP-1/board' })).toEqual({ page: 'topic', entity: 'TOP-1', tab: 'board' })
-    expect(fromPageQuery(route('entity-page', { page: 'topic', entity: '', tab: 'board' }))).toEqual({})
+    expect(readFromPage({ from_page: 'topic/TOP-1/board' })).toEqual({
+      page: 'topic',
+      entity: 'TOP-1',
+      tab: 'board',
+    })
+    expect(
+      fromPageQuery(route('entity-page', { page: 'topic', entity: '', tab: 'board' }))
+    ).toEqual({})
   })
 })
 

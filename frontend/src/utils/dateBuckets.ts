@@ -173,7 +173,10 @@ export function bucketMeta(
       const wall = new Date(`${(value as string).slice(0, 19)}Z`)
       return wall.toLocaleTimeString(locale, { timeStyle: 'short', timeZone: 'UTC' })
     }
-    return new Date(value as string).toLocaleTimeString(locale, { timeStyle: 'short', timeZone: tz })
+    return new Date(value as string).toLocaleTimeString(locale, {
+      timeStyle: 'short',
+      timeZone: tz,
+    })
   }
   // Formatted from the calendar day at UTC noon in UTC, so the zone cannot
   // move it onto a neighbouring day.

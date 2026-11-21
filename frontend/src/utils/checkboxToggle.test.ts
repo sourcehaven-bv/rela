@@ -36,7 +36,12 @@ const okCases: OkCase[] = [
   { name: 'plus bullet', content: '+ [ ] task', index: 0, want: '+ [x] task' },
   { name: 'ordered single-digit', content: '1. [ ] task', index: 0, want: '1. [x] task' },
   { name: 'ordered multi-digit', content: '42. [ ] task', index: 0, want: '42. [x] task' },
-  { name: 'preserves indentation', content: '    - [ ] indented', index: 0, want: '    - [x] indented' },
+  {
+    name: 'preserves indentation',
+    content: '    - [ ] indented',
+    index: 0,
+    want: '    - [x] indented',
+  },
   {
     name: 'preserves CRLF line endings on untouched lines',
     content: '- [ ] first\r\n- [ ] second',

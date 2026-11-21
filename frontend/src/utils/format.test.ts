@@ -416,7 +416,9 @@ describe('formatDisplayNumber', () => {
     expect(formatDisplayNumber(3500, { type: 'integer' }, 'nl-NL')).toBeUndefined()
     expect(formatDisplayNumber(3500, undefined, 'nl-NL')).toBeUndefined()
     expect(formatDisplayNumber('n/a', eur, 'nl-NL')).toBeUndefined()
-    expect(formatDisplayNumber(3500, { type: 'string', display: { currency: 'EUR' } }, 'nl-NL')).toBeUndefined()
+    expect(
+      formatDisplayNumber(3500, { type: 'string', display: { currency: 'EUR' } }, 'nl-NL')
+    ).toBeUndefined()
   })
 
   it('is applied by formatCellValue', () => {
@@ -430,7 +432,9 @@ describe('formatDisplayNumber', () => {
     expect(plain(formatDisplayNumber('12.5', dec, 'nl-NL'))).toBe('€ 12,50')
     expect(plain(formatDisplayNumber('0.125', dec, 'nl-NL'))).toBe('€ 0,125')
     expect(plain(formatDisplayNumber('3500', dec, 'nl-NL'))).toBe('€ 3.500')
-    expect(plain(formatDisplayNumber('1234567890123456789.01', dec, 'en-US'))).toBe('€1,234,567,890,123,456,789.01')
+    expect(plain(formatDisplayNumber('1234567890123456789.01', dec, 'en-US'))).toBe(
+      '€1,234,567,890,123,456,789.01'
+    )
     expect(formatDisplayNumber('1e3', dec, 'nl-NL')).toBeUndefined()
   })
 
