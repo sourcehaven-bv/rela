@@ -232,7 +232,8 @@
     "schemaChanged": "De configuratie is gewijzigd. Laad opnieuw en probeer het nog eens.",
     "stateChanged": "Dit is gewijzigd terwijl je bezig was. Probeer het opnieuw.",
     "encryptedInaccessible": "Dit item is versleuteld en kan hier niet worden bewerkt",
-    "historyUnsupported": "Deze installatie bewaart geen versiegeschiedenis"
+    "historyUnsupported": "Deze installatie bewaart geen versiegeschiedenis",
+    "tenantReadOnly": "Deze werkruimte is alleen-lezen"
   },
   "dashboard": {
     "openList": "Open de lijst",
@@ -766,6 +767,7 @@
     }
   },
   "form": {
+    "workspaceReadOnly": "Deze werkruimte is alleen-lezen. Nieuwe records kunnen niet worden opgeslagen.",
     "saveFailed": "Opslaan mislukt",
     "allChangesSaved": "Alle wijzigingen opgeslagen",
     "sidePanel": {
@@ -1137,8 +1139,8 @@
       "searching": "Zoeken...",
       "selected": "{number} geselecteerd"
     },
-    "provisioning": "Je organisatie wordt ingericht. Dit duurt even.",
-    "provisioningFailed": "Het inrichten van je organisatie is niet gelukt. Probeer het later opnieuw, of neem contact op met je beheerder als het blijft mislukken."
+    "provisioning": "Je werkruimte wordt ingericht. Dit duurt even.",
+    "provisioningFailed": "Het inrichten van je werkruimte is niet gelukt. Probeer het later opnieuw, of neem contact op met je beheerder als het blijft mislukken."
   },
   "switcher": {
     "projects": "Projecten",

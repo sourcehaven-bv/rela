@@ -2,6 +2,7 @@ import axios, { type AxiosInstance, type AxiosResponse } from 'axios'
 import { ApiError, toApiError } from './errors'
 import { apiUrl } from './base'
 import { isProvisioningResponse, startProvisioningPoll } from './tenantProvisioning'
+import { trackWorkspaceReadOnly } from './workspaceReadOnly'
 import { carriesAsOf, currentAsOf } from './asOf'
 import { t } from '@/i18n'
 
@@ -55,6 +56,7 @@ class ApiClient {
           void startProvisioningPoll()
           return Promise.reject(toApiError(new Error('tenant_provisioning')))
         }
+        trackWorkspaceReadOnly(response.config, response.status, response.data)
         return response
       },
       (error: unknown) => {
@@ -67,6 +69,9 @@ class ApiClient {
           isProvisioningResponse(error.response.status, error.response.data)
         ) {
           void startProvisioningPoll()
+        }
+        if (axios.isAxiosError(error) && error.response) {
+          trackWorkspaceReadOnly(error.config ?? {}, error.response.status, error.response.data)
         }
         return Promise.reject(toApiError(error))
       },

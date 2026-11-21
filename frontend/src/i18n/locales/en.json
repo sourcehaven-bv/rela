@@ -232,7 +232,8 @@
     "schemaChanged": "The configuration changed. Reload and try again.",
     "stateChanged": "This changed while you were working. Try again.",
     "encryptedInaccessible": "This item is encrypted and cannot be edited here",
-    "historyUnsupported": "This installation does not keep version history"
+    "historyUnsupported": "This installation does not keep version history",
+    "tenantReadOnly": "This workspace is read-only"
   },
   "dashboard": {
     "openList": "Open the list",
@@ -766,6 +767,7 @@
     }
   },
   "form": {
+    "workspaceReadOnly": "This workspace is read-only. New records cannot be saved.",
     "saveFailed": "Save failed",
     "allChangesSaved": "All changes saved",
     "sidePanel": {
@@ -1137,8 +1139,8 @@
       "searching": "Searching...",
       "selected": "{number} selected"
     },
-    "provisioning": "Setting up your organization. This takes a moment.",
-    "provisioningFailed": "Setting up your organization did not finish. Try again later, or contact your administrator if it keeps failing."
+    "provisioning": "Setting up your workspace. This takes a moment.",
+    "provisioningFailed": "Setting up your workspace did not finish. Try again later, or contact your administrator if it keeps failing."
   },
   "switcher": {
     "projects": "Projects",

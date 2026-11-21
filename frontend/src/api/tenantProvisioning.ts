@@ -33,7 +33,7 @@ const UNAVAILABLE_PROBLEMS = [
   'provisioning_needs_operator',
 ]
 
-/** Whether a response is the server's "your organization is being set up". */
+/** Whether a response is the server's "this workspace is still being set up". */
 export function isProvisioningResponse(status: number, data: unknown): boolean {
   if (typeof data !== 'object' || data === null) return false
   if (status === 202) return (data as { status?: unknown }).status === 'provisioning'
