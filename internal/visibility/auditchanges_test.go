@@ -23,6 +23,7 @@ import (
 // excludedFromChanges are the audit ops a change list never shows, each
 // with why. Together with visibility.ChangeOps they must name every op.
 var excludedFromChanges = map[string]string{
+	audit.OpAppendRecords: "record rows, not entity content",
 	audit.OpUpdateRecord:  "a record row, not entity content",
 	audit.OpDeleteRecord:  "a record row, not entity content",
 	audit.OpDeniedWrite:   "a refusal: nothing changed, and its summary names the denial",
