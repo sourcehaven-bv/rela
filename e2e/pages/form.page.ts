@@ -1141,6 +1141,12 @@ export class FormPage extends BasePage {
     return this.fileWidget(property).locator("img.image-preview-img");
   }
 
+  /** Click the image widget's remove button and confirm the dialog. */
+  async removeImage(property: string) {
+    await this.fileWidget(property).locator(".image-remove").click();
+    await this.page.getByRole("button", { name: "Delete", exact: true }).click();
+  }
+
   /** Edit mode only: attach a file and wait for its upload to succeed, so a
    *  following navigation cannot abort it. */
   async attachFileAndWaitForUpload(property: string, name: string, contents: string) {

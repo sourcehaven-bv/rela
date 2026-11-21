@@ -33,13 +33,13 @@ test.describe('Image field', () => {
 
     const detail = new EntityPage(appPage);
     await detail.navigateToEntity('brand', created.id);
-    const preview = appPage.locator('main img.image-preview-img');
+    const preview = detail.imagePreview();
     await expect(preview).toBeVisible();
     expect(await decoded(preview)).toBe(true);
 
     const list = new ListPage(appPage);
     await list.navigateToList('brand_logos');
-    const thumb = appPage.locator('.rl-table-row img.image-cell').first();
+    const thumb = list.firstImageThumbnail();
     await expect(thumb).toBeVisible();
     expect(await decoded(thumb)).toBe(true);
   });
@@ -56,9 +56,7 @@ test.describe('Image field', () => {
       .poll(async () => (await api.getEntity('brands', brand.id))._attachments?.logo?.[0]?.filename)
       .toBe('two.png');
 
-    await appPage.locator('#field-logo .image-remove').click();
-    // The widget asks for confirmation through the app's own dialog.
-    await appPage.getByRole('button', { name: 'Delete', exact: true }).click();
+    await form.removeImage('logo');
     await expect
       .poll(async () => (await api.getEntity('brands', brand.id))._attachments?.logo ?? [])
       .toHaveLength(0);

@@ -803,12 +803,12 @@ type PropertyDef struct {
 
 // PropertyDisplay is the wire form of metamodel.PropertyDisplay.
 type PropertyDisplay struct {
+	// Image marks a file property as an image (TKT-WG1410D).
+	Image    bool   `json:"image,omitempty"`
 	Currency string `json:"currency,omitempty"`
 	Link     bool   `json:"link,omitempty"`
 	// LinkText replaces the URL as the text of a link (TKT-IO9PTLD).
 	LinkText string `json:"link_text,omitempty"`
-	// Image marks a file property as an image (TKT-WG1410D).
-	Image bool `json:"image,omitempty"`
 }
 
 // RelationType is the JSON representation of a relation type.
