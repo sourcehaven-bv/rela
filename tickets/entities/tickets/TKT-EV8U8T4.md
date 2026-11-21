@@ -1,45 +1,32 @@
 ---
 id: TKT-EV8U8T4
 type: ticket
-title: 'Record types: MCP, Lua, CLI, rollups, SPA and backend registry'
+title: 'Record types: MCP tools, Lua list and aggregate, and CLI'
 kind: enhancement
 priority: medium
-effort: l
+effort: m
 status: backlog
 ---
 
 ## Description
 
-Follow-up to TKT-J7Q9C4K, which shipped the record store core: the `records:`
-schema section, the `Store` contract with file, sqlite and postgres backends,
-the conformance suite, the service with owner-based ACL, bucketed aggregates,
-the ledger constraint (balance, reverse, period lock), owner rename and delete,
-retention, and the REST surface under `/api/v1/_records`.
+Follow-up to TKT-J7Q9C4K, which shipped the record store core and the REST
+surface under `/api/v1/_records`. TKT-RK810V7 added `rela.append_records`.
 
-This ticket covers the parts TKT-J7Q9C4K deferred:
+This ticket adds the remaining agent and script surfaces:
 
-- MCP tools and Lua bindings (`rela.records`) for append, list and aggregate.
-- CLI: `rela records append|list|aggregate|expire`. The hourly retention job
-shipped in TKT-J7Q9C4K.
-- Rollup source: a rollup column reads a record type (`latest`, `sum`, `avg`
-over a window), with decimal `sum` and `avg` in rollups generally.
-- SPA: a records panel on the entity page with a table and a line chart.
-- Named backend registry: `.rela/records.yaml` `backend: <name>` resolved from
-factories in `internal/appbuild`, with a test backend proving selection.
-- Optional `records:read` and `records:append` permissions per record type.
-- An `entity` ref field type (`target:`) for dimensions such as a person.
+- MCP tools for append, list and aggregate.
+- Lua bindings for list and aggregate, next to `rela.append_records`.
+- CLI: `rela records append|list|aggregate|expire`. Decide who may run
+`expire`; retention today runs only as the hourly job.
 
-Review items deferred from TKT-J7Q9C4K:
-
-- A native SQL `Aggregator` for `sqlrecords` (bucket and fold in the
-database), so aggregates are not capped at `MaxAggregateRows`, with a
-`storetest.Counting`-style budget test.
-- Refuse to delete an owner that still has ledger rows (BUG-WOFSBFM).
-- Decide whether record writes go to the audit log.
+The other parts of the original ticket are split out: rollups over records, the
+native SQL aggregator, per-type permissions, the `entity` field type, the
+backend registry, the entity-page panel, and the append audit. BUG-WOFSBFM
+covers refusing to delete a ledger owner.
 
 ## Acceptance
 
 - Each surface goes through `records.Service`, never `records.Store`.
-- A test backend named in `.rela/records.yaml` is selected at wiring.
-- A rollup over a record type shows `latest` and `sum` on the owner in views,
-gated before it folds.
+- MCP and CLI reads are gated like the REST reads: a hidden owner's rows do
+not appear and are not folded.

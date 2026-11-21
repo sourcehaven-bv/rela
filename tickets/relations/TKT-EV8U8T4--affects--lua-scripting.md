@@ -1,5 +1,5 @@
 ---
 from: TKT-EV8U8T4
 relation: affects
-to: metamodel-types
+to: lua-scripting
 ---
