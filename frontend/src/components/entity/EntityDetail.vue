@@ -135,6 +135,7 @@ import { recordRecentEntity } from '@/utils/recentEntities'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 import type { RowMove } from 'rela-components/components/table/types'
 import OrderedSectionRow from '@/components/entity/OrderedSectionRow.vue'
+import { sectionColumnLabel } from '@/utils/sectionTable'
 import { sectionRowLabel, useSectionReorder } from '@/composables/useSectionReorder'
 import { useQueryCache } from '@pinia/colada'
 import { entityKeys } from '@/queries/entities'
@@ -3272,23 +3273,26 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                   class="table-group"
                 >
                   <h3 class="group-heading">{{ group.groupName }}</h3>
-                  <table class="data-table">
-                    <thead>
-                      <tr>
+                  <table class="data-table" role="table">
+                    <thead role="rowgroup">
+                      <tr role="row">
                         <th
-                          v-for="col in group.columns ?? section.columns"
+                          v-for="(col, ci) in group.columns ?? section.columns"
                           :key="col.property || col.relation"
+                          role="columnheader"
+                          :class="{ 'section-col--secondary': ci > 0 && col.primary === false }"
                         >
-                          {{ col.label || col.property || col.relation }}
+                          {{ sectionColumnLabel(col) }}
                         </th>
-                        <th class="actions-col" />
+                        <th class="actions-col" role="columnheader" />
                       </tr>
                     </thead>
-                    <tbody>
+                    <tbody role="rowgroup">
                       <tr
                         v-for="row in group.rows"
                         :id="anchorId(section.sectionId, row.entityId)"
                         :key="row.entityId"
+                        role="row"
                       >
                         <SectionTableRowCells
                           :key="tableRowKey(row)"
@@ -3318,19 +3322,28 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 </div>
               </template>
 
-              <table v-else class="data-table">
-                <thead>
-                  <tr>
-                    <th v-if="sectionReorder.movable(section)" class="order-col">
+              <table v-else class="data-table" role="table">
+                <thead role="rowgroup">
+                  <tr role="row">
+                    <th
+                      v-if="sectionReorder.movable(section)"
+                      class="order-col"
+                      role="columnheader"
+                    >
                       <span class="rl-visually-hidden">{{ t('entity.order') }}</span>
                     </th>
-                    <th v-for="col in section.columns" :key="col.property || col.relation">
-                      {{ col.label || col.property || col.relation }}
+                    <th
+                      v-for="(col, ci) in section.columns"
+                      :key="col.property || col.relation"
+                      role="columnheader"
+                      :class="{ 'section-col--secondary': ci > 0 && col.primary === false }"
+                    >
+                      {{ sectionColumnLabel(col) }}
                     </th>
-                    <th class="actions-col" />
+                    <th class="actions-col" role="columnheader" />
                   </tr>
                 </thead>
-                <tbody>
+                <tbody role="rowgroup">
                   <!--
                   A section in relation order the reader may change gets a
                   handle per row. The row component is the <tr> itself, so
@@ -3341,6 +3354,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                     v-for="row in section.rows"
                     :id="anchorId(section.sectionId, row.entityId)"
                     :key="row.entityId"
+                    role="row"
                     v-bind="
                       sectionReorder.movable(section)
                         ? {
@@ -4056,9 +4070,11 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   align-items: center;
 }
 
-/* Table */
+/* Table. The wrapper is the container the stacked layout below measures, so
+   a section in a narrow detail panel stacks as it does on a phone. */
 .table-wrapper {
   overflow-x: auto;
+  container: section-table / inline-size;
 }
 
 /* display: nested — parent rows that expand to their children. */
@@ -4231,6 +4247,123 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 
 .actions-col {
   width: 60px;
+}
+
+/* The column name beside each value; only a stacked row shows it. */
+.data-table :deep(.section-cell__label) {
+  display: none;
+}
+
+/*
+ * A narrow section stacks each row into a block (BUG-6WQ1U8S), as a list
+ * and a dashboard table card do on a phone: the first column heads the row,
+ * and each other column is a "name  value" line. A table that scrolled
+ * sideways wrapped its dates and pushed its last columns off screen.
+ *
+ * The row is a grid. The order handle, the heading cell and the edit button
+ * share the first line; every other cell takes a full line of its own. The
+ * explicit roles in the template keep the table a table for a screen reader
+ * once its parts are no longer laid out as one.
+ */
+@container section-table (max-width: 480px) {
+  .data-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .data-table,
+  .data-table tbody {
+    display: block;
+  }
+
+  .data-table tbody > tr {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--rl-color-border);
+  }
+
+  .data-table tbody > tr:last-child {
+    border-bottom: none;
+  }
+
+  .data-table :deep(td:not(.ordered-row__handle-cell)) {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    align-items: center;
+    gap: var(--space-sm);
+    padding: 2px 0;
+    border-bottom: none;
+  }
+
+  /* A long value without spaces, such as an email address, wraps within its
+     line rather than widening the row. */
+  .data-table :deep(.section-cell__value) {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .data-table :deep(td.ordered-row__handle-cell) {
+    grid-column: 1;
+    grid-row: 1;
+    padding-right: var(--space-sm);
+    border-bottom: none;
+  }
+
+  .data-table :deep(td.section-cell--title) {
+    grid-column: 2;
+    grid-row: 1;
+    grid-template-columns: minmax(0, 1fr);
+    font-weight: 600;
+  }
+
+  .data-table :deep(td.actions-cell) {
+    grid-column: 3;
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .data-table :deep(td:not(.section-cell--title) .section-cell__label) {
+    display: block;
+    color: var(--rl-color-text-muted);
+    overflow-wrap: break-word;
+    hyphens: auto;
+  }
+
+  /* A number reads as a value on its line, not trailing at the far edge. */
+  .data-table :deep(td.data-table-cell--numeric) {
+    text-align: left;
+  }
+
+  /* `primary: false` leaves a column out of the stacked row. Its header
+     goes too, so a screen reader still pairs each cell with its own header,
+     and a link in the column is not a hidden tab stop. */
+  .data-table th.section-col--secondary,
+  .data-table :deep(td.section-cell--secondary) {
+    display: none;
+  }
+
+  /* A cell with no value would leave a label with no answer. It is hidden
+     from sight only: a screen reader still counts it, so the cells after it
+     keep their column headers. */
+  .data-table :deep(td.section-cell--empty) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
 
 .section-totals {

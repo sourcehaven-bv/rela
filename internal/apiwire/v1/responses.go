@@ -1882,6 +1882,10 @@ type ViewColumn struct {
 	// (TKT-4Q2EIVZ), empty otherwise. A cell is an input only when its row's
 	// `_fields` verdict also allows the write.
 	Render string `json:"render,omitempty"`
+	// Primary is the column's `primary:` (BUG-6WQ1U8S). A table section
+	// stacks its rows on a phone and leaves out a column set to false there.
+	// Nil when the config does not set it.
+	Primary *bool `json:"primary,omitempty"`
 }
 
 // ViewRow represents a table row.

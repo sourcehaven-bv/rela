@@ -2120,7 +2120,7 @@ the face each row was served in, or a busy indicator. Set exactly one of `proper
 | `direction` | string | Relation columns only: `"outgoing"` or `"incoming"`; inferred when omitted   |
 | `face`      | bool   | Shows the label of the face each row was served in; faced types only        |
 | `busy`      | string | Channel type; shows a busy indicator while a channel of this type on the row is in a working state; lists only |
-| `primary`   | bool   | Keeps the column on a narrow list, as on a phone; lists only; see [Columns on a phone](#columns-on-a-phone) |
+| `primary`   | bool   | Keeps or drops the column on a narrow list, as on a phone; on a table section, `false` drops it from a stacked row; see [Columns on a phone](#columns-on-a-phone) |
 | `label`     | string | Column header (defaults to the schema label, then the property / relation name, `Face` or `Busy`) |
 | `sortable`  | bool   | Column can be sorted by clicking the header                                 |
 | `link`      | string | `detail` links the cell to the entity's detail page; `document/<name>` to a document |
@@ -2128,6 +2128,11 @@ the face each row was served in, or a busy indicator. Set exactly one of `proper
 An unset column `label` shows the label the schema gives the property, or the relation's
 label (its inverse label on an incoming column). Forms use the same schema label, so set a
 label in `schema.yaml` once instead of repeating it on every list and view.
+
+The row's title is the column with `link:`, or the first column when no column
+has one. A click anywhere on the row opens the entity. A title column with
+`link:` shows in the link colour, as links do elsewhere in the app; without
+`link:` the title is plain text.
 
 **Face column example** — on a list of a type with `concept` and `vastgesteld` faces, show
 which one the world serves for each row:
@@ -2218,8 +2223,10 @@ lists:
         primary: true
 ```
 
-`primary:` is for lists only. On a dashboard card or a view section column it
-is a config error, because those tables do not drop columns.
+A `display: table` section of a view takes `primary:` too. It does not drop
+columns by default: see [Table sections on a phone](#table-sections-on-a-phone).
+On a dashboard card, and on a view section that is not `display: table`,
+`primary:` is a config error, because those surfaces do not drop columns.
 
 ### Static Filters
 
@@ -3473,6 +3480,32 @@ shows its new value. A total the reader may not see, or one that is not set,
 is left out rather than shown as zero. `totals:` is valid on `display: table`
 sections only.
 
+#### Table sections on a phone
+
+A `display: table` section 480 pixels wide or narrower, as on a phone or in a
+narrow detail panel, shows each row as a block instead of a table. The width
+that counts is the section's own, not the screen's. The first
+column heads the block, beside the edit button. Every other column is a line
+with the column name and the value, so the table never scrolls sideways. A
+line with no value is left out, unless the reader can fill it in.
+
+Set `primary: false` on a column to leave it out of the block. The first
+column always stays. Every other column stays by default; `primary: true`
+changes nothing here.
+
+```yaml
+sections:
+  - heading: Invoices
+    source: invoices
+    display: table
+    columns:
+      - {property: invoice_number, link: detail}
+      - {property: issued}
+      - {property: due, primary: false}   # left out on a phone
+      - {property: total}
+      - {property: pdf_url}
+```
+
 ### Widget Overrides
 
 By default the widget is chosen from the property's declared type — `boolean`
@@ -4256,6 +4289,7 @@ The number of columns follows the width of the screen, so `width` names a size
 rather than a column count. On a phone (a screen 480 pixels wide or less),
 every card takes the whole row, whatever its `width`, and a table card shows
 each row as a stack of column names and values, so it never scrolls sideways.
+A long value without spaces, such as an email address, wraps within its line.
 At every width, a short value of one word, such as an invoice number, stays on
 one line instead of breaking at a hyphen.
 Cards have no height

@@ -999,6 +999,14 @@ watch([() => props.name, () => props.anchor, worldParam], () => void loadData())
     font-weight: 600;
   }
 
+  /* A long value without spaces, such as an email address, wraps rather
+     than widening its column past the labels of the other lines. A short
+     token keeps its line (cell-value--nowrap). */
+  .card-table .cell-value:not(.cell-value--nowrap) {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
   .card-table td:not(:first-child) .cell-label {
     display: block;
     color: var(--rl-color-text-muted);

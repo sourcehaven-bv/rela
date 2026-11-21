@@ -1109,6 +1109,7 @@ func viewColumnsToV1(cols []ListColumn) []v1.ViewColumn {
 			Relation: col.Relation,
 			Link:     col.Link,
 			Render:   col.Render,
+			Primary:  col.Primary,
 		})
 	}
 	return out

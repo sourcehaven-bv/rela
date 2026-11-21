@@ -818,7 +818,9 @@ export class EntityPage extends BasePage {
 
   async expectTableCellText(heading: string, rowId: string, column: string, text: string) {
     const cell = await this.sectionTableCell(heading, rowId, column);
-    await expect(cell).toHaveText(text);
+    // innerText, not textContent: each cell also holds its column label for
+    // the stacked phone layout, hidden at this width (BUG-6WQ1U8S).
+    await expect(cell).toHaveText(text, { useInnerText: true });
   }
 
   /** Open a cell's inline editor, type `value` and keep it with Enter.
