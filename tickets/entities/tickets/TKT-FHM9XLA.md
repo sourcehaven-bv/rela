@@ -5,7 +5,7 @@ title: Polish relation cards and attachment list
 kind: enhancement
 priority: medium
 effort: s
-status: ready
+status: done
 ---
 
 ## Description
