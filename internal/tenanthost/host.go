@@ -115,6 +115,10 @@ type Config struct {
 	// Webhook. Without it those events are refused with 503, never passed
 	// to the tenant or acknowledged.
 	StatusSync StatusSyncer
+	// TenantAPI verifies the bearer token of the tenant API. Optional: nil
+	// leaves [TenantsPath] an ordinary path that needs an assertion. It
+	// needs provisioning on.
+	TenantAPI TenantAPIVerifier
 }
 
 // Host is the front http.Handler of a multi-tenant server.
@@ -142,7 +146,7 @@ func New(cfg Config) (*Host, error) {
 	if cfg.StatusSync != nil && cfg.Webhook == nil {
 		return nil, errors.New("tenanthost: status sync needs the IdP webhook")
 	}
-	if err := validateProvision(cfg.Provision, cfg.Webhook != nil); err != nil {
+	if err := validateProvision(cfg.Provision, cfg.Webhook != nil, cfg.TenantAPI != nil); err != nil {
 		return nil, err
 	}
 	return &Host{cfg: cfg, prov: newProvisioning(cfg.Provision)}, nil
@@ -169,6 +173,10 @@ func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	clean := cleanPath(r.URL.Path)
 	if h.cfg.Webhook != nil && r.Method == http.MethodPost && clean == WebhookPath {
 		h.serveWebhook(w, r)
+		return
+	}
+	if h.cfg.TenantAPI != nil && strings.HasPrefix(clean, TenantsPath) {
+		h.serveTenantAPI(w, r, clean)
 		return
 	}
 	// shell serves the static shell instead of a refusal on a tenant-free

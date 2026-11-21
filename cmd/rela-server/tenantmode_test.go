@@ -138,6 +138,44 @@ func TestValidateStatusSync(t *testing.T) {
 	}
 }
 
+// TestValidateTenantAPI pins the boot refusals of the tenant API: its
+// audience is its own, and it needs provisioning on.
+func TestValidateTenantAPI(t *testing.T) {
+	flags := func(aud, provision string) *serverFlags {
+		f := jwtFlags()
+		f.tenant.enabled, f.tenant.apiAudience, f.tenant.provision = true, aud, provision
+		f.webhookAudience = "rela-webhook"
+		return f
+	}
+	tests := []struct {
+		name    string
+		flags   *serverFlags
+		wantErr string
+	}{
+		{name: "off", flags: flags("", "")},
+		{name: "webhook mode", flags: flags("rela-tenant-api", "webhook")},
+		{name: "lazy mode", flags: flags("rela-tenant-api", "lazy")},
+		{name: "identity audience", flags: flags("rela", "webhook"), wantErr: "-jwt-audience"},
+		{name: "webhook audience", flags: flags("rela-webhook", "webhook"), wantErr: "-webhook-audience"},
+		{name: "provisioning unset", flags: flags("rela-tenant-api", ""), wantErr: "-tenant-provision"},
+		{name: "provisioning off", flags: flags("rela-tenant-api", "off"), wantErr: "-tenant-provision"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateTenantAPI(tc.flags)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want one containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 // TestRefuseTenantOnlyFlags pins that the flags only tenant mode acts on are
 // refused without it.
 func TestRefuseTenantOnlyFlags(t *testing.T) {
@@ -157,6 +195,7 @@ func TestRefuseTenantOnlyFlags(t *testing.T) {
 	}
 	for _, tf := range []tenantFlags{
 		{luaHTTPAllow: "10.0.0.0/8"}, {sharedHostConfig: true}, {provision: "lazy"}, {provisionRate: 5},
+		{apiAudience: "rela-tenant-api"},
 	} {
 		if err := refuseTenantOnlyFlags(tf); err == nil || !strings.Contains(err.Error(), "needs tenant mode") {
 			t.Errorf("%+v without tenant mode = %v; want a refusal", tf, err)
