@@ -2497,8 +2497,10 @@ taking the first, since the request asked two different things.
 
 ### Filter Controls
 
-Interactive filters shown above the table. A control filters on either a
-**property** or a **relation** (set exactly one):
+Interactive filters, opened from a **Filters** drop-down in the page header. The
+button shows how many filters are active. Lists and boards also have a search
+box and a **Sort** menu (a property and a direction) beside it. A control
+filters on either a **property** or a **relation** (set exactly one):
 
 ```yaml
 filter_controls:

@@ -39,6 +39,7 @@ import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
 import SearchBox from './SearchBox.vue'
 import AdHocFilterMenu from './AdHocFilterMenu.vue'
+import SortMenu, { type SortOption } from './SortMenu.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import AddToPileMenu from '@/components/piles/AddToPileMenu.vue'
@@ -740,6 +741,24 @@ function handleSort(field: string, event: MouseEvent) {
   page.value = 1
 }
 
+/** The properties the Sort menu offers: the list's own sortable columns. */
+const sortOptions = computed<SortOption[]>(() => {
+  const seen = new Set<string>()
+  const out: SortOption[] = []
+  for (const column of listConfig.value?.columns ?? []) {
+    if (!column.property || column.sortable === false || seen.has(column.property)) continue
+    seen.add(column.property)
+    out.push({ property: column.property, label: column.label || column.property })
+  }
+  return out
+})
+
+function handleSortMenu(specs: SortSpec[]) {
+  sortSpecs.value = specs
+  // Sort changed: back to page 1, as a header click does.
+  page.value = 1
+}
+
 /*
  * A column for the property the list is grouped by repeats its section's
  * heading on every row, so it is left out. Not for date buckets: a bucket
@@ -1406,6 +1425,14 @@ watch(searchQuery, () => {
           :placeholder="t('list.searchEntities', { entity: listConfig.entity })"
           @update:model-value="handleSearchUpdate"
         />
+        <FilterBar
+          v-if="listConfig.filter_controls?.length"
+          :config="listConfig"
+          :entity-type="entityType"
+          :filters="filters"
+          @filter="handleFilter"
+        />
+        <SortMenu :options="sortOptions" :model-value="sortSpecs" @update:model-value="handleSortMenu" />
         <AdHocFilterMenu
           ref="filterMenuRef"
           mode="list"
@@ -1455,13 +1482,6 @@ watch(searchQuery, () => {
     </div>
 
     <div class="list-content">
-      <FilterBar
-        v-if="listConfig.filter_controls?.length"
-        :config="listConfig"
-        :entity-type="entityType"
-        :filters="filters"
-        @filter="handleFilter"
-      />
       <!--
         A grouped list loads up to its row cap and no further, so past the cap
         the sections are a prefix of the list. Said once, above them, rather

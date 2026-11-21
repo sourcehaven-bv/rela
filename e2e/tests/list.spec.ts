@@ -109,6 +109,60 @@ test.describe('List View', () => {
     });
   });
 
+  test.describe('Toolbar', () => {
+    test('search narrows the rows to the matches', async ({ appPage }) => {
+      const listPage = new ListPage(appPage);
+
+      await listPage.navigateToList('features');
+      await listPage.expectRowContains('Export Data');
+
+      await listPage.search('Dashboard');
+
+      await listPage.expectRowContains('Dashboard Analytics');
+      await listPage.expectRowNotVisible('Export Data');
+    });
+
+    test('the sort menu orders the rows by a property and a direction', async ({ appPage }) => {
+      const listPage = new ListPage(appPage);
+
+      await listPage.navigateToList('features');
+
+      await listPage.sortBy('title', 'Descending');
+      await listPage.expectFirstRowContains('User Authentication');
+
+      await listPage.sortBy('title', 'Ascending');
+      await listPage.expectFirstRowContains('Checkbox render fixture');
+    });
+
+    test('the filter drop-down opens and closes from the keyboard', async ({ appPage }) => {
+      const listPage = new ListPage(appPage);
+
+      await listPage.navigateToList('features');
+
+      await listPage.openFilterMenuWithKeyboard();
+      await listPage.closeFilterMenuWithEscape();
+    });
+
+    test('the sort menu opens and closes from the keyboard', async ({ appPage }) => {
+      const listPage = new ListPage(appPage);
+
+      await listPage.navigateToList('features');
+
+      await listPage.openAndCloseSortMenuWithKeyboard();
+    });
+
+    test('the filter trigger counts the active filters', async ({ appPage }) => {
+      const listPage = new ListPage(appPage);
+
+      await listPage.navigateToList('features');
+      await expect(listPage.filterMenuCount).toHaveCount(0);
+
+      await listPage.setFilterByIndex(0, 'approved');
+
+      await expect(listPage.filterMenuCount).toHaveText('1');
+    });
+  });
+
   test.describe('Filtering', () => {
     test('filter controls are visible', async ({ appPage }) => {
       const listPage = new ListPage(appPage);

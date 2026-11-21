@@ -160,9 +160,19 @@ export class KanbanPage extends BasePage {
   /** Pick a value in the filter control labelled `label`. The board renders
    *  the list's FilterBar, so it is found the way the list page finds it. */
   async setFilter(label: string, value: string) {
-    const control = this.filterBar.locator('.filter-item').filter({ hasText: new RegExp(label, 'i') });
+    await this.openFilterMenu();
+    const control = this.filterPanel.locator('.filter-item').filter({ hasText: new RegExp(label, 'i') });
     await this.pickFilterOption(control, value);
     await this.waitForSpinnerToDisappear();
+  }
+
+  /** Sort the board and wait for the read that carries the sort. */
+  async sortByAndWaitForRead(property: string, direction: 'Ascending' | 'Descending', sortParam: string) {
+    const read = this.page.waitForRequest(
+      (r) => r.url().includes('/api/v1/') && r.url().includes(`sort=${encodeURIComponent(sortParam)}`),
+    );
+    await this.sortBy(property, direction);
+    await read;
   }
 
   /** The create dialog New opens over the board. */

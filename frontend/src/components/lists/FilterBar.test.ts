@@ -18,6 +18,10 @@ function targetSelectProps(wrapper: VueWrapper): { mode?: string; modelValue?: s
 // mount and surfaces load failures via uiStore.error. Mock both.
 const fetchListMock = vi.fn()
 const uiErrorMock = vi.fn()
+vi.mock('rela-components/components/overlay/RlPopover.vue', async () => ({
+  default: (await import('@/test/inlinePopover')).default,
+}))
+
 vi.mock('@/stores', async (orig) => {
   const actual = await orig<typeof import('@/stores')>()
   return {
