@@ -629,3 +629,38 @@ func (a assertionTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	r.Header.Set("X-Auth-Assertion", a.token)
 	return http.DefaultTransport.RoundTrip(r)
 }
+
+// TestTenantMode_ReadOnlyTenantRefusesWrites pins the host's read-only
+// wiring (TKT-59HWQ76): once the tenant API makes a tenant read-only, its
+// next write through the production host is refused and its reads still
+// work, while another tenant is untouched.
+func TestTenantMode_ReadOnlyTenantRefusesWrites(t *testing.T) {
+	d := newTenantDeployment(t)
+	th := d.host(t)
+	ctx := t.Context()
+	writer, err := tenant.NewProvisioner(d.base, tenant.AuditRoot(t.TempDir()))
+	require.NoError(t, err)
+	task := func(title string) map[string]any {
+		return map[string]any{"properties": map[string]any{"title": title}}
+	}
+	write := func(token, title string) *httptest.ResponseRecorder {
+		return tenantCall(t, th, token, http.MethodPost, "/api/v1/tasks", task(title))
+	}
+	require.Contains(t, []int{http.StatusOK, http.StatusCreated}, write("tok-org-a", "before").Code)
+
+	_, err = writer.Apply(ctx, "org-a", tenant.Change{State: new(tenant.StateReadOnly)})
+	require.NoError(t, err)
+	refused := write("tok-org-a", "during")
+	require.Equal(t, http.StatusForbidden, refused.Code, refused.Body.String())
+	require.Contains(t, refused.Body.String(), "tenant_read_only")
+	list := tenantCall(t, th, "tok-org-a", http.MethodGet, "/api/v1/tasks", nil)
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	require.Contains(t, list.Body.String(), "before")
+	require.NotContains(t, list.Body.String(), "during")
+	require.Contains(t, []int{http.StatusOK, http.StatusCreated}, write("tok-org-b", "other").Code,
+		"read-only reached another tenant")
+
+	_, err = writer.Apply(ctx, "org-a", tenant.Change{State: new(tenant.StateActive)})
+	require.NoError(t, err)
+	require.Contains(t, []int{http.StatusOK, http.StatusCreated}, write("tok-org-a", "after").Code)
+}

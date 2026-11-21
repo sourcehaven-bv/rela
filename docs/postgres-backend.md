@@ -835,7 +835,7 @@ schema and runs the migrations, exactly as `tenant create` does.
 | Value | What happens |
 | --- | --- |
 | `off` (default) | An unknown org gets 403. The IdP webhook acknowledges and drops events for it. |
-| `webhook` | A verified `organization.created` webhook, or the tenant API, creates the tenant. Requests for an unknown org still get 403. Needs the IdP webhook (`-webhook-audience` and `-webhook-action`) or the tenant API (`-tenant-api-audience`). |
+| `webhook` | A verified `organization.created` webhook, or the tenant API, creates the tenant. Requests for an unknown org still get 403. Needs the IdP webhook (`-webhook-audience` and `-webhook-action`) or the tenant API (`-tenant-api-role`). |
 | `lazy` | As `webhook`, and a request with a verified but unknown org also starts the create. Works without the webhook; then it is the only path. |
 
 The webhook waits up to 10 seconds for the create:
@@ -933,58 +933,163 @@ is why the default is `off`.
 The server still refuses to start when the control table does not exist,
 so create the first tenant with `rela-server tenant create`.
 
-### Creating tenants through the tenant API
+### Managing tenants through the tenant API
 
-An external provisioning job can create an org's tenant before the org's
-first visit, and read its status, through the tenant API. Set
-`-tenant-api-audience` (`RELA_TENANT_API_AUDIENCE`) to turn it on. The API
-needs `-tenant-provision` set to `webhook` or `lazy`. In `webhook` mode the
-API may be the only create path; the IdP webhook is then optional.
+A control plane, such as a SaaS billing service, manages each org's tenant
+through the tenant API. It creates the tenant before the org's first visit,
+sets its state and plan, archives it, and reads its usage. Set
+`-tenant-api-role` (`RELA_TENANT_API_ROLE`) to turn it on. The API needs
+`-tenant-provision` set to `webhook` or `lazy`. In `webhook` mode the API
+may be the only create path; the IdP webhook is then optional.
 
 | Request | What happens |
 | --- | --- |
 | `PUT /api/v1/_tenants/<org_id>` | Creates the org's tenant, as an `organization.created` webhook does. |
-| `GET` or `HEAD /api/v1/_tenants/<org_id>` | Reads the tenant's status. Never starts a create. |
+| `GET` or `HEAD /api/v1/_tenants/<org_id>` | Reads the tenant's state, plan and entitlements from the control table. Opens nothing and never starts a create. |
+| `PATCH /api/v1/_tenants/<org_id>` | Sets the state, the plan or the entitlements. |
+| `DELETE /api/v1/_tenants/<org_id>` | Archives the tenant: it is no longer served, and its data stays. |
+| `GET /api/v1/_tenants/<org_id>/usage` | Reads the tenant's users and storage. |
 
-**Authentication.** The API is for an operator or integration, not for end
-users. The caller sends `Authorization: Bearer <JWT>`. The server checks
-the token the same way as an IdP webhook body:
+**Authentication.** The server does not check the control plane's
+credentials itself. The edge in front of it (Pratique) does, and forwards
+an identity assertion in the usual header (`-jwt-header`), signed with the
+usual key (`-jwt-issuer`, `-jwt-jwks-url`, `-jwt-audience`). The API
+accepts an assertion only when:
 
-- It is ES256, signed by the identity issuer's JWKS (`-jwt-issuer`,
-  `-jwt-jwks-url`), and carries `exp`.
-- Its `aud` is the `-tenant-api-audience` value. The server refuses to start
-  when that value equals `-jwt-audience` or `-webhook-audience`, so an end
-  user's assertion or a webhook body is never accepted here.
-- Its `org_id` claim names the org in the path. One token acts on one org.
-- `jti`, if present, is logged.
+- `principal_type` is `operator`;
+- it carries no `org_id`;
+- its `roles` hold the `-tenant-api-role` value.
 
-Only the holder of the IdP's signing key can mint such a token. Have the IdP
-issue it to the provisioning job with a short lifetime, and with this
-audience only: a token whose `aud` lists several audiences is accepted
-wherever one of them matches. A token without the
-right audience, signature or expiry gets 401 with `WWW-Authenticate:
-Bearer`; a token for another org gets 403 `forbidden`.
+One operator principal acts on every org. An end user's assertion always
+carries an `org_id`, so it is refused here. An operator's assertion carries
+none, so every other path refuses it with 403 `unknown_tenant`: it can
+reach no tenant's data. A missing or invalid assertion gets 401 with
+`WWW-Authenticate: Bearer`; a valid one that does not meet the three rules
+gets 403 `forbidden`. The operator's subject (`sub`) is written to the
+server log for every create, change and archive.
 
-A response body is JSON: `{"org_id":"<org_id>","status":"<status>"}`, with
-`status` one of `active`, `provisioning`, `suspended` or `erased`. Errors
-use the problem body of the rest of the server.
+In Pratique, register the control plane as an operator client of the hub
+(`oauth.operator_clients`, with the role), and list the tenant API under
+the edge's operator paths (`edge.operator.paths: ["/api/v1/_tenants/*"]`).
+The control plane gets a short-lived token from the hub with the
+`client_credentials` grant and calls the edge with it.
+
+**States.** A response about one tenant is JSON:
+
+```json
+{"org_id": "org-a", "state": "active", "read_only": false,
+ "plan": "team", "entitlements": {"max_users": 25}}
+```
+
+`state` is one of these:
+
+| State | Meaning |
+| --- | --- |
+| `active` | Served normally. |
+| `read_only` | Served, but every write is refused (see below). |
+| `suspended` | Not served; the data stays. `suspended_by` says who: `api`, `operator` or `idp`. |
+| `archived` | Not served; the data stays until an operator erases it. `archived_at` says when. |
+| `provisioning` | Being created. |
+| `erasing` or `erased` | Being erased, or erased. |
+
+**Changing state, plan and entitlements.** A `PATCH` body names what
+changes; an absent field stays as it is:
+
+```json
+{"state": "read_only", "plan": "team", "entitlements": {"max_users": 25, "sso": true}}
+```
+
+- `state` is `active`, `read_only` or `suspended`. The tenant API resumes
+  only a tenant it suspended itself. A tenant an operator or the IdP
+  suspended answers 409 `tenant_held`; only they resume it. Suspending a
+  suspended tenant changes nothing and keeps its cause.
+- `plan` is a name of at most 128 bytes. `""` clears it.
+- `entitlements` replaces the stored object as a whole; `{}` clears it.
+  Names match `^[a-z][a-z0-9_]{0,63}$`, values are numbers of at most 32
+  characters, booleans or strings of at most 256 bytes, and there are at
+  most 64.
+- The plan and string values must be UTF-8 without control characters.
+
+A body that is not a valid change gets 400 `invalid_change`, with the
+reason in `detail`. The change is one transaction on the control row. A
+suspension takes effect at the next request, and the server closes the
+tenant at once. Each applied change is written to the lifecycle log with
+actor `system:tenant-api` and the operator client as `principal`.
+
+rela stores the plan and the entitlements and shows them to the tenant's
+own users: `GET /api/v1/_tenant` adds `read_only`, `plan` and
+`entitlements` for an active tenant. It enforces none of the
+entitlements; the control plane, or the edge, decides what a plan allows.
+`max_users` is a candidate for enforcement when a user is first
+provisioned, which is not done yet.
+
+**Read-only.** A read-only tenant serves `GET`, `HEAD`, `OPTIONS` and the
+WebDAV reads `PROPFIND` and `REPORT`. It refuses every other request with
+403 `tenant_read_only`, including remote MCP calls, actions, comments,
+piles, leases, presence, settings and collaborative-editing saves. Two
+writes pass because they change no tenant data: the `PUT` of a live-update
+stream's subscriptions, and the IdP webhook. Background work the server
+starts itself, such as scheduled flows, still runs. Export works, because
+it is a read. Two side effects of reads also still happen: lazy user
+provisioning creates a person's user entity on their first visit, and a
+collaborative-editing session still relays edits between open clients,
+although it cannot save them. During a rolling upgrade, a replica on a release from
+before the tenant API ignores the read-only flag and serves writes until
+it is replaced.
+
+**Archiving.** `DELETE` suspends the tenant with cause `archive` and
+records `archived_at`. It works on an active or suspended tenant, whoever
+suspended it, and archiving an archived tenant changes nothing. The tenant
+API cannot undo it: a `PATCH` or `PUT` answers 409 `tenant_archived`. An
+operator brings it back with `rela-server tenant resume`, which clears
+`archived_at`, or removes the data with `rela-server tenant erase`. A
+`tenant suspend` of an archived tenant keeps it archived. `tenant resume`
+leaves the read-only flag as it was, so a tenant that was read-only before
+it was archived comes back read-only. To export an archived tenant, an
+operator resumes it first, as for any suspended tenant. `tenant erase`
+also clears the read-only flag, plan, entitlements and archive time. Hard
+deletion through the API is not offered.
+
+**Usage.** `GET .../usage` answers:
+
+```json
+{"org_id": "org-a", "users": 12, "active_users_30d": 7,
+ "storage_bytes": 52428800, "measured_at": "2026-11-21T12:00:00Z"}
+```
+
+- `users` counts the entities of the user type `acl.yaml` names
+  (`user_entity_type`), which lazy provisioning creates on a person's
+  first visit. It is 0 when the policy names no user type.
+- `active_users_30d` counts the distinct people who made a change in the
+  last 30 days, from the tenant's audit log. Reads are not audited, so a
+  person who only reads is not counted. `system:` actors are not counted.
+- `storage_bytes` is the on-disk size of the tenant's schema: tables,
+  indexes and TOAST, which hold the entities, history, search index and
+  attachment bytes.
+
+A tenant whose schema does not exist yet, or any more, answers 404.
+
+**Creating.** A `PUT` shares the start rate, the running cap and the
+failure holds with lazy and webhook provisioning, so retrying it inside a
+hold starts nothing. The trust assumption above applies to the API as
+well.
 
 | `PUT` outcome | Response |
 | --- | --- |
-| Created now | 201 `active` |
-| Already active | 200 `active` |
+| Created now | 201 with the tenant |
+| Already exists and served (`active` or `read_only`) | 200 with the tenant |
 | Still running after 10 seconds, or another server is creating it | 202 `provisioning` with `Location` and `Retry-After`; poll the `GET` |
 | Suspended | 409 `tenant_suspended` |
+| Archived | 409 `tenant_archived` |
 | Erased | 409 `tenant_erased`; only `tenant create -recreate` brings it back |
 | Needs an operator | 503 `provisioning_needs_operator` |
 | Failed, or over the rate or running cap | 503 `provisioning_failed` or `provisioning_busy` with `Retry-After` |
 | Not a valid org id | 400 `invalid_org_id` |
 
-A `GET` answers 200 with the status, or 404 `unknown_tenant` when the org
-has no tenant and no create is running. A `PUT` shares the start rate, the
-running cap and the failure holds with lazy and webhook provisioning, so
-retrying it inside a hold starts nothing. The trust assumption above
-applies to the API as well.
+A `GET` answers 404 `unknown_tenant` when the org has no tenant and no
+create is running. A `PATCH` on a tenant still being created may set the
+plan and entitlements; a state change answers 409 `tenant_provisioning`
+with `Retry-After`. Errors use the problem body of the rest of the server.
 
 ### Suspension follows the IdP
 

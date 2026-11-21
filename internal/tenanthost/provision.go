@@ -335,6 +335,27 @@ func (p *provisioning) start(ctx context.Context, orgID string) (*run, error) {
 	return r, nil
 }
 
+// logProvisioned logs how a provisioning run for orgID ended.
+func logProvisioned(ctx context.Context, orgID string, err error) {
+	level, msg := slog.LevelInfo, "tenant host: tenant provisioned"
+	attrs := []any{"org_id", orgID}
+	switch {
+	case err == nil:
+	case errors.Is(err, tenant.ErrTenantInUse):
+		msg = "tenant host: tenant is being provisioned by another process"
+	case errors.Is(err, tenant.ErrTenantExists):
+		msg = "tenant host: tenant exists but is not active; not provisioned"
+		attrs = append(attrs, "error", err)
+	case errors.Is(err, ErrNeedsOperator):
+		level, msg = slog.LevelError, "tenant host: provisioning needs an operator; not retried for an hour"
+		attrs = append(attrs, "error", err, "fix", operatorHint(err))
+	default:
+		level, msg = slog.LevelError, "tenant host: provisioning failed"
+		attrs = append(attrs, "error", err)
+	}
+	slog.Log(ctx, level, msg, attrs...)
+}
+
 func (p *provisioning) execute(ctx context.Context, orgID string, r *run) {
 	defer p.wg.Done()
 	ctx, cancel := context.WithTimeout(ctx, p.timeout)
@@ -347,19 +368,7 @@ func (p *provisioning) execute(ctx context.Context, orgID string, r *run) {
 	}()
 	err := p.p.Provision(ctx, orgID)
 	cancel()
-	switch {
-	case err == nil:
-		slog.Info("tenant host: tenant provisioned", "org_id", orgID)
-	case errors.Is(err, tenant.ErrTenantInUse):
-		slog.Info("tenant host: tenant is being provisioned by another process", "org_id", orgID)
-	case errors.Is(err, tenant.ErrTenantExists):
-		slog.Info("tenant host: tenant exists but is not active; not provisioned", "org_id", orgID, "error", err)
-	case errors.Is(err, ErrNeedsOperator):
-		slog.Error("tenant host: provisioning needs an operator; not retried for an hour",
-			"org_id", orgID, "error", err, "fix", operatorHint(err))
-	default:
-		slog.Error("tenant host: provisioning failed", "org_id", orgID, "error", err)
-	}
+	logProvisioned(ctx, orgID, err)
 	p.mu.Lock()
 	delete(p.runs, orgID)
 	switch {
