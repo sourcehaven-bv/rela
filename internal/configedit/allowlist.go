@@ -226,6 +226,8 @@ var editable = map[File][]string{
 		"lists.*.columns.[].direction",
 		"lists.*.columns.[].label",
 		"lists.*.columns.[].link",
+		// Which columns stay on a phone (TKT-3VLKP3D); display only.
+		"lists.*.columns.[].primary",
 		"lists.*.columns.[].property",
 		"lists.*.columns.[].relation",
 		"lists.*.columns.[].sortable",
@@ -445,6 +447,8 @@ var locked = map[File][]string{
 		"dashboards.*.cards.[].columns.[].face",
 		// Busy columns are list-only (TKT-TU3XH4); the load refuses them here.
 		"dashboard.cards.[].columns.[].busy", "dashboards.*.cards.[].columns.[].busy",
+		// So is primary (TKT-3VLKP3D).
+		"dashboard.cards.[].columns.[].primary", "dashboards.*.cards.[].columns.[].primary",
 		// Editable columns are view-table-only (TKT-4Q2EIVZ); the load refuses them here.
 		"lists.*.columns.[].render", "dashboard.cards.[].columns.[].render",
 		"dashboards.*.cards.[].columns.[].render",

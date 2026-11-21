@@ -748,7 +748,10 @@ export interface Messages {
 
   /** A table row's checkbox: `Select Fix login`. */
   selectItem: (args: { title: string }) => string
-  /** A table section's select-all checkbox: `Select all in Done`. */
+  /**
+   * A table section's select-all checkbox: `Select all in Done`, or
+   * `Select all` for a list without sections, whose one section has no title.
+   */
   selectAllIn: (args: { section: string }) => string
   /** A table row's drag handle: `Move Fix login`. */
   moveRow: (args: { title: string }) => string
@@ -1014,7 +1017,7 @@ export const DEFAULT_MESSAGES: Messages = {
   dropFiles: ({ multiple }) => `Drop ${multiple ? 'files' : 'a file'} here, or click to choose`,
 
   selectItem: ({ title }) => `Select ${title}`,
-  selectAllIn: ({ section }) => `Select all in ${section}`,
+  selectAllIn: ({ section }) => (section.trim() ? `Select all in ${section}` : 'Select all'),
   moveRow: ({ title }) => `Move ${title}`,
   showMoreRows: ({ count }) => `Show ${count} more`,
   ofRemaining: ({ remaining }) => `of ${remaining} remaining`,

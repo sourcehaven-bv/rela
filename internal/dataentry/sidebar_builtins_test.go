@@ -14,7 +14,7 @@ import (
 )
 
 // The built-in sidebar rows (Search, Inbox, Flow tasks, Flow runs, Analysis)
-// follow `builtins:`: per space with `spaces:`, else at the top level. A row's
+// and the as-of picker follow `builtins:`: per space with `spaces:`, else at the top level. A row's
 // `permission:` is the same UX filter as a navigation entry's.
 
 // portalBuiltins hides four rows in a portal space and gates Analysis on
@@ -33,6 +33,7 @@ func portalBuiltins() []dataentryconfig.Space {
 				dataentryconfig.BuiltinFlowRuns:  {Hidden: true},
 				dataentryconfig.BuiltinSearch:    {Hidden: true},
 				dataentryconfig.BuiltinFlowTasks: {Hidden: true},
+				dataentryconfig.BuiltinAsOf:      {Hidden: true},
 			}},
 	}
 }
@@ -46,6 +47,7 @@ func TestSidebarBuiltins_Spaces(t *testing.T) {
 	all := []dataentryconfig.BuiltinRow{
 		dataentryconfig.BuiltinSearch, dataentryconfig.BuiltinFlowTasks,
 		dataentryconfig.BuiltinFlowRuns, dataentryconfig.BuiltinAnalysis,
+		dataentryconfig.BuiltinAsOf,
 	}
 	cases := []struct {
 		name  string

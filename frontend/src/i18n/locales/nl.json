@@ -1641,6 +1641,7 @@
     "pickerAria": "Toon de stand op een datum",
     "pickerTitle": "Toon de gegevens zoals ze waren aan het eind van een datum. Leeg laten voor nu.",
     "banner": "Je ziet de stand op {when}. Deze weergave is alleen-lezen.",
+    "now": "Nu",
     "backToNow": "Terug naar nu",
     "readOnly": "Deze pagina toont een eerdere stand en is alleen-lezen. Ga terug naar nu om iets te wijzigen."
   }

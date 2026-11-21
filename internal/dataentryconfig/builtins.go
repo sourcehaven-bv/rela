@@ -7,7 +7,8 @@ import (
 )
 
 // BuiltinRow names one of the rows the sidebar pins above the configured
-// navigation. The names are the keys of a `builtins:` block.
+// navigation, or the as-of date picker in the sidebar header. The names are
+// the keys of a `builtins:` block.
 type BuiltinRow string
 
 // The built-in sidebar rows, in the order the sidebar shows them.
@@ -17,10 +18,16 @@ const (
 	BuiltinFlowTasks BuiltinRow = "flow_tasks"
 	BuiltinFlowRuns  BuiltinRow = "flow_runs"
 	BuiltinAnalysis  BuiltinRow = "analysis"
+	// BuiltinAsOf is the date picker in the sidebar header, not a row. It
+	// shows only where the storage keeps version history.
+	BuiltinAsOf BuiltinRow = "as_of"
 )
 
-// BuiltinRows lists every built-in row in sidebar order.
-var BuiltinRows = []BuiltinRow{BuiltinSearch, BuiltinInbox, BuiltinFlowTasks, BuiltinFlowRuns, BuiltinAnalysis}
+// BuiltinRows lists every built-in row in sidebar order, then the as-of
+// picker.
+var BuiltinRows = []BuiltinRow{
+	BuiltinSearch, BuiltinInbox, BuiltinFlowTasks, BuiltinFlowRuns, BuiltinAnalysis, BuiltinAsOf,
+}
 
 // BuiltinConfig says whether one built-in sidebar row is shown.
 //

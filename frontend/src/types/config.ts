@@ -516,6 +516,12 @@ export interface ListColumn {
   sortable?: boolean
   link?: string
   width?: string
+  /**
+   * Whether the column stays in a row too narrow for every column (a phone,
+   * or beside an open detail panel). Unset keeps the default: enum badges,
+   * the face and the busy indicator stay. Lists only.
+   */
+  primary?: boolean
 }
 
 export interface ListFilter {
@@ -1495,8 +1501,11 @@ export interface SidebarSpace {
   home: string
 }
 
-/** A built-in sidebar row, as `builtins:` in data-entry.yaml names it. */
-export type BuiltinRow = 'search' | 'inbox' | 'flow_tasks' | 'flow_runs' | 'analysis'
+/**
+ * A built-in sidebar row, or the as-of picker in the sidebar header, as
+ * `builtins:` in data-entry.yaml names it.
+ */
+export type BuiltinRow = 'search' | 'inbox' | 'flow_tasks' | 'flow_runs' | 'analysis' | 'as_of'
 
 /** One row of a space's Create menu. */
 export interface SidebarCreate {

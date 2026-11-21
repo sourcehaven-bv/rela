@@ -260,6 +260,9 @@ const { hasFlows } = useFlowList()
  */
 const hiddenBuiltins = ref<ReadonlySet<BuiltinRow>>(new Set())
 const showsBuiltin = (row: BuiltinRow) => !hiddenBuiltins.value.has(row)
+// The as-of picker waits for the first answer, so a space that hides it does
+// not show it for a moment first.
+const builtinsKnown = ref(false)
 
 const pinnedGroups = computed(() => {
   const rows: { row: BuiltinRow; item: SidebarItem; when: boolean }[] = [
@@ -349,6 +352,7 @@ async function loadSidebar() {
     sidebarAppName.value = data.app.name
     sidebarGroups.value = data.navigation
     hiddenBuiltins.value = new Set(data.hidden_builtins ?? [])
+    builtinsKnown.value = true
     schemaStore.setLogoUrl(data.logoUrl ?? null)
     // Principal-scoped inline-create offers ride on this payload; see
     // SidebarData.inline_create for why the sidebar carries them.
@@ -539,7 +543,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
         </template>
       </SpaceSwitcher>
       <WorldSwitcher />
-      <AsOfPicker />
+      <AsOfPicker v-if="builtinsKnown && showsBuiltin('as_of')" />
     </template>
 
     <!--
@@ -595,6 +599,19 @@ async function handleAction(item: SidebarItem, ev?: Event) {
  */
 .sidebar.collapsed {
   --rl-sidebar-width: 60px;
+}
+
+/*
+ * The as-of picker takes a row of its own below the switchers (it sets its
+ * own flex-basis), so the header has to wrap. In the collapsed rail it is
+ * left out: a date does not fit, and AsOfBanner says a date is picked.
+ */
+.sidebar :deep(.rl-sidebar__header) {
+  flex-wrap: wrap;
+}
+
+.sidebar.collapsed :deep(.as-of-picker) {
+  display: none;
 }
 
 .logo-img {

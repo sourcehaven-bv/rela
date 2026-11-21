@@ -334,18 +334,23 @@ watch(
       <!--
         The hamburger sits inside the shell's main pane rather than fixed to the
         viewport: the shell owns the drawer, so the trigger belongs to the pane
-        the drawer covers.
+        the drawer covers. It sits in a bar of its own, so content scrolls
+        under the bar rather than past a floating button.
       -->
-      <RlIconButton
+      <div
         v-if="showHamburger && !navOpen && !presentation.presenting.value"
-        class="mobile-menu-btn"
-        icon="menu"
-        raised
-        :label="t('shell.toggleNav')"
-        :aria-expanded="navOpen"
-        aria-controls="main-sidebar"
-        @click="navOpen = !navOpen"
-      />
+        class="mobile-menu-bar"
+      >
+        <RlIconButton
+          class="mobile-menu-btn"
+          icon="menu"
+          raised
+          :label="t('shell.toggleNav')"
+          :aria-expanded="navOpen"
+          aria-controls="main-sidebar"
+          @click="navOpen = !navOpen"
+        />
+      </div>
       <!-- One suggestion slot for every page, above the routed view. The
            server applies the operator's placement for the page, so the card
            is always mounted and simply renders nothing where none is owed. -->
@@ -430,7 +435,10 @@ body {
      title above it. The token already carries its own breakpoints and the
      iOS safe-area inset. */
   --page-padding-x: var(--rl-page-gutter-left);
-  padding: var(--rl-space-5) var(--rl-page-gutter-right) var(--rl-space-5) var(--rl-page-gutter-left);
+  /* The top padding as a variable, so the hamburger bar can pull itself up
+     over it and stick at the pane's edge (see .mobile-menu-bar). */
+  --pane-padding-top: var(--rl-space-5);
+  padding: var(--pane-padding-top) var(--rl-page-gutter-right) var(--rl-space-5) var(--rl-page-gutter-left);
   padding-bottom: 48px; /* Account for status bar */
   /* The pane is the scroll container, so PageLayout's sticky bars stick
      against it rather than against the document. */
@@ -474,38 +482,41 @@ body {
 /* Placement only: RlIconButton draws the control. The shell owns the drawer,
    so its trigger belongs to the pane the drawer covers rather than to the
    viewport. This is the fallback for views that do not yet fill the header
-   slot — RlPageHeader renders its own toggle for those that do.
+   slot; RlPageHeader renders its own toggle for those that do.
 
-   Three classes so the hiding outranks RlIconButton's scoped
-   `.rl-icon-button[data-v]` `display: flex` on specificity alone. A bare
-   class lost to it, which left an invisible full-width button over the top
-   of every desktop page; two classes would tie and depend on bundle order. */
-.app-layout .mobile-menu-btn.rl-icon-button {
+   The button sits in a full-width bar with the page's own background. A
+   floating button let content scroll past under it: headings and table
+   headers showed around the button and under its corner. */
+.app-layout .mobile-menu-bar {
   /* The shell sets this token whenever its sidebar is off-canvas: below
      768px, and up to 1079px while a detail panel is open. Following it
-     keeps this button in step with the shell's own breakpoints. */
+     keeps the bar in step with the shell's own breakpoints. */
   display: var(--rl-nav-toggle-display, none);
-  align-items: center;
-  justify-content: center;
-  align-self: flex-start;
-  flex: 0 0 44px;
+  flex: none;
+  /* Sticky, not fixed: the bar scrolls with its pane and stays put as the
+     content moves under it. Fixed would pin it to the viewport, where it
+     would sit over the drawer the shell slides in.
+
+     A sticky box stops at the pane's padding edge, not its border, so the
+     bar is pulled up over the top padding (margin) and sticks there (top).
+     Without both, content would show through the padding above the bar. */
+  position: sticky;
+  top: calc(0px - var(--pane-padding-top, 0px));
+  z-index: 101;
+  /* Full width: out to the pane's edges on both sides. The button keeps
+     its 8px inset from the left edge. No safe-area term: the shell pads
+     the frame, so the pane already starts below the notch. */
+  margin: calc(0px - var(--pane-padding-top, 0px)) calc(0px - var(--rl-page-gutter-right, 16px))
+    var(--rl-space-2, 8px) calc(0px - var(--page-padding-x, 16px));
+  padding: 8px;
+  background: var(--rl-color-bg);
+}
+
+/* A 44px touch target. Two classes so the size outranks RlIconButton's own
+   scoped rule on specificity alone. */
+.app-layout .mobile-menu-btn.rl-icon-button {
   width: 44px;
   height: 44px;
-  /* Sticky, not fixed: the button scrolls with its pane's padding box and
-     stays put as the content moves under it. Fixed would pin it to the
-     viewport, where it would sit over the drawer the shell slides in. */
-  position: sticky;
-  float: left;
-  /* No safe-area term: the shell pads the frame, so this button's containing
-     block already starts below the notch. */
-  --mobile-menu-btn-top: 8px;
-  top: var(--mobile-menu-btn-top);
-  margin-left: calc(0px - var(--page-padding-x, 16px) + 8px);
-  /* `top` moves the button down from its own slot, onto whatever follows
-     it, such as the next-action banner. The margin moves the next element
-     down by the same amount plus some air. */
-  margin-bottom: calc(var(--mobile-menu-btn-top) + var(--rl-space-2, 8px));
-  z-index: 101;
 }
 
 @media (max-width: 768px) {
@@ -521,7 +532,7 @@ body {
        Space for the hamburger button (only present on top-level screens).
        On detail/edit screens the hamburger is hidden, but we still need
        breathing room, so keep the same top padding regardless. */
-    padding-top: 60px;
+    --pane-padding-top: 60px;
     /* Extra bottom padding so the last card's rounded corners aren't flush
        against the screen edge. */
     padding-bottom: 24px;
@@ -531,11 +542,29 @@ body {
      60px reservation only on pages without one; otherwise the sticky bar
      starts a full header-slot below the viewport edge. */
   .app-layout .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky) {
-    padding-top: 0;
+    --pane-padding-top: 0px;
   }
 
-  .app-layout .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky) > .mobile-menu-btn {
-    margin-bottom: -44px;
+  /* A sticky topbar leaves 64px on its left for the button, so there the bar
+     is see-through and lies over the topbar instead of taking a row. Only
+     the button takes taps. */
+  .app-layout .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky) > .mobile-menu-bar {
+    margin-bottom: -60px;
+    background: none;
+    pointer-events: none;
+  }
+
+  .app-layout .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky) > .mobile-menu-bar > * {
+    pointer-events: auto;
+  }
+
+  /* Except when a next-action card or the as-of banner comes first: they
+     sit above the topbar, so the bar keeps its row and they start below
+     the button rather than under it. */
+  .app-layout
+    .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky):has(> .na, > .as-of-banner)
+    > .mobile-menu-bar {
+    margin-bottom: var(--rl-space-2, 8px);
   }
 
   /* Hide keyboard shortcut hints on mobile: a touch device has no keys to
@@ -555,7 +584,7 @@ body {
 @media (max-width: 480px) {
   .app-layout .rl-app-shell__main {
     /* Same as above: the gutter token owns the horizontal padding. */
-    padding-top: 56px;
+    --pane-padding-top: 56px;
     padding-bottom: 24px;
   }
 }

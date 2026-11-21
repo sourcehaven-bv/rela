@@ -409,7 +409,8 @@ export const NL_MESSAGES: Messages = {
     `Sleep ${multiple ? 'bestanden' : 'een bestand'} hierheen, of klik om te kiezen`,
 
   selectItem: ({ title }) => `${title} selecteren`,
-  selectAllIn: ({ section }) => `Alles in ${section} selecteren`,
+  selectAllIn: ({ section }) =>
+    section.trim() ? `Alles in ${section} selecteren` : 'Alles selecteren',
   moveRow: ({ title }) => `${title} verplaatsen`,
   showMoreRows: ({ count }) => `Nog ${count} tonen`,
   ofRemaining: ({ remaining }) => `van de ${remaining} resterende`,

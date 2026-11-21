@@ -1458,9 +1458,9 @@ type SidebarResponse struct {
 	// hint, like InlineCreate; the create endpoint re-authorizes.
 	Create []SidebarCreate `json:"create,omitempty"`
 	// HiddenBuiltins names the built-in sidebar rows ("search", "inbox",
-	// "flow_tasks", "flow_runs", "analysis") the current space, or the
-	// top-level sidebar without spaces, leaves out for this principal
-	// ([dataentryconfig.Builtins]). Absent when every row is shown. A UX
+	// "flow_tasks", "flow_runs", "analysis") and the as-of picker ("as_of")
+	// that the current space, or the top-level sidebar without spaces, leaves
+	// out for this principal ([dataentryconfig.Builtins]). Absent when every row is shown. A UX
 	// filter: the pages behind the rows stay reachable by URL.
 	HiddenBuiltins []dataentryconfig.BuiltinRow `json:"hidden_builtins,omitempty"`
 
