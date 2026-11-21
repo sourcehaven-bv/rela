@@ -46,6 +46,9 @@ type compiledRule struct {
 	faces       []string
 	when        []*predicate.Program
 	then        []*predicate.Program
+	// fields are the properties a form shows a violation at: those the
+	// then side reads, or the when side's when the then side reads none.
+	fields []string
 	// hops maps each traversal of a relation rule, by
 	// [predicate.TraversalSpec.Key], to the edges it reads. Empty for a
 	// property rule.
@@ -137,7 +140,24 @@ func (s *Set) compileRule(meta *metamodel.Metamodel, rule metamodel.ValidationRu
 	if c.hops, err = compileHops(meta, typ, slices.Concat(c.when, c.then)); err != nil {
 		return c, err
 	}
+	if c.fields = attributes(c.then); len(c.fields) == 0 {
+		c.fields = attributes(c.when)
+	}
 	return c, nil
+}
+
+// attributes returns the entity properties progs read, sorted and once.
+func attributes(progs []*predicate.Program) []string {
+	var out []string
+	for _, prog := range progs {
+		for _, attr := range prog.Attributes(predicatefns.VarEntity) {
+			if !slices.Contains(out, attr) {
+				out = append(out, attr)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // compileSide compiles one side of a rule: the filter clauses and the
@@ -255,8 +275,10 @@ func (s *Set) holds(ctx context.Context, r compiledRule, e *entity.Entity, trave
 
 func violation(r compiledRule) *metamodel.ValidationError {
 	return &metamodel.ValidationError{
-		Type:    metamodel.ValidationErrorRule,
-		Message: violationMessage(r),
+		Type:        metamodel.ValidationErrorRule,
+		Message:     violationMessage(r),
+		Fields:      slices.Clone(r.fields),
+		Description: r.description,
 	}
 }
 

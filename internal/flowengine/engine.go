@@ -224,6 +224,7 @@ func begin(ctx context.Context, e *Engine, runs flowrun.Store, f *flowcfg.Flow, 
 	now := e.now()
 	initial, _ := f.State(f.Initial())
 	props := map[string]any{
+		metamodel.FlowRunPropTitle:   f.RunTitle(subj, now),
 		metamodel.FlowRunPropFlow:    f.Name(),
 		metamodel.FlowRunPropVersion: f.Version(),
 		metamodel.FlowRunPropStatus:  string(initial.Status),

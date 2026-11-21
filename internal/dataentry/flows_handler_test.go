@@ -86,6 +86,11 @@ func (f *fakeFlows) Tasks(_ context.Context, name string, page, perPage int) (fl
 	return flowview.Tasks{}, f.err
 }
 
+func (f *fakeFlows) FailedTasks(_ context.Context, name string) ([]flowview.Task, bool, error) {
+	f.rec("failed %s", name)
+	return nil, false, f.err
+}
+
 func flowRequest(t *testing.T, app *App, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -103,7 +108,7 @@ func TestFlowsAPI_Routes(t *testing.T) {
 	}{
 		{"flows", http.MethodGet, "/api/v1/_flows", "", http.StatusOK, "flows"},
 		{"tasks", http.MethodGet, "/api/v1/_flows/tasks?flow=onboarding&page=2&per_page=10", "", http.StatusOK,
-			"tasks onboarding 2 10"},
+			"tasks onboarding 2 10; failed onboarding"},
 		{"run list", http.MethodGet, "/api/v1/_flows/runs?flow=f&status=running", "", http.StatusOK,
 			"list f running 1 25"},
 		{"subject runs", http.MethodGet, "/api/v1/_flows/runs?subject=PER-1", "", http.StatusOK,

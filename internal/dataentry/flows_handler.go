@@ -35,12 +35,13 @@ type FlowService interface {
 	Cancel(ctx context.Context, id flow.RunID) error
 	Retry(ctx context.Context, id flow.RunID) error
 	Tasks(ctx context.Context, flowName string, page, perPage int) (flowview.Tasks, error)
+	FailedTasks(ctx context.Context, flowName string) ([]flowview.Task, bool, error)
 }
 
 // flowsHandler owns the flow routes (TKT-ZAXRXND):
 //
 //	GET  /api/v1/_flows                       the flows of flows.yaml
-//	GET  /api/v1/_flows/tasks                 the caller's tasks
+//	GET  /api/v1/_flows/tasks                 the caller's tasks and the failed runs they manage
 //	GET  /api/v1/_flows/runs                  the run list; ?subject= the runs on one entity
 //	                                          and the flows the caller may start on it
 //	POST /api/v1/_flows/runs                  start a run (201)
@@ -141,6 +142,12 @@ func (h *flowsHandler) tasks(w http.ResponseWriter, r *http.Request) {
 	page, perPage := parseV1Pagination(q)
 	out, err := h.svc.Tasks(r.Context(), q.Get("flow"), page, perPage)
 	if err != nil {
+		writeFlowError(w, r, err)
+		return
+	}
+	// The Flow tasks page lists the failed runs the caller manages above
+	// the tasks (BUG-53GP5F5).
+	if out.Failed, out.FailedTruncated, err = h.svc.FailedTasks(r.Context(), q.Get("flow")); err != nil {
 		writeFlowError(w, r, err)
 		return
 	}

@@ -262,15 +262,30 @@ func (c *FlowControl) RunList(ctx context.Context, flowName, status string, page
 	if flowName != "" {
 		eq[metamodel.FlowRunPropFlow] = flowName
 	}
-	if status != "" {
+	// A run whose job step failed keeps its state's status on the header
+	// (BUG-S5VV0N0), so `failed` also reads the runs in a job state and
+	// keeps those whose job failed (BUG-53GP5F5).
+	var anyOf []map[string]string
+	switch status {
+	case "":
+	case string(flow.StatusFailed):
+		anyOf = append(jobGroups(c.eng.Flows(), flowName),
+			map[string]string{metamodel.FlowRunPropStatus: string(flow.StatusFailed)})
+	default:
 		eq[metamodel.FlowRunPropStatus] = status
 	}
 	hdrs, more, err := c.holders.Headers(ctx, visibility.HeaderQuery{
-		EntityType: entity.FlowRunType, Equal: eq, Faces: store.AllFaces(), Limit: MaxRunList,
+		EntityType: entity.FlowRunType, Equal: eq, AnyOf: anyOf, Faces: store.AllFaces(), Limit: MaxRunList,
 		Order: []store.OrderSpec{{Property: metamodel.FlowRunPropStarted, Descending: true}},
 	})
 	if err != nil {
 		return flowview.Runs{}, err
+	}
+	var failed map[flow.RunID]bool
+	if status == string(flow.StatusFailed) {
+		if hdrs, failed, err = c.keepFailed(ctx, hdrs); err != nil {
+			return flowview.Runs{}, err
+		}
 	}
 	out := flowview.Runs{Runs: []flowview.Run{}, Total: len(hdrs), Truncated: more}
 	views := make([]flowview.Run, len(hdrs))
@@ -298,15 +313,16 @@ func (c *FlowControl) RunList(ctx context.Context, flowName, status string, page
 	if err != nil {
 		return flowview.Runs{}, err
 	}
-	var unfinished []flow.RunID
-	for _, k := range order {
-		if !flow.Status(views[k].Status).Terminal() {
-			unfinished = append(unfinished, flow.RunID(views[k].ID))
+	if failed == nil {
+		var unfinished []flow.RunID
+		for _, k := range order {
+			if !flow.Status(views[k].Status).Terminal() {
+				unfinished = append(unfinished, flow.RunID(views[k].ID))
+			}
 		}
-	}
-	failed, err := c.failedJobs(ctx, unfinished)
-	if err != nil {
-		return flowview.Runs{}, err
+		if failed, err = c.failedJobs(ctx, unfinished); err != nil {
+			return flowview.Runs{}, err
+		}
 	}
 	for _, k := range order {
 		v := c.labeled(views[k])
@@ -321,6 +337,33 @@ func (c *FlowControl) RunList(ctx context.Context, flowName, status string, page
 		return flowview.Runs{}, err
 	}
 	return out, nil
+}
+
+// keepFailed returns the headers among hdrs of the runs that read as
+// failed: the header says so, or the run waits on a failed job step, which
+// failed names. The stored states come from one run store read.
+func (c *FlowControl) keepFailed(ctx context.Context, hdrs []store.EntityHeader) ([]store.EntityHeader,
+	map[flow.RunID]bool, error) {
+	status := func(h store.EntityHeader) flow.Status {
+		return flow.Status(propString(&entity.Entity{Properties: h.Properties}, metamodel.FlowRunPropStatus))
+	}
+	var unfinished []flow.RunID
+	for _, h := range hdrs {
+		if !status(h).Terminal() {
+			unfinished = append(unfinished, flow.RunID(h.ID))
+		}
+	}
+	failed, err := c.failedJobs(ctx, unfinished)
+	if err != nil {
+		return nil, nil, err
+	}
+	var out []store.EntityHeader
+	for _, h := range hdrs {
+		if status(h) == flow.StatusFailed || failed[flow.RunID(h.ID)] {
+			out = append(out, h)
+		}
+	}
+	return out, failed, nil
 }
 
 // failedJobs reads the stored state of the unfinished runs ids in one run
@@ -436,7 +479,8 @@ func (c *FlowControl) unnamedViews(ctx context.Context, cl *caller, hdrs []*enti
 			return nil, err
 		}
 		if subj == nil {
-			v.Subject = ""
+			// The title can name the subject, as the address does.
+			v.Subject, v.Title = "", v.FlowLabel
 		}
 		holds := cl.holds(ctx, run.Subject.ID)
 		w := waitingOf(x, holds)
@@ -468,6 +512,10 @@ func (c *FlowControl) unnamedViews(ctx context.Context, cl *caller, hdrs []*enti
 			})
 		}
 		manage := manages.may(ctx, run.Subject.ID, c.runManagePermissions(ctx, flows, run))
+		// The error text can hold subject values, so a manager who may not
+		// read the subject does not get it either.
+		withholdJobError(&v, manage, subj != nil)
+		failedMessage(ctx, flows, run, &v)
 		v.Actions = flowview.Actions{
 			Complete: len(x.Parallel) == 0 && mayStep(w, x),
 			Manage:   manage,
@@ -502,7 +550,14 @@ func (c *FlowControl) nameSubjects(ctx context.Context, runs []flowview.Run) err
 		return err
 	}
 	for i := range runs {
-		runs[i].SubjectTitle = titles[runs[i].Subject].title
+		if subj, ok := titles[runs[i].Subject]; ok {
+			runs[i].SubjectTitle = subj.title
+			runs[i].Title = c.viewTitle(runs[i])
+		} else {
+			// The subject is withheld from this reader. A stored title can
+			// hold its values, so the run is named by its flow alone.
+			runs[i].Subject, runs[i].SubjectTitle, runs[i].Title = "", "", flowOnlyTitle(runs[i])
+		}
 		for j := range runs[i].Log {
 			e := &runs[i].Log[j]
 			if t, ok := titles[e.By]; ok && person != "" && t.typ == person && t.title != e.By {
@@ -511,6 +566,28 @@ func (c *FlowControl) nameSubjects(ctx context.Context, runs []flowview.Run) err
 		}
 	}
 	return nil
+}
+
+// viewTitle is the title of v for its reader: the stored title of a flow
+// with `title:`, or the flow's label and the subject's title as the reader
+// reads it, also for a run started before titles were stored.
+func (c *FlowControl) viewTitle(v flowview.Run) string {
+	if f, ok := c.eng.Flow(v.Flow); ok && f.HasTitle() {
+		return v.Title
+	}
+	if v.SubjectTitle == "" || v.SubjectTitle == v.Subject {
+		return v.Title
+	}
+	return v.FlowLabel + ": " + v.SubjectTitle
+}
+
+// flowOnlyTitle names v by its flow, for a reader who may not read its
+// subject.
+func flowOnlyTitle(v flowview.Run) string {
+	if v.FlowLabel != "" {
+		return v.FlowLabel
+	}
+	return v.Flow
 }
 
 // subjectOf reads the subject at ref through the gate, once per
@@ -543,13 +620,53 @@ func waitingOf(x flowengine.Explanation, holds func(string) bool) *flowview.Wait
 		w.Pending = &flowview.Pending{Failures: x.Pending.Failures, NextAttempt: x.Pending.NextAttempt}
 		if j := x.Pending.Job; j != nil {
 			w.Pending.Job = &flowview.Job{Phase: string(j.Phase), Failed: j.Failed, Attempts: j.Attempts,
-				FailKind: string(j.FailKind)}
+				FailKind: string(j.FailKind), Error: j.Error}
 		}
 	}
 	if x.Claim != nil {
 		w.ClaimedBy = x.Claim.By
 	}
 	return w
+}
+
+// withholdJobError removes the job error from v and its branches unless
+// the caller manages the run and reads its subject (BUG-53GP5F5).
+func withholdJobError(v *flowview.Run, manage, readsSubject bool) {
+	if manage && readsSubject {
+		return
+	}
+	strip := func(w *flowview.Waiting) {
+		if w != nil && w.Pending != nil && w.Pending.Job != nil {
+			w.Pending.Job.Error = ""
+		}
+	}
+	strip(v.Waiting)
+	for i := range v.Parallel {
+		strip(v.Parallel[i].Waiting)
+	}
+}
+
+// failedMessage sets the `failed_message:` of run's flow on v when a job
+// step of v failed for good. The rest of the time no client says it.
+func failedMessage(ctx context.Context, flows *flowengine.FlowCache, run flowrun.Run, v *flowview.Run) {
+	if !jobFailed(v) {
+		return
+	}
+	if f, err := flows.Of(ctx, run); err == nil {
+		v.FailedMessage = f.FailedMessage()
+	}
+}
+
+// jobFailed reports that the job step of v, or of one of its parallel
+// branches, failed for good.
+func jobFailed(v *flowview.Run) bool {
+	failed := func(w *flowview.Waiting) bool {
+		return w != nil && w.Pending != nil && w.Pending.Job != nil && w.Pending.Job.Phase == string(flowrun.JobFailed)
+	}
+	if failed(v.Waiting) {
+		return true
+	}
+	return slices.ContainsFunc(v.Parallel, func(p flowview.Place) bool { return failed(p.Waiting) })
 }
 
 // addDetail adds the timers and branches of x to w.
@@ -559,7 +676,7 @@ func addDetail(w *flowview.Waiting, x flowengine.Explanation) {
 	}
 	for _, b := range x.Branches {
 		w.Branches = append(w.Branches, flowview.Branch{To: b.To, Fork: b.Fork, Label: b.Label, Roles: b.Roles,
-			Guard: b.Guard, Holds: b.Holds, Failed: b.Failed})
+			Guard: b.Guard, Holds: b.Holds, Failed: b.Failed, Fields: b.Fields})
 	}
 }
 
@@ -708,8 +825,9 @@ func (c *FlowControl) labeled(v flowview.Run) flowview.Run {
 func headerView(h *entity.Entity) flowview.Run {
 	state := propString(h, metamodel.FlowRunPropState)
 	return flowview.Run{
-		ID: h.ID, Flow: propString(h, metamodel.FlowRunPropFlow), Version: propString(h, metamodel.FlowRunPropVersion),
-		State: state, StateLabel: state, Status: propString(h, metamodel.FlowRunPropStatus),
+		ID: h.ID, Title: propString(h, metamodel.FlowRunPropTitle), Flow: propString(h, metamodel.FlowRunPropFlow),
+		Version: propString(h, metamodel.FlowRunPropVersion),
+		State:   state, StateLabel: state, Status: propString(h, metamodel.FlowRunPropStatus),
 		Started:   propTime(h, metamodel.FlowRunPropStarted),
 		Completed: propTime(h, metamodel.FlowRunPropCompleted),
 	}
@@ -799,17 +917,21 @@ func (c *FlowControl) complete(ctx context.Context, id flow.RunID, gen int64,
 		return flowview.Completed{}, cerr
 	}
 	wctx := audit.WithFlowStep(ctx, audit.FlowStep{Flow: run.Flow, Run: string(id), Step: x.State, By: cl.user})
+	var warnings []flowview.FieldNote
 	if len(props) > 0 {
 		// The step's own write: this run's outside_edits do not narrow it,
 		// another run's on the subject still do (TKT-XI7IDBS).
 		pctx := flowedits.WithinRun(wctx, id, x.State)
-		if _, err = grant.PatchEntity(pctx, run.Subject.String(), entity.Patch{Properties: props}); err != nil {
+		res, perr := grant.PatchEntity(pctx, run.Subject.String(), entity.Patch{Properties: props})
+		if perr != nil {
 			c.eng.ReleaseClaim(ctx, id, gen, cl.user)
-			return flowview.Completed{}, err
+			return flowview.Completed{}, perr
 		}
+		warnings = fieldNotes(res, x.Writes)
 	}
 	changed, err := c.eng.Change(wctx, id, gen, cl.user, holds)
-	out := flowview.Completed{Written: names, Moved: changed.Moved, State: changed.State, Finished: changed.Finished}
+	out := flowview.Completed{Written: names, Moved: changed.Moved, State: changed.State, Finished: changed.Finished,
+		Warnings: warnings}
 	if err == nil && changed.Blocked {
 		out.Problem = flowview.ProblemBlocked
 	}
@@ -819,8 +941,14 @@ func (c *FlowControl) complete(ctx context.Context, id flow.RunID, gen int64,
 	// The write has landed, so the step is not refused: say how the run
 	// fared instead.
 	slog.WarnContext(ctx, "flowengine: a step was written but the run did not follow", "run", id, "error", err)
+	return followProblem(out, err)
+}
+
+// followProblem is out with the problem of a step whose write landed but
+// whose run did not follow with err. An err it cannot place is returned.
+func followProblem(out flowview.Completed, err error) (flowview.Completed, error) {
 	switch {
-	case changed.Moved:
+	case out.Moved:
 		out.Problem = flowview.ProblemSettling
 	case errors.Is(err, flowengine.ErrGuard):
 		out.Problem = flowview.ProblemGuard
@@ -849,6 +977,28 @@ func (c *FlowControl) Retry(ctx context.Context, id flow.RunID) error {
 		return classify(err)
 	}
 	return classify(c.eng.Retry(byCaller(ctx), id))
+}
+
+// fieldNotes returns the warnings of res on the properties in writes, in
+// res's order. A warning's path is a JSON pointer to the property.
+//
+// Nil: res accepted, returns nil.
+func fieldNotes(res *entity.UpdateResult, writes []string) []flowview.FieldNote {
+	if res == nil {
+		return nil
+	}
+	var out []flowview.FieldNote
+	for _, w := range res.Warnings {
+		name, ok := strings.CutPrefix(w.Path, "/properties/")
+		if !ok {
+			continue
+		}
+		name = strings.ReplaceAll(strings.ReplaceAll(name, "~1", "/"), "~0", "~")
+		if slices.Contains(writes, name) {
+			out = append(out, flowview.FieldNote{Field: name, Message: w.Detail})
+		}
+	}
+	return out
 }
 
 // inputNames returns the names of props, sorted, or errFlowInput for a
@@ -969,6 +1119,9 @@ func (c *FlowControl) forkedRuns(ctx context.Context, hdrs []store.EntityHeader,
 // Candidates are matched on the current flows.yaml: a run on an older
 // version in a state the current version renamed is not listed. The
 // header can lag the run store (RR-9H6KV01); completing revalidates.
+//
+// It leaves Failed empty: [FlowControl.FailedTasks] reads those, so the
+// next-action source and MCP do not pay for them.
 func (c *FlowControl) Tasks(ctx context.Context, flowName string, page, perPage int) (flowview.Tasks, error) {
 	cl, err := c.callerOf(ctx)
 	if err != nil {
@@ -1056,6 +1209,110 @@ func (c *FlowControl) Tasks(ctx context.Context, flowName string, page, perPage 
 		out.Tasks[i].SubjectTitle = titles[out.Tasks[i].Subject]
 	}
 	return out, nil
+}
+
+// jobGroups returns the header groups under which a run can wait on a
+// job step of the flows: the job state, or for a job state in a parallel
+// branch the join, which the header of a forked run names.
+func jobGroups(flows []*flowcfg.Flow, flowName string) []map[string]string {
+	var groups []map[string]string
+	seen := map[[2]string]bool{}
+	for _, f := range flows {
+		if flowName != "" && f.Name() != flowName {
+			continue
+		}
+		for _, st := range f.States() {
+			if _, ok := st.Job(); !ok {
+				continue
+			}
+			state := st.Name
+			if fk, _, inBranch := f.Region(st.Name); inBranch {
+				state = fk.Join
+			}
+			if key := [2]string{f.Name(), state}; !seen[key] {
+				seen[key] = true
+				groups = append(groups, map[string]string{
+					metamodel.FlowRunPropFlow: f.Name(), metamodel.FlowRunPropState: state,
+				})
+			}
+		}
+	}
+	return groups
+}
+
+// FailedTasks lists the unfinished runs whose job step failed for good
+// and that the caller manages, newest first (BUG-53GP5F5). A non-empty
+// flowName keeps one flow. The store reads the candidates, the runs in a
+// job state, in one gated header query, their subjects in one edge query
+// and their stored state in one run store read. The manage check runs once
+// per subject of a failed run only; a failed run is rare and waits for an
+// operator. more reports that more candidates exist than one call reads.
+func (c *FlowControl) FailedTasks(ctx context.Context, flowName string) (tasks []flowview.Task, more bool,
+	err error) {
+	tasks = []flowview.Task{}
+	groups := jobGroups(c.eng.Flows(), flowName)
+	if len(groups) == 0 {
+		return tasks, false, nil
+	}
+	hdrs, more, err := c.holders.Headers(ctx, visibility.HeaderQuery{
+		EntityType: entity.FlowRunType, AnyOf: groups, Faces: store.AllFaces(), Limit: MaxTaskCandidates,
+		Order: []store.OrderSpec{{Property: metamodel.FlowRunPropStarted, Descending: true}},
+	})
+	if err != nil || len(hdrs) == 0 {
+		return tasks, more, err
+	}
+	subjects, err := c.carried(ctx, hdrs)
+	if err != nil {
+		return nil, false, err
+	}
+	ids := make([]flow.RunID, 0, len(hdrs))
+	started := map[flow.RunID]time.Time{}
+	for _, h := range hdrs {
+		if _, ok := subjects[h.ID]; ok {
+			ids = append(ids, flow.RunID(h.ID))
+			started[flow.RunID(h.ID)] = headerView(&entity.Entity{ID: h.ID, Properties: h.Properties}).Started
+		}
+	}
+	if len(ids) == 0 {
+		return tasks, more, nil
+	}
+	runs, err := c.eng.RunsByID(ctx, ids)
+	if err != nil {
+		return nil, false, err
+	}
+	flows := c.eng.FlowCache()
+	places := flows.FailedJobPlaces(ctx, runs)
+	manages := &manageVerdicts{c: c}
+	for _, run := range runs {
+		place, ok := places[run.ID]
+		if !ok || !manages.may(ctx, run.Subject.ID, c.runManagePermissions(ctx, flows, run)) {
+			continue
+		}
+		t := flowview.Task{Run: string(run.ID), Flow: run.Flow, FlowLabel: run.Flow, State: place.State,
+			StateLabel: place.State, Subject: subjects[string(run.ID)], Started: started[run.ID], Branch: place.Branch}
+		if f, ok := c.eng.Flow(run.Flow); ok {
+			t.FlowLabel, t.StateLabel = f.Label(), stateLabel(f, place.State)
+		}
+		tasks = append(tasks, t)
+	}
+	sort.SliceStable(tasks, func(i, j int) bool {
+		if !tasks[i].Started.Equal(tasks[j].Started) {
+			return tasks[i].Started.After(tasks[j].Started)
+		}
+		return tasks[i].Run < tasks[j].Run
+	})
+	addrs := make([]string, len(tasks))
+	for i, t := range tasks {
+		addrs[i] = t.Subject
+	}
+	titles, err := c.titles(ctx, addrs)
+	if err != nil {
+		return nil, false, err
+	}
+	for i := range tasks {
+		tasks[i].SubjectTitle = titles[tasks[i].Subject]
+	}
+	return tasks, more, nil
 }
 
 // mayHold reports whether the caller holds role globally or could hold it

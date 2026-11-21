@@ -13,8 +13,10 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/flowview"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -683,4 +685,50 @@ func markedStates(diagram string) []string {
 		}
 	}
 	return marked
+}
+
+// TestFlowControl_CompleteStepFieldFeedback pins BUG-53GP5F5: a step that
+// writes a value breaking its type's pattern is written and answers the
+// pattern's message as a warning at that field, and a step a write rule
+// refuses fails with the rule's fields and description, so the form can
+// show it at a field.
+func TestFlowControl_CompleteStepFieldFeedback(t *testing.T) {
+	editSchema := func(s string) string {
+		s = strings.Replace(s, "entities:\n", "types:\n  initials:\n    validations:\n"+
+			"      - pattern: '^[A-Z]+$'\n        error: Write capitals only.\n"+"entities:\n", 1)
+		s = strings.Replace(s, "      name:\n        type: string\n", "      name:\n        type: initials\n", 1)
+		return strings.Replace(s, "relations:\n", "validations:\n  - name: documents-need-stage\n"+
+			"    description: Check the documents first.\n    entity_type: person\n"+
+			"    enforce: write\n    when_condition: \"entity.documents == true\"\n    then: [\"stage=checked\"]\n"+"relations:\n", 1)
+	}
+	editFlows := func(s string) string {
+		return strings.Replace(s, "writes: [documents]", "writes: [documents, name, stage]", 1)
+	}
+	keep := func(s string) string { return s }
+	svc, ctl := stepProjectFlows(t, "name", editSchema, keep, editFlows)
+	addFlowPerson(t, svc, "PER-1", map[string]any{"name": "ADA", "status": "hired"})
+	alice := flowUser(t, svc, "alice")
+	id, err := ctl.Start(alice, "onboarding", "PER-1")
+	require.NoError(t, err)
+	run, err := ctl.Run(alice, id)
+	require.NoError(t, err)
+	require.Equal(t, "Onboarding: ADA", run.Title, "the view titles the run by the flow label and the subject title")
+	h, err := svc.Store().GetEntity(context.Background(), entity.Ref{ID: string(id)})
+	require.NoError(t, err)
+	require.Equal(t, "Onboarding", h.Properties[metamodel.FlowRunPropTitle], "the stored title copies nothing of the subject")
+	require.Empty(t, run.FailedMessage, "only a failed job step carries the flow's text")
+	require.Equal(t, []string{"documents"}, run.Waiting.Branches[0].Fields,
+		"the guard reads documents, which the step writes")
+
+	got, err := ctl.Complete(alice, id, run.Generation, map[string]any{"name": "ada"})
+	require.NoError(t, err)
+	require.Equal(t, flowview.ProblemBlocked, got.Problem)
+	require.Equal(t, []flowview.FieldNote{{Field: "name", Message: "Write capitals only."}}, got.Warnings)
+
+	_, err = ctl.Complete(alice, id, run.Generation, map[string]any{"documents": true})
+	var invalid *entitymanager.ValidationError
+	require.ErrorAs(t, err, &invalid)
+	require.Len(t, invalid.Errors, 1)
+	require.Equal(t, []string{"stage"}, invalid.Errors[0].Fields)
+	require.Equal(t, "Check the documents first.", invalid.Errors[0].Description)
 }

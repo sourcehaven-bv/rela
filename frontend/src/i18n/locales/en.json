@@ -50,6 +50,8 @@
       "jobRunning": "The job of this step runs: attempt {n} of {max}.",
       "jobWaiting": "The job of this step waits for attempt {n} of {max}.",
       "jobWaitingAt": "The job of this step waits for attempt {n} of {max}, at {at}.",
+      "jobRetrying": "The job of this step failed and is retried: attempt {n} of {max}.",
+      "jobRetryingAt": "The job of this step failed and is retried: attempt {n} of {max}, at {at}.",
       "jobFailed": "The job of this step failed after {n} failed attempt: {why}. Retry the run to start again. | The job of this step failed after {n} failed attempts: {why}. Retry the run to start again.",
       "jobFailKind": {
         "exhausted": "no attempts are left",
@@ -71,7 +73,8 @@
       "forOthers": "This step is waiting for someone else.",
       "waiting": "This step is waiting.",
       "processing": "This step is being processed.",
-      "failedPlain": "This step could not be completed. Someone who manages this flow has to retry it."
+      "failedPlain": "Something went wrong at this step. It continues once the team behind this process has solved it.",
+      "jobError": "Last error:"
     },
     "step": {
       "title": "Step",
@@ -82,6 +85,8 @@
       "completing": "Completing…",
       "done": "Step completed.",
       "finished": "Step completed. The run has finished.",
+      "blockedRequired": "The run stays at this step: the condition of the next step does not hold yet. Check the fields marked *. Your entries are kept.",
+      "movedWithWarnings": "The run moved on. Some values you entered have a warning: check them on the subject.",
       "problem": {
         "blocked": "The run stays at this step: no condition of the next step holds yet. Your entries are kept.",
         "guard": "Your values were saved, but a condition of the next step could not be checked. The run stays where it is.",
@@ -140,7 +145,11 @@
       "loadFailed": "Your tasks could not be loaded.",
       "empty": "Nothing waits for you.",
       "truncated": "Not every task could be read. Pick a flow to see the rest.",
-      "branchState": "{state} (branch {branch})"
+      "branchState": "{state} (branch {branch})",
+      "failedTitle": "Failed runs",
+      "failedHint": "The job of these runs failed for good. Retry a run once the cause is fixed.",
+      "waitingTitle": "Waiting for you",
+      "actions": "Actions"
     }
   },
   "inbox": {

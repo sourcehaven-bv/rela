@@ -241,7 +241,7 @@ func TestEngine_Explain(t *testing.T) {
 	require.Equal(t, []TimerDue{{Name: "stalled", Label: "No documents in a week", To: "escalated",
 		Due: h.clock.Add(7 * 24 * time.Hour)}}, x.Timers)
 	require.Equal(t, []BranchCheck{{To: "review", Roles: []string{"hr"}, Guard: "entity.documents == true",
-		Holds: true}}, x.Branches)
+		Holds: true, Fields: []string{"documents"}}}, x.Branches)
 	require.Nil(t, x.Pending)
 	require.NotNil(t, x.Claim)
 	require.Equal(t, "alice", x.Claim.By)
