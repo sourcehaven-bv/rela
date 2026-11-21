@@ -111,7 +111,7 @@ func (c *FlowControl) start(ctx context.Context, name, addr string) (flow.RunID,
 	if subject.Type != f.Subject() {
 		return "", fmt.Errorf("%w: flow %q runs on %s, and %s is a %s", errFlowRequest, name, f.Subject(), subject.ID, subject.Type)
 	}
-	if err := c.authorize(ctx, subject.ID, perms); err != nil {
+	if err = c.authorize(ctx, subject.ID, perms); err != nil {
 		return "", err
 	}
 	open, err := c.openPermissions(ctx, f, subject)
@@ -121,7 +121,7 @@ func (c *FlowControl) start(ctx context.Context, name, addr string) (flow.RunID,
 	if len(open) == 0 {
 		return "", fmt.Errorf("%w: flow %q on %s", errFlowCondition, name, subject.ID)
 	}
-	if err := c.authorize(ctx, subject.ID, open); err != nil {
+	if err = c.authorize(ctx, subject.ID, open); err != nil {
 		return "", err
 	}
 	return c.eng.Start(byCaller(ctx), name, subject.Ref())

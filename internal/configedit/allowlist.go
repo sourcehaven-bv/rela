@@ -420,6 +420,8 @@ var locked = map[File][]string{
 		// Not in the Configure space yet: card width (TKT-H21TYS). Editing a
 		// card in Configure keeps the width it has.
 		"dashboard.cards.[].width", "dashboards.*.cards.[].width",
+		// Not in the Configure space yet: hiding an empty card (TKT-3U99O4L).
+		"dashboard.cards.[].hide_empty", "dashboards.*.cards.[].hide_empty",
 		// Not in the Configure space yet: entity dashboards and their card
 		// scopes, which pair with pages: (also locked).
 		"dashboard.entity_type", "dashboards.*.entity_type",

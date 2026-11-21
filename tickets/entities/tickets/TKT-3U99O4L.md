@@ -41,3 +41,6 @@ a line card is refused at load.
 - The God-object lint (plimsoll) failed on the extra `HideEmpty` field.
 The `max-fields` directive on `DashboardCard` went from 22 to 23, under the
 format-mirror exception documented on `Config`.
+- CI also flagged a shadowed `err` in `FlowControl.start` (govet) and an
+unclassified `hide_empty` key in the configedit allowlist. Both are fixed;
+`hide_empty` is locked beside `width`.
