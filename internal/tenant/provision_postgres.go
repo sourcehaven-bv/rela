@@ -305,7 +305,8 @@ func (p *Provisioner) Resume(ctx context.Context, orgID string) error {
 // SuspendForIDP suspends orgID because the IdP suspended its org. It reports
 // whether the row changed. A tenant the tenant API suspended gets the IdP
 // as its cause, so the tenant API cannot resume it while the IdP holds it;
-// its API hold stays (see [Record.APIHold]). Any other suspended tenant
+// its API hold is set, also on a row that predates [Record.APIHold], so the
+// IdP's resume gives the suspension back to the tenant API. Any other suspended tenant
 // stays so and keeps its cause, so an operator suspension stays one. An
 // erasing or erased tenant is left alone. A provisioning tenant is refused with an
 // error that wraps [ErrTenantProvisioning]: its create would make it
@@ -313,7 +314,8 @@ func (p *Provisioner) Resume(ctx context.Context, orgID string) error {
 func (p *Provisioner) SuspendForIDP(ctx context.Context, orgID string) (bool, error) {
 	var changed bool
 	err := p.withRecord(ctx, orgID, func(ctx context.Context, conn *pgx.Conn, rec Record) error {
-		tag, err := conn.Exec(ctx, "UPDATE "+controlTable+" SET status = $1, suspended_by = $2, updated_at = now() "+
+		tag, err := conn.Exec(ctx, "UPDATE "+controlTable+" SET status = $1, suspended_by = $2, "+
+			"api_hold = api_hold OR suspended_by IS NOT DISTINCT FROM $6, updated_at = now() "+
 			"WHERE schema_name = $3 AND org_id = $4 AND (status = $5 OR (status = $1 AND suspended_by = $6))",
 			string(StatusSuspended), string(SuspendedByIDP), rec.Schema, orgID, string(StatusActive),
 			string(SuspendedByAPI))

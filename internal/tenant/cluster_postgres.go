@@ -55,7 +55,8 @@ const suspendCauses = `('operator', 'idp', 'api', 'archive')`
 
 // controlUpgradeDDL brings a control table made by an older release up to
 // this one: it adds the missing columns and widens the status and
-// suspension-cause checks. Each statement is idempotent, and they run in one
+// suspension-cause checks. It gives a tenant the tenant API suspended
+// before [Record.APIHold] existed its hold. Each statement is idempotent, and they run in one
 // transaction, so a table with the newest column always has the wide checks.
 // [ensureControl] runs it only when a column is missing, because ALTER
 // TABLE locks the table even when it changes nothing.
@@ -71,6 +72,8 @@ const controlUpgradeDDL = `ALTER TABLE ` + controlTable + `
 	ADD COLUMN IF NOT EXISTS entitlements jsonb,
 	ADD COLUMN IF NOT EXISTS archived_at timestamptz,
 	ADD COLUMN IF NOT EXISTS api_hold boolean NOT NULL DEFAULT false;
+UPDATE ` + controlTable + ` SET api_hold = true
+	WHERE status = 'suspended' AND suspended_by = 'api' AND NOT api_hold;
 DO $$
 DECLARE c name;
 BEGIN

@@ -321,6 +321,49 @@ func TestProvisioner_UpgradesControlTableForTenantAPI(t *testing.T) {
 	}
 }
 
+// TestProvisioner_APIHoldOnRowsFromBeforeTheColumn pins that a tenant the
+// tenant API suspended before api_hold existed keeps the API's suspension
+// through an IdP suspend and resume: the upgrade backfills the hold, and
+// the IdP's takeover sets it on a row that still lacks it.
+func TestProvisioner_APIHoldOnRowsFromBeforeTheColumn(t *testing.T) {
+	pv := newProvisioned(t)
+	ctx := t.Context()
+	suspend := tenant.Change{State: new(tenant.StateSuspended)}
+	for _, org := range []string{"org-a", "org-b"} {
+		if _, err := pv.p.Create(ctx, org, tenant.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pv.p.Apply(ctx, org, suspend); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pv.conn.Exec(ctx, "ALTER TABLE "+tenant.ControlSchema+".tenants DROP COLUMN api_hold"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pv.p.Create(ctx, "org-c", tenant.CreateOptions{}); err != nil {
+		t.Fatalf("Create on an old table: %v", err)
+	}
+	if rec := pv.record(t, "org-a"); !rec.APIHold {
+		t.Fatalf("after the upgrade: %+v; want the API hold backfilled", rec)
+	}
+	if _, err := pv.conn.Exec(ctx, "UPDATE "+tenant.ControlSchema+".tenants SET api_hold = false "+
+		"WHERE org_id = 'org-b'"); err != nil {
+		t.Fatal(err)
+	}
+	for _, org := range []string{"org-a", "org-b"} {
+		if changed, err := pv.p.SuspendForIDP(ctx, org); err != nil || !changed {
+			t.Fatalf("SuspendForIDP(%s) = %v, %v", org, changed, err)
+		}
+		if changed, err := pv.p.ResumeForIDP(ctx, org); err != nil || changed {
+			t.Fatalf("ResumeForIDP(%s) = %v, %v; want it to stay suspended", org, changed, err)
+		}
+		rec := pv.record(t, org)
+		if rec.Status != tenant.StatusSuspended || rec.SuspendedBy != tenant.SuspendedByAPI || !rec.APIHold {
+			t.Fatalf("%s after IdP suspend and resume: %+v; want suspended by api", org, rec)
+		}
+	}
+}
+
 // TestRegistry_LeaseCarriesCurrentState pins that a lease on an open
 // tenant carries the access state and plan resolved for this request, not
 // the ones the tenant was opened with.

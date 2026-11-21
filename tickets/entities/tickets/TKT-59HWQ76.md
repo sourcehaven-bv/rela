@@ -28,7 +28,7 @@ archive, and usage.
 
 - [ ] The API accepts only a verified edge assertion with principal_type operator, no org_id and the configured role; a user assertion or a missing one is refused.
 - [ ] PATCH sets state (active, read_only, suspended) and plan/entitlements; a tenant an operator or the IdP suspended is not resumed by the API.
-- [ ] When the IdP suspends a tenant the API suspended, the IdP's hold wins: an API resume is refused until the IdP resumes, and an IdP resume leaves the API's hold in place.
+- [ ] When the IdP suspends a tenant the API suspended, the IdP's hold wins: an API resume is refused until the IdP resumes, and an IdP resume leaves the API's hold in place, also for a tenant suspended before the hold was recorded.
 - [ ] A read_only tenant serves reads and exports and refuses writes with 403 tenant_read_only.
 - [ ] DELETE archives: the data stays, access is refused, and only an operator brings it back or erases it.
 - [ ] GET usage reports users, active users and storage bytes.
