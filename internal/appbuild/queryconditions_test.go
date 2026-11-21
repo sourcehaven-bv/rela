@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/queryplan"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -37,16 +38,16 @@ func TestQueryConditions_Lower(t *testing.T) {
 		"entity.title == current_user.id and not related(entity, 'implementedBy')")
 	require.NoError(t, err)
 
-	filter, ok := conds.Lower(context.Background(), prog, "feature")
-	require.False(t, ok, "current_user lowers only with a stamped identity")
+	filter, err := conds.Lower(context.Background(), prog, "feature")
+	require.Error(t, err, "current_user lowers only with a stamped identity")
 	require.Empty(t, filter.Props)
 	require.Empty(t, filter.Traversals)
 
 	ctx := principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolMCP})
 	ctx, err = conds.StampQueryIdentity(ctx)
 	require.NoError(t, err)
-	filter, ok = conds.Lower(ctx, prog, "feature")
-	require.True(t, ok)
+	filter, err = conds.Lower(ctx, prog, "feature")
+	require.NoError(t, err)
 	require.Equal(t, []store.PropPredicate{
 		{Property: "title", Op: store.PropEqual, Value: "alice", Scalar: true},
 	}, filter.Props)
@@ -61,17 +62,25 @@ func TestQueryConditions_Lower(t *testing.T) {
 	// An `or` rides in Where, and every field it reads is one of its props.
 	orProg, err := ev.CompileWithCurrentUser("feature", "entity.title == 'a' or entity.title < 'c'")
 	require.NoError(t, err)
-	filter, ok = conds.Lower(ctx, orProg, "feature")
-	require.True(t, ok)
+	filter, err = conds.Lower(ctx, orProg, "feature")
+	require.NoError(t, err)
 	require.Empty(t, filter.Props)
 	require.NotNil(t, filter.Where)
 	require.Equal(t, store.CondOr, filter.Where.Op)
 	require.Len(t, filter.Where.Props(), 2)
 
-	filter, ok = appbuild.QueryConditions{}.Lower(ctx, prog, "feature")
-	require.False(t, ok, "the zero value lowers nothing")
+	filter, err = appbuild.QueryConditions{}.Lower(ctx, prog, "feature")
+	require.Error(t, err, "the zero value lowers nothing")
 	require.Empty(t, filter.Props)
 	require.Empty(t, filter.Traversals)
+
+	// A refusal names the part that does not lower.
+	twoProps, err := ev.CompileWithCurrentUser("feature", "entity.title == 'a' or entity.title < entity.title")
+	require.NoError(t, err)
+	_, err = conds.Lower(ctx, twoProps, "feature")
+	var unsupported *queryplan.UnsupportedConditionError
+	require.ErrorAs(t, err, &unsupported)
+	require.Contains(t, err.Error(), "entity.title < entity.title")
 }
 
 // The bundle's Reader gates the traversals Conditions returns with the
@@ -132,8 +141,8 @@ assignments:
 			require.NoError(t, err)
 			prog, err := ev.Compile("feature", tc.filter)
 			require.NoError(t, err)
-			filter, ok := reads.Conditions.Lower(callCtx, prog, "feature")
-			require.True(t, ok)
+			filter, err := reads.Conditions.Lower(callCtx, prog, "feature")
+			require.NoError(t, err)
 			filter.Type, filter.Faces, filter.Limit = "feature", store.AllFaces(), 10
 			page, err := reads.Reader.ListEntityPage(callCtx, filter)
 			require.NoError(t, err)

@@ -85,9 +85,10 @@ func requireLowerable(
 // some role gates with `visible:` is closed, so a field shows only where a
 // global role grants it.
 //
-// A condition that fails to lower here (only an empty identity can cause
-// that, after the load-time rule) contributes nothing, which hides more and
-// never less. The error is a missing or mismatched request; callers fail
+// A condition that fails to lower here contributes nothing, which hides
+// more and never less. After the load-time rule two things cause that: an
+// empty identity, and a related(...) condition on a faced type, which has
+// no zero-face row for the traversal to start from. The error is a missing or mismatched request; callers fail
 // closed.
 func (r *PolicyResolver) SearchFieldScope(ctx context.Context, entityType string) (*search.FieldScope, error) {
 	if r.policy == nil {
@@ -353,7 +354,8 @@ func (c *fieldScopeCompiler) visibleRoles() []string {
 //
 // A condition with related(...) is answered as the grant's traversal binder
 // answers it: ungated, every face of the endpoint, and never for a row on a
-// named face (traversalFor refuses those).
+// named face (traversalFor refuses those), so on a faced type it does not
+// lower.
 func (c *fieldScopeCompiler) lowerWhen(prog *predicate.Program) (*store.GraphQuery, bool) {
 	entityType := c.entityType
 	lowered, ok := queryplan.LowerScope(prog, c.meta, entityType, c.identity)
@@ -375,8 +377,14 @@ func (c *fieldScopeCompiler) lowerWhen(prog *predicate.Program) (*store.GraphQue
 		}
 		q.Related = append(q.Related, store.DirectedRelation{Incoming: hop.Incoming, Pred: *pred})
 	}
-	if len(q.Related) > 0 {
-		q.FaceIn = []entity.Face{""}
+	// The binder answers a related(...) condition only on the zero-face
+	// row. A faceless type has only that row, so the grant needs no face
+	// test; a faced type has no zero-face row (DEC-NPZICR), so the grant
+	// passes nowhere. Deciding it here keeps FaceIn out of the scope, so a
+	// page filter can AND the condition into a store query
+	// (store.GraphQuery.RowCond, TKT-9BKVQ9I).
+	if len(q.Related) > 0 && len(c.meta.Entities[entityType].Faces) > 0 {
+		return nil, false
 	}
 	return q, true
 }

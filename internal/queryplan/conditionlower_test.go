@@ -1,6 +1,7 @@
 package queryplan_test
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -282,5 +283,40 @@ func TestLowerCondition_NilInputs(t *testing.T) {
 	}
 	if _, ok := queryplan.LowerCondition(prog, meta, "undeclared", ""); ok {
 		t.Error("an inequality on an undeclared type lowered")
+	}
+}
+
+// A refusal names the construct that does not lower and why, so a caller
+// can rewrite the condition (TKT-9BKVQ9I).
+func TestLowerConditionExplained_NamesTheConstruct(t *testing.T) {
+	meta := conditionMeta()
+	ev := predicatefns.NewEvaluator(meta)
+	deep := "entity.status == 'a'"
+	for range store.MaxCondDepth {
+		deep = "not (" + deep + ")"
+	}
+	for _, tc := range []struct{ src, construct, reason string }{
+		{"entity.due < '2026-01-01'", "entity.due < 2026-01-01", "cannot answer"},
+		{"entity.price > 3", "entity.price > 3", "cannot answer"},
+		{"entity.status == entity.assignee", "entity.status == entity.assignee", "cannot answer"},
+		{"entity.status == 'a' or entity.count > entity.count", "entity.count > entity.count", "cannot answer"},
+		{"entity.assignee ~= current_user.tool", "current_user.tool", "current_user.id"},
+		{"entity.status == ''", `entity.status == ""`, ""},
+		{deep, "condition", "too large"},
+	} {
+		t.Run(tc.src[:min(len(tc.src), 40)], func(t *testing.T) {
+			prog, err := ev.CompileWithCurrentUser("task", tc.src)
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			_, err = queryplan.LowerConditionExplained(prog, meta, "task", "PERS-1")
+			var unsupported *queryplan.UnsupportedConditionError
+			if !errors.As(err, &unsupported) {
+				t.Fatalf("err = %v, want an UnsupportedConditionError", err)
+			}
+			if !strings.Contains(unsupported.Construct, tc.construct) || !strings.Contains(unsupported.Reason, tc.reason) {
+				t.Errorf("got %q, want the construct %q and a reason with %q", err, tc.construct, tc.reason)
+			}
+		})
 	}
 }

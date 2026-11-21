@@ -105,7 +105,10 @@ func toolListEntities() *mcpgo.Tool {
 		withString("type", description("Entity type (required with filter)")),
 		withString("filter", description(
 			"Predicate expression, e.g. entity.status == 'open' and entity.priority ~= 'low', "+
-				"or related(entity, 'implements', { status = 'open' })")),
+				"or related(entity, 'implements', { status = 'open' }). Supported: ==, ~=, <, <=, >, >= "+
+				"between a string, enum or integer property and a value; a value in a list of strings; "+
+				"related(...); current_user comparisons; and, or, not. Any other filter is refused "+
+				"with an error naming the part that is not supported")),
 		withNumber("limit", description("Max results (default 50, at most 1000)")),
 		withNumber("offset", description("Results to skip")),
 		withString("world", description(worldArgDescription)),

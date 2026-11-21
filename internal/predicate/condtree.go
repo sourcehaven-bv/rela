@@ -58,13 +58,38 @@ type CondTree struct {
 // unless the program is evaluated with [NilOrderedIsFalse], and only then
 // does it agree with a store's reading.
 func (p *Program) ConditionTree(spec PrefilterSpec) (CondTree, bool) {
-	if p == nil || spec.RecordVar == "" {
-		return CondTree{}, false
-	}
-	return condTree(p.root, spec)
+	t, unsupported := p.ConditionTreeExplained(spec)
+	return t, unsupported == ""
 }
 
-func condTree(n node, spec PrefilterSpec) (CondTree, bool) {
+// ConditionTreeExplained is [Program.ConditionTree] that names what it
+// refuses: unsupported is the source text of the smallest sub-expression
+// that is not one of the tree's shapes, such as `today()` or
+// `entity.a == entity.b`, and empty when the whole program reads as a
+// tree. A nil program or a spec without a record variable is "program".
+func (p *Program) ConditionTreeExplained(spec PrefilterSpec) (tree CondTree, unsupported string) {
+	if p == nil || spec.RecordVar == "" {
+		return CondTree{}, "program"
+	}
+	var why string
+	t, ok := condTree(p.root, spec, &why)
+	if !ok {
+		return CondTree{}, why
+	}
+	return t, ""
+}
+
+// condTree reads n as a [CondTree]. When it refuses, *why holds the source
+// text of the refused sub-expression, written by the innermost refusal.
+func condTree(n node, spec PrefilterSpec, why *string) (CondTree, bool) {
+	t, ok := condTreeNode(n, spec, why)
+	if !ok && *why == "" {
+		*why = render(n)
+	}
+	return t, ok
+}
+
+func condTreeNode(n node, spec PrefilterSpec, why *string) (CondTree, bool) {
 	switch x := n.(type) {
 	case *logicalNode:
 		if x.selects() {
@@ -76,7 +101,7 @@ func condTree(n node, spec PrefilterSpec) (CondTree, bool) {
 		}
 		out := CondTree{Op: op}
 		for _, side := range []node{x.lhs, x.rhs} {
-			t, ok := condTree(side, spec)
+			t, ok := condTree(side, spec, why)
 			if !ok {
 				return CondTree{}, false
 			}
@@ -88,7 +113,7 @@ func condTree(n node, spec PrefilterSpec) (CondTree, bool) {
 		}
 		return out, true
 	case *notNode:
-		t, ok := condTree(x.expr, spec)
+		t, ok := condTree(x.expr, spec, why)
 		if !ok {
 			return CondTree{}, false
 		}

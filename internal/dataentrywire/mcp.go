@@ -124,9 +124,6 @@ func RemoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 		Families:    appbuild.CompiledWorlds(svc).Families(),
 		Worlds:      host.Worlds(),
 	}
-	if reads.Traversals != nil {
-		deps.Related.Traversals = reads.Traversals
-	}
 	deps.Related.Conditions = reads.Conditions
 	if reads.Rollups != nil {
 		deps.Related.Rollups = reads.Rollups

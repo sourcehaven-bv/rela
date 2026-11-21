@@ -219,9 +219,10 @@ func assertEntityPages(t *testing.T, f pageFixture) {
 			wantIDs: []string{"TKT-0010", "TKT-0011"}, wantTotal: pageAssigned,
 		},
 		{
-			name: "a filter on a field hidden on some rows is refused", user: "bob",
-			q:       visibility.PageQuery{Props: openStatus, Limit: 5},
-			wantErr: visibility.ErrPropsNotPushable,
+			// bob reads only his tickets and sees only their title, so
+			// status is unset on every row he is served (TKT-9BKVQ9I).
+			name: "a filter on a field hidden from the reader matches as unset", user: "bob",
+			q: visibility.PageQuery{Props: openStatus, Limit: 5},
 		},
 		{
 			name: "no read grant reads nothing", user: "carol",

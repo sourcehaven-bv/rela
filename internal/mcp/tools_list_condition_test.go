@@ -13,7 +13,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
@@ -67,15 +69,11 @@ var listConditionFilters = map[string]string{
 	"title-from-b":     "entity.title >= 'b'",
 	"mine-from-b":      "is_current_user(entity.assignee) and entity.title >= 'b'",
 	"not-b-or-mine":    "not (entity.title < 'b' or entity.title > 'b') or is_current_user(entity.assignee)",
-	// This does not lower: it keeps the Go path for everyone.
-	"title-is-assignee": "entity.title == entity.assignee",
 }
 
-// goOnlyFilters are the filters that never lower.
-var goOnlyFilters = map[string]bool{"title-is-assignee": true}
-
-// statusFilters read status, which frank does not see on any ticket; they
-// keep the Go path for him.
+// statusFilters read status, which frank does not see on any ticket. The
+// reader folds his comparisons on it to their value on an unset status
+// (TKT-9BKVQ9I), so a page may need no count at all.
 var statusFilters = map[string]bool{"open": true, "not-done": true, "others-open": true, "open-or-reported": true}
 
 // reportedFilters require a traversal into users, which dave may not read:
@@ -88,13 +86,15 @@ var reportedFilters = map[string]bool{"reported": true, "contradiction": true, "
 type conditionFixture struct {
 	srv      *Server
 	counting *storetest.Counting
+	binder   *relresolve.Binder
 	as       func(user string) context.Context
 }
 
 // newConditionFixtureOn seeds n tickets, three features and three users on
 // base and serves them under a policy with one principal per access shape:
 // alice reads everything, bob reads tickets only as their editor, dave
-// reads no users, erin reads no tickets, frank sees no ticket status.
+// reads no users, erin reads no tickets, frank sees no ticket status, and
+// gina sees it only on tickets titled b.
 func newConditionFixtureOn(t *testing.T, base store.Store, n int) conditionFixture {
 	t.Helper()
 	ctx := context.Background()
@@ -172,10 +172,18 @@ func newConditionFixtureOn(t *testing.T, base store.Store, n int) conditionFixtu
 					{Field: "title"}, {Field: "assignee"}, {Field: "watchers"},
 				}},
 			},
+			"somestatus": {
+				Read: []string{"ticket", "feature", "user"},
+				Visible: map[string][]acl.FieldGrant{"ticket": {
+					{Field: "title"}, {Field: "assignee"}, {Field: "watchers"},
+					{Field: "status", When: "entity.title == 'b'"},
+				}},
+			},
 		},
 		RoleRelations: map[string]acl.RoleRelationDef{"editor-of": {Confers: "editor"}},
 		Assignments: map[string]string{
 			"alice": "all", "bob": "browse", "dave": "tickets", "erin": "features", "frank": "nostatus",
+			"gina": "somestatus",
 		},
 	}, aclstore.MustNewGraph(counting), counting)
 	if err != nil {
@@ -187,12 +195,12 @@ func newConditionFixtureOn(t *testing.T, base store.Store, n int) conditionFixtu
 	srv := &Server{logger: slog.New(slog.DiscardHandler)}
 	setDeps(srv, Deps{
 		Store:    reads.Reader,
-		Related:  RelatedReads{Traversals: reads.Traversals, Conditions: reads.Conditions},
+		Related:  RelatedReads{Conditions: reads.Conditions},
 		Meta:     meta,
 		World:    store.TrivialScope(),
 		Families: store.TrivialScope(),
 	})
-	return conditionFixture{srv: srv, counting: counting, as: func(user string) context.Context {
+	return conditionFixture{srv: srv, counting: counting, binder: reads.Traversals, as: func(user string) context.Context {
 		return acltest.Bind(principal.With(ctx, principal.Principal{User: user, Tool: principal.ToolMCP}), t, d)
 	}}
 }
@@ -216,14 +224,15 @@ func (f conditionFixture) list(ctx context.Context, t *testing.T, args map[strin
 	return ids, page.Total
 }
 
-// goPath answers filter for ctx's caller on the Go path alone: every
-// readable ticket, judged by the filter on the redacted row.
+// goPath answers filter for ctx's caller in Go, as the reference the store
+// path is compared with: every readable ticket, judged by the filter on the
+// redacted row, with traversals answered by the gated binder.
 func (f conditionFixture) goPath(
 	ctx context.Context, t *testing.T, filter string, offset, limit int,
 ) (ids []string, total int) {
 	t.Helper()
 	d := snapshotFor(ctx, f.srv).deps
-	prog, err := compileListFilter(d.Meta, d.Related, "ticket", filter)
+	prog, err := compileListFilter(d.Meta, "ticket", filter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,15 +240,33 @@ func (f conditionFixture) goPath(
 	if err != nil {
 		t.Fatal(err)
 	}
-	page := listPage{faces: store.InWorld(store.TrivialScope()), offset: offset, limit: limit}
-	rows, total, err := page.filterInGo(ctx, d, "ticket", prog)
+	var rows []*entity.Entity
+	for e, lerr := range d.Store.ListEntities(ctx, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}) {
+		if lerr != nil {
+			t.Fatal(lerr)
+		}
+		rows = append(rows, e)
+	}
+	rowIDs := make([]string, len(rows))
+	for i, e := range rows {
+		rowIDs[i] = e.ID
+	}
+	traversalFor, err := f.binder.Bind(ctx, "ticket", rowIDs, prog)
 	if err != nil {
 		t.Fatal(err)
 	}
+	ev := predicatefns.NewEvaluator(d.Meta).LoweringSemantics()
 	for _, e := range rows {
-		ids = append(ids, e.ID)
+		ok, merr := ev.MatchesWithTraversals(ctx, prog, e.Type, e.ID, e.Properties, traversalFor(e.ID))
+		if merr != nil {
+			t.Fatal(merr)
+		}
+		if ok {
+			ids = append(ids, e.ID)
+		}
 	}
-	return ids, total
+	slices.Sort(ids)
+	return applyPagination(ids, offset, limit), len(ids)
 }
 
 // The comparison tests run serially, subtests included: every subtest
@@ -250,11 +277,11 @@ func TestListEntities_ConditionMatchesGoPath(t *testing.T) {
 
 // assertConditionMatchesGoPath serves every filter for every principal and
 // page through list_entities, and compares the rows and the total with the
-// Go path (TKT-Z099FGY). It also checks which path served the page, so the
-// comparison cannot pass by both sides taking the Go path.
+// Go reference (TKT-Z099FGY). It also checks that the store served the
+// page without reading the whole type.
 func assertConditionMatchesGoPath(t *testing.T, f conditionFixture) {
 	t.Helper()
-	for _, user := range []string{"alice", "bob", "dave", "erin", "frank"} {
+	for _, user := range []string{"alice", "bob", "dave", "erin", "frank", "gina"} {
 		for name, filter := range listConditionFilters {
 			for _, pg := range []struct{ offset, limit int }{{0, 4}, {4, 4}, {0, 50}, {30, 5}} {
 				t.Run(fmt.Sprintf("%s %s %d+%d", user, name, pg.offset, pg.limit), func(t *testing.T) {
@@ -271,10 +298,9 @@ func assertConditionMatchesGoPath(t *testing.T, f conditionFixture) {
 						t.Fatalf("served %v of %d, Go path %v of %d", gotIDs, gotTotal, wantIDs, wantTotal)
 					}
 
-					// CountMatched is the pushed path's signature. The Go
-					// path reads the whole readable type (ListEntities, or
-					// GraphQuery under a graph read scope) and counts in
-					// memory.
+					// CountMatched is the pushed path's signature. No path
+					// reads the whole readable type (ListEntities, or
+					// GraphQuery under a graph read scope).
 					switch {
 					case user == "erin":
 						// erin reads no tickets: neither path reaches a row.
@@ -282,9 +308,9 @@ func assertConditionMatchesGoPath(t *testing.T, f conditionFixture) {
 						if calls["CountMatched"]+calls["ListEntities"]+calls["GraphQuery"]+calls["GraphQueryHeaders"] != 0 {
 							t.Errorf("a denied traversal must read nothing: %s", f.counting)
 						}
-					case goOnlyFilters[name] || user == "frank" && statusFilters[name]:
-						if calls["CountMatched"] != 0 || calls["ListEntities"]+calls["GraphQuery"] == 0 {
-							t.Errorf("%s must stay on the Go path for %s: %s", name, user, f.counting)
+					case user == "frank" && statusFilters[name]:
+						if calls["CountMatched"] > 1 || calls["ListEntities"]+calls["GraphQuery"] != 0 {
+							t.Errorf("%s read the whole type for %s: %s", name, user, f.counting)
 						}
 					default:
 						if calls["CountMatched"] != 1 || calls["ListEntities"]+calls["GraphQuery"] != 0 {
