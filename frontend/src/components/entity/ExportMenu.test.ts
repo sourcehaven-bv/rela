@@ -84,6 +84,24 @@ describe('ExportMenu', () => {
     expect(href).toHaveBeenCalledWith('/api/v1/_documents/sales/_export?transform=pdf')
   })
 
+  it('renders an ellipsis trigger with "Export as" items in more mode', async () => {
+    vi.mocked(getTransforms).mockResolvedValue([{ name: 'pdf', produces: 'application/pdf' }])
+
+    const wrapper = mount(ExportMenu, {
+      props: { more: true, urlFor: (t: string) => `/x?transform=${t}` },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    const trigger = wrapper.find('[data-testid="export-more-menu"]')
+    expect(trigger.exists()).toBe(true)
+    expect(trigger.attributes('aria-label')).toBe('More actions')
+    expect(wrapper.text()).not.toContain('Export')
+    await trigger.trigger('click')
+
+    expect(items().map((i) => i.textContent?.trim())).toEqual(['Export as pdf'])
+  })
+
   it('hides the menu when the registry fetch fails, without throwing', async () => {
     vi.mocked(getTransforms).mockRejectedValue(new Error('offline'))
 

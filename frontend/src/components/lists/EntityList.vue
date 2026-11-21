@@ -1393,7 +1393,7 @@ watch(searchQuery, () => {
     <PageHeaderContent :title="listConfig.title || listConfig.entity">
       <template #actions>
         <BackButton v-if="backTarget" :target="backTarget" />
-        <ExportMenu :url-for="listExportUrlFor" />
+        <ExportMenu more :url-for="listExportUrlFor" />
         <RlButton
           v-for="a in toolbar.buttons.value"
           :key="`toolbar-action-${a.id}`"

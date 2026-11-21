@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getTransforms, type TransformInfo } from '@/api/transforms'
 import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import RlIcon from 'rela-components/components/common/RlIcon.vue'
 import RlMenu from 'rela-components/components/overlay/RlMenu.vue'
 import RlMenuItem from 'rela-components/components/overlay/RlMenuItem.vue'
@@ -20,6 +21,11 @@ const props = defineProps<{
    */
   allowed?: string[]
   size?: 'sm' | 'md'
+  /**
+   * Render as a "more" (ellipsis) icon button instead of a labelled Export
+   * button, for page headers that keep secondary actions out of the way.
+   */
+  more?: boolean
 }>()
 
 const transforms = ref<TransformInfo[]>([])
@@ -62,7 +68,15 @@ function exportAs(tr: TransformInfo) {
   -->
   <RlMenu v-if="offered.length" class="export-menu">
     <template #trigger="{ toggle, attrs }">
-      <RlButton variant="secondary" :size="size" v-bind="attrs" @click="toggle">
+      <RlIconButton
+        v-if="more"
+        icon="ellipsis"
+        :label="t('entity.moreActions')"
+        data-testid="export-more-menu"
+        v-bind="attrs"
+        @click="toggle"
+      />
+      <RlButton v-else variant="secondary" :size="size" v-bind="attrs" @click="toggle">
         {{ t('entity.export') }}
         <template #trailing>
           <RlIcon name="chevron-down" :size="14" aria-hidden="true" />
@@ -71,7 +85,7 @@ function exportAs(tr: TransformInfo) {
     </template>
 
     <RlMenuItem v-for="tr in offered" :key="tr.name" class="export-menu-item" @click="exportAs(tr)">
-      {{ tr.name }}
+      {{ more ? t('entity.exportAs', { format: tr.name }) : tr.name }}
     </RlMenuItem>
   </RlMenu>
 </template>
