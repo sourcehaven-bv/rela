@@ -655,6 +655,18 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 	return th, nil
 }
 
+// shellBoot reads the app name and language the tenant-free shell shows
+// from the shared data-entry.yaml. An unreadable file leaves the shell as
+// built: the tenants' own config load reports a broken file.
+func shellBoot(base *appbuild.SharedBase) dataentry.ShellBoot {
+	boot, err := dataentry.LoadShellBoot(context.Background(), base.ProjectConfig().Load)
+	if err != nil {
+		slog.Warn("tenant mode: shell reads no app name", "error", err)
+		return dataentry.ShellBoot{}
+	}
+	return boot
+}
+
 // tenantHost wires the registry and the front handler over one shared base.
 // verifier is the host's own; s.assertion must already be the reuse wrapper
 // around the same verifier, so every tenant's gate trusts what the host
@@ -681,7 +693,7 @@ func (s *server) tenantHost(
 	hcfg := tenanthost.Config{
 		Verifier:   verifier,
 		HeaderName: s.f.jwtHeader,
-		Static:     dataentry.StaticShell(),
+		Static:     dataentry.StaticShell(shellBoot(base)),
 		Provision:  limits.provision,
 		Acquire: func(ctx context.Context, orgID string) (http.Handler, func(), error) {
 			lease, aerr := registry.Acquire(ctx, orgID)

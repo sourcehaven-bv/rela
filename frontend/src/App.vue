@@ -21,6 +21,7 @@ import { useConfirmHost } from '@/composables/useConfirm'
 import { useDetailPanelOutlet } from '@/composables/useDetailPanel'
 import { usePageHeaderOutlet } from '@/composables/usePageHeader'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
+import { bootMeta } from '@/i18n/bootMeta'
 import { usePresentationOutlet } from '@/composables/usePresentation'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { unknownWorldQuery } from '@/composables/useWorld'
@@ -88,7 +89,8 @@ const showHamburger = computed(
 )
 
 const schemaStore = useSchemaStore()
-useDocumentTitle(() => schemaStore.app?.name)
+// Before the config loads, the app name the server wrote into the shell.
+useDocumentTitle(() => schemaStore.app?.name ?? bootMeta('rela-app-name'))
 
 // The library's own strings follow the interface language (TKT-ZL1QAO),
 // and the project default from app.language feeds the resolution.
