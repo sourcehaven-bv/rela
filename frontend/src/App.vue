@@ -6,7 +6,7 @@ import { navigationPending } from '@/router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { provideMessages } from 'rela-components/composables/useMessages'
 import { localeMessages } from 'rela-components/composables/localeMessages'
-import { resolvedLanguage, setProjectLanguage } from '@/i18n'
+import { resolvedLanguage } from '@/i18n'
 import { getErrorMessage } from '@/api'
 import { tenantProvisioning } from '@/api/tenantProvisioning'
 import {
@@ -21,7 +21,7 @@ import { useConfirmHost } from '@/composables/useConfirm'
 import { useDetailPanelOutlet } from '@/composables/useDetailPanel'
 import { usePageHeaderOutlet } from '@/composables/usePageHeader'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
-import { bootMeta } from '@/i18n/bootMeta'
+import { useShellAppConfig } from '@/composables/useShellAppConfig'
 import { usePresentationOutlet } from '@/composables/usePresentation'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { unknownWorldQuery } from '@/composables/useWorld'
@@ -89,17 +89,12 @@ const showHamburger = computed(
 )
 
 const schemaStore = useSchemaStore()
-// Before the config loads, the app name the server wrote into the shell.
-useDocumentTitle(() => schemaStore.app?.name ?? bootMeta('rela-app-name'))
+// Also feeds app.language to the language resolution.
+const { appName } = useShellAppConfig(schemaStore)
+useDocumentTitle(appName)
 
-// The library's own strings follow the interface language (TKT-ZL1QAO),
-// and the project default from app.language feeds the resolution.
+// The library's own strings follow the interface language (TKT-ZL1QAO).
 provideMessages(localeMessages(() => resolvedLanguage.value.language))
-watch(
-  () => schemaStore.app?.language,
-  (language) => setProjectLanguage(language),
-  { immediate: true }
-)
 const uiStore = useUIStore()
 // The Configure space has its own sidebar and no space create menu.
 const configuring = computed(() => isConfigurePath(route.path))
