@@ -3,7 +3,7 @@ import type { TimelineEntry } from 'rela-components/components/feedback/timeline
 import type { FlowEvent, FlowRun } from '@/api/flows'
 import { browserTimeZone, formatDatetime } from '@/utils/format'
 import { entityDetailHref } from '@/utils/entityRoute'
-import { actorLabel } from '@/components/entity/changeText'
+import { actorLabel } from '@/utils/actorLabel'
 
 /** Translates a key with named values; vue-i18n's `t` fits it. */
 export type Translate = (key: string, values?: Record<string, unknown>) => string
