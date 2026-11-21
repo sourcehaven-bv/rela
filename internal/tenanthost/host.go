@@ -115,10 +115,10 @@ type Config struct {
 	// Webhook. Without it those events are refused with 503, never passed
 	// to the tenant or acknowledged.
 	StatusSync StatusSyncer
-	// TenantAPI verifies the bearer token of the tenant API. Optional: nil
+	// TenantAPI enables the tenant API under [TenantsPath]. Optional: nil
 	// leaves [TenantsPath] an ordinary path that needs an assertion. It
 	// needs provisioning on.
-	TenantAPI TenantAPIVerifier
+	TenantAPI *TenantAPIConfig
 }
 
 // Host is the front http.Handler of a multi-tenant server.
@@ -147,6 +147,9 @@ func New(cfg Config) (*Host, error) {
 		return nil, errors.New("tenanthost: status sync needs the IdP webhook")
 	}
 	if err := validateProvision(cfg.Provision, cfg.Webhook != nil, cfg.TenantAPI != nil); err != nil {
+		return nil, err
+	}
+	if err := cfg.TenantAPI.validate(); err != nil {
 		return nil, err
 	}
 	return &Host{cfg: cfg, prov: newProvisioning(cfg.Provision)}, nil
@@ -211,10 +214,12 @@ func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if id.OrgID == "" {
+	if id.OrgID == "" || id.PrincipalType == operatorPrincipal {
+		// An operator principal manages tenants through the tenant API; it
+		// never acts inside one, even when its assertion names an org.
 		if !shell() {
-			slog.InfoContext(r.Context(), "tenant host: verified assertion carries no org_id",
-				"path", r.URL.Path, "method", r.Method)
+			slog.InfoContext(r.Context(), "tenant host: verified assertion names no tenant to act in",
+				"path", r.URL.Path, "method", r.Method, "principal_type", id.PrincipalType)
 			writeError(w, r, http.StatusForbidden, "unknown_tenant", "No tenant for this organization")
 		}
 		return
@@ -402,13 +407,20 @@ type problem struct {
 	Type     string `json:"type"`
 	Title    string `json:"title"`
 	Status   int    `json:"status"`
+	Detail   string `json:"detail,omitempty"`
 	Instance string `json:"instance,omitempty"`
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, status int, code, title string) {
+	writeProblem(w, r, status, code, title, "")
+}
+
+// writeProblem is [writeError] with a detail, for a refusal whose reason is
+// the caller's own input.
+func writeProblem(w http.ResponseWriter, r *http.Request, status int, code, title, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(problem{
-		Type: "https://rela.dev/errors/" + code, Title: title, Status: status, Instance: r.URL.Path,
+		Type: "https://rela.dev/errors/" + code, Title: title, Status: status, Detail: detail, Instance: r.URL.Path,
 	})
 }

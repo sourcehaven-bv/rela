@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -48,7 +49,7 @@ func TestSelect_FailsClosed(t *testing.T) {
 			if !errors.Is(selErr, tc.want) {
 				t.Fatalf("Select(%q) error = %v, want %v", tc.org, selErr, tc.want)
 			}
-			if got != (tenant.Tenant{}) {
+			if !reflect.DeepEqual(got, tenant.Tenant{}) {
 				t.Errorf("Select(%q) returned a usable tenant %+v alongside an error", tc.org, got)
 			}
 		})
