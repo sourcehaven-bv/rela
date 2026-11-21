@@ -957,6 +957,12 @@ export interface DashboardCard {
    */
   width?: 'normal' | 'wide' | 'full'
   /**
+   * Leave the card out when its list or query has no rows for this reader.
+   * A card that failed to load still shows. The server refuses it on a line
+   * card.
+   */
+  hide_empty?: boolean
+  /**
    * Optional ACL permission gating this card's visibility (TKT-53KICM).
    *
    * The SPA does not act on this: the server already omits cards the principal

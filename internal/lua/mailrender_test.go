@@ -44,6 +44,7 @@ h, t = mail.render{
   subject = "Weekly digest",
   lang = "nl",
   intro = "You have **3** items.",
+  button = { label = "Open the board", url = "/board" },
   sections = {
     { title = "Overdue", body = "These are _past_ due.",
       columns = {"Title", "Due"},
@@ -60,6 +61,7 @@ h, t = mail.render{
 		Subject: "Weekly digest",
 		Lang:    "nl",
 		Intro:   "You have **3** items.",
+		Button:  &mailrender.Button{Label: "Open the board", URL: "/board"},
 		Sections: []mailrender.Section{{
 			Title:   "Overdue",
 			Body:    "These are _past_ due.",
@@ -363,4 +365,24 @@ h, t = mail.render{
 	require.Contains(t, html, `<a href="https://app.example/x"`)
 	require.Contains(t, html, "PLAIN", "a row past the end of links still renders")
 	require.NotContains(t, html, "<tr></tr>", "no empty row is emitted")
+}
+
+// TestMailRender_ButtonErrors pins that a malformed or unsafe button raises
+// instead of rendering a dead call to action.
+func TestMailRender_ButtonErrors(t *testing.T) {
+	t.Parallel()
+	for name, script := range map[string]string{
+		"not a table":   `mail.render{subject = "s", button = "go"}`,
+		"no label":      `mail.render{subject = "s", button = {url = "https://x.example"}}`,
+		"no url":        `mail.render{subject = "s", button = {label = "Go"}}`,
+		"unsafe scheme": `mail.render{subject = "s", button = {label = "Go", url = "javascript:alert(1)"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			rt, _ := newMailRuntime(t, &recordingMailSender{})
+			err := rt.RunString(script)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "mail.render")
+		})
+	}
 }

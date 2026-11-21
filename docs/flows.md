@@ -102,7 +102,7 @@ Each entry in `start:` names one way to start a run.
 | ----- | ------------ | ---------- |
 | `create` | when a subject is created | `when` (optional) |
 | `predicate` | when a subject comes to match `when` | `when` (required) |
-| `manual` | when a person asks for it | `permission` (required) |
+| `manual` | when a person asks for it and `when` holds | `permission` (required), `when` (optional) |
 | `schedule` | on each subject that matches `when`, every period | `every` (required), `when` (optional) |
 
 A manual start needs a permission from acl.yaml. rela warns when no role
@@ -110,6 +110,23 @@ grants it, because then nobody can start the flow by hand. rela also warns
 about a flow without start triggers. A schedule start needs
 `per_subject: one`; with `many`, every tick would start another run on
 every matching subject.
+
+A manual start with `when:` is offered only on a subject for which the
+condition holds. The Start button is hidden on other subjects, and a start
+through the API or `rela flow start` is refused there as a conflict. Use it
+to stop staff starting a flow that no longer applies, such as a signup on an
+account whose signup is done:
+
+```yaml
+      - on: manual
+        permission: staff.manage
+        when: "entity.status == 'pending'"
+```
+
+The condition follows the same rules as other flow conditions: it reads only
+the subject's own properties, and none that a `visible:` grant restricts. A
+caller without the permission is refused for that reason first, whatever the
+condition.
 
 ### Starting on create
 

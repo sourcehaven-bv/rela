@@ -1951,6 +1951,7 @@ local html, text = mail.render{
   subject  = "Wekelijks MT",
   lang     = "nl",                     -- optional BCP-47 tag
   intro    = "Automatisch samengesteld.",
+  button   = { label = "Open het dashboard", url = "/" },  -- optional
   sections = {
     { title = "Open acties", columns = {"Taak", "Deadline"},
       rows = {{"Leveranciersbeoordeling", "2026-09-01"}},
@@ -1965,8 +1966,10 @@ mail.send{to = "maaike@example.nl", subject = "Wekelijks MT", html = html, text 
 It returns both parts, rendered through the same branded, client-tested template
 the declarative digests use — table-based layout, inlined CSS, Outlook
 fallbacks. `intro`/`body`/`footer` are markdown and are **sanitized**; `rows`
-cells are escaped values, not markdown; row links are limited to `http(s)` or a
-`/`-relative path resolved against `base_url`.
+cells are escaped values, not markdown; row links and the `button` URL are
+limited to `http(s)` or a `/`-relative path resolved against `base_url`. The
+`button` is a link styled as a button, shown below the intro; its text part is
+`label: URL`.
 
 There is deliberately no `html` or `css` field: the sanitizing is the point.
 `mail.render` needs no mail configuration (it only formats), and a malformed

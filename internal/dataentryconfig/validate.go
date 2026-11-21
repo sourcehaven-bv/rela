@@ -2746,6 +2746,10 @@ func validateDashboardCards(prefix string, cards []DashboardCard) []string {
 				prefix, i, card.Title, card.Display, joinMapKeys(validDashboardDisplayModes)))
 		}
 		errs = append(errs, validateDashboardCardWidth(prefix, i, card)...)
+		if card.HideEmpty && (card.Records != nil || card.Display == DisplayLine) {
+			errs = append(errs, fmt.Sprintf("%s: card[%d] %q sets hide_empty, which a line card does not take: it has no rows",
+				prefix, i, card.Title))
+		}
 		// Busy columns are list-only (TKT-TU3XH4). Every card is checked
 		// here, whatever its source or display.
 		for j, c := range card.Columns {

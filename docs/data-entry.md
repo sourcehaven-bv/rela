@@ -3986,8 +3986,29 @@ dashboard:
 | `rows_order` / `columns_order` | string | `matrix`: `asc` (default) or `desc`                         |
 | `match`      | string | `ratio`: the query scope on the list's type that counts as matched          |
 | `width`      | string | `normal` (default), `wide` or `full`: how much of the row the card takes    |
+| `hide_empty` | bool   | Leave the card out when its list or query has no rows for the reader. Not on a `line` card |
 | `permission` | string | Hide this card from principals who do not hold the named ACL permission     |
 | `scope`      | map    | On an [entity dashboard](#entity-dashboards): `{ relation, direction }` from the entity to the card's rows |
+
+### Hiding an empty card (`hide_empty:`)
+
+Set `hide_empty: true` to leave a card off the dashboard when its list or
+query has no rows for the person viewing it. Use it for a card that only
+matters when there is something to do, such as open invoices on a customer
+portal. A card that fails to load still shows, with its error, so a failure
+does not look like "nothing to show". A `line` card has no rows, so rela
+refuses `hide_empty` on it when the config loads. Like `permission:`, this
+only tidies the dashboard; the rows are access-checked either way.
+
+```yaml
+dashboard:
+  cards:
+    - title: Open invoices
+      list: open_invoices
+      display: table
+      columns: [{property: invoice_number}, {property: total}]
+      hide_empty: true
+```
 
 ### Cards from a list (`list:`)
 

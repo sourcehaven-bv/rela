@@ -111,16 +111,27 @@ func (c *FlowControl) start(ctx context.Context, name, addr string) (flow.RunID,
 	if subject.Type != f.Subject() {
 		return "", fmt.Errorf("%w: flow %q runs on %s, and %s is a %s", errFlowRequest, name, f.Subject(), subject.ID, subject.Type)
 	}
-	if err := c.authorize(ctx, subject.ID, perms); err != nil {
+	if authErr := c.authorize(ctx, subject.ID, perms); authErr != nil {
+		return "", authErr
+	}
+	open, err := c.openPermissions(ctx, f, subject)
+	if err != nil {
 		return "", err
+	}
+	if len(open) == 0 {
+		return "", fmt.Errorf("%w: flow %q on %s", errFlowCondition, name, subject.ID)
+	}
+	if authErr := c.authorize(ctx, subject.ID, open); authErr != nil {
+		return "", authErr
 	}
 	return c.eng.Start(byCaller(ctx), name, subject.Ref())
 }
 
 // Startable names the flows the caller may start by hand on the entity at
-// addr: each flow on its type with an `on: manual` start whose permission
-// the caller holds for it, as [FlowControl.Start] checks. It does not look
-// at `per_subject:`. Its errors carry a [flowview] kind.
+// addr: each flow on its type with an `on: manual` start whose `when:`
+// holds for it and whose permission the caller holds for it, as
+// [FlowControl.Start] checks. It does not look at `per_subject:`. Its
+// errors carry a [flowview] kind.
 func (c *FlowControl) Startable(ctx context.Context, addr string) ([]string, error) {
 	out, err := c.startable(ctx, addr)
 	return out, classify(err)
@@ -133,11 +144,17 @@ func (c *FlowControl) startable(ctx context.Context, addr string) ([]string, err
 	}
 	out := []string{}
 	for _, f := range c.eng.Flows() {
-		perms := manualPermissions(f)
-		if f.Subject() != subject.Type || len(perms) == 0 {
+		if f.Subject() != subject.Type || len(manualPermissions(f)) == 0 {
 			continue
 		}
-		err := c.authorize(ctx, subject.ID, perms)
+		perms, err := c.openPermissions(ctx, f, subject)
+		if err != nil {
+			return nil, err
+		}
+		if len(perms) == 0 {
+			continue
+		}
+		err = c.authorize(ctx, subject.ID, perms)
 		if errors.Is(err, ErrFlowPermission) {
 			continue
 		}
@@ -284,6 +301,22 @@ func managePermissions(f *flowcfg.Flow) []string {
 		return []string{p}
 	}
 	return manualPermissions(f)
+}
+
+// openPermissions are the permissions of the manual starts of f whose
+// `when:` holds for subject.
+func (c *FlowControl) openPermissions(ctx context.Context, f *flowcfg.Flow, subject *entity.Entity) ([]string, error) {
+	starts, err := flowengine.ManualStarts(ctx, c.eng, f, subject.Ref())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(starts))
+	for _, s := range starts {
+		if s.Permission != "" {
+			out = append(out, s.Permission)
+		}
+	}
+	return out, nil
 }
 
 func manualPermissions(f *flowcfg.Flow) []string {

@@ -338,6 +338,23 @@ const cardViews = computed<CardView[]>(() =>
 )
 
 /**
+ * Whether a `hide_empty:` card loaded and has no rows for this reader. A
+ * card that failed or has not loaded is not empty: an error must not read
+ * as "nothing to show".
+ */
+function loadedEmpty(view: CardView): boolean {
+  if (view.failed) return false
+  if (view.card.list) return view.value !== undefined && view.value.total === 0
+  const data = cardData.value.get(view.key)
+  return data !== undefined && data.count === 0
+}
+
+/** The tiles that show: every card but a `hide_empty:` card with no rows. */
+const shownViews = computed(() =>
+  cardViews.value.filter((view) => !(view.card.hide_empty && loadedEmpty(view)))
+)
+
+/**
  * The tile class for a card's `width:` (TKT-H21TYS). Any other value, which
  * the server rejects at config load, gets no class and renders as normal.
  */
@@ -406,7 +423,7 @@ watch([() => props.name, () => props.anchor, worldParam], () => void loadData())
 
       <div v-else class="dashboard-grid">
         <section
-          v-for="view in cardViews"
+          v-for="view in shownViews"
           :key="view.key"
           class="dashboard-card"
           :class="widthClass(view.card.width)"

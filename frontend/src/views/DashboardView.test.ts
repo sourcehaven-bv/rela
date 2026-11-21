@@ -809,6 +809,38 @@ describe('DashboardView', () => {
     })
   })
 
+  describe('hide_empty', () => {
+    const titles = (w: Awaited<ReturnType<typeof mountView>>) =>
+      w.findAll('.dashboard-card h3').map((h) => h.text())
+
+    it('leaves out a hide_empty card whose list or query has no rows', async () => {
+      seedDashboard([
+        card({ title: 'Empty list', query: undefined, list: 'open', index: 0, hide_empty: true }),
+        card({ title: 'Full list', query: undefined, list: 'open', index: 1, hide_empty: true }),
+        card({ title: 'Empty query', query: 'type:none', index: 2, hide_empty: true }),
+        card({ title: 'Shown anyway', query: 'type:none', index: 3 }),
+      ])
+      getDashboardCardMock.mockImplementation(async (_name, index) =>
+        index === 0
+          ? { title: 'Empty list', display: 'count', list: 'open', total: 0 }
+          : { title: 'Full list', display: 'count', list: 'open', total: 3 }
+      )
+
+      const wrapper = await mountView()
+      expect(titles(wrapper)).toEqual(['Full list', 'Shown anyway'])
+    })
+
+    it('keeps a hide_empty card that failed to load, so the error shows', async () => {
+      seedDashboard([card({ title: 'Broken', query: undefined, list: 'open', hide_empty: true })])
+      getDashboardCardMock.mockRejectedValue(new Error('boom'))
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      const wrapper = await mountView()
+      expect(titles(wrapper)).toEqual(['Broken'])
+      expect(wrapper.find('[data-testid="card-failed"]').exists()).toBe(true)
+    })
+  })
+
   describe('card width (TKT-H21TYS)', () => {
     it('gives each tile the class for its width, in config order', async () => {
       seedDashboard([

@@ -211,3 +211,25 @@ dashboards:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `dashboards[ops]: card[0] "Y" has invalid width "half"`)
 }
+
+// TestValidateDashboardCardHideEmpty pins that hide_empty loads on a list or
+// query card and is refused on a line card, which has no rows.
+func TestValidateDashboardCardHideEmpty(t *testing.T) {
+	cfg, err := loadAndValidate(t, `
+version: "1.0"
+lists:
+  all: {entity_type: ticket}
+dashboard:
+  cards:
+    - {title: X, query: "type:ticket", display: count, hide_empty: true}
+    - {title: Y, list: all, display: count, hide_empty: true}
+`)
+	require.NoError(t, err)
+	assert.True(t, cfg.Dashboard.Cards[0].HideEmpty)
+	assert.True(t, cfg.Dashboard.Cards[1].HideEmpty)
+
+	_, err = validateRecordsCardYAML(t, `{title: Coverage, display: line, hide_empty: true,
+       records: {type: measurement, field: value, owners: [MET-1]}}`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `card[0] "Coverage" sets hide_empty, which a line card does not take`)
+}

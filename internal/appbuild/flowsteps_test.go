@@ -45,7 +45,18 @@ func stepProjectEdit(t *testing.T, display string, edit func(string) string) (*a
 func stepProjectSchema(t *testing.T, display string, editSchema, edit func(string) string) (*appbuild.Services,
 	*appbuild.FlowControl) {
 	t.Helper()
+	return stepProjectFlows(t, display, editSchema, edit, func(s string) string { return s })
+}
+
+// stepProjectFlows is stepProjectSchema with flows.yaml passed through
+// editFlows too.
+func stepProjectFlows(t *testing.T, display string, editSchema, edit, editFlows func(string) string) (
+	*appbuild.Services, *appbuild.FlowControl) {
+	t.Helper()
 	root := writeFlowProject(t)
+	flows, err := os.ReadFile(filepath.Join(root, "flows.yaml"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "flows.yaml"), []byte(editFlows(string(flows))), 0o600))
 	schema, err := os.ReadFile(filepath.Join("..", "flowcfg", "testdata", "schema.yaml"))
 	require.NoError(t, err)
 	named := strings.Replace(editSchema(string(schema)), "    label: Person\n",
@@ -358,6 +369,38 @@ func TestFlowControl_Startable(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestFlowControl_ManualStartWhen pins that a manual start's `when:`
+// decides whether the flow is offered and started on a subject: Startable
+// leaves the flow out and Start refuses it as a conflict while the
+// condition does not hold (finding 15).
+func TestFlowControl_ManualStartWhen(t *testing.T) {
+	id := func(s string) string { return s }
+	svc, ctl := stepProjectFlows(t, "name", id, id, func(s string) string {
+		return strings.Replace(s, "permission: onboarding.start",
+			"permission: onboarding.start\n        when: \"entity.status ~= 'left'\"", 1)
+	})
+	addFlowPerson(t, svc, "PER-1", map[string]any{"name": "Ada", "status": "left"})
+	addFlowPerson(t, svc, "PER-2", map[string]any{"name": "Bea", "status": "new"})
+	alice := flowUser(t, svc, "alice")
+
+	got, err := ctl.Startable(alice, "PER-1")
+	require.NoError(t, err)
+	require.Empty(t, got, "the condition does not hold, so the flow is not offered")
+	_, err = ctl.Start(alice, "onboarding", "PER-1")
+	require.ErrorIs(t, err, flowview.ErrConflict)
+
+	got, err = ctl.Startable(alice, "PER-2")
+	require.NoError(t, err)
+	require.Equal(t, []string{"onboarding"}, got)
+	_, err = ctl.Start(alice, "onboarding", "PER-2")
+	require.NoError(t, err)
+
+	// A caller without the permission is still refused as forbidden, not
+	// told whether the condition holds.
+	_, err = ctl.Start(flowUser(t, svc, "bob"), "onboarding", "PER-1")
+	require.ErrorIs(t, err, flowview.ErrForbidden)
 }
 
 // TestFlowControl_SubjectTitle pins that the run list, the tasks, the run
