@@ -11,8 +11,6 @@
  * `/` focuses the search box and `f` opens the Filters menu, as on a list.
  */
 import { computed, ref } from 'vue'
-import SearchBox from '@/components/lists/SearchBox.vue'
-import FilterBar from '@/components/lists/FilterBar.vue'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { useListKeyboard } from '@/composables/useListKeyboard'
 import { useSchemaStore } from '@/stores/schema'
@@ -71,8 +69,8 @@ export function useViewToolbar(options: {
     staticFilterProperties: () => new Set(),
   })
 
-  const searchBoxRef = ref<InstanceType<typeof SearchBox> | null>(null)
-  const filterBarRef = ref<InstanceType<typeof FilterBar> | null>(null)
+  const searchBoxRef = ref<{ focus: () => void } | null>(null)
+  const filterBarRef = ref<{ open: () => unknown } | null>(null)
 
   const entityType = computed(() =>
     mergedEntityType(options.entityTypes().map((name) => schemaStore.getEntityType(name))),
@@ -95,10 +93,10 @@ export function useViewToolbar(options: {
   // Function refs for the template: a string ref to a destructured binding
   // reads as unused to the type checker.
   function bindSearchBox(el: unknown) {
-    searchBoxRef.value = el as InstanceType<typeof SearchBox> | null
+    searchBoxRef.value = el as { focus: () => void } | null
   }
   function bindFilterBar(el: unknown) {
-    filterBarRef.value = el as InstanceType<typeof FilterBar> | null
+    filterBarRef.value = el as { open: () => unknown } | null
   }
 
   return {
