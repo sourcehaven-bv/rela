@@ -44,16 +44,17 @@ func failedJobView() flowview.Run {
 // in every branch.
 func TestWithholdJobError(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		show bool
-		want string
+		name         string
+		manage, read bool
+		want         string
 	}{
-		{name: "manager who reads the subject", show: true, want: "salary 9000"},
-		{name: "manager who cannot read the subject, or no manager", show: false, want: ""},
+		{name: "manager who reads the subject", manage: true, read: true, want: "salary 9000"},
+		{name: "manager who cannot read the subject", manage: true, read: false, want: ""},
+		{name: "reader who does not manage", manage: false, read: true, want: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v := failedJobView()
-			withholdJobError(&v, tc.show)
+			withholdJobError(&v, tc.manage, tc.read)
 			require.Equal(t, tc.want, v.Waiting.Pending.Job.Error)
 			require.Equal(t, tc.want, v.Parallel[0].Waiting.Pending.Job.Error)
 		})

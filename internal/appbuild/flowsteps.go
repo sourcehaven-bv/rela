@@ -514,7 +514,7 @@ func (c *FlowControl) unnamedViews(ctx context.Context, cl *caller, hdrs []*enti
 		manage := manages.may(ctx, run.Subject.ID, c.runManagePermissions(ctx, flows, run))
 		// The error text can hold subject values, so a manager who may not
 		// read the subject does not get it either.
-		withholdJobError(&v, manage && subj != nil)
+		withholdJobError(&v, manage, subj != nil)
 		failedMessage(ctx, flows, run, &v)
 		v.Actions = flowview.Actions{
 			Complete: len(x.Parallel) == 0 && mayStep(w, x),
@@ -630,10 +630,9 @@ func waitingOf(x flowengine.Explanation, holds func(string) bool) *flowview.Wait
 }
 
 // withholdJobError removes the job error from v and its branches unless
-// show is set: the caller manages the run and reads its subject
-// (BUG-53GP5F5).
-func withholdJobError(v *flowview.Run, show bool) {
-	if show {
+// the caller manages the run and reads its subject (BUG-53GP5F5).
+func withholdJobError(v *flowview.Run, manage, readsSubject bool) {
+	if manage && readsSubject {
 		return
 	}
 	strip := func(w *flowview.Waiting) {
