@@ -193,4 +193,16 @@ describe('FlowRunsPanel', () => {
     expect(wrapper.find('[data-testid="flow-runs-panel"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="flow-start-onboarding"]').exists()).toBe(false)
   })
+
+  // BUG-UZGMHIK: an action on the page bumps `revision`; the runs are read again.
+  it('reads the runs again when the revision changes', async () => {
+    listFlowsMock.mockResolvedValue([onboarding])
+    listSubjectRunsMock.mockResolvedValue([run()])
+    const wrapper = mountPanel()
+    await flushPromises()
+    const reads = listSubjectRunsMock.mock.calls.length
+    await wrapper.setProps({ revision: 1 })
+    await flushPromises()
+    expect(listSubjectRunsMock).toHaveBeenCalledTimes(reads + 1)
+  })
 })

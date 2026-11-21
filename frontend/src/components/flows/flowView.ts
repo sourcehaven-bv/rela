@@ -3,6 +3,7 @@ import type { TimelineEntry } from 'rela-components/components/feedback/timeline
 import type { FlowEvent, FlowRun } from '@/api/flows'
 import { browserTimeZone, formatDatetime } from '@/utils/format'
 import { entityDetailHref } from '@/utils/entityRoute'
+import { actorLabel } from '@/components/entity/changeText'
 
 /** Translates a key with named values; vue-i18n's `t` fits it. */
 export type Translate = (key: string, values?: Record<string, unknown>) => string
@@ -91,7 +92,9 @@ export function timelineEntries(run: FlowRun, t: Translate): TimelineEntry[] {
     .map((e, i) => ({
       id: `${i}`,
       summary: eventSummary(e, t),
-      actor: e.by_title || e.by || undefined,
+      // The server names a person by title; any other principal reads as
+      // the Changes list names it, so `system:signup-bot` is "System".
+      actor: e.by_title || (e.by ? actorLabel(e.by) : undefined),
       timestamp: formatInstant(e.at),
       datetime: e.at,
       tone: (e.via === 'timer' ? 'amber' : 'grey') as StatusColor,

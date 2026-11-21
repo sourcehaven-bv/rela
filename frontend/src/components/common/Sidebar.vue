@@ -186,6 +186,7 @@ const configNavGroupsWithPiles = computed(() =>
  * come just before it, in a group of their own.
  */
 const navGroups = computed(() => {
+  if (!navLoaded.value) return []
   const groups = configNavGroupsWithPiles.value
   if (!piles.available.value) return groups
   const unpinned = (p: { id: string }) => !pinnedPileIds.value.has(p.id)
@@ -263,8 +264,17 @@ const showsBuiltin = (row: BuiltinRow) => !hiddenBuiltins.value.has(row)
 // The as-of picker waits for the first answer, so a space that hides it does
 // not show it for a moment first.
 const builtinsKnown = ref(false)
+/*
+ * Whether the first sidebar answer is in, or has failed. Until then the
+ * sidebar draws its frame without nav rows: the built-in rows alone would
+ * show the generic Search, Flow tasks, Flow runs and Analysis for a moment
+ * before the space's own navigation replaced them (BUG-UZGMHIK). A failed
+ * load still shows the built-in rows, so the app stays navigable.
+ */
+const navLoaded = ref(false)
 
 const pinnedGroups = computed(() => {
+  if (!navLoaded.value) return []
   const rows: { row: BuiltinRow; item: SidebarItem; when: boolean }[] = [
     {
       row: 'search',
@@ -353,6 +363,7 @@ async function loadSidebar() {
     sidebarGroups.value = data.navigation
     hiddenBuiltins.value = new Set(data.hidden_builtins ?? [])
     builtinsKnown.value = true
+    navLoaded.value = true
     schemaStore.setLogoUrl(data.logoUrl ?? null)
     // Principal-scoped inline-create offers ride on this payload; see
     // SidebarData.inline_create for why the sidebar carries them.
@@ -366,6 +377,9 @@ async function loadSidebar() {
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
     // (see BUG-6C3V and src/composables/usePageData.ts).
+    // A failed or cancelled current request still ends the wait, so the
+    // built-in rows show instead of an empty sidebar.
+    if (request === sidebarRequest) navLoaded.value = true
     if (isCancelledFetch(err)) return
     console.error('Failed to load sidebar:', err)
   }

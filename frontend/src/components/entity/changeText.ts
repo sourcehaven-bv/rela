@@ -42,7 +42,19 @@ export function opText(op: string): string {
  * (`idpWebhookUserPrefix` in internal/dataentry/audit_handler.go).
  */
 export function actorText(c: ChangeRecord, titles: Record<string, string> = {}): string {
-  const user = c.user ?? ''
+  return actorLabel(c.user, titles)
+}
+
+/**
+ * The readable name of a principal, by the rules of `actorText`. The flow
+ * run timeline uses it too, so a bot reads "System" there as it does in
+ * Changes (BUG-UZGMHIK).
+ */
+export function actorLabel(
+  principal: string | undefined,
+  titles: Record<string, string> = {}
+): string {
+  const user = principal ?? ''
   if (titles[user]) return titles[user]
   const idpEvent = cut(user, 'webhook:')
   if (idpEvent) return t('audit.changes.actor.idp', { event: idpEvent })

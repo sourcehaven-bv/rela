@@ -32,6 +32,7 @@ vi.mock('@/api/flows', async (orig) => ({
 }))
 
 import Sidebar from './Sidebar.vue'
+import { getSidebar } from '@/api'
 
 /**
  * The pinned rows follow the sidebar's `hidden_builtins`, which the server
@@ -113,5 +114,28 @@ describe('Sidebar built-in rows', () => {
     expect(hidden.find('[data-testid="as-of-picker"]').exists()).toBe(false)
     // The pinned rows are not affected.
     expect(pinnedHrefs(hidden)).toEqual(['/search', '/flows/tasks', '/flows/runs', '/analyze'])
+  })
+  // BUG-UZGMHIK: on a full load the generic rows showed for a moment before
+  // the space's own navigation arrived.
+  it('draws no nav rows until the sidebar has loaded', async () => {
+    let answer: (d: SidebarData) => void = () => {}
+    vi.mocked(getSidebar).mockImplementationOnce(() => new Promise((r) => (answer = r)))
+    sidebar.navigation = [{ group: 'Work', items: [{ label: 'Orders', href: '/list/orders' }] }]
+    const w = await mountSidebar()
+    expect(w.find('#main-sidebar').exists()).toBe(true)
+    expect(pinnedHrefs(w)).toEqual([])
+    expect(w.text()).not.toContain('Orders')
+
+    answer(sidebar)
+    await flushPromises()
+    expect(pinnedHrefs(w)).toEqual(['/search', '/flows/tasks', '/flows/runs', '/analyze'])
+    expect(w.text()).toContain('Orders')
+  })
+
+  it('shows the built-in rows when the sidebar fails to load', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(getSidebar).mockRejectedValueOnce(new Error('down'))
+    const w = await mountSidebar()
+    expect(pinnedHrefs(w)).toEqual(['/search', '/flows/tasks', '/flows/runs', '/analyze'])
   })
 })

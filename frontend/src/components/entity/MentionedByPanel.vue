@@ -17,6 +17,11 @@ const props = defineProps<{
   entityType: string
   /** The address on screen (`POL-1@draft`). */
   entityId: string
+  /**
+   * Bumped by the page after it ran an action, so the list is read again
+   * in place (BUG-UZGMHIK). The list on screen stays until the answer lands.
+   */
+  revision?: number
 }>()
 
 const { worldParam } = useWorld()
@@ -87,6 +92,12 @@ watch(
     void load()
   },
   { immediate: true }
+)
+
+// Read again in place after an action on the page; see the prop.
+watch(
+  () => props.revision,
+  () => void load()
 )
 
 onBeforeUnmount(() => controller?.abort())

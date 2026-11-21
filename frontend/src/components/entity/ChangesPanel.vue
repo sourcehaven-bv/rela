@@ -28,6 +28,11 @@ const props = defineProps<{
   entityType: string
   /** The address on screen (`POL-1@draft`). */
   entityId: string
+  /**
+   * Bumped by the page after it ran an action, so the list is read again
+   * in place (BUG-UZGMHIK). The list on screen stays until the answer lands.
+   */
+  revision?: number
 }>()
 
 const { t } = useI18n()
@@ -117,6 +122,13 @@ watch(
     if (enabled.value) void load()
   },
   { immediate: true }
+)
+
+watch(
+  () => props.revision,
+  () => {
+    if (enabled.value) void load()
+  }
 )
 
 onBeforeUnmount(() => controller?.abort())
