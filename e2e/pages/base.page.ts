@@ -58,6 +58,14 @@ export class BasePage {
     await this.waitForSpinnerToDisappear();
   }
 
+  /** Pick a value in the header Filters panel's control labelled `label`. */
+  async setHeaderFilter(label: string, value: string) {
+    await this.openFilterMenu();
+    const control = this.filterPanel.locator('.filter-item').filter({ hasText: new RegExp(label, 'i') });
+    await this.pickFilterOption(control, value);
+    await this.waitForSpinnerToDisappear();
+  }
+
   /** The Sort menu's trigger, in the page header's tool row. */
   get sortMenuButton(): Locator {
     return this.page.getByTestId('sort-menu-button');

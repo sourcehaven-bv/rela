@@ -58,6 +58,12 @@ type ganttHandler struct {
 	// redactor is the field-redaction seam (appRedactor); a closure so test
 	// builders that rebind app.affordances keep it live.
 	redactor func() visibility.FieldRedactor
+	// fields is the field-verdict resolver the reader's own `filter[...]`
+	// params are checked against, as on a list. A closure for the same
+	// reason as redactor. Nil: accepted. Only a request that carries filter
+	// params reads it, and a handler built without it (the edge tests)
+	// receives none.
+	fields func() fieldVisibility
 }
 
 // ganttNode is one entity in the build, carrying parsed dates and tree links.
@@ -122,12 +128,19 @@ func (h *ganttHandler) handleV1Gantt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rootParam := r.URL.Query().Get("root")
+	uq := parseGanttUserQuery(r.URL.Query(), rootParam)
+	if err := uq.validate(s.Meta, g); err != nil {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_filter", "Invalid filter parameter", err.Error())
+		return
+	}
 
 	// Drilled requests try the SQL-scoped subtree first (TKT-5LUGYP): the
 	// full forest is built only when the fast path cannot answer with
-	// identical ACL semantics.
+	// identical ACL semantics. A request with a reader's own search or
+	// filters skips it: the filter runs in the full build's node load, and
+	// answering from there keeps the two paths from drifting.
 	var forest *ganttForest
-	if rootParam != "" {
+	if rootParam != "" && uq.empty() {
 		sub, gerr := h.buildGanttSubtree(r.Context(), s, g, rootParam)
 		if gerr != nil {
 			gerr.write(w, r)
@@ -136,7 +149,7 @@ func (h *ganttHandler) handleV1Gantt(w http.ResponseWriter, r *http.Request) {
 		forest = sub // nil means "fast path declined": the full build answers
 	}
 	if forest == nil {
-		full, gerr := h.buildGanttForest(r.Context(), s, g)
+		full, gerr := h.buildGanttForest(r.Context(), s, g, uq)
 		if gerr != nil {
 			gerr.write(w, r)
 			return
@@ -198,9 +211,9 @@ func (e *ganttError) write(w http.ResponseWriter, r *http.Request) {
 // multi-parent and cycle policies. See the type doc for why the order is
 // load-bearing.
 func (h *ganttHandler) buildGanttForest(
-	ctx context.Context, s *Schema, g dataentryconfig.Gantt,
+	ctx context.Context, s *Schema, g dataentryconfig.Gantt, uq ganttUserQuery,
 ) (*ganttForest, *ganttError) {
-	nodes, gerr := h.loadGanttNodes(ctx, s, g)
+	nodes, gerr := h.loadGanttNodes(ctx, s, g, uq)
 	if gerr != nil {
 		return nil, gerr
 	}
@@ -316,12 +329,21 @@ func finishGanttForest(
 // loadGanttNodes runs pipeline steps 1-2: list each source type through the
 // read gate, redact each entity once, then apply the source filters and parse
 // the date roles from what survives.
+//
+// The reader's own search and filters (uq) narrow the redacted set here,
+// BEFORE the nodes exist, so a dropped entity is in no parent link and no
+// roll-up: the fold runs over what matched, as it does over what a where:
+// clause kept.
 func (h *ganttHandler) loadGanttNodes(
-	ctx context.Context, s *Schema, g dataentryconfig.Gantt,
+	ctx context.Context, s *Schema, g dataentryconfig.Gantt, uq ganttUserQuery,
 ) (map[string]*ganttNode, *ganttError) {
 	nodes := map[string]*ganttNode{}
 	for _, typeName := range ganttSortedKeys(g.Sources) {
 		ents, gerr := h.loadGanttType(ctx, typeName)
+		if gerr != nil {
+			return nil, gerr
+		}
+		ents, gerr = h.applyGanttUserQuery(ctx, s, typeName, ents, uq)
 		if gerr != nil {
 			return nil, gerr
 		}
@@ -360,6 +382,7 @@ func newGanttHandler(app *App, st store.Store) *ganttHandler {
 			return scopedHeaders(ctx, app.Services(), rqr, scopeRequest{Type: typeName, Faces: rqr.Faces})
 		},
 		redactor: func() visibility.FieldRedactor { return appRedactor(app) },
+		fields:   func() fieldVisibility { return app.fieldResolver },
 	}
 }
 

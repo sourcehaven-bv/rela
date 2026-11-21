@@ -2650,6 +2650,13 @@ sort:
 
 You can also sort a list by the virtual property `id` (entity ID).
 
+In the browser, the Sort menu in the page header picks the sort. Shift-click on
+column headers adds a second or third key. The menu lists every key, marks the
+direction of each, and shows "Sort: Title +1" on its button when more than one
+key is set. Click a listed key to flip its direction, and again to remove it.
+A board keeps its sort in the URL (`?sort=-title`), as a list does, so the link
+shares it and a reload keeps it.
+
 **Enum properties sort in their declared order.** A `status` whose schema lists
 `values: [backlog, ready, in-progress, done]` sorts in that order rather than
 alphabetically, so writing the enum in workflow order gives the right sort for
@@ -8380,7 +8387,24 @@ navigation:
 | `max_events_per_day` | int | Chips per month-view day cell before `+N more` (default 3) |
 | `edit_form` | string | Form offered when editing from an event's preview |
 | `create_form` | string | Form opened by the "New" button |
-| `filter_controls` | list | Interactive filters, as on lists and kanbans |
+| `filter_controls` | list | Interactive filters in the Filters menu (property controls only; see below) |
+
+### Search and filters
+
+A calendar has the list's search box and Filters menu in its header. Both are
+kept in the URL (`?q=`, `?filter[status]=open`), so a link shares them.
+
+- The search box matches the event's source entity, as on a list, and narrows
+  what each source reads.
+- A filter applies to the sources whose entity type has that property. A source
+  whose type lacks it is not narrowed.
+- The reader's search and filters narrow the events. They never widen what
+  `where:` and the visible period already select.
+- `filter_controls` on a calendar take property controls only. A relation
+  control is not offered.
+
+A calendar has no Sort menu: an event sits on its date. Document views have no
+toolbar either, because a document is one rendered entity and not a list.
 
 ### Source fields
 
@@ -8724,7 +8748,31 @@ colour-blindness and greyscale where amber-versus-red alone would not.
 | `max_nodes` | int | Nodes per response (default 2000); exceeding it flags the response as truncated |
 | `sources` | map | Date-role mapping keyed by entity **type** |
 | `tooltip` | object | Extra fields on the hover card — `fields:` of `- property:` entries with optional `label:`, shared shape with kanban cards. Property fields only: values come from the redacted entity, so field-level `visible:` policy holds; relation fields are refused at load (neighbor titles would bypass row-gating) |
-| `filter_controls` | list | Interactive filters, as on lists and kanbans |
+| `filter_controls` | list | Interactive filters in the Filters menu (property controls only; see below) |
+
+### Search, filters and sort
+
+A gantt has the list's search box and Filters menu, and a Sort menu for its
+rows. Search and filters go to the server with the read (`q`, `filter[...]`).
+The state is in the URL, so a link shares it.
+
+- The server applies them to the visible rows **before** the roll-up. A row
+  that does not match is dropped and is in no ancestor's rolled span, so the
+  bars never show dates from a row the reader filtered out or cannot see.
+- A matching child of a dropped parent becomes a root row.
+- A drilled root stays in the chart, whether or not it matches.
+- `q` searches the id and the text properties of each row, not its body.
+- A filter applies to the source types that have the property. `filter_controls`
+  take property controls only; a relation control is not offered.
+- A filter on a property no source type has is refused with `invalid_filter`.
+- A filter on a property the reader may not see is refused with
+  `property_not_visible`, and a hidden value never matches a search.
+
+The Sort menu orders the siblings at every level by `title`, `start` or `end`
+(`?sort=-start`). It runs in the browser on the rows the server returned, so
+changing the sort does not read again or collapse the chart. Rows without a
+date sort last in both directions. The date is the rolled span when there is
+one, else the planned window.
 
 ### Source fields
 

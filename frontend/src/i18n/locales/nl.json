@@ -916,6 +916,7 @@
     "actionConfirm": "{label} toepassen op {n} geselecteerde items?",
     "searchPlaceholder": "Zoeken...",
     "searchEntities": "{entity} zoeken...",
+    "searchView": "Zoeken...",
     "clearSearch": "Zoekopdracht wissen",
     "removeFilter": "Filter op {property} weghalen",
     "groupTruncated": "De eerste {shown} van {total} rijen worden getoond. Filter de lijst om de rest te zien.",
@@ -943,6 +944,10 @@
     "sort": {
       "button": "Sorteren",
       "buttonActive": "Sorteren: {property}",
+      "buttonMulti": "Sorteren: {property} +{count}",
+      "keysLabel": "Sorteersleutels",
+      "keyAscending": "{property} (oplopend)",
+      "keyDescending": "{property} (aflopend)",
       "menuLabel": "Sorteren op",
       "default": "Standaardvolgorde",
       "ascending": "Oplopend",
@@ -1410,6 +1415,10 @@
     "apply": "Oplossing toepassen"
   },
   "gantt": {
+    "sortTitle": "Titel",
+    "sortStart": "Startdatum",
+    "sortEnd": "Einddatum",
+    "noMatches": "Niets komt overeen met de zoekopdracht of filters.",
     "reloadFailed": "Het diagram kon niet opnieuw worden geladen: {error}",
     "handle": {
       "start": "Begin van {name}",

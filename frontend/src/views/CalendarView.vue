@@ -59,6 +59,10 @@ import {
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import RlSegmentedControl from 'rela-components/components/data/RlSegmentedControl.vue'
+import PageHeaderContent from '@/components/common/PageHeaderContent'
+import SearchBox from '@/components/lists/SearchBox.vue'
+import FilterBar from '@/components/lists/FilterBar.vue'
+import { filterParamsForType, useViewToolbar } from '@/composables/useViewToolbar'
 import { I18nT, useI18n } from 'vue-i18n'
 
 const props = defineProps<{ id: string }>()
@@ -74,6 +78,22 @@ const queryCache = useQueryCache()
 const config = computed(() => schemaStore.getCalendar(props.id) as CalendarConfig | undefined)
 usePageTitle(() => config.value?.title || props.id)
 const timezone = computed(() => uiStore.effectiveTimezone)
+
+// Search and filters, in the URL as on a list. A source's read carries them
+// (see paramsFor); a filter applies to the sources whose type has the property.
+const {
+  filters,
+  searchQuery,
+  bindSearchBox,
+  bindFilterBar,
+  entityType: toolbarEntityType,
+  filterConfig,
+  handleSearchUpdate,
+  handleFilter,
+} = useViewToolbar({
+  entityTypes: () => (config.value?.sources ?? []).map((s) => s.entity),
+  controls: () => config.value?.filter_controls,
+})
 
 // View and anchor are URL state: without it a refresh loses your place and
 // "the week of the launch" is unlinkable.
@@ -161,7 +181,13 @@ const today = computed(() => todayIn(timezone.value))
 function paramsFor(source: CalendarSourceConfig): ListParams {
   const pad = source.end_date ? source.max_span : 0
   const b = windowBounds(view.value, anchor.value, weekStart.value, timezone.value, pad)
-  const params: ListParams = {}
+  // The reader's own search and filters go first, so the window and the
+  // source's `where:` below win on a key both set: the reader narrows the
+  // source and can never widen it.
+  const params: ListParams = {
+    ...filterParamsForType(filters.value, schemaStore.getEntityType(source.entity)),
+  }
+  if (searchQuery.value) params.q = searchQuery.value
   params[`filter[${source.date}][gte]`] = b.gte
   params[`filter[${source.date}][lt]`] = b.lt
 
@@ -342,7 +368,15 @@ async function refetchGrid() {
 
 // Refetch when the window, the calendar, or the display timezone changes.
 watch(
-  () => [props.id, view.value, dayKey(anchor.value), timezone.value].join('|'),
+  () =>
+    [
+      props.id,
+      view.value,
+      dayKey(anchor.value),
+      timezone.value,
+      searchQuery.value,
+      JSON.stringify(filters.value),
+    ].join('|'),
   () => {
     void refetchGrid()
   },
@@ -617,11 +651,8 @@ function onDragEnd() {
 
 <template>
   <div class="calendar-view" :data-testid="`page-state-${pageState}`">
-    <header class="page-header">
-      <div class="header-left">
-        <h1>{{ config?.title || props.id }}</h1>
-      </div>
-      <div class="header-actions">
+    <PageHeaderContent :title="config?.title || props.id">
+      <template #actions>
         <RlButton
           v-if="config?.create_form && canCreate()"
           variant="primary"
@@ -630,8 +661,25 @@ function onDragEnd() {
         >
           {{ t('common.new') }}
         </RlButton>
-      </div>
-    </header>
+      </template>
+
+      <template #tools>
+        <SearchBox
+          :ref="bindSearchBox"
+          :model-value="searchQuery"
+          :placeholder="t('list.searchView')"
+          @update:model-value="handleSearchUpdate"
+        />
+        <FilterBar
+          v-if="filterConfig.filter_controls.length"
+          :ref="bindFilterBar"
+          :config="filterConfig"
+          :entity-type="toolbarEntityType"
+          :filters="filters"
+          @filter="handleFilter"
+        />
+      </template>
+    </PageHeaderContent>
 
     <div class="calendar-toolbar">
       <div class="calendar-nav">

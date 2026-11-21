@@ -916,6 +916,7 @@
     "actionConfirm": "Apply {label} to {n} selected entities?",
     "searchPlaceholder": "Search...",
     "searchEntities": "Search {entity}s...",
+    "searchView": "Search...",
     "clearSearch": "Clear search",
     "removeFilter": "Remove {property} filter",
     "groupTruncated": "Showing the first {shown} of {total} rows. Filter the list to see the rest.",
@@ -943,6 +944,10 @@
     "sort": {
       "button": "Sort",
       "buttonActive": "Sort: {property}",
+      "buttonMulti": "Sort: {property} +{count}",
+      "keysLabel": "Sort keys",
+      "keyAscending": "{property} (ascending)",
+      "keyDescending": "{property} (descending)",
       "menuLabel": "Sort by",
       "default": "Default order",
       "ascending": "Ascending",
@@ -1410,6 +1415,10 @@
     "apply": "Apply Resolution"
   },
   "gantt": {
+    "sortTitle": "Title",
+    "sortStart": "Start date",
+    "sortEnd": "End date",
+    "noMatches": "Nothing matches the search or filters.",
     "reloadFailed": "Could not reload the chart: {error}",
     "handle": {
       "start": "Start of {name}",

@@ -30,6 +30,13 @@ import { entityKeys } from '@/queries/entities'
 import { useUIStore } from '@/stores/ui'
 import { useI18n } from 'vue-i18n'
 import { useGanttDrag, type GanttDragMode } from '@/composables/useGanttDrag'
+import PageHeaderContent from '@/components/common/PageHeaderContent'
+import SearchBox from '@/components/lists/SearchBox.vue'
+import FilterBar from '@/components/lists/FilterBar.vue'
+import SortMenu, { type SortOption } from '@/components/lists/SortMenu.vue'
+import { filterParamsForType, useViewToolbar } from '@/composables/useViewToolbar'
+import { useUrlSort } from '@/composables/useUrlSort'
+import { GANTT_SORT_KEYS, sortGanttNodes } from '@/utils/ganttSort'
 import {
   barSpan,
   isoDay,
@@ -66,6 +73,39 @@ const queryCache = useQueryCache()
 const config = computed(() => schemaStore.getGantt(props.id))
 usePageTitle(() => config.value?.title || props.id)
 
+// Search and filters, in the URL as on a list. The server applies them before
+// the roll-up (see internal/dataentry/gantt_userquery.go), so every change is
+// a read. The sort is the other way round: the order of siblings is
+// presentation, so it is applied here to what was read.
+const {
+  filters,
+  searchQuery,
+  bindSearchBox,
+  bindFilterBar,
+  entityType: toolbarEntityType,
+  filterConfig,
+  handleSearchUpdate,
+  handleFilter,
+} = useViewToolbar({
+  entityTypes: () => Object.keys(config.value?.sources ?? {}),
+  controls: () => config.value?.filter_controls,
+})
+const sortSpecs = useUrlSort(() => new Set<string>(GANTT_SORT_KEYS))
+const sortOptions = computed<SortOption[]>(() => [
+  { property: 'title', label: t('gantt.sortTitle') },
+  { property: 'start', label: t('gantt.sortStart') },
+  { property: 'end', label: t('gantt.sortEnd') },
+])
+
+/** The reader's search and filters as the gantt read takes them; none when
+ * the chart is not narrowed. A filter on a property no source type has is
+ * not sent: the server refuses it. */
+const narrowing = computed<Record<string, string> | undefined>(() => {
+  const params = filterParamsForType(filters.value, toolbarEntityType.value)
+  if (searchQuery.value) params.q = searchQuery.value
+  return Object.keys(params).length ? params : undefined
+})
+
 const data = ref<GanttResponse | null>(null)
 /** The root id `data` was fetched for; null means the full forest. */
 const fetchedRoot = ref<string | null>(null)
@@ -99,7 +139,10 @@ async function fetchScope(root: string | null, keep = false) {
   loading.value = true
   if (!keep) error.value = ''
   try {
-    const res = await getGantt(props.id, root ?? undefined)
+    const narrow = narrowing.value
+    const res = await (narrow
+      ? getGantt(props.id, root ?? undefined, narrow)
+      : getGantt(props.id, root ?? undefined))
     if (seq !== fetchSeq) return
     data.value = res
     fetchedRoot.value = root
@@ -172,8 +215,9 @@ watch(
  * Going back up above the fetched scope refetches likewise.
  */
 watch(
-  [() => props.id, drillPath, () => props.root] as const,
-  ([id, path, root], old) => {
+  [() => props.id, () => drillPath.value.join(','), () => props.root] as const,
+  ([id, , root], old) => {
+    const path = drillPath.value
     // Every navigation settles the scope anew, whether or not it fetches.
     cancelFetch()
     drag.cancel()
@@ -202,13 +246,24 @@ watch(
   { immediate: true }
 )
 
+// Narrowing the chart changes what every scope holds, so the scope on screen
+// is read again. The drilled root stays, whether or not it matches.
+watch(
+  () => JSON.stringify(narrowing.value ?? null),
+  () => {
+    cancelFetch()
+    drag.cancel()
+    const path = drillPath.value
+    void fetchScope(path.length ? path[path.length - 1] : null)
+  }
+)
+
 /** The roots currently shown: the forest, or the drilled node's subtree. */
 const currentRoots = computed<GanttNode[]>(() => {
   const roots = data.value?.roots ?? []
   const path = drillPath.value
-  if (path.length === 0) return roots
-  const node = findNode(roots, path[path.length - 1])
-  return node ? [node] : roots
+  const node = path.length ? findNode(roots, path[path.length - 1]) : null
+  return sortGanttNodes(node ? [node] : roots, sortSpecs.value)
 })
 
 /** Breadcrumbs: id + best-known title (from the drill click, else the tree,
@@ -699,8 +754,27 @@ const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.
 
 <template>
   <div class="gantt-view">
+    <PageHeaderContent :title="config?.title || id">
+      <template #tools>
+        <SearchBox
+          :ref="bindSearchBox"
+          :model-value="searchQuery"
+          :placeholder="t('list.searchView')"
+          @update:model-value="handleSearchUpdate"
+        />
+        <FilterBar
+          v-if="filterConfig.filter_controls.length"
+          :ref="bindFilterBar"
+          :config="filterConfig"
+          :entity-type="toolbarEntityType"
+          :filters="filters"
+          @filter="handleFilter"
+        />
+        <SortMenu v-model="sortSpecs" :options="sortOptions" />
+      </template>
+    </PageHeaderContent>
+
     <div class="gantt-head">
-      <h1>{{ config?.title || id }}</h1>
       <div class="gantt-nav">
         <RlIconButton icon="chevron-left" :label="t('gantt.earlier')" :disabled="!axis" @click="step(-1)" />
         <span v-if="axis && nowDay === null" class="now-hint">{{ t('gantt.todayOutside') }}</span>
@@ -927,7 +1001,7 @@ const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.
 
         <div v-if="rows.length === 0" class="empty">{{ t('gantt.nothingToShow') }}</div>
       </div>
-      <div v-else class="empty">{{ t('gantt.empty') }}</div>
+      <div v-else class="empty">{{ narrowing ? t('gantt.noMatches') : t('gantt.empty') }}</div>
 
       <div class="legend">
         <span><i class="sw leaf-sw" /> {{ t('gantt.legend.workItem') }}</span>
@@ -1000,16 +1074,12 @@ const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.
   justify-content: space-between;
   margin-bottom: 0.75rem;
 }
-.gantt-head h1 {
-  font-size: 1.25rem;
-  margin: 0;
-  margin-right: auto;
-}
 .gantt-nav {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
   margin-right: 0.75rem;
+  margin-left: auto;
 }
 .zoom-seg {
   display: inline-flex;

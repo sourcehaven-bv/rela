@@ -146,4 +146,45 @@ describe('KanbanView toolbar', () => {
     expect(lastParams()?.sort).toBe('-due')
     wrapper.unmount()
   })
+
+  it('writes the chosen sort to the URL', async () => {
+    const wrapper = await mountBoard()
+
+    wrapper.findComponent(SortMenu).vm.$emit('update:modelValue', [{ property: 'due', direction: 'desc' }])
+    await flushPromises()
+
+    expect(routerReplace).toHaveBeenCalledWith({ query: { sort: '-due' } })
+    wrapper.unmount()
+  })
+
+  it('removes ?sort= when the sort is cleared', async () => {
+    mockRoute.query = { sort: 'due', q: 'anna' }
+    const wrapper = await mountBoard()
+
+    wrapper.findComponent(SortMenu).vm.$emit('update:modelValue', [])
+    await flushPromises()
+
+    expect(routerReplace).toHaveBeenCalledWith({ query: { q: 'anna' } })
+    wrapper.unmount()
+  })
+
+  it('reads the sort from ?sort= and sends it with the board read', async () => {
+    mockRoute.query = { sort: 'status,-due' }
+    const wrapper = await mountBoard()
+
+    expect(lastParams()?.sort).toBe('status,-due')
+    expect(wrapper.findComponent(SortMenu).props('modelValue')).toEqual([
+      { property: 'status', direction: 'asc' },
+      { property: 'due', direction: 'desc' },
+    ])
+    wrapper.unmount()
+  })
+
+  it('ignores a sort key the board cannot sort on', async () => {
+    mockRoute.query = { sort: 'ghost,-due' }
+    const wrapper = await mountBoard()
+
+    expect(lastParams()?.sort).toBe('-due')
+    wrapper.unmount()
+  })
 })
