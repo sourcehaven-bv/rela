@@ -891,6 +891,13 @@ is `active` or `suspended`, or the route answers 401 or 403. The route answers 2
 about any other org. An org that has no tenant gets 403 `unknown_tenant`,
 unless `lazy` is on, which starts its create and answers `provisioning`.
 
+The "setting up" screen loads before any tenant exists, so it cannot read
+the tenant's config. The server reads `app.name` and `app.language` from
+the shared `data-entry.yaml` once at startup and writes them into that
+page: the tab title is the app name, and the screen uses the app language
+unless the user chose a language on the Settings page. A project's
+`custom/` files are not served there.
+
 Concurrent requests and webhooks for one org share one create. The create
 runs on its own context with a 5 minute timeout, so a client that hangs up
 does not abort a migration. Starts are capped across all orgs:
