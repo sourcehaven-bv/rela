@@ -41,7 +41,7 @@
 
 .flow-list__heading {
   margin: var(--space-md) 0 var(--space-xs);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-base);
 }
 
 .flow-list__empty,

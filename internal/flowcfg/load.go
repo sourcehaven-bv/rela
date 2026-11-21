@@ -214,6 +214,11 @@ func decodeNode(n *yaml.Node, out any) error {
 }
 
 // loader collects the problems of one load.
+//
+// It has a method per checked key, so each new key adds one. 40 → 42
+// (BUG-53GP5F5): `title:` and `failed_message:`.
+//
+//plimsoll:max-methods=42
 type loader struct {
 	meta     *metamodel.Metamodel
 	policy   *acl.Policy

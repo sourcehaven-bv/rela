@@ -29,6 +29,11 @@ type Flow struct {
 }
 
 // Run is one run as the caller may see it.
+//
+// It is the wire shape of GET /_flows/runs/{id}, flat as clients read it.
+// 20 → 21 fields (BUG-53GP5F5): Title and FailedMessage.
+//
+//plimsoll:max-fields=21
 type Run struct {
 	ID string `json:"id"`
 	// Title is the title the run got when it started (BUG-53GP5F5); empty
