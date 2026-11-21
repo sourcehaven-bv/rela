@@ -124,6 +124,11 @@ func (g *Guard) Source() string { return g.source }
 func (g *Guard) Fields() []string { return slices.Clone(g.fields) }
 
 // Flow is one compiled entry of `flows:`. It is immutable.
+//
+// Its exported methods are read-only accessors of the compiled keys. 20 →
+// 23 (BUG-53GP5F5): RunTitle, HasTitle and FailedMessage.
+//
+//plimsoll:max-exported-methods=23
 type Flow struct {
 	name       string
 	label      string
@@ -147,6 +152,10 @@ type Flow struct {
 	// branch to its fork, by index, and its branch: a fork target.
 	forks  []Fork
 	region map[string]regionOf
+	// title is how the flow titles its runs; failedMessage is
+	// `failed_message:`, empty when the flow sets none.
+	title         runTitle
+	failedMessage string
 }
 
 // regionOf places a state in a fork's branch.

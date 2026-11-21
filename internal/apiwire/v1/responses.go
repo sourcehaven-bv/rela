@@ -1028,6 +1028,11 @@ type FieldError struct {
 	Source ErrorSource `json:"source"`
 	Code   string      `json:"code"`
 	Detail string      `json:"detail"`
+	// Fields and Message are set for a failed validation rule, which names
+	// no one property: the properties the rule reads, so a form can show
+	// it at one, and the rule's description without its name.
+	Fields  []string `json:"fields,omitempty"`
+	Message string   `json:"message,omitempty"`
 }
 
 // ErrorSource points to the location of an error: an RFC 6901 JSON pointer

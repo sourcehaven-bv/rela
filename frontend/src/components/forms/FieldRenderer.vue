@@ -10,6 +10,8 @@ const props = defineProps<{
   propertyDef?: PropertyDef
   value: unknown
   error?: string
+  /** A soft finding on the saved value; see FieldShell. */
+  warning?: string
   readonly?: boolean
   // Sparse per-option allow map: only `false` entries appear; absent
   // keys default to allowed. An option is disabled when EITHER this
@@ -76,6 +78,7 @@ const currentValue = computed(() => (props.value == null ? '' : String(props.val
     :help="help"
     :hint="field.hint"
     :error="error"
+    :warning="warning"
     :label-position="isCheckbox ? 'after' : 'before'"
     :span="field.span"
   >

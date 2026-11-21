@@ -14,16 +14,20 @@ type rawFile struct {
 
 // rawFlow is one entry of `flows:`.
 type rawFlow struct {
-	Label      string        `yaml:"label"`
-	Subject    string        `yaml:"subject"`
-	RunAs      *string       `yaml:"run_as"`
-	PerSubject string        `yaml:"per_subject"`
-	Deadline   string        `yaml:"deadline"`
-	Retention  *rawRetention `yaml:"retention"`
-	Start      []rawStart    `yaml:"start"`
-	Manage     *rawManage    `yaml:"manage"`
-	Initial    string        `yaml:"initial"`
-	States     yaml.Node     `yaml:"states"`
+	Label string `yaml:"label"`
+	// Title is `title:`, compiled by [loader.title].
+	Title string `yaml:"title"`
+	// FailedMessage is `failed_message:`.
+	FailedMessage string        `yaml:"failed_message"`
+	Subject       string        `yaml:"subject"`
+	RunAs         *string       `yaml:"run_as"`
+	PerSubject    string        `yaml:"per_subject"`
+	Deadline      string        `yaml:"deadline"`
+	Retention     *rawRetention `yaml:"retention"`
+	Start         []rawStart    `yaml:"start"`
+	Manage        *rawManage    `yaml:"manage"`
+	Initial       string        `yaml:"initial"`
+	States        yaml.Node     `yaml:"states"`
 	// OutsideEdits is `outside_edits:`, compiled by [loader.outsideEdits].
 	OutsideEdits yaml.Node `yaml:"outside_edits"`
 }

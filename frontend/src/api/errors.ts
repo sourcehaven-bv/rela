@@ -45,6 +45,9 @@ export interface ValidationError {
   source?: { pointer: string }
   code?: string
   field?: string
+  /** For a schema validation rule: the properties it reads, so a form can show it at one. */
+  fields?: string[]
+  /** For a schema validation rule: its description, without the rule name. */
   message?: string
   detail?: string
 }

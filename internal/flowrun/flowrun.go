@@ -209,9 +209,10 @@ const (
 // MaxJobSeq caps [JobAttempt.Seq].
 const MaxJobSeq = 1 << 20
 
-// JobAttempt is the state of a job step's attempts (TKT-PY2G11W). It holds
-// no error text: an error can quote subject values or secrets, so it goes
-// to the log only.
+// MaxJobError caps [JobAttempt.Error], in bytes.
+const MaxJobError = 512
+
+// JobAttempt is the state of a job step's attempts (TKT-PY2G11W).
 type JobAttempt struct {
 	// Seq numbers the attempts that were queued, from 1. It names the
 	// attempt in the idempotency key and on the queue.
@@ -235,6 +236,12 @@ type JobAttempt struct {
 	StartedAt time.Time `json:"started_at,omitzero"`
 	// NextAt is when the next attempt is due, in the waiting phase.
 	NextAt time.Time `json:"next_at,omitzero"`
+	// Error is the error of the last attempt that failed, on one line and
+	// at most [MaxJobError] bytes (BUG-53GP5F5). The job runner removes
+	// the secret values it knows of before the engine stores it. It can
+	// still quote what the target read, so only a reader who manages the
+	// run is shown it.
+	Error string `json:"error,omitempty"`
 }
 
 // State is a run's stored execution state: the engine's instance, the
@@ -558,7 +565,7 @@ func checkJob(j *JobAttempt) error {
 		return nil
 	}
 	if j.Seq < 0 || j.Seq > MaxJobSeq || j.Failed < 0 || j.Failed > MaxPendingFailures || j.Unsent < 0 ||
-		j.Unsent > MaxPendingFailures {
+		j.Unsent > MaxPendingFailures || len(j.Error) > MaxJobError {
 
 		return invalid("job attempt out of range")
 	}
