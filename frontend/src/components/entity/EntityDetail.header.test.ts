@@ -160,6 +160,9 @@ describe('EntityDetail header actions', () => {
     })
 
     it('leaves the tab alone without names-tab', async () => {
+      // With no page title the tab keeps its title for TITLE_HOLD_MS, so
+      // start from the shell's title: a page title would replace it.
+      document.title = 'Portal'
       const s = shell()
       const w = await mountDetail()
       expect(document.title).toBe('Portal')

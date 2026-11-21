@@ -795,6 +795,23 @@ describe('DashboardView', () => {
       expectDealRow(await mountView())
     })
 
+    it('heads a column without a label with the schema label', async () => {
+      seedDeals()
+      const store = useSchemaStore()
+      const def = store.getEntityType('deal')!
+      def.properties.stage.label = 'Sales stage'
+      searchReturns([deal('D-1', { title: 'Big deal', stage: 'contact' })])
+      seedDashboard([
+        card({
+          display: 'table',
+          columns: [{ property: 'stage' }, { property: 'title', label: 'Deal' }, { property: 'sector' }],
+        }),
+      ])
+
+      const heads = (await mountView()).findAll('thead th').map((th) => th.text())
+      expect(heads).toEqual([def.properties.stage.label, 'Deal', 'sector'])
+    })
+
     it('leaves empty cells and unknown properties as plain text', async () => {
       seedDeals()
       searchReturns([deal('D-1', { title: 'Bare', note: 'kept' })])

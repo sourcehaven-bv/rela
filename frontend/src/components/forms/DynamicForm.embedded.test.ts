@@ -156,6 +156,9 @@ describe('DynamicForm — embedded mode', () => {
 
   // A form page names the tab; a form in a dialog leaves the host's title.
   it('names the tab only as a page', async () => {
+    // With no page title the tab keeps its title for TITLE_HOLD_MS, so
+    // start from the shell's title: a page title would replace it.
+    document.title = 'Portal'
     mounted.push(
       mount(
         defineComponent({

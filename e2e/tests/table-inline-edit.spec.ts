@@ -10,6 +10,9 @@ import { EntityPage } from '../pages';
 const SECTION = 'Charges';
 const TOTAL = 'Total quantity';
 
+// qty has no column label, so its header is the schema label.
+const QTY = 'Quantity';
+
 test.describe('Table sections with editable cells (TKT-4Q2EIVZ)', () => {
   async function seed(api: ApiHelpers) {
     const invoice = await api.createEntity('invoices', { properties: { title: 'March invoice' } });
@@ -30,7 +33,7 @@ test.describe('Table sections with editable cells (TKT-4Q2EIVZ)', () => {
     await entity.navigateToEntity('invoice', invoiceId);
 
     await entity.expectTableCellEditable(SECTION, widgetsId, 'description');
-    await entity.expectTableCellEditable(SECTION, widgetsId, 'qty');
+    await entity.expectTableCellEditable(SECTION, widgetsId, QTY);
     await entity.expectTableCellReadOnly(SECTION, widgetsId, 'unit');
     await entity.expectTableCellText(SECTION, widgetsId, 'unit', 'pcs');
   });
@@ -54,12 +57,12 @@ test.describe('Table sections with editable cells (TKT-4Q2EIVZ)', () => {
 
     await entity.expectSectionTotal(SECTION, TOTAL, '5');
 
-    await entity.editTableCell(SECTION, widgetsId, 'qty', '7');
+    await entity.editTableCell(SECTION, widgetsId, QTY, '7');
 
     await entity.expectSectionTotal(SECTION, TOTAL, '9');
 
     await appPage.reload();
-    await entity.expectTableCellText(SECTION, widgetsId, 'qty', '7');
+    await entity.expectTableCellText(SECTION, widgetsId, QTY, '7');
     await entity.expectSectionTotal(SECTION, TOTAL, '9');
   });
 });

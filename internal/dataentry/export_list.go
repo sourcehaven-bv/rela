@@ -63,7 +63,7 @@ func (h *exportHandler) listExportRenderer(
 	// render override from it — see resolveEffectiveList for why these must
 	// not be looked up independently.
 	effListID, effList, haveList := h.resolveEffectiveList(q.Get("list"), typeName)
-	columns := listColumnsOf(effList, haveList)
+	columns := withSchemaLabels(h.meta(), []string{typeName}, listColumnsOf(effList, haveList))
 
 	// The WHOLE ACL-scoped, filtered, sorted set — pre-pagination. Reuses the
 	// exact read path the list view uses, so export can't widen past the view.
@@ -569,7 +569,8 @@ func columnCell(
 }
 
 // columnLabel returns a column's display label, defaulting to the property or
-// relation name when no explicit label is set.
+// relation name when neither the list nor the schema sets one (the caller
+// fills schema labels with withSchemaLabels).
 func columnLabel(c dataentryconfig.ListColumn) string {
 	if c.Label != "" {
 		return c.Label

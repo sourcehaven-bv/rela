@@ -4,6 +4,7 @@ import { getGitStatus, syncGit, type GitStatus, type GitSyncResponse } from '@/a
 import { getErrorMessage } from '@/api/errors'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { t } from '@/i18n'
+import { useSchemaStore } from './schema'
 
 export const useGitStore = defineStore('git', () => {
   // State
@@ -38,7 +39,12 @@ export const useGitStore = defineStore('git', () => {
   })
 
   // Actions
+  // A deployment without git (capabilities.git false, such as a database
+  // backend) answers every status with "not available", so the store does
+  // not ask. Until the schema has loaded it does not know, and does not ask
+  // either: the sidebar footer asks once the schema says git is there.
   async function fetchStatus() {
+    if (!useSchemaStore().gitEnabled) return
     loading.value = true
     lastError.value = null
     try {

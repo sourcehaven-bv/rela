@@ -1347,15 +1347,17 @@ properties:
       currency: EUR
 ```
 
-The value 3500 then shows as "€ 3.500" in a Dutch browser and "€3,500" in an
-American one. A whole amount shows no decimals. The format applies wherever
-the value is shown: kanban cards and column summaries, list cells, and the
-entity page. Form inputs stay plain numbers.
+The value 3500 then shows as "€ 3.500,00" in a Dutch browser and
+"€3,500.00" in an American one. An amount always shows the currency's minor
+unit: two digits for EUR and USD, none for JPY. So amounts on one page line
+up, whole or not. The format applies wherever the value is shown: kanban
+cards and column summaries, list cells, and the entity page. Form inputs stay
+plain numbers.
 
-A decimal shows the digits it was written with, and at least two when it has
-any, so `12.5` shows as "€ 12,50". With `scale:` it always shows that many
-digits. The amount is formatted from the stored text, not from a binary
-number, so it stays exact.
+A decimal shows at least the currency's minor unit, and more when it was
+written with more, so `12.5` shows as "€ 12,50" and `0.125` as "€ 0,125".
+With `scale:` it always shows that many digits. The amount is formatted from
+the stored text, not from a binary number, so it stays exact.
 
 `currency` needs a single-valued `integer` or `decimal` property, and an
 ISO 4217 code:
