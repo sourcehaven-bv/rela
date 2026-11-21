@@ -41,6 +41,54 @@ type sseEvent struct {
 	Data string
 }
 
+// sseHandler owns the live-reload event stream (/api/events and
+// /api/v1/_events) and the bridge that feeds store changes into it.
+// Extracted from App to take the per-connection loop and its read-gate
+// helpers off that god-object.
+//
+// The collaborators are closures over App rather than captured values: test
+// builders reassign App.broker, App.acl and App.leases after construction,
+// and a captured copy would go stale (the attachmentHandler idiom).
+type sseHandler struct {
+	// schema is the reloadable snapshot; a relation change reads its
+	// metamodel to find the relation's end types.
+	schema func() *Schema
+	// acl is the policy a stream re-derives its read gate from after a
+	// relation change or a new UTC day.
+	acl func() acl.ACL
+	// broker carries the non-entity frames (refresh, git, config-error).
+	broker func() *eventBroker
+	// feed numbers store change events and lets a stream resume.
+	feed func() *changefeed.Bus
+	// live holds the live-view subscriptions of v1 streams.
+	live func() *liveHub
+	// source is the store whose change watcher the bridge starts the feed on.
+	source func() changefeed.Source
+	// leaseWake and channelWake wake the live-view worker on lease and
+	// channel changes.
+	leaseWake   func() leaseWaker
+	channelWake func() func() channelChanges
+
+	// timing holds the stream's flush and ping intervals; tests shorten them
+	// before serving.
+	timing sseTimings
+}
+
+// newSSEHandler wires the handler to app's live collaborators.
+func newSSEHandler(app *App) *sseHandler {
+	return &sseHandler{
+		schema:      app.State,
+		acl:         func() acl.ACL { return app.acl },
+		broker:      func() *eventBroker { return app.broker },
+		feed:        func() *changefeed.Bus { return app.feed },
+		live:        func() *liveHub { return app.live },
+		source:      func() changefeed.Source { return app.store },
+		leaseWake:   func() leaseWaker { return app.leases.wakeSource() },
+		channelWake: func() func() channelChanges { return app.channels.wakeSource() },
+		timing:      defaultSSETimings,
+	}
+}
+
 // eventBroker manages SSE client connections for live-reload notifications.
 type eventBroker struct {
 	mu      sync.Mutex
@@ -182,7 +230,7 @@ func (a *App) StartWatching() error {
 	// write by ANOTHER process visible live (the pgstore cross-process feed,
 	// TKT-WZYWM9) and surfaces fsstore's external-file-edit events. Local API
 	// writes flow through here too, so the write handlers do not broadcast.
-	a.startStoreEventBridge()
+	a.sse.startStoreEventBridge()
 
 	return nil
 	// coverage-ignore-end
@@ -204,12 +252,13 @@ func (a *App) StartWatching() error {
 // If a future feature needs an audit-aware SSE channel, it must expose a
 // SEPARATE feed, gated by per-subscriber ACL, with its own redaction policy.
 // The regression test `TestSSE_DoesNotFlowAuditEvents` pins this invariant.
-func (a *App) startStoreEventBridge() {
-	if err := a.feed.Start(a.store); err != nil {
+func (h *sseHandler) startStoreEventBridge() {
+	feed := h.feed()
+	if err := feed.Start(h.source()); err != nil {
 		slog.Warn("sse: change feed not started", "error", err)
 		return
 	}
-	a.live.start(a.feed, a.leases.wakeSource(), a.channels.wakeSource())
+	h.live().start(feed, h.leaseWake(), h.channelWake())
 }
 
 // relationEndTypes is every entity type a relation of state's metamodel can
@@ -234,45 +283,12 @@ func relationEndTypes(state *Schema, relation string) []string {
 }
 
 // StartGitFetch begins periodic git fetch in the background.
-// Returns a stop function to shut down the fetcher.
+// Returns a stop function to shut down the fetcher. See
+// [gitHandler.startFetch].
 //
-// coverage-ignore-func: background goroutine with timer
+// coverage-ignore-func: delegates to the timer-driven background fetcher
 func (a *App) StartGitFetch() (stop func()) {
-	gitOps := a.gitOps
-	cfg := a.State().Cfg.Git
-
-	if gitOps == nil || cfg == nil || cfg.FetchInterval <= 0 {
-		return func() {} // no-op if git not configured or fetch disabled
-	}
-
-	// coverage-ignore-start: os-fs-event: background goroutine driven by a real time.Ticker running git fetch (project
-	// marks it coverage-ignore)
-	interval := time.Duration(cfg.FetchInterval) * time.Second
-	ticker := time.NewTicker(interval)
-	done := make(chan struct{})
-
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				if err := gitOps.Fetch(); err != nil {
-					slog.Warn("git fetch error", "error", err)
-				} else {
-					// Broadcast git status update so UI can refresh
-					a.broker.broadcast("git")
-				}
-			case <-done:
-				ticker.Stop()
-				return
-			}
-		}
-	}()
-
-	slog.Info("git background fetch started", "interval", interval)
-	return func() {
-		close(done)
-	}
-	// coverage-ignore-end
+	return a.gitAPI.startFetch()
 }
 
 // configReadFailedMessage is the config-error text sent when data-entry.yaml
@@ -404,7 +420,7 @@ func publishConfig(a *App, cfg *Config) {
 // changed since (TKT-3A1200).
 //
 //archplan:auth=required
-func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
+func (h *sseHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
@@ -428,8 +444,9 @@ func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ch := a.broker.subscribe()
-	defer a.broker.unsubscribe(ch)
+	broker := h.broker()
+	ch := broker.subscribe()
+	defer broker.unsubscribe(ch)
 
 	// The token is untrusted input. Subscribe checks its exact length before
 	// decoding, and anything it did not mint is a resync; the value is never
@@ -438,11 +455,11 @@ func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 	if token == "" {
 		token = r.URL.Query().Get("last_event_id")
 	}
-	sub := a.feed.Subscribe(token)
+	sub := h.feed().Subscribe(token)
 	defer sub.Close()
 
 	rc := http.NewResponseController(w)
-	conn := &sseConn{w: w, flusher: flusher, setDeadline: rc.SetWriteDeadline, timing: a.sseTiming, expiry: expiry}
+	conn := &sseConn{w: w, flusher: flusher, setDeadline: rc.SetWriteDeadline, timing: h.timing, expiry: expiry}
 	ready := map[string]string{}
 	var live liveFrames // nil: no live views on this stream
 	if r.URL.Path == "/api/v1/_events" {
@@ -450,8 +467,9 @@ func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 		// Without the stashed principal a replay would run as the resolved
 		// one, so the stream goes without live views instead.
 		if owner, ok := replayPrincipalFrom(r.Context()); ok {
-			c := a.live.register(owner)
-			defer a.live.unregister(c)
+			hub := h.live()
+			c := hub.register(owner)
+			defer hub.unregister(c)
 			ready["conn"] = c.id
 			live = c
 		} else {
@@ -467,7 +485,7 @@ func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.runSSELoop(conn, r, ch, sub, sub.Start(), live)
+	h.runSSELoop(conn, r, ch, sub, sub.Start(), live)
 }
 
 // sseFlushInterval bounds how long a coalesced type-change burst waits
@@ -593,11 +611,11 @@ type changeSource interface {
 // that frame is the last one written even when a flush or ping is due at
 // the same moment. At expiry no final frame is written: the client
 // reconnects with a fresh assertion, as after a reload.
-func (a *App) runSSELoop(
+func (h *sseHandler) runSSELoop(
 	conn *sseConn, r *http.Request, ch <-chan sseEvent, feed changeSource, start uint64, live liveFrames,
 ) {
 	st := &sseStream{
-		app:      a,
+		h:        h,
 		conn:     conn,
 		feed:     feed,
 		gate:     readGateFromContext(r.Context()),
@@ -674,9 +692,9 @@ func writeLiveChanged(conn *sseConn, keys []string) error {
 	return nil
 }
 
-// sseStream is the per-connection state of App.runSSELoop.
+// sseStream is the per-connection state of [sseHandler.runSSELoop].
 type sseStream struct {
-	app      *App
+	h        *sseHandler
 	conn     *sseConn
 	feed     changeSource
 	gate     readGate
@@ -722,7 +740,7 @@ func (st *sseStream) take(ctx context.Context) bool {
 	// applies to them as to any entity type.
 	types := batch.Types
 	if len(batch.RelationTypes) > 0 {
-		state := st.app.State()
+		state := st.h.schema()
 		types = slices.Clone(types)
 		for _, rel := range batch.RelationTypes {
 			types = append(types, relationEndTypes(state, rel)...)
@@ -733,7 +751,7 @@ func (st *sseStream) take(ctx context.Context) bool {
 		// defer the visibility decision to the flush (which re-checks every
 		// pending type against the fresh gate). Otherwise filter at entry to
 		// avoid buffering types the principal can't read.
-		if st.regate || st.app.entityTypeVisible(ctx, st.gate, st.verdicts, typ) {
+		if st.regate || st.typeVisible(ctx, typ) {
 			st.pending[typ] = struct{}{}
 		}
 	}
@@ -751,7 +769,7 @@ func (st *sseStream) flush(ctx context.Context) error {
 	if st.regate {
 		// A re-derived gate is a new operation with its own read time.
 		now := nowFunc()
-		gate, ok := st.app.freshReadGate(readtime.With(ctx, now), st.gate)
+		gate, ok := st.h.freshReadGate(readtime.With(ctx, now), st.gate)
 		if !ok && readDay(now) != st.gateDay {
 			// The prior gate was judged on an earlier day, so it may still
 			// count an expired grant. Send nothing until a re-derive works;
@@ -767,7 +785,7 @@ func (st *sseStream) flush(ctx context.Context) error {
 	}
 	var visible []string
 	for typ := range st.pending {
-		if st.app.entityTypeVisible(ctx, st.gate, st.verdicts, typ) {
+		if st.typeVisible(ctx, typ) {
 			visible = append(visible, typ)
 		}
 	}
@@ -800,8 +818,8 @@ func readDay(t time.Time) string { return t.UTC().Format(time.DateOnly) }
 // is constant-true, so it returns current with ok true. On a resolution
 // failure it returns current with ok false; the caller decides whether the
 // prior gate is still safe to use.
-func (a *App) freshReadGate(ctx context.Context, current readGate) (readGate, bool) {
-	d, ok := a.acl.(*acl.Declarative)
+func (h *sseHandler) freshReadGate(ctx context.Context, current readGate) (readGate, bool) {
+	d, ok := h.acl().(*acl.Declarative)
 	if !ok || d == nil {
 		return current, true
 	}
@@ -822,9 +840,9 @@ func (a *App) freshReadGate(ctx context.Context, current readGate) (readGate, bo
 	return gate, true
 }
 
-// entityTypeVisible returns whether the connection's principal may read
-// the type at all, caching the verdict for the connection's lifetime
-// (cleared on a relation change). DenyAll → not visible (withhold the
+// typeVisible returns whether the connection's principal may read the type
+// at all under st.gate, caching the verdict in st.verdicts for the
+// connection's lifetime (cleared on a relation change). DenyAll → not visible (withhold the
 // nudge). AllowAll / Query → visible (the principal can read at least
 // some entities of the type, so "the type changed, re-fetch" leaks
 // nothing beyond the gated list they could already poll).
@@ -833,13 +851,13 @@ func (a *App) freshReadGate(ctx context.Context, current readGate) (readGate, bo
 // the only signal on the wire is the type, so there is no error to
 // echo; the miss degrades to "no nudge", and the client's periodic
 // reconnect re-fetch reconciles.
-func (a *App) entityTypeVisible(ctx context.Context, gate readGate, cache map[string]bool, entityType string) bool {
-	if v, ok := cache[entityType]; ok {
+func (st *sseStream) typeVisible(ctx context.Context, entityType string) bool {
+	if v, ok := st.verdicts[entityType]; ok {
 		return v
 	}
-	rqr := gate.ReadQuery(ctx, entityType)
+	rqr := st.gate.ReadQuery(ctx, entityType)
 	visible := rqr.AllowAll || rqr.Query != nil
-	cache[entityType] = visible
+	st.verdicts[entityType] = visible
 	return visible
 }
 

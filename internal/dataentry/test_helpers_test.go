@@ -409,9 +409,10 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture, opts ..
 		fieldResolver: NopFieldVerdictResolver{},
 		auditSink:     audit.Nop{},
 		feed:          testFeed(),
-		sseTiming:     defaultSSETimings,
 	}
 	app.live = testLiveHub(app)
+	app.sse = newSSEHandler(app)
+	app.gitAPI = newGitHandler(app)
 	if meta != nil {
 		// Use an in-memory FS + project context so the workspace's
 		// templater has paths it can dereference. Without this,
@@ -531,8 +532,10 @@ func newHandlerTestApp(t *testing.T) *App {
 	// NewApp (which rejects a nil resolver). Without it, any handler that
 	// serializes entities for the wire panics — caught by the router walk
 	// test driving _search through the full router (TKT-TLQ94B).
-	app := &App{fieldResolver: NopFieldVerdictResolver{}, feed: testFeed(), sseTiming: defaultSSETimings}
+	app := &App{fieldResolver: NopFieldVerdictResolver{}, feed: testFeed()}
 	app.live = testLiveHub(app)
+	app.sse = newSSEHandler(app)
+	app.gitAPI = newGitHandler(app)
 	rebindApp(app, fs, ctx, svc)
 	// Make sure kv hits the real filesystem through state.KV, matching production.
 	kvRoot, err := storage.NewRootedFS(fs, ctx.CacheDir)

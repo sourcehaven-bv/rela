@@ -155,8 +155,8 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	}
 
 	// SSE endpoints — excluded from reload-lock (long-lived connection)
-	mux.HandleFunc("/api/events", a.handleSSE)
-	mux.HandleFunc("/api/v1/_events", a.handleSSE)
+	mux.HandleFunc("/api/events", a.sse.handleSSE)
+	mux.HandleFunc("/api/v1/_events", a.sse.handleSSE)
 	// Co-editing relay (TKT-CJL604) — a WebSocket, so it stays off the
 	// inner mux whose writers cannot hijack, like SSE.
 	mux.HandleFunc("GET "+CollabPathPrefix+"{type}/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -169,8 +169,8 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	// APIs used by Vue SPA
 	inner.HandleFunc("/api/help/", a.handleEntityHelp)
 	a.commands.registerCommandRoutes(inner)
-	inner.HandleFunc("/api/git/status", a.handleGitStatus)
-	inner.HandleFunc("/api/git/sync", a.handleGitSync)
+	inner.HandleFunc("/api/git/status", a.gitAPI.handleGitStatus)
+	inner.HandleFunc("/api/git/sync", a.gitAPI.handleGitSync)
 
 	// REST API v1 - main API for Vue SPA
 	a.registerAPIV1Routes(inner)

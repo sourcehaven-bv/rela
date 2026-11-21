@@ -154,6 +154,8 @@ func newPostgresHookApp(t *testing.T, st store.Store, hooks map[string]dataentry
 		auditSink:     audit.Nop{},
 	}
 	app.live = testLiveHub(app)
+	app.sse = newSSEHandler(app)
+	app.gitAPI = newGitHandler(app)
 	fs := storage.NewMemFS()
 	paths := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
 	require.NoError(t, fs.MkdirAll(paths.CacheDir, 0o755))
