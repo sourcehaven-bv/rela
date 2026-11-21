@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia'
+import { defineStore, getActivePinia } from 'pinia'
 import { computed, ref } from 'vue'
 import { relaBase } from '@/api/base'
 import type { SidebarCreate, SidebarSpace } from '@/types'
@@ -111,3 +111,21 @@ export const useSpaceStore = defineStore('space', () => {
 
   return { spaces, current, create, loaded, enabled, currentSpace, set, href }
 })
+
+/**
+ * The space the app is in, or undefined when spaces are off or no store is
+ * running yet. For code outside a component that builds a link.
+ */
+export function currentSpace(): string | undefined {
+  if (!getActivePinia()) return undefined
+  const space = useSpaceStore()
+  return space.enabled ? space.current : undefined
+}
+
+/**
+ * The address of an app path in the current space, under the project base:
+ * for an href built outside the router, such as in rendered markdown.
+ */
+export function spaceHref(path: string): string {
+  return relaBase() + withSpace(path, currentSpace()).slice(1)
+}

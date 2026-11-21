@@ -51,7 +51,11 @@ const props = withDefaults(
     run: FlowRun
     /** The flow's subject type; links and the step form need it. */
     subjectType?: string
-    /** Link the title to the run's own page. */
+    /**
+     * Link the title to the run's own page. Only a reader who manages the run
+     * gets the link: the page adds nothing for anyone else, who sees the run's
+     * state and status on this card.
+     */
     linkTitle?: boolean
     /** Leave the flow label out; the run's own page already shows it as the page title. */
     hideTitle?: boolean
@@ -191,7 +195,7 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
   <article class="flow-run-card" data-testid="flow-run" :data-run-id="shown.id">
     <header class="flow-run-card__header">
       <h3 v-if="!hideTitle" class="flow-run-card__title">
-        <RouterLink v-if="linkTitle" :to="space.href(runHref(shown.id))">
+        <RouterLink v-if="linkTitle && manage" :to="space.href(runHref(shown.id))">
           {{ labelOf(shown.flow_label, shown.flow) }}
         </RouterLink>
         <template v-else>{{ labelOf(shown.flow_label, shown.flow) }}</template>

@@ -184,7 +184,12 @@ describe('NextActionOffers', () => {
     // BEFORE the dialog await, or two dialogs open and two OKs mutate twice.
     it('runs once for a double-click, even with confirm', async () => {
       let resolveConfirm: (ok: boolean) => void = () => {}
-      confirmMock.mockImplementation(() => new Promise<boolean>((r) => { resolveConfirm = r }))
+      confirmMock.mockImplementation(
+        () =>
+          new Promise<boolean>((r) => {
+            resolveConfirm = r
+          })
+      )
 
       const w = mountOffers([{ ...actOffer, confirm: true }])
       const btn = w.find('.rl-button--primary')
@@ -381,6 +386,41 @@ describe('NextActionOffers', () => {
       await w.find('.na-defer__trigger').trigger('click')
 
       expect(w.text()).toContain('Stop suggesting this')
+    })
+
+    // After a flow step was done, a notice with nothing to act on took the
+    // banner's place, and its "Not now" read as the banner left behind.
+    it('reads Hide, not Not now, on a suggestion that only informs', async () => {
+      await withLoadedSuggestion()
+      const w = mountOffers([])
+      expect(w.find('.na-defer__trigger').text()).toContain('Hide')
+      expect(w.find('.na-defer__trigger').text()).not.toContain('Not now')
+
+      await w.find('.na-defer__trigger').trigger('click')
+      expect(w.findAll('.na-defer__item').map((i) => i.text())).toEqual([
+        'Hide for now',
+        'Stop suggesting this',
+      ])
+      await w.findAll('.na-defer__item')[0].trigger('click')
+      expect(mockFeedback).toHaveBeenCalledWith(expect.objectContaining({ kind: 'seen' }))
+      expect(useNextAction().suggestion.value).toBeNull()
+    })
+
+    it.each<[string, NextActionOffer[]]>([
+      ['something to act on', [{ navigate: '/x' }]],
+      ['a snooze', [{ snooze: ['1d'] }]],
+      ['a dismiss', [{ dismiss: true }]],
+    ])('keeps Not now when there is %s', (_name, offers) => {
+      expect(mountOffers(offers).find('.na-defer__trigger').text()).toContain('Not now')
+    })
+
+    // An offer whose button does not render leaves nothing to act on either.
+    it('reads Hide when a pick_one has no options', () => {
+      expect(
+        mountOffers([{ pick_one: { query: 'type:task', action: 'start-task' } }], {})
+          .find('.na-defer__trigger')
+          .text()
+      ).toContain('Hide')
     })
 
     // Mute governs the SOURCE, not this suggestion, so it is set apart rather

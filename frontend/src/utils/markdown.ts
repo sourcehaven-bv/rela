@@ -1,7 +1,7 @@
 import { Marked, type Tokens } from 'marked'
 import mermaid from 'mermaid'
 import DOMPurify from 'dompurify'
-import { relaBase } from '@/api/base'
+import { spaceHref } from '@/stores/space'
 import { ENTITY_ADDRESS } from './entityAddress'
 
 // Initialize mermaid with strict security
@@ -273,7 +273,9 @@ function rewriteEntityRefToken(token: unknown, resolve: EntityRefResolver, world
   if (!visibleTitle) return
 
   const query = world ? `?world=${encodeURIComponent(world)}` : ''
-  const href = relaBase() + `entity/${hit.type}/${hit.entityId ?? token.text}${query}`
+  // In the current space, like a router link, so a link opened in a new tab
+  // does not load the page outside it first.
+  const href = spaceHref(`/entity/${hit.type}/${hit.entityId ?? token.text}`) + query
   // Inaccessible targets get a trailing lock affordance; keep the
   // readable title when one was supplied (the lock only conveys "the
   // underlying file is encrypted") and only fall back to the bare ID
@@ -490,7 +492,8 @@ function linkMessageRefs(html: string, options: RenderMessageMarkdownOptions): s
       const ref = target.link
       const query = options.world ? `?world=${encodeURIComponent(options.world)}` : ''
       const a = document.createElement('a')
-      a.setAttribute('href', `${relaBase()}entity/${ref.type}/${ref.id}${query}`)
+      // In the current space, like the code-span refs above.
+      a.setAttribute('href', spaceHref(`/entity/${ref.type}/${ref.id}`) + query)
       a.className = 'entity-ref'
       a.textContent = ref.title || ref.id
       if (ref.title) a.setAttribute('title', ref.id)

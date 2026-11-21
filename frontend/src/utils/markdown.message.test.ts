@@ -3,7 +3,10 @@
 // jsdom for the same reason as markdown.test.ts: DOMPurify needs
 // browser-accurate serialization (BUG-SQSV6V).
 import { describe, it, expect } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import { renderMessageMarkdown } from './markdown'
+import { useSpaceStore } from '@/stores/space'
+import type { SidebarSpace } from '@/types'
 
 // Channel messages come from any member, so their renderer keeps a strict
 // allowlist (TKT-91BK6F R2, R3): nothing in the output may load a remote
@@ -115,6 +118,23 @@ describe('renderMessageMarkdown', () => {
     expect(a.getAttribute('target')).toBeNull()
     // An id the message did not resolve stays code: no lookup of its own.
     expect(t.content.querySelector('code')?.textContent).toBe('TKT-2')
+  })
+
+  it('links a ref into the current space', () => {
+    setActivePinia(createPinia())
+    useSpaceStore().set({
+      spaces: [{ id: 'portal', label: 'Portal' } as SidebarSpace],
+      space: 'portal',
+    })
+    try {
+      const html = renderMessageMarkdown('see `TKT-1`', {
+        refs: [{ id: 'TKT-1', type: 'ticket', title: 'One' }],
+      })
+      const a = dom(html).content.querySelector('a.entity-ref')!
+      expect(a.getAttribute('href')).toBe('/s/portal/entity/ticket/TKT-1')
+    } finally {
+      setActivePinia(createPinia())
+    }
   })
 
   it('leaves code blocks, partial matches and malformed refs alone', () => {

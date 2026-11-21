@@ -4,15 +4,27 @@
  * a link when the column links. Shared by the plain and the editable rows, so
  * the two render a read-only cell the same way.
  */
+import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import type { ViewCell, ViewRow } from '@/api/views'
 import { entityRef } from '@/utils/entityRef'
+import { safeInternalHref } from '@/utils/openIntent'
 import ViewTableCell from './ViewTableCell.vue'
 
-defineProps<{
+const props = defineProps<{
   cell: ViewCell
   property?: string
   row: ViewRow
 }>()
+
+// The server sends the link as a bare path. The router resolves it into the
+// current space, so a new tab or a copied address opens the same page.
+const router = useRouter()
+const href = computed(() => {
+  const link = props.cell.link
+  if (!link || !safeInternalHref(link)) return undefined
+  return router.resolve(link).href
+})
 
 const emit = defineEmits<{
   'link-click': [event: MouseEvent, target: { id: string; type: string }, link: string]
@@ -21,14 +33,14 @@ const emit = defineEmits<{
 
 <template>
   <a
-    v-if="cell.link"
-    :href="cell.link"
+    v-if="href"
+    :href="href"
     @click="
       emit(
         'link-click',
         $event,
         { id: cell.entityId || row.entityId, type: cell.entityType || row.entityType },
-        cell.link
+        cell.link!
       )
     "
   >

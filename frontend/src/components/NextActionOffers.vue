@@ -119,6 +119,37 @@ const deferRef = useTemplateRef<HTMLElement>('deferRef')
 const snoozeDurations = computed(() => props.offers.flatMap((o) => o.snooze || []))
 const hasDismiss = computed(() => props.offers.some((o) => o.dismiss))
 
+/**
+ * A suggestion that only informs: nothing to act on and nothing the operator
+ * offered to defer. "Not now" would read as putting off an action that is not
+ * there; after a flow step was done, the notice that replaced its banner
+ * looked like the banner had stayed behind. Such a suggestion's control reads
+ * "Hide", and its first item acknowledges it ("seen"), which the server turns
+ * into a snooze for the source's cooldown. Mute stays, as on every suggestion.
+ */
+const informOnly = computed(
+  () => !hasControl.value && snoozeDurations.value.length === 0 && !hasDismiss.value
+)
+
+/**
+ * Whether an offer renders at least one button, by the template's own
+ * conditions: an action needs the entity, a pick_one needs live options.
+ */
+const hasControl = computed(() =>
+  actEntries.value.some(
+    ({ offer, index }) =>
+      offer.navigate ||
+      offer.acknowledge ||
+      (offer.action && props.entityId) ||
+      (offer.pick_one && optionsFor(index).length > 0)
+  )
+)
+
+function hide() {
+  deferOpen.value = false
+  acknowledge()
+}
+
 function offerLabel(offer: NextActionOffer, fallback: string): string {
   return offer.label || fallback
 }
@@ -190,7 +221,8 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
     </template>
 
     <!--
-      One "Not now" control for every way of NOT acting. Mute is always
+      One "Not now" control for every way of NOT acting; it reads "Hide" on
+      a suggestion that only informs (see informOnly). Mute is always
       present, never operator-configured: without a one-click way to switch a
       source off, an annoying suggestion can only be escaped by complying with
       it — and the mute rate is the signal telling an operator which source to
@@ -206,11 +238,16 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
         :aria-expanded="deferOpen"
         @click.stop="deferOpen = !deferOpen"
       >
-        {{ t('nextAction.notNow') }}
+        {{ informOnly ? t('nextAction.hide') : t('nextAction.notNow') }}
         <span class="na-defer__caret" aria-hidden="true">&#9662;</span>
       </button>
 
       <ul v-if="deferOpen" class="na-defer__menu" role="menu">
+        <li v-if="informOnly" role="none">
+          <button type="button" class="na-defer__item" role="menuitem" @click.stop="hide()">
+            {{ t('nextAction.hideForNow') }}
+          </button>
+        </li>
         <li v-for="d in snoozeDurations" :key="d" role="none">
           <button
             type="button"

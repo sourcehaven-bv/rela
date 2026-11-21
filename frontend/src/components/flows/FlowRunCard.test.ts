@@ -79,6 +79,25 @@ describe('FlowRunCard', () => {
     } as unknown as EntityType)
   })
 
+  it('links the title to the run page only for a reader who manages the run', async () => {
+    const mountLinked = (r: FlowRun) =>
+      mount(FlowRunCard, {
+        props: { run: r, subjectType: 'person', linkTitle: true },
+        global: { stubs: { RouterLink: RouterLinkStub } },
+      })
+    const managed = mountLinked(run())
+    await flushPromises()
+    expect(managed.findComponent(RouterLinkStub).props('to')).toBe('/flows/runs/R1')
+
+    const other = mountLinked(
+      run({ _actions: { complete: true, manage: false, cancel: false, retry: false } })
+    )
+    await flushPromises()
+    expect(other.find('.flow-run-card__title').text()).toBe('Onboarding')
+    expect(other.findComponent(RouterLinkStub).exists()).toBe(false)
+    expect(other.find('[data-testid="flow-run-status"]').exists()).toBe(true)
+  })
+
   it('leaves the flow label out when the page already names the flow', async () => {
     const wrapper = mount(FlowRunCard, {
       props: { run: run(), subjectType: 'person', hideTitle: true },

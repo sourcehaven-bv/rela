@@ -11,8 +11,16 @@ import { useNavigationPending } from '@/composables/useNavigationPending'
 import { relaBase } from '@/api/base'
 import { currentAsOf } from '@/api/asOf'
 import { getSidebar } from '@/api/schema'
-import { lastSpace, homeTarget, spaceOf, useSpaceStore, withSpace } from '@/stores/space'
+import {
+  currentSpace,
+  lastSpace,
+  homeTarget,
+  spaceOf,
+  useSpaceStore,
+  withSpace,
+} from '@/stores/space'
 import { CONFIGURE_PREFIX, configureRoute, isConfigurePath } from '@/configure/routes'
+import { prefixResolvedLinks } from './spaceLinks'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -508,6 +516,9 @@ router.beforeEach((to) => {
   if (!space.enabled || !space.current || spaceOf(to.path) || isConfigurePath(to.path)) return
   return { path: withSpace(to.path, space.current), query: to.query, hash: to.hash }
 })
+
+// The guard above covers navigation; this gives a link's href the same space.
+prefixResolvedLinks(router, currentSpace)
 
 /**
  * A page reading at a past instant stays there: a link or a navigation
