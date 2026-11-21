@@ -45,7 +45,6 @@ import (
 	"net"
 	"net/url"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -237,7 +236,7 @@ func Parse(data []byte, meta *metamodel.Metamodel) (*Config, error) {
 }
 
 // Names returns the remote names in sorted order.
-func (c *Config) Names() []string { return sortedKeys(c.Remotes) }
+func (c *Config) Names() []string { return slices.Sorted(maps.Keys(c.Remotes)) }
 
 // Mapping is one remote's config checked against the local schema.
 type Mapping struct {
@@ -382,10 +381,10 @@ func (c *compiler) remote(p Remote) {
 	if len(p.Entities) == 0 {
 		c.fail("entities: map at least one source type")
 	}
-	for _, src := range sortedKeys(p.Entities) {
+	for _, src := range slices.Sorted(maps.Keys(p.Entities)) {
 		c.entity(src, p.Entities[src])
 	}
-	for _, src := range sortedKeys(p.Relations) {
+	for _, src := range slices.Sorted(maps.Keys(p.Relations)) {
 		c.relation(src, p.Relations[src])
 	}
 }
@@ -399,7 +398,7 @@ func (c *compiler) entity(src string, em EntityMap) {
 		c.fail("entities: source type %q is not a valid type name", src)
 		return
 	}
-	for _, other := range sortedKeys(c.m.Entities) {
+	for _, other := range slices.Sorted(maps.Keys(c.m.Entities)) {
 		if c.m.Entities[other].Local == local {
 			c.fail("entities: %q and %q both map to local type %q", other, src, local)
 			return
@@ -475,7 +474,7 @@ func (c *compiler) rule(where, rule string) {
 // hold.
 func (c *compiler) rules(where, typeRule string, perField map[string]string, fields []FieldMapping) {
 	c.rule(where+": conflict", typeRule)
-	for _, field := range sortedKeys(perField) {
+	for _, field := range slices.Sorted(maps.Keys(perField)) {
 		if !slices.ContainsFunc(fields, func(f FieldMapping) bool { return f.Local.Name == field }) {
 			c.fail("%s: field_conflicts: %q is not a mapped field", where, field)
 			continue
@@ -561,7 +560,7 @@ func (c *compiler) relation(src string, rm RelationMap) {
 	// A push finds the source type of a local relation by its local type, so
 	// two source types may not share one.
 	if c.m.Remote.Push {
-		for _, other := range sortedKeys(c.m.Relations) {
+		for _, other := range slices.Sorted(maps.Keys(c.m.Relations)) {
 			if c.m.Relations[other].Local == local {
 				c.fail("relations: %q and %q both map to local type %q, which a remote with push does not support",
 					other, src, local)
@@ -604,7 +603,7 @@ func (c *compiler) relationRules(src string, rm *RelationMap, fields []FieldMapp
 func typedFields(
 	m map[string]string, typeOf func([]string) ([]syncmerge.Field, error),
 ) ([]FieldMapping, error) {
-	names := sortedKeys(m)
+	names := slices.Sorted(maps.Keys(m))
 	typed, err := typeOf(names)
 	if err != nil {
 		return nil, err
@@ -696,11 +695,11 @@ func mappingHash(m *Mapping) string {
 		}
 		return out
 	}
-	for _, src := range sortedKeys(m.Entities) {
+	for _, src := range slices.Sorted(maps.Keys(m.Entities)) {
 		e := m.Entities[src]
 		v.Entities = append(v.Entities, typ{e.Source, e.Local, e.Ref, conv(e.Fields)})
 	}
-	for _, src := range sortedKeys(m.Relations) {
+	for _, src := range slices.Sorted(maps.Keys(m.Relations)) {
 		r := m.Relations[src]
 		v.Relations = append(v.Relations, typ{Source: r.Source, Local: r.Local, Fields: conv(r.Fields)})
 	}
@@ -710,15 +709,6 @@ func mappingHash(m *Mapping) string {
 	}
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:16])
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func (p Remote) onGone() string {

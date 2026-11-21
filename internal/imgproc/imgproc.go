@@ -99,10 +99,6 @@ const (
 	// DefaultJPEGQuality is used when re-encoding to JPEG without an explicit
 	// quality.
 	DefaultJPEGQuality = 85
-
-	// bytesPerPixel is what the stdlib decoders materialize (NRGBA/RGBA). Used
-	// to translate the pixel cap into a memory budget.
-	bytesPerPixel = 4
 )
 
 // maxConcurrentCeiling caps the decode concurrency regardless of core count.
@@ -114,23 +110,10 @@ const maxConcurrentCeiling = 4
 
 // maxConcurrent bounds how many decodes run at once, process-wide. Combined
 // with the pixel cap it bounds worst-case transient memory to roughly
-// maxConcurrent × DefaultMaxPixels × bytesPerPixel. Derived from the CPU count,
+// maxConcurrent × DefaultMaxPixels × 4 bytes (NRGBA/RGBA). Derived from the CPU count,
 // floored at 1 and capped at [maxConcurrentCeiling] so the memory budget does
 // not grow with core count.
 var maxConcurrent = min(max(int64(runtime.GOMAXPROCS(0)), 1), maxConcurrentCeiling)
-
-// MemoryBudgetBytes is the documented worst-case transient decode memory:
-// concurrency bound × pixel cap × bytes-per-pixel. Exposed so operators tuning
-// MaxPixels can reason about the ceiling.
-//
-// Caveat: a decode that exceeds [Config.Timeout] unblocks its caller but keeps
-// running (Go image decoders are not cancellable) and holds its slot until it
-// finishes. A burst of slow-but-honest inputs can therefore tie up all slots
-// and make subsequent decodes queue for up to the slow decode's duration. The
-// memory budget stays bounded; latency does not.
-func MemoryBudgetBytes() int64 {
-	return maxConcurrent * DefaultMaxPixels * bytesPerPixel
-}
 
 // decodeSem serializes decodes to at most [maxConcurrent] at a time. It is a
 // package singleton so the bound is process-wide (every attachment write path

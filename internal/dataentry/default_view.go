@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"slices"
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -81,7 +82,7 @@ func buildDefaultViewConfig(meta *metamodel.Metamodel, entityType string) (ViewC
 	// Outgoing first, then incoming.
 	for _, name := range relationNames {
 		def := meta.Relations[name]
-		if !containsString(def.From, entityType) {
+		if !slices.Contains(def.From, entityType) {
 			continue
 		}
 		collectAs := "out_" + name
@@ -108,7 +109,7 @@ func buildDefaultViewConfig(meta *metamodel.Metamodel, entityType string) (ViewC
 		// for the inverse direction is the right behavior here, since the
 		// edges visible to the inverse are different from the outgoing
 		// ones. Allow through.
-		if !containsString(def.To, entityType) {
+		if !slices.Contains(def.To, entityType) {
 			continue
 		}
 		collectAs := "in_" + name

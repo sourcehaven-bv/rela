@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -119,10 +120,10 @@ func countAffectedRelations(meta *metamodel.Metamodel, entityType string) int {
 		if relDef == nil {
 			continue
 		}
-		if sliceContains(relDef.From, entityType) {
+		if slices.Contains(relDef.From, entityType) {
 			count++
 		}
-		if sliceContains(relDef.To, entityType) {
+		if slices.Contains(relDef.To, entityType) {
 			count++
 		}
 	}

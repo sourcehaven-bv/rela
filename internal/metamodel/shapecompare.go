@@ -2,6 +2,7 @@ package metamodel
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -113,14 +114,14 @@ func CompareShapes(from, to ShapeProjection) ShapeReport {
 
 func compareEntityShapes(r *ShapeReport, from, to map[string]EntityShape) {
 	var removedTypes []string
-	for _, name := range sortedKeys(from) {
+	for _, name := range slices.Sorted(maps.Keys(from)) {
 		if _, ok := to[name]; !ok {
 			removedTypes = append(removedTypes, name)
 			r.add(TierDrift, "entity_type_removed", name,
 				fmt.Sprintf("entity type %q removed: existing entities become unknown to the schema (readable, but every write is rejected) until migrated or GC'd", name))
 		}
 	}
-	for _, name := range sortedKeys(to) {
+	for _, name := range slices.Sorted(maps.Keys(to)) {
 		if _, ok := from[name]; !ok {
 			r.add(TierAdditive, "entity_type_added", name, fmt.Sprintf("entity type %q added", name))
 			// A removed type whose property shape resembles this added one
@@ -135,7 +136,7 @@ func compareEntityShapes(r *ShapeReport, from, to map[string]EntityShape) {
 			}
 		}
 	}
-	for _, name := range sortedKeys(from) {
+	for _, name := range slices.Sorted(maps.Keys(from)) {
 		toShape, ok := to[name]
 		if !ok {
 			continue
@@ -230,18 +231,18 @@ func compareFaces(r *ShapeReport, typeName string, from, to EntityShape) {
 }
 
 func compareRelationShapes(r *ShapeReport, from, to map[string]RelationShape, scopes bool) {
-	for _, name := range sortedKeys(from) {
+	for _, name := range slices.Sorted(maps.Keys(from)) {
 		if _, ok := to[name]; !ok {
 			r.add(TierDrift, "relation_type_removed", "rel:"+name,
 				fmt.Sprintf("relation type %q removed: existing relations become unknown to the schema until migrated or GC'd", name))
 		}
 	}
-	for _, name := range sortedKeys(to) {
+	for _, name := range slices.Sorted(maps.Keys(to)) {
 		if _, ok := from[name]; !ok {
 			r.add(TierAdditive, "relation_type_added", "rel:"+name, fmt.Sprintf("relation type %q added", name))
 		}
 	}
-	for _, name := range sortedKeys(from) {
+	for _, name := range slices.Sorted(maps.Keys(from)) {
 		toRel, ok := to[name]
 		if !ok {
 			continue
@@ -410,14 +411,14 @@ func compareProperties(r *ShapeReport, owner string, from, to map[string]Propert
 	}
 
 	var removed []string
-	for _, pname := range sortedKeys(from) {
+	for _, pname := range slices.Sorted(maps.Keys(from)) {
 		if _, ok := to[pname]; !ok {
 			removed = append(removed, pname)
 			r.add(TierDrift, "property_removed", subject(pname),
 				fmt.Sprintf("property %s removed: stored values are orphaned until migrated or GC'd", subject(pname)))
 		}
 	}
-	for _, pname := range sortedKeys(to) {
+	for _, pname := range slices.Sorted(maps.Keys(to)) {
 		if _, ok := from[pname]; ok {
 			continue
 		}
@@ -442,7 +443,7 @@ func compareProperties(r *ShapeReport, owner string, from, to map[string]Propert
 			}
 		}
 	}
-	for _, pname := range sortedKeys(from) {
+	for _, pname := range slices.Sorted(maps.Keys(from)) {
 		toProp, ok := to[pname]
 		if !ok {
 			continue
@@ -526,7 +527,7 @@ func compareValueList(r *ShapeReport, subject string, from, to []string) {
 }
 
 func compareNamedTypes(r *ShapeReport, from, to map[string][]string) {
-	for _, name := range sortedKeys(from) {
+	for _, name := range slices.Sorted(maps.Keys(from)) {
 		if _, ok := to[name]; !ok {
 			// Impact on data shows up via the property-level deltas of any
 			// property that referenced this type; the type's disappearance
@@ -534,12 +535,12 @@ func compareNamedTypes(r *ShapeReport, from, to map[string][]string) {
 			r.add(TierAdditive, "named_type_removed", "type:"+name, fmt.Sprintf("named type %q removed", name))
 		}
 	}
-	for _, name := range sortedKeys(to) {
+	for _, name := range slices.Sorted(maps.Keys(to)) {
 		if _, ok := from[name]; !ok {
 			r.add(TierAdditive, "named_type_added", "type:"+name, fmt.Sprintf("named type %q added", name))
 		}
 	}
-	for _, name := range sortedKeys(from) {
+	for _, name := range slices.Sorted(maps.Keys(from)) {
 		if _, ok := to[name]; !ok {
 			continue
 		}

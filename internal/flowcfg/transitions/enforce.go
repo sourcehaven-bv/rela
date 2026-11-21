@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -43,7 +45,7 @@ func (s *Transitions) EnforceUpdate(
 	}
 	var moves []move
 	var whens []*predicate.Program
-	for _, prop := range sortedKeys(props) {
+	for _, prop := range slices.Sorted(maps.Keys(props)) {
 		m := s.machines[props[prop]]
 		from := ""
 		if old != nil {
@@ -123,7 +125,7 @@ func (s *Transitions) EnforceCreate(_ context.Context, e *entity.Entity) error {
 		return nil
 	}
 	props := s.propType[e.Type]
-	for _, prop := range sortedKeys(props) {
+	for _, prop := range slices.Sorted(maps.Keys(props)) {
 		m := s.machines[props[prop]]
 		entry := m.def.Initial()
 		if entry == "" {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/comments"
@@ -189,7 +190,7 @@ func (c *copier) copyRelations(ctx context.Context) error {
 }
 
 func (c *copier) copyAttachments(ctx context.Context) error {
-	for _, id := range sortedKeys(c.imported.families) {
+	for _, id := range slices.Sorted(maps.Keys(c.imported.families)) {
 		infos, err := c.src.store.ListFamilyAttachments(ctx, id)
 		if err != nil {
 			c.rep.fail("list attachments of %s: %v", id, err)

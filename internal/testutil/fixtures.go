@@ -91,11 +91,6 @@ func (b *EntityBuilder) WithTitle(title string) *EntityBuilder {
 	return b.WithProperty("title", title)
 }
 
-// WithDescription adds a description property to the entity.
-func (b *EntityBuilder) WithDescription(desc string) *EntityBuilder {
-	return b.WithProperty("description", desc)
-}
-
 // WithContent sets the content of the entity.
 func (b *EntityBuilder) WithContent(content string) *EntityBuilder {
 	b.entity.Content = content
@@ -318,27 +313,9 @@ func (e *EntityDefBuilder) Label(label string) *EntityDefBuilder {
 	return e
 }
 
-// Plural sets the plural name (used for directory names).
-func (e *EntityDefBuilder) Plural(plural string) *EntityDefBuilder {
-	e.def.Plural = plural
-	return e
-}
-
 // IDPrefix sets a single ID prefix.
 func (e *EntityDefBuilder) IDPrefix(prefix string) *EntityDefBuilder {
 	e.def.IDPrefix = prefix
-	return e
-}
-
-// IDPrefixes sets multiple ID prefixes.
-func (e *EntityDefBuilder) IDPrefixes(prefixes ...string) *EntityDefBuilder {
-	e.def.IDPrefixes = prefixes
-	return e
-}
-
-// IDType sets the ID generation type (short, sequential, manual).
-func (e *EntityDefBuilder) IDType(idType string) *EntityDefBuilder {
-	e.def.IDType = idType
 	return e
 }
 
@@ -354,28 +331,6 @@ func (e *EntityDefBuilder) Prop(name, propType string, required bool) *EntityDef
 	e.properties[name] = metamodel.PropertyDef{
 		Type:     propType,
 		Required: required,
-	}
-	return e
-}
-
-// PropWithDefault adds a property with a default value.
-func (e *EntityDefBuilder) PropWithDefault(name, propType string, required bool, defaultVal string) *EntityDefBuilder {
-	e.propOrder = append(e.propOrder, name)
-	e.properties[name] = metamodel.PropertyDef{
-		Type:     propType,
-		Required: required,
-		Default:  defaultVal,
-	}
-	return e
-}
-
-// ListProp adds a multi-select property.
-func (e *EntityDefBuilder) ListProp(name, propType string, required bool) *EntityDefBuilder {
-	e.propOrder = append(e.propOrder, name)
-	e.properties[name] = metamodel.PropertyDef{
-		Type:     propType,
-		Required: required,
-		List:     true,
 	}
 	return e
 }
@@ -421,24 +376,6 @@ func (b *MetamodelBuilder) WithRelation(name, label string, from, to []string) *
 	return b
 }
 
-// WithRelationCardinality adds a relation with cardinality constraints.
-func (b *MetamodelBuilder) WithRelationCardinality(
-	name, label string,
-	from, to []string,
-	minOut, maxOut, minIn, maxIn *int,
-) *MetamodelBuilder {
-	b.meta.Relations[name] = metamodel.RelationDef{
-		Label:       label,
-		From:        from,
-		To:          to,
-		MinOutgoing: minOut,
-		MaxOutgoing: maxOut,
-		MinIncoming: minIn,
-		MaxIncoming: maxIn,
-	}
-	return b
-}
-
 // WithCustomType adds a custom type to the metamodel.
 func (b *MetamodelBuilder) WithCustomType(name string, values []string) *MetamodelBuilder {
 	b.meta.Types[name] = metamodel.CustomType{
@@ -460,108 +397,6 @@ func (b *MetamodelBuilder) WithCustomTypeDefault(name string, values []string, d
 func (b *MetamodelBuilder) Build() *metamodel.Metamodel {
 	b.meta.InitAliases()
 	return b.meta
-}
-
-// SimpleMetamodel returns a simple metamodel for testing with requirement and decision types.
-func SimpleMetamodel() *metamodel.Metamodel {
-	return NewMetamodel().
-		DefineEntity("requirement").
-		Label("Requirement").
-		IDPrefix("REQ-").
-		Prop("title", metamodel.PropertyTypeString, true).
-		Prop("status", "status", false).
-		End().
-		DefineEntity("decision").
-		Label("Decision").
-		IDPrefix("DEC-").
-		Prop("title", metamodel.PropertyTypeString, true).
-		Prop("status", "status", false).
-		End().
-		WithRelation("addresses", "Addresses", []string{"decision"}, []string{"requirement"}).
-		WithCustomType("status", []string{"draft", "proposed", "accepted", "rejected", "deprecated", "retired"}).
-		Build()
-}
-
-// WorkspaceMetamodel returns a metamodel suitable for workspace tests with
-// requirement, decision, stakeholder, and checklist types plus automations.
-func WorkspaceMetamodel() *metamodel.Metamodel {
-	return NewMetamodel().
-		DefineEntity("requirement").
-		Label("Requirement").
-		Plural("requirements").
-		IDPrefix("REQ-").
-		IDType(metamodel.IDTypeSequential).
-		Prop("title", metamodel.PropertyTypeString, true).
-		Prop("status", metamodel.PropertyTypeString, false).
-		End().
-		DefineEntity("decision").
-		Label("Decision").
-		Plural("decisions").
-		IDPrefix("DEC-").
-		IDType(metamodel.IDTypeSequential).
-		Prop("title", metamodel.PropertyTypeString, true).
-		Prop("status", metamodel.PropertyTypeString, false).
-		End().
-		DefineEntity("stakeholder").
-		Label("Stakeholder").
-		Plural("stakeholders").
-		IDType(metamodel.IDTypeManual).
-		Prop("name", metamodel.PropertyTypeString, true).
-		End().
-		DefineEntity("checklist").
-		Label("Checklist").
-		Plural("checklists").
-		IDPrefix("CHK-").
-		IDType(metamodel.IDTypeSequential).
-		Prop("title", metamodel.PropertyTypeString, true).
-		Prop("status", metamodel.PropertyTypeString, false).
-		End().
-		WithRelation("addresses", "Addresses", []string{"decision"}, []string{"requirement"}).
-		WithRelation("depends-on", "Depends On", []string{"requirement"}, []string{"requirement"}).
-		WithRelation("has-checklist", "has checklist", []string{"requirement"}, []string{"checklist"}).
-		Build()
-}
-
-// TicketMetamodel returns a metamodel for ticket/issue tracking tests.
-func TicketMetamodel() *metamodel.Metamodel {
-	return NewMetamodel().
-		DefineEntity("ticket").
-		Label("Ticket").
-		IDPrefix("TKT-").
-		Prop("title", metamodel.PropertyTypeString, true).
-		Prop("status", "status_type", false).
-		Prop("priority", "priority_type", false).
-		End().
-		DefineEntity("component").
-		Label("Component").
-		IDPrefix("CMP-").
-		Prop("name", metamodel.PropertyTypeString, true).
-		End().
-		WithRelation("depends-on", "depends on", []string{"ticket"}, []string{"ticket"}).
-		WithRelation("belongs-to", "belongs to", []string{"ticket"}, []string{"component"}).
-		WithCustomType("status_type", []string{"open", "in_progress", "closed"}).
-		WithCustomType("priority_type", []string{"low", "medium", "high"}).
-		Build()
-}
-
-// AliasMetamodel returns a metamodel with aliases for testing alias resolution.
-func AliasMetamodel() *metamodel.Metamodel {
-	return NewMetamodel().
-		DefineEntity("requirement").
-		Label("Requirement").
-		IDPrefix("REQ-").
-		Aliases("req").
-		Prop("title", metamodel.PropertyTypeString, true).
-		Prop("status", "status", false).
-		End().
-		DefineEntity("control").
-		Label("Control").
-		IDPrefix("CTRL-").
-		Aliases("ctrl").
-		Prop("title", metamodel.PropertyTypeString, true).
-		End().
-		WithCustomType("status", []string{"draft", "accepted"}).
-		Build()
 }
 
 // SimpleMetamodelYAML returns a simple metamodel YAML for testing.
@@ -594,43 +429,6 @@ relations:
 types:
   status:
     values: [draft, proposed, accepted, rejected, deprecated, retired]
-`
-}
-
-// RenameTestMetamodelYAML returns a metamodel for rename tests with requirement, decision,
-// and depends-on/addresses relations.
-func RenameTestMetamodelYAML() string {
-	return `version: "1.0"
-entities:
-  requirement:
-    label: Requirement
-    plural: requirements
-    id_prefix: "REQ-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-        required: true
-      status:
-        type: string
-  decision:
-    label: Decision
-    plural: decisions
-    id_prefix: "DEC-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-        required: true
-relations:
-  addresses:
-    label: Addresses
-    from: [decision]
-    to: [requirement]
-  depends-on:
-    label: Depends On
-    from: [requirement]
-    to: [requirement]
 `
 }
 

@@ -132,7 +132,7 @@ type FilePropertyView struct {
 // Nil: returned when mt has none.
 func fileProperties(mt *realtimecfg.MessageType) []FilePropertyView {
 	var out []FilePropertyView
-	for _, name := range sortedKeys(mt.Properties) {
+	for _, name := range slices.Sorted(maps.Keys(mt.Properties)) {
 		p := mt.Properties[name]
 		if p.Type != realtimecfg.PropertyFile {
 			continue
@@ -270,7 +270,7 @@ func cursors(req ReadRequest, v ReadView) Cursors {
 // set from [call.postable], less what the transport cannot carry.
 func (c *call) messageTypes(post map[string]bool) []MessageTypeView {
 	out := make([]MessageTypeView, 0, len(c.ct.MessageTypes))
-	for _, name := range sortedKeys(c.ct.MessageTypes) {
+	for _, name := range slices.Sorted(maps.Keys(c.ct.MessageTypes)) {
 		mt := c.ct.MessageTypes[name]
 		ttl, reply := messageTypeTiming(mt)
 		out = append(out, MessageTypeView{

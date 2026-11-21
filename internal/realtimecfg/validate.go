@@ -67,13 +67,13 @@ func (v *validator) compile(raw *rawFile) *Compiled {
 		channelTypes: map[string]*ChannelType{},
 		triggers:     map[string]*Trigger{},
 	}
-	for _, name := range sortedKeys(raw.ChannelTypes) {
+	for _, name := range slices.Sorted(maps.Keys(raw.ChannelTypes)) {
 		rct := raw.ChannelTypes[name]
 		if ct := v.channelType(name, &rct, c.limits); ct != nil {
 			c.channelTypes[name] = ct
 		}
 	}
-	for _, name := range sortedKeys(raw.Triggers) {
+	for _, name := range slices.Sorted(maps.Keys(raw.Triggers)) {
 		rt := raw.Triggers[name]
 		if t := v.trigger(name, &rt, raw, c); t != nil {
 			c.triggers[name] = t
@@ -148,7 +148,7 @@ func (v *validator) channelType(name string, raw *rawChannelType, limits Limits)
 	ct.Cardinality = v.cardinality(key+".cardinality", raw.Cardinality)
 	ct.OnEntityDelete = v.onEntityDelete(key+".on_entity_delete", raw.OnEntityDelete)
 
-	for _, rn := range sortedKeys(raw.Roles) {
+	for _, rn := range slices.Sorted(maps.Keys(raw.Roles)) {
 		rr := raw.Roles[rn]
 		if !namePattern.MatchString(rn) {
 			v.add(key+".roles."+rn, "role name "+nameRule)
@@ -176,7 +176,7 @@ func (v *validator) channelType(name string, raw *rawChannelType, limits Limits)
 	if len(raw.MessageTypes) == 0 {
 		v.add(key+".message_types", "a channel type needs at least one message type")
 	}
-	for _, mn := range sortedKeys(raw.MessageTypes) {
+	for _, mn := range slices.Sorted(maps.Keys(raw.MessageTypes)) {
 		rm := raw.MessageTypes[mn]
 		if mt := v.messageType(key+".message_types."+mn, mn, &rm, ct, limits); mt != nil {
 			ct.MessageTypes[mn] = mt
@@ -431,7 +431,7 @@ func (v *validator) messageType(key, name string, raw *rawMessageType, ct *Chann
 			v.add(key+".promote_to", "promote_to belongs on an action: declare an action with its own "+
 				"roles or permission and put promote_to there")
 		}
-		for _, an := range sortedKeys(raw.Actions) {
+		for _, an := range slices.Sorted(maps.Keys(raw.Actions)) {
 			ra := raw.Actions[an]
 			ak := key + ".actions." + an
 			if !namePattern.MatchString(an) {
@@ -458,7 +458,7 @@ func messageProperties(v *validator, key string, raw map[string]rawProperty, mt 
 	if len(raw) > realtimelimits.MaxMessageProperties {
 		v.add(key, fmt.Sprintf("at most %d properties", realtimelimits.MaxMessageProperties))
 	}
-	for _, pn := range sortedKeys(raw) {
+	for _, pn := range slices.Sorted(maps.Keys(raw)) {
 		rp := raw[pn]
 		mt.Properties[pn] = v.property(key+"."+pn, pn, &rp, limits)
 	}
@@ -643,7 +643,7 @@ func (v *validator) promote(key string, raw *rawPromote, mt *MessageType, ct *Ch
 	if def == nil {
 		return p
 	}
-	for _, ep := range sortedKeys(raw.Map) {
+	for _, ep := range slices.Sorted(maps.Keys(raw.Map)) {
 		mp := raw.Map[ep]
 		p.Map[ep] = mp
 		v.promoteMapping(key+".map."+ep, raw.Type, ep, mp, def, mt)
@@ -697,7 +697,7 @@ func (v writeChecker) entityTarget(
 // default and are not computed, sorted: those a create must fill.
 func requiredProps(def *metamodel.EntityDef) []string {
 	var out []string
-	for _, ep := range sortedKeys(def.Properties) {
+	for _, ep := range slices.Sorted(maps.Keys(def.Properties)) {
 		if pd := def.Properties[ep]; pd.Required && pd.Default == "" && pd.Computed == "" {
 			out = append(out, ep)
 		}
@@ -752,7 +752,7 @@ func (v *validator) promoteFace(key, typ, face string) {
 // message type, which the web app shows as one line of text. It is a
 // function, not a validator method, to keep the validator's method count.
 func refuseEphemeralObjects(v *validator, key string, props map[string]rawProperty) {
-	for _, name := range sortedKeys(props) {
+	for _, name := range slices.Sorted(maps.Keys(props)) {
 		if PropertyType(props[name].Type) == PropertyObject {
 			v.add(key+".properties."+name, "an ephemeral message shows as one line of text, so it cannot "+
 				"hold an object list")
@@ -1012,7 +1012,7 @@ func (v *validator) literalPost(key string, mt *MessageType, lit map[string]stri
 	}
 	// A trigger or reminder posts no files, so a required file property
 	// would refuse every post it makes.
-	for _, pn := range sortedKeys(mt.Properties) {
+	for _, pn := range slices.Sorted(maps.Keys(mt.Properties)) {
 		if p := mt.Properties[pn]; p.Type == PropertyFile && p.Required {
 			v.add(key, "message type "+mt.Name+" requires a file in property "+pn+
 				", and a trigger or reminder posts no files")
@@ -1028,7 +1028,7 @@ func (v *validator) literalPost(key string, mt *MessageType, lit map[string]stri
 		}
 	}
 	policyOK := true
-	for _, pn := range sortedKeys(lit) {
+	for _, pn := range slices.Sorted(maps.Keys(lit)) {
 		p, ok := mt.Properties[pn]
 		if !ok {
 			continue // NormalizeProps refuses an undeclared property.
@@ -1100,15 +1100,6 @@ func orDefault(s, def string) string {
 		return def
 	}
 	return s
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // facesRestricted reports whether p may admit some reader to entityType

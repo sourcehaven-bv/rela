@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/app"
 	"github.com/Sourcehaven-BV/rela/internal/comments/filecomments"
@@ -159,7 +161,7 @@ func (s *source) checkLocked(ctx context.Context, rep *Report) error {
 			problems = append(problems, "relation "+relationName(r.Identity())+" is encrypted")
 		}
 	}
-	for _, id := range sortedKeys(families) {
+	for _, id := range slices.Sorted(maps.Keys(families)) {
 		infos, err := s.store.ListFamilyAttachments(ctx, id)
 		if err != nil {
 			problems = append(problems, fmt.Sprintf("list attachments of %s: %v", id, err))

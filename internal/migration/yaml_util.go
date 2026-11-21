@@ -146,19 +146,6 @@ func FindMapEntriesByKey(node *yaml.Node, key string) [][2]*yaml.Node {
 	return results
 }
 
-// ReplaceScalarValue replaces all occurrences of oldValue with newValue.
-// Only affects scalar nodes. Returns count of replacements made.
-func ReplaceScalarValue(node *yaml.Node, oldValue, newValue string) int {
-	count := 0
-	walkAll(node, func(n *yaml.Node) {
-		if n.Kind == yaml.ScalarNode && n.Value == oldValue {
-			n.Value = newValue
-			count++
-		}
-	})
-	return count
-}
-
 // ReplaceMapValueByKey replaces values of entries with matching key.
 // Only replaces if the current value matches oldValue.
 // Returns count of replacements made.

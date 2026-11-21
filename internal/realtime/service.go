@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"slices"
 	"time"
@@ -304,7 +305,7 @@ func (c *call) affordancesWith(post map[string]bool) Affordances {
 // the inbox entry both take them from here, so the two cannot drift.
 func decisionAffordances(c *call, post map[string]bool) (posts, types []string, entries []EntryRef) {
 	posts = []string{}
-	for _, name := range sortedKeys(c.ct.MessageTypes) {
+	for _, name := range slices.Sorted(maps.Keys(c.ct.MessageTypes)) {
 		if post[name] {
 			posts = append(posts, name)
 		}
@@ -480,7 +481,7 @@ func (s *Service) postEphemeral(c *call, mt *realtimecfg.MessageType, in PostInp
 // Nil: returned when no type's choices name it as their answer.
 func inlineUnder(ct *realtimecfg.ChannelType, name string) []string {
 	var out []string
-	for _, q := range sortedKeys(ct.MessageTypes) {
+	for _, q := range slices.Sorted(maps.Keys(ct.MessageTypes)) {
 		if c := ct.MessageTypes[q].Choices; c != nil && c.Answer == name {
 			out = append(out, q)
 		}

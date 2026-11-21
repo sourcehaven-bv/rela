@@ -100,7 +100,7 @@ func (c reminderCompiler) compile(key string, raw map[string]rawReminder) {
 	if len(raw) > flow.MaxReminders {
 		v.add(key, fmt.Sprintf("at most %d reminders per session", flow.MaxReminders))
 	}
-	for _, name := range sortedKeys(raw) {
+	for _, name := range slices.Sorted(maps.Keys(raw)) {
 		rk := key + "." + name
 		if !namePattern.MatchString(name) {
 			v.add(rk, "reminder name must match ^[a-z][a-z0-9-]{0,62}$")
@@ -214,7 +214,7 @@ func (c reminderCompiler) post(key string, raw *rawTriggerPost, r *SessionRemind
 			"connected to the leading process")
 		return false
 	}
-	for _, sn := range sortedKeys(c.states) {
+	for _, sn := range slices.Sorted(maps.Keys(c.states)) {
 		if _, keyed := c.states[sn].On[raw.Type]; keyed {
 			v.add(tk, fmt.Sprintf("a reminder never moves the session, but a person posting %s would; "+
 				"use a message type no transition is keyed by", raw.Type))

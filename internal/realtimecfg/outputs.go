@@ -55,7 +55,7 @@ type Output struct {
 func (o Output) Properties() map[string]Template { return maps.Clone(o.props) }
 
 // PropertyNames returns the names of the output's properties, sorted.
-func (o Output) PropertyNames() []string { return sortedKeys(o.props) }
+func (o Output) PropertyNames() []string { return slices.Sorted(maps.Keys(o.props)) }
 
 // Outputs returns the transition's outputs in file order. The slice is a
 // copy.
@@ -136,7 +136,7 @@ func (v writeChecker) setOutput(key string, raw *rawSetOutput, c outputCause, ct
 		if o.props == nil {
 			o.props = props
 		}
-		for _, name := range sortedKeys(raw.Properties) {
+		for _, name := range slices.Sorted(maps.Keys(raw.Properties)) {
 			pd, has := def.Properties[name]
 			if !has {
 				continue
@@ -221,7 +221,7 @@ func (v writeChecker) outputProps(
 	key string, raw map[string]any, typ string, def *metamodel.EntityDef, c outputCause,
 ) map[string]Template {
 	out := make(map[string]Template, len(raw))
-	for _, name := range sortedKeys(raw) {
+	for _, name := range slices.Sorted(maps.Keys(raw)) {
 		pk := key + "." + name
 		pd, ok := def.Properties[name]
 		switch {
@@ -270,7 +270,7 @@ func transitionCause(file *rawFile, ct string, t Transition, mt *MessageType, tr
 // triggerReachable reports the trigger that posts message type msgType
 // into channel type ct, or "" when none does.
 func triggerReachable(file *rawFile, ct, msgType string) string {
-	for _, name := range sortedKeys(file.Triggers) {
+	for _, name := range slices.Sorted(maps.Keys(file.Triggers)) {
 		tr := file.Triggers[name]
 		if tr.Channel == ct && tr.Post.Type == msgType {
 			return name

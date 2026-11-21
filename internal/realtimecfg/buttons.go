@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -183,7 +184,7 @@ func (v buttonChecker) preset(key string, raw rawPreset, compose bool, sc button
 	mt := sc.mt
 	in := make(map[string]any, len(raw))
 	ok = true
-	for _, name := range sortedKeys(raw) {
+	for _, name := range slices.Sorted(maps.Keys(raw)) {
 		val := presetValue(mt.Properties[name], raw[name].node)
 		if p, declared := mt.Properties[name]; declared && val != nil &&
 			(p.Type == PropertyRef || p.Type == PropertyMarkdown) {
@@ -247,7 +248,7 @@ func (v buttonChecker) preset(key string, raw rawPreset, compose bool, sc button
 // list, because the composer has no field for a list.
 func (v buttonChecker) checkLeftOut(key string, mt *MessageType, props map[string]any, compose bool) ([]string, bool) {
 	var out []string
-	for _, name := range sortedKeys(mt.Properties) {
+	for _, name := range slices.Sorted(maps.Keys(mt.Properties)) {
 		if _, set := props[name]; set {
 			continue
 		}
@@ -309,7 +310,7 @@ const maxPresetInt = 1 << 53
 // guards would see a value the load never checked.
 func (v buttonChecker) exactInBrowser(key string, props map[string]any) bool {
 	ok := true
-	for _, name := range sortedKeys(props) {
+	for _, name := range slices.Sorted(maps.Keys(props)) {
 		if n, isInt := props[name].(int64); isInt && (n > maxPresetInt || n < -maxPresetInt) {
 			v.add(key+"."+name, fmt.Sprintf("must be between -%d and %d; a browser cannot carry a larger "+
 				"integer exactly, so a click would post another value", int64(maxPresetInt), int64(maxPresetInt)))
@@ -493,7 +494,7 @@ func loadGuardHolds(prog *predicate.Program, fields map[string]predicate.Value, 
 func (v buttonChecker) states(s *Session, ct *ChannelType, statesKey string) {
 	for _, st := range s.states {
 		var buttons []Transition
-		for _, mn := range sortedKeys(st.on) {
+		for _, mn := range slices.Sorted(maps.Keys(st.on)) {
 			for _, t := range st.on[mn] {
 				if t.button != nil {
 					buttons = append(buttons, t)
@@ -525,7 +526,7 @@ func (v buttonChecker) states(s *Session, ct *ChannelType, statesKey string) {
 // is label and that a person's post may move out of st, or "". A type only
 // a trigger moves has no button to show beside a preset button.
 func typeLabeled(st SessionState, ct *ChannelType, label string) string {
-	for _, mn := range sortedKeys(st.on) {
+	for _, mn := range slices.Sorted(maps.Keys(st.on)) {
 		if !slices.ContainsFunc(st.on[mn], func(e Transition) bool { return e.By != TransitionByTrigger }) {
 			continue
 		}

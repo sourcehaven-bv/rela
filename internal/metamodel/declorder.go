@@ -2,6 +2,7 @@ package metamodel
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -204,7 +205,7 @@ func recordFileFaceOrder(data []byte, entities map[string]EntityDef) error {
 // order means a loader path forgot to record it.
 func validateDeclOrder(m *Metamodel) []string {
 	var errs []string
-	for _, name := range sortedKeys(m.Entities) {
+	for _, name := range slices.Sorted(maps.Keys(m.Entities)) {
 		def := m.Entities[name]
 		if len(def.Faces) == 0 {
 			continue

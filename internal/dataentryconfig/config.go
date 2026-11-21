@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"slices"
 	"sort"
@@ -743,7 +744,7 @@ func validateCalendarColor(color, context string) []string {
 		return nil
 	}
 	return []string{fmt.Sprintf("%s: unknown color %q (valid: %s)",
-		context, color, strings.Join(sortedMapKeys(ValidCalendarColors), ", "))}
+		context, color, strings.Join(slices.Sorted(maps.Keys(ValidCalendarColors)), ", "))}
 }
 
 // NoIcon is the reserved name meaning "render no icon at all".
@@ -800,7 +801,7 @@ func suggestIcon(name string) string {
 	// cares about what is legal to WRITE, not what draws a glyph. Without it,
 	// `None` — a spelling authors reach for by reflex — scored closest to
 	// "done" and the message confidently recommended a green check mark.
-	candidates := append(sortedMapKeys(ValidIconNames), NoIcon)
+	candidates := append(slices.Sorted(maps.Keys(ValidIconNames)), NoIcon)
 	sort.Strings(candidates)
 
 	best, bestDist := "", maxDistance+1

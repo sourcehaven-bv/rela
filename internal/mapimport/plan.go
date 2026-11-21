@@ -193,7 +193,7 @@ func (st *mappingState) ident() []string {
 	if st.em.Key != "" {
 		out = append(out, st.em.Key)
 	}
-	return append(out, sortedKeys(st.em.Scope)...)
+	return append(out, slices.Sorted(maps.Keys(st.em.Scope))...)
 }
 
 type builder struct {
@@ -489,7 +489,7 @@ func hiddenTarget(st *mappingState, d *draft, g *entity.Entity) string {
 	if len(g.Redacted) == 0 {
 		return ""
 	}
-	names := sortedKeys(d.props)
+	names := slices.Sorted(maps.Keys(d.props))
 	for _, name := range d.absent {
 		if v := st.em.Properties[name]; v != nil && v.ClearMissing {
 			names = append(names, name)
@@ -587,7 +587,7 @@ func (b *builder) planCreate(st *mappingState, d *draft) *createOp {
 	change := EntityChange{
 		Mapping: st.em.name, Type: st.em.Type, Key: d.key, ID: d.id, ContentChanged: d.content != nil,
 	}
-	for _, name := range sortedKeys(props) {
+	for _, name := range slices.Sorted(maps.Keys(props)) {
 		change.Properties = append(change.Properties, PropertyChange{Name: name, New: props[name]})
 	}
 	b.plan.Creates = append(b.plan.Creates, change)
@@ -600,7 +600,7 @@ func (b *builder) planCreate(st *mappingState, d *draft) *createOp {
 func (b *builder) planUpdate(st *mappingState, d *draft, g *entity.Entity) {
 	change := EntityChange{Mapping: st.em.name, Type: st.em.Type, Key: d.key, ID: g.ID}
 	patch := entity.Patch{Properties: map[string]any{}}
-	for _, name := range sortedKeys(d.props) {
+	for _, name := range slices.Sorted(maps.Keys(d.props)) {
 		pd := st.def.Properties[name]
 		if sameValue(pd, g.Properties[name], d.props[name]) {
 			continue
@@ -910,7 +910,7 @@ func (b *builder) addRelations(adds []*relOp, have map[string]bool, out bool) {
 // missing reports stored rows in scope that the source no longer holds.
 func (b *builder) missing(ctx context.Context, st *mappingState) error {
 	ident := st.ident()
-	for _, key := range sortedKeys(st.inScope) {
+	for _, key := range slices.Sorted(maps.Keys(st.inScope)) {
 		if st.seen[key] {
 			continue
 		}

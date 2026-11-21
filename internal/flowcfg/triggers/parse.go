@@ -410,7 +410,7 @@ func placeholderErrors(where string, r Rule) []string {
 		}
 		if a.CreateEntity != nil {
 			check(at+" create.template", a.CreateEntity.Template)
-			for _, k := range sortedKeys(a.CreateEntity.Properties) {
+			for _, k := range slices.Sorted(maps.Keys(a.CreateEntity.Properties)) {
 				check(at+" create.properties."+k, a.CreateEntity.Properties[k])
 			}
 		}

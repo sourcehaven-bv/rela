@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"maps"
 	"slices"
 	"strings"
 
@@ -208,7 +209,7 @@ func describeChannelType(ct realtimecfg.ChannelType) ChannelTypeView {
 			v.Lifecycle = append(v.Lifecycle, LabeledName{Name: name, Label: op.Label})
 		}
 	}
-	for _, name := range sortedKeys(ct.MessageTypes) {
+	for _, name := range slices.Sorted(maps.Keys(ct.MessageTypes)) {
 		v.MessageTypes = append(v.MessageTypes, describeMessageType(ct.MessageTypes[name]))
 	}
 	v.Session = describeSession(ct.Session())
@@ -242,7 +243,7 @@ func describeMessageType(mt *realtimecfg.MessageType) MessageTypeDescription {
 		InDerived:      mt.InDerived(),
 	}
 	d.Properties = describeProperties(mt.Properties)
-	for _, name := range sortedKeys(mt.Actions) {
+	for _, name := range slices.Sorted(maps.Keys(mt.Actions)) {
 		a := mt.Actions[name]
 		ad := ActionDescription{Name: a.Name, Label: a.Label}
 		if a.PromoteTo != nil {

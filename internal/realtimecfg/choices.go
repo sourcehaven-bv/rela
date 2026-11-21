@@ -1,6 +1,10 @@
 package realtimecfg
 
-import "fmt"
+import (
+	"fmt"
+	"maps"
+	"slices"
+)
 
 // Button limits behind the load warning on `choices.from`. A list longer
 // than this, or with longer items, loads, but its buttons crowd the
@@ -18,7 +22,7 @@ type choiceChecker struct{ *validator }
 // the message types and the session are compiled, because it reads the
 // answer type and the session's transitions.
 func (v choiceChecker) choices(raw *rawChannelType, ct *ChannelType) {
-	for _, mn := range sortedKeys(raw.MessageTypes) {
+	for _, mn := range slices.Sorted(maps.Keys(raw.MessageTypes)) {
 		rc := raw.MessageTypes[mn].Choices
 		mt := ct.MessageTypes[mn]
 		if rc == nil || mt == nil {
@@ -133,7 +137,7 @@ func (v choiceChecker) choicesAnswer(key string, rc *rawChoices, question *Messa
 			"can reply", rc.Answer))
 		return nil
 	}
-	for _, pn := range sortedKeys(answer.Properties) {
+	for _, pn := range slices.Sorted(maps.Keys(answer.Properties)) {
 		if answer.Properties[pn].Required && pn != rc.Into {
 			v.add(key, fmt.Sprintf("message type %s requires property %q; a click fills only %q, so the "+
 				"answer type may require no other property", rc.Answer, pn, rc.Into))
