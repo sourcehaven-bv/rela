@@ -8408,6 +8408,9 @@ body:
           "label": {
             "type": "string"
           },
+          "label_plural": {
+            "type": "string"
+          },
           "plural": {
             "type": "string"
           },

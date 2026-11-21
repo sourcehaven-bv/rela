@@ -239,6 +239,7 @@ var editable = map[File][]string{
 		"lists.*.create_form",
 		"lists.*.description",
 		"lists.*.edit_form",
+		"lists.*.empty_message",
 		"lists.*.entity_type",
 		"lists.*.filter_controls.[].**",
 		"lists.*.filters.[].**",

@@ -30,6 +30,7 @@ body:
     },
     "policy": {
       "label": "Policy",
+      "label_plural": "Policies",
       "plural": "policies",
       "primary": "title",
       "id_type": "manual",

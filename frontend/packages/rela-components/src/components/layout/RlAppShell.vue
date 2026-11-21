@@ -329,11 +329,15 @@ onBeforeUnmount(() => {
     inset: 0 auto 0 0;
     z-index: var(--rl-z-shell-nav);
     transform: translateX(-100%);
-    transition: transform var(--rl-duration-slow) var(--rl-ease);
-    box-shadow: var(--rl-shadow-lg);
+    transition: transform var(--rl-duration-slow) var(--rl-ease), box-shadow var(--rl-duration-slow) var(--rl-ease);
   }
 
-  .rl-app-shell--panel-open .rl-app-shell__sidebar--open { transform: translateX(0); }
+  /* The shadow only on the open drawer: a closed one sits just off the left
+   * edge, and its shadow fell onto the content as a grey strip. */
+  .rl-app-shell--panel-open .rl-app-shell__sidebar--open {
+    transform: translateX(0);
+    box-shadow: var(--rl-shadow-lg);
+  }
 
   /* A drawer here too, so it carries the same insets. */
   .rl-app-shell--panel-open .rl-app-shell__sidebar {
@@ -364,11 +368,14 @@ onBeforeUnmount(() => {
     inset: 0 auto 0 0;
     z-index: var(--rl-z-shell-nav);
     transform: translateX(-100%);
-    transition: transform var(--rl-duration-slow) var(--rl-ease);
-    box-shadow: var(--rl-shadow-lg);
+    transition: transform var(--rl-duration-slow) var(--rl-ease), box-shadow var(--rl-duration-slow) var(--rl-ease);
   }
 
-  .rl-app-shell__sidebar--open { transform: translateX(0); }
+  /* Shadow on the open drawer only; see the medium breakpoint above. */
+  .rl-app-shell__sidebar--open {
+    transform: translateX(0);
+    box-shadow: var(--rl-shadow-lg);
+  }
 
   /*
    * As a drawer the sidebar stands against the screen edge itself, so the

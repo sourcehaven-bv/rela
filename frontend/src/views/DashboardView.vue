@@ -214,6 +214,8 @@ interface CardView {
   count: number
   breakdown: BreakdownItem[]
   rows: TableRow[]
+  /** A table card's column headers, one per column, resolved once. */
+  columnLabels: string[]
   /** Some rows hide the grouped value from this reader and are not counted. */
   partial: boolean
   /** The server-computed value of a list card; absent for a query card. */
@@ -291,51 +293,59 @@ function buildRows(card: DashboardCardEntry, entities: Entity[]): Entity[] {
  */
 const cardViews = computed<CardView[]>(() =>
   cards.value.map((card) => {
-    const key = cardKey(card)
-    const link = entityDashboard.value || card.records ? undefined : cardLink(card)
-    if (card.list) {
-      const value = cardValues.value.get(key)
-      return {
-        card,
-        key,
-        link,
-        value,
-        count: value?.total ?? 0,
-        partial: value?.partial ?? false,
-        breakdown:
-          value && card.display === 'breakdown'
-            ? listBreakdown(schemaStore, card, value, t('dashboard.unknown'))
-            : [],
-        rows:
-          value && card.display === 'table'
-            ? tableRows(schemaStore, card, valueRows(value), uiStore.effectiveTimezone)
-            : [],
-        summary: value
-          ? summaryText(schemaStore, card, value, uiStore.effectiveTimezone)
-          : undefined,
-        failed: cardErrors.value.has(key),
-      }
-    }
-    const entities = cardData.value.get(key)?.entities ?? []
-    const breakdown =
-      card.display === 'breakdown' && card.group_by
-        ? queryBreakdown(schemaStore, card.group_by, entities, t('dashboard.unknown'))
-        : { items: [], partial: false }
-    return {
-      link,
-      failed: false,
-      card,
-      key,
-      count: cardData.value.get(key)?.count || 0,
-      partial: breakdown.partial,
-      breakdown: breakdown.items,
-      rows:
-        card.display === 'table'
-          ? tableRows(schemaStore, card, buildRows(card, entities), uiStore.effectiveTimezone)
-          : [],
-    }
+    const view = buildCardView(card)
+    const columnLabels =
+      card.display === 'table'
+        ? (card.columns ?? []).map((col) => getColumnLabel(col, view.rows))
+        : []
+    return { ...view, columnLabels }
   })
 )
+
+/** One tile without its column labels, which need the rows first. */
+function buildCardView(card: DashboardCardEntry): Omit<CardView, 'columnLabels'> {
+  const key = cardKey(card)
+  const link = entityDashboard.value || card.records ? undefined : cardLink(card)
+  if (card.list) {
+    const value = cardValues.value.get(key)
+    return {
+      card,
+      key,
+      link,
+      value,
+      count: value?.total ?? 0,
+      partial: value?.partial ?? false,
+      breakdown:
+        value && card.display === 'breakdown'
+          ? listBreakdown(schemaStore, card, value, t('dashboard.unknown'))
+          : [],
+      rows:
+        value && card.display === 'table'
+          ? tableRows(schemaStore, card, valueRows(value), uiStore.effectiveTimezone)
+          : [],
+      summary: value ? summaryText(schemaStore, card, value, uiStore.effectiveTimezone) : undefined,
+      failed: cardErrors.value.has(key),
+    }
+  }
+  const entities = cardData.value.get(key)?.entities ?? []
+  const breakdown =
+    card.display === 'breakdown' && card.group_by
+      ? queryBreakdown(schemaStore, card.group_by, entities, t('dashboard.unknown'))
+      : { items: [], partial: false }
+  return {
+    link,
+    failed: false,
+    card,
+    key,
+    count: cardData.value.get(key)?.count || 0,
+    partial: breakdown.partial,
+    breakdown: breakdown.items,
+    rows:
+      card.display === 'table'
+        ? tableRows(schemaStore, card, buildRows(card, entities), uiStore.effectiveTimezone)
+        : [],
+  }
+}
 
 /**
  * Whether a `hide_empty:` card loaded and has no rows for this reader. A
@@ -507,40 +517,60 @@ watch([() => props.name, () => props.anchor, worldParam], () => void loadData())
           </div>
 
           <!-- Table display -->
+          <!--
+            The explicit roles keep the table a table for assistive technology
+            on a phone, where the CSS below stacks each row into a block and a
+            browser would otherwise drop the table semantics.
+          -->
           <div v-else-if="view.card.display === 'table'" class="card-table">
             <table
               v-if="view.rows.length > 0"
+              role="table"
               :aria-labelledby="`dashboard-card-${view.key}-title`"
             >
-              <thead>
-                <tr>
-                  <th v-for="col in view.card.columns" :key="col.property" scope="col">
-                    {{ getColumnLabel(col, view.rows) }}
+              <thead role="rowgroup">
+                <tr role="row">
+                  <th
+                    v-for="(label, i) in view.columnLabels"
+                    :key="view.card.columns?.[i]?.property ?? i"
+                    role="columnheader"
+                    scope="col"
+                  >
+                    {{ label }}
                   </th>
                 </tr>
               </thead>
-              <tbody>
-                <tr v-for="row in view.rows" :key="row.entity.id">
-                  <td v-for="cell in row.cells" :key="cell.key">
-                    <router-link v-if="cell.link" :to="cell.link" class="cell-link">
-                      {{ cell.text }}
-                    </router-link>
-                    <span
-                      v-else-if="cell.hidden"
-                      class="cell-hidden"
-                      :title="t('dashboard.hiddenTitle')"
-                      >{{ t('dashboard.hidden') }}</span
-                    >
-                    <component
-                      :is="cell.widget.component"
-                      v-else-if="cell.widget"
-                      :model-value="cell.widget.modelValue"
-                      mode="display"
-                      :property-name="cell.widget.propertyName"
-                      :entity-type="row.entity.type"
-                      :entity-id="row.entity.id"
-                    />
-                    <span v-else>{{ cell.text }}</span>
+              <tbody role="rowgroup">
+                <tr v-for="row in view.rows" :key="row.entity.id" role="row">
+                  <td
+                    v-for="(cell, i) in row.cells"
+                    :key="cell.key"
+                    role="cell"
+                    :class="{ 'cell--empty': !cell.hidden && !cell.widget && !cell.text }"
+                  >
+                    <!-- The column name beside the value, shown only on a phone. -->
+                    <span class="cell-label" aria-hidden="true">{{ view.columnLabels[i] }}</span>
+                    <span class="cell-value" :class="{ 'cell-value--nowrap': cell.nowrap }">
+                      <router-link v-if="cell.link" :to="cell.link" class="cell-link">
+                        {{ cell.text }}
+                      </router-link>
+                      <span
+                        v-else-if="cell.hidden"
+                        class="cell-hidden"
+                        :title="t('dashboard.hiddenTitle')"
+                        >{{ t('dashboard.hidden') }}</span
+                      >
+                      <component
+                        :is="cell.widget.component"
+                        v-else-if="cell.widget"
+                        :model-value="cell.widget.modelValue"
+                        mode="display"
+                        :property-name="cell.widget.propertyName"
+                        :entity-type="row.entity.type"
+                        :entity-id="row.entity.id"
+                      />
+                      <span v-else>{{ cell.text }}</span>
+                    </span>
                   </td>
                 </tr>
               </tbody>
@@ -795,6 +825,15 @@ watch([() => props.name, () => props.anchor, worldParam], () => void loadData())
   color: var(--rl-color-text);
 }
 
+/* The column name beside each value; only the stacked phone layout shows it. */
+.cell-label {
+  display: none;
+}
+
+.cell-value--nowrap {
+  white-space: nowrap;
+}
+
 .cell-link {
   color: var(--rl-color-accent);
   text-decoration: none;
@@ -912,6 +951,71 @@ watch([() => props.name, () => props.anchor, worldParam], () => void loadData())
        the track shrink below item min-content — with plain 1fr a table card
        blows the track past the viewport. */
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* A table card stacks each row into a block on a phone: the first column
+     as the row's heading, each other column as a "name  value" line. A
+     table that scrolled sideways cut its columns off at the card's edge,
+     and a reader could not tell more columns were there. */
+  .card-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .card-table table,
+  .card-table tbody,
+  .card-table tr,
+  .card-table td {
+    display: block;
+  }
+
+  .card-table tr {
+    position: relative;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--rl-color-border);
+  }
+
+  .card-table tr:last-child {
+    border-bottom: none;
+  }
+
+  /* The value column is at least as wide as an unbreakable short value, so
+     an id never overflows the card; the label column gives way. */
+  .card-table td {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(min-content, 3fr);
+    align-items: center;
+    gap: var(--space-sm);
+    padding: 2px 0;
+    border-bottom: none;
+  }
+
+  .card-table td:first-child {
+    grid-template-columns: minmax(0, 1fr);
+    font-weight: 600;
+  }
+
+  .card-table td:not(:first-child) .cell-label {
+    display: block;
+    color: var(--rl-color-text-muted);
+    overflow-wrap: anywhere;
+  }
+
+  /* A value with nothing in it would leave a label with no answer. The cell
+     is hidden from sight only: a screen reader still counts it, so the cells
+     after it keep their column headers. */
+  .card-table td.cell--empty:not(:first-child) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 }
 </style>

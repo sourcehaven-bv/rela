@@ -2059,6 +2059,7 @@ lists:
 | `header`          | string | Markdown rendered above the list (info/help; see below)     |
 | `footer`          | string | Markdown rendered below the list                            |
 | `description`     | string | Fallback for `header`; used only when `header` is unset      |
+| `empty_message`   | string | Text an empty list shows instead of "No People found." (the type's `label_plural`) |
 | `columns`         | list   | Column definitions                                          |
 | `sort`            | object | Default sort order                                          |
 | `filters`         | list   | Static filters (always applied)                             |
@@ -2543,7 +2544,8 @@ taking the first, since the request asked two different things.
 
 Interactive filters, opened from a **Filters** drop-down in the page header. The
 button shows how many filters are active. Lists and boards also have a search
-box and a **Sort** menu (a property and a direction) beside it. A control
+box and a **Sort** menu (a property and a direction) beside it. On a phone the
+search box, **Sort** and **Filters** share a row below the page title. A control
 filters on either a **property** or a **relation** (set exactly one):
 
 ```yaml
@@ -4252,7 +4254,11 @@ column count (`width: 2`), fails config load.
 
 The number of columns follows the width of the screen, so `width` names a size
 rather than a column count. On a phone (a screen 480 pixels wide or less),
-every card takes the whole row, whatever its `width`. Cards have no height
+every card takes the whole row, whatever its `width`, and a table card shows
+each row as a stack of column names and values, so it never scrolls sideways.
+At every width, a short value of one word, such as an invoice number, stays on
+one line instead of breaking at a hyphen.
+Cards have no height
 setting: a card grows to fit its content, and the cards in one row share the
 height of the tallest.
 
