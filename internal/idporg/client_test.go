@@ -163,8 +163,9 @@ func TestOrgStatus_BadAnswers(t *testing.T) {
 	}
 }
 
+// TestOrgStatus_Unreachable is not parallel: between closing the listener and
+// dialing, a parallel test's httptest server can bind the same port and answer.
 func TestOrgStatus_Unreachable(t *testing.T) {
-	t.Parallel()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
