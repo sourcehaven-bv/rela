@@ -678,7 +678,7 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, created.ID))
 
 	// SSE broadcast is driven by the store-event bridge (see
-	// App.startStoreEventBridge), not inline here — so a create by ANY process
+	// sseHandler.startStoreEventBridge), not inline here — so a create by ANY process
 	// reaches all connected browsers and a local create isn't double-broadcast.
 
 	writeV1JSON(w, http.StatusCreated, result)
@@ -1424,7 +1424,7 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 	}
 
 	// SSE broadcast is driven by the store-event bridge (see
-	// App.startStoreEventBridge); a delete by any process reaches all browsers,
+	// sseHandler.startStoreEventBridge); a delete by any process reaches all browsers,
 	// and a local delete isn't double-broadcast.
 
 	w.WriteHeader(http.StatusNoContent)

@@ -83,7 +83,7 @@ func runSSEConn(ctx context.Context, t *testing.T, app *App) (send chan<- testEv
 	conn := &sseConn{w: sink, flusher: sink, timing: defaultSSETimings}
 	done := make(chan struct{})
 	go func() {
-		app.runSSELoop(conn, req, broker, sub, sub.Start(), nil)
+		app.sse.runSSELoop(conn, req, broker, sub, sub.Start(), nil)
 		close(done)
 	}()
 	go func() {
@@ -411,7 +411,7 @@ func TestSSEACL_MembershipChangeReGates(t *testing.T) {
 // errReadGate returns an error-free ReadQuery but flips DenyAll/Query so
 // we can also exercise the deny path; for the error path we use a gate
 // whose ReadQuery returns a zero verdict (neither AllowAll nor Query),
-// which entityTypeVisible treats as fail-closed.
+// which sseStream.typeVisible treats as fail-closed.
 type zeroVerdictGate struct{ readGate }
 
 func (zeroVerdictGate) ReadQuery(context.Context, string) acl.ReadQueryResult {

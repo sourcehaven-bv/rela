@@ -232,7 +232,12 @@ type appEntityWriter interface {
 // into one wiring setter, [App.SetNextActions] (23 -> 22 exported; the
 // exported pin had lagged at 24).
 //
-//plimsoll:max-methods=80
+// The SSE cluster (handleSSE, runSSELoop, freshReadGate, the store-event
+// bridge and the sseTiming field) moved to sseHandler, with the per-type
+// verdict cache on sseStream; the git status and sync handlers moved to
+// gitHandler, and StartGitFetch now delegates to it (80 -> 72).
+//
+//plimsoll:max-methods=72
 //plimsoll:max-exported-methods=22
 type App struct {
 	// Primitives — immutable after NewApp.
@@ -506,8 +511,12 @@ type App struct {
 	// StopWatching closes it.
 	feed *changefeed.Bus
 
-	// sseTiming holds the SSE flush and ping intervals.
-	sseTiming sseTimings
+	// sse owns the live-reload event stream and the store-event bridge.
+	// Always non-nil after NewApp.
+	sse *sseHandler
+	// gitAPI owns the git status and sync routes and the background fetch.
+	// Always non-nil after NewApp.
+	gitAPI *gitHandler
 	// live holds the live-view subscriptions and their replay worker
 	// (TKT-HJ5Z9Y). Built in NewApp; the worker runs between StartWatching
 	// and StopWatching.
@@ -1325,7 +1334,6 @@ func NewApp(
 		acl:             aclImpl,
 		broker:          newEventBroker(),
 		feed:            feed,
-		sseTiming:       defaultSSETimings,
 		scriptEngine:    scriptEngine,
 		fieldResolver:   fieldResolver,
 		auditSink:       auditSink,
@@ -1336,6 +1344,10 @@ func NewApp(
 	}
 	families.app = app
 	app.live = newLiveHub(func() *metamodel.Metamodel { return app.State().Meta })
+	// sseHandler and gitHandler own the event stream and the git routes,
+	// extracted on the same terms as nextActionHandler below.
+	app.sse = newSSEHandler(app)
+	app.gitAPI = newGitHandler(app)
 	app.faceEdges = faceEdgesOf(app)
 	// documentService needs scriptEngine (for Lua renders) and a closure
 	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).

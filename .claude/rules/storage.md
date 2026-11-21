@@ -114,7 +114,7 @@ Rules when touching storage backends:
   them onto a shared connection. If the listener can't connect, the store
   degrades with a warning (local events still work). Exact ordering (xid8 +
   `pg_snapshot_xmin`) is the documented upgrade, not built. The data-entry SSE
-  feed consumes this via `App.startStoreEventBridge` (entity events only).
+  feed consumes this via `sseHandler.startStoreEventBridge` (entity events only).
   fsstore/memstore stay in-process single-writer by nature.
 
 - DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no

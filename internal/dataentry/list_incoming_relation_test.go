@@ -98,6 +98,8 @@ func newIncomingRelApp(t *testing.T, entities []*entity.Entity, relations []*ent
 
 	app := &App{fieldResolver: NopFieldVerdictResolver{}}
 	app.live = testLiveHub(app)
+	app.sse = newSSEHandler(app)
+	app.gitAPI = newGitHandler(app)
 	rebindApp(app, fs, ctx, svc)
 	app.schema.Publish(&Schema{
 		Cfg:        cfg,

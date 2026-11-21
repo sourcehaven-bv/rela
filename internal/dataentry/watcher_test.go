@@ -622,7 +622,7 @@ func TestHandleSSEHeaders(t *testing.T) {
 	// Run handler in goroutine since it blocks until context is cancelled
 	done := make(chan struct{})
 	go func() {
-		app.handleSSE(w, r)
+		app.sse.handleSSE(w, r)
 		close(done)
 	}()
 
@@ -661,7 +661,7 @@ func TestHandleSSEReceivesEvent(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		app.handleSSE(w, r)
+		app.sse.handleSSE(w, r)
 		close(done)
 	}()
 
@@ -695,7 +695,7 @@ func TestHandleSSENoFlusher(t *testing.T) {
 	// Use a custom writer that does NOT implement Flusher.
 	w := &nonFlusherWriter{header: make(http.Header)}
 
-	app.handleSSE(w, r)
+	app.sse.handleSSE(w, r)
 
 	if w.code != http.StatusInternalServerError {
 		t.Errorf("expected 500 for non-flusher writer, got %d", w.code)
