@@ -79,7 +79,7 @@ func baseURLFor(sender MailSender) string {
 // A FREE function returning a closure, rather than a method on Runtime like
 // mail.send. Two reasons, and the first is the load-bearing one:
 //
-//   - Runtime sits at its plimsoll load line (//plimsoll:max-methods=46), and
+//   - Runtime sits at its plimsoll load line (//plimsoll:max-methods), and
 //     the sanctioned fix for a full type is to take methods off it (TKT-N0IKN9),
 //     not to raise the cap. A binding that needs one field is not a reason to
 //     widen the type's surface.

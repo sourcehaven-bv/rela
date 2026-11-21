@@ -1218,7 +1218,7 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 
 		// List-render bindings. Kept as closures over the provider rather
 		// than *Runtime methods on purpose: Runtime is pinned at the
-		// plimsoll load line (max-methods=120), and these would push it
+		// plimsoll load line (max-methods), and these would push it
 		// over. They are also genuinely per-render state, not runtime
 		// behavior.
 		if r.listRender.Rows != nil {
@@ -1234,8 +1234,7 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 //
 // A plain function rather than a *Runtime method because it needs nothing
 // from the Runtime — the LState and the render context are the whole input.
-// (It also keeps Runtime off its plimsoll load line, which sits at exactly
-// max-methods=120. That is a consequence, not the reason: the fix for a full
+// (It also keeps Runtime off its plimsoll load line. That is a consequence, not the reason: the fix for a full
 // Runtime is to take fields OFF it — see TKT-N0IKN9 — not to route new
 // methods around the counter.)
 //
