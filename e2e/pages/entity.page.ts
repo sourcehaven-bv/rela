@@ -6,7 +6,6 @@ export class EntityPage extends BasePage {
   readonly heading: Locator;
   readonly editButton: Locator;
   readonly deleteButton: Locator;
-  readonly typeBadge: Locator;
   /** Rendered document body inside the documents panel (if any). */
   readonly documentBody: Locator;
   /** Document panel tab selector (only rendered when >1 doc applies). */
@@ -18,7 +17,6 @@ export class EntityPage extends BasePage {
     this.heading = page.locator('main h1').first();
     this.editButton = page.locator('a:has-text("Edit"), button:has-text("Edit")').first();
     this.deleteButton = page.locator('button:has-text("Delete")').first();
-    this.typeBadge = page.locator('.entity-type-badge');
     this.documentBody = page.locator('.document-body').first();
     this.documentSelector = page.locator('.documents-panel .doc-select');
   }
@@ -406,11 +404,6 @@ export class EntityPage extends BasePage {
     await expect(item).toBeVisible();
     const trigger = item.locator('.card-header, .list-link').first();
     await trigger.click();
-  }
-
-  async expectTypeBadge(type: string | RegExp) {
-    const matcher = type instanceof RegExp ? type : new RegExp(type, 'i');
-    await expect(this.typeBadge.filter({ hasText: matcher }).first()).toBeVisible();
   }
 
   async hasEditButton(): Promise<boolean> {
