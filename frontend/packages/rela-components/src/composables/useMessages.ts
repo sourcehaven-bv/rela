@@ -528,6 +528,16 @@ export interface Messages {
   /** The bulk action bar's tally: `3 tasks selected`. */
   selectedCount: (args: CountArgs) => string
 
+  /** The rendered diff's change tally: `3 changes`. */
+  diffChangeCount: (args: { count: number }) => string
+  /** The rendered diff's position while stepping: `2 of 3`. */
+  diffPosition: (args: { current: number; total: number }) => string
+  /** The rendered diff's step buttons, and its fold and empty state. */
+  diffPrevious: string
+  diffNext: string
+  diffUnchangedBlocks: (args: { count: number }) => string
+  diffNoChanges: string
+
   /** A search or filter's result tally: `4 of 120`. */
   resultCount: (args: { shown: number; total: number }) => string
 
@@ -870,6 +880,13 @@ export const DEFAULT_MESSAGES: Messages = {
     `${count} ${count === 1 ? noun : (pluralNoun ?? `${noun}s`)} selected`,
 
   resultCount: ({ shown, total }) => `${shown} of ${total}`,
+
+  diffChangeCount: ({ count }) => `${count} ${count === 1 ? 'change' : 'changes'}`,
+  diffPosition: ({ current, total }) => `${current} of ${total}`,
+  diffPrevious: 'Previous change',
+  diffNext: 'Next change',
+  diffUnchangedBlocks: ({ count }) => `${count} unchanged blocks`,
+  diffNoChanges: 'No changes',
 
   cardGrabbed: ({ title }) =>
     `${title}, picked up. Use the arrow keys to choose a column, Enter to drop, Escape to cancel.`,
