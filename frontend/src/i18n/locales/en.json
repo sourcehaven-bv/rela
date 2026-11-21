@@ -1159,6 +1159,8 @@
     "confirmMessage": "This runs immediately and cannot be undone.",
     "done": "{label}: done",
     "notNow": "Not now",
+    "hide": "Hide",
+    "hideForNow": "Hide for now",
     "remindIn": "Remind me in {duration}",
     "notThisOne": "Not this one",
     "stop": "Stop suggesting this"

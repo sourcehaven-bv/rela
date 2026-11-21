@@ -1159,6 +1159,8 @@
     "confirmMessage": "Dit wordt direct uitgevoerd. Je kunt het niet ongedaan maken.",
     "done": "{label}: klaar",
     "notNow": "Niet nu",
+    "hide": "Verbergen",
+    "hideForNow": "Voorlopig verbergen",
     "remindIn": "Herinner me over {duration}",
     "notThisOne": "Deze niet",
     "stop": "Dit niet meer voorstellen"

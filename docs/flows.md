@@ -620,8 +620,10 @@ Someone who does not manage the flow, such as a customer who only fills
 in a step, sees the state, its status, and the step form when the step
 waits for them. Otherwise they see one line: the step waits for someone
 else, waits, is being processed, or failed and needs someone who manages
-the flow. This is presentation, not access control: every reader of the
-subject may still read the whole run over the API.
+the flow. The run's name links to the run page only for someone who
+manages the flow; anyone else sees it as plain text. This is presentation,
+not access control: every reader of the subject may still read the whole
+run over the API.
 
 The step form edits only the properties in the state's `writes:`, and
 sends only the ones you changed. When you complete the step, rela writes

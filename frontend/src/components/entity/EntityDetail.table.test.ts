@@ -27,7 +27,12 @@ vi.mock('vue-router', async (orig) => ({
     path: '/entity/project/P-1',
     fullPath: '/entity/project/P-1',
   }),
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+    back: vi.fn(),
+    resolve: (to: string) => ({ href: to }),
+  }),
 }))
 
 const taak = {

@@ -4912,6 +4912,10 @@ dismissed every time is a source to delete.
 "stop suggesting this" on every suggestion, per source and per user, and it is
 reversible.
 
+A suggestion with no button to act on, no snooze and no dismiss only informs.
+Its menu reads "Hide" instead of "Not now". It offers "Hide for now", which
+sends `seen`, and "stop suggesting this".
+
 ### The endpoint
 
 The SPA reads the suggestion from `GET /api/v1/_next_action` and answers it
@@ -6607,6 +6611,11 @@ is no setting for this.
 the permission. It works like `permission:` on a navigation entry. It is a
 convenience, not a security control: the lists and entities of a hidden space
 stay reachable by URL, under the normal ACL.
+
+**Links stay in the space.** Inside a space every link the app renders carries
+`/s/<space>/`: links in lists, tables, relation cards, markdown entity
+references and suggestions. A link opened in a new tab or copied opens the same
+page in the same space.
 
 **The app root** (`/`) opens the home of the current space: the space the user
 is in, else the space this browser was last in, else the first space the user
