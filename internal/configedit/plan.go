@@ -38,7 +38,8 @@ type Counter interface {
 // A Problem is something the draft must resolve before it can be saved.
 type Problem struct {
 	// Code is stable for the browser: value_in_use, type_change,
-	// unsupported_change, rename, acl_reference, invalid, locked.
+	// unsupported_change, rename, acl_reference, invalid, locked,
+	// captured_card.
 	Code       string `json:"code"`
 	Message    string `json:"message"`
 	File       File   `json:"file,omitempty"`

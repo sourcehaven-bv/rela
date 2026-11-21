@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
@@ -39,6 +40,10 @@ func (c *SchedulerCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider, 
 		// the broken file behind the tasks that did start.
 		return err
 	}
+	err = refuseCaptureTasks(cfg)
+	if err != nil {
+		return err
+	}
 	if len(cfg.Tasks) == 0 {
 		return fmt.Errorf("no tasks: none of %s, subscriptions.yaml or remotes.yaml declares one", scheduler.ConfigFile)
 	}
@@ -54,4 +59,15 @@ func (c *SchedulerCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider, 
 	s.WatchConfig()
 	return s.Run(ctx)
 	// coverage-ignore-end
+}
+
+// refuseCaptureTasks fails when cfg has a capture task. A capture computes a
+// data-entry dashboard card, which only rela-server and rela-desktop can do;
+// the command refuses rather than starting with tasks it would never run.
+func refuseCaptureTasks(cfg *scheduler.Config) error {
+	if names := cfg.CaptureTasks(); len(names) > 0 {
+		return fmt.Errorf("capture tasks %s compute dashboard cards, which rela scheduler cannot do; "+
+			"run them in rela-server or rela-desktop", strings.Join(names, ", "))
+	}
+	return nil
 }

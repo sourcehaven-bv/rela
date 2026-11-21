@@ -70,6 +70,12 @@ type TaskConfig struct {
 	// principal, so ForEach and RunAs are mutually exclusive.
 	ForEach *ForEachConfig `yaml:"for_each,omitempty"`
 
+	// Capture stores one dashboard card's figure as a record row instead of
+	// running a script (TKT-6OYQO79). See [CaptureConfig].
+	//
+	// Nil: accepted, and the task runs its script or template.
+	Capture *CaptureConfig `yaml:"capture,omitempty"`
+
 	// Subscription marks a task that polls a feed from subscriptions.yaml
 	// instead of running a script. Never read from schedules.yaml: only
 	// [AddSubscriptions] sets it.
@@ -327,8 +333,8 @@ func validateTask(i int, t TaskConfig, seen map[string]struct{}) error {
 	}
 	seen[t.Name] = struct{}{}
 
-	if (t.Script == "") == (t.Template == "") {
-		return fmt.Errorf("task %q: exactly one of script or template is required", t.Name)
+	if kinds := countSet(t.Script != "", t.Template != "", t.Capture != nil); kinds != 1 {
+		return fmt.Errorf("task %q: exactly one of script, template or capture is required", t.Name)
 	}
 	if !t.Every.set {
 		return fmt.Errorf("task %q: every is required", t.Name)
@@ -358,7 +364,21 @@ func validateTask(i int, t TaskConfig, seen map[string]struct{}) error {
 	if t.Template != "" && t.ForEach == nil {
 		return fmt.Errorf("task %q: template requires for_each", t.Name)
 	}
+	if t.Capture != nil {
+		return validateCaptureTask(t)
+	}
 	return nil
+}
+
+// countSet returns how many of flags are true.
+func countSet(flags ...bool) int {
+	n := 0
+	for _, f := range flags {
+		if f {
+			n++
+		}
+	}
+	return n
 }
 
 // anySystemIdentity lets a scheduled task run as any `system:` name. A task's
@@ -380,5 +400,5 @@ func (c *Config) ValidateMetamodel(meta *metamodel.Metamodel) error {
 			return fmt.Errorf("task %q: for_each.entity_type %q is unknown", task.Name, task.ForEach.EntityType)
 		}
 	}
-	return nil
+	return c.validateCaptures(meta)
 }

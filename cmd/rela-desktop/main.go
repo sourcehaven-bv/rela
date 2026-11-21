@@ -456,6 +456,10 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 	if err != nil {
 		return d.failLoad(err)
 	}
+	cards, err := dataentry.CardFigures(app)
+	if err != nil {
+		return d.failLoad(err)
+	}
 
 	// Start background scheduler for the new project.
 	schedCtx, schedCancel := context.WithCancel(context.Background())
@@ -471,7 +475,7 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 	d.pendingSetupDir = ""
 	d.pendingSetupMeta = nil
 	d.stopScheduler = schedCancel
-	d.leasesDone = startBackground(schedCtx, svc, bind)
+	d.leasesDone = startBackground(schedCtx, svc, bind, cards)
 	d.mu.Unlock()
 	handedOff = true
 
@@ -1416,10 +1420,14 @@ func newDesktopApp(fsys storage.FS, projCtx *project.Context, svc *appbuild.Serv
 // flow worker and channel hint follower.
 // All stop with ctx; the returned channel closes once all have, and is
 // awaited before svc closes.
+//
+// cards computes the dashboard card figures of capture tasks, from the app
+// built over the same svc.
 func startBackground(
 	ctx context.Context, svc *appbuild.Services, bind func(context.Context) (context.Context, error),
+	cards scheduler.CardEvaluator,
 ) <-chan struct{} {
-	sched := scheduler.StartBackground(ctx, svc, bind, slog.Default())
+	sched := scheduler.StartBackground(ctx, svc, bind, slog.Default(), scheduler.WithCards(cards))
 	leases := appbuild.WatchLeases(ctx, svc)
 	worker := appbuild.RunRealtimeWorker(ctx, svc)
 	flows := appbuild.RunFlowWorker(ctx, svc)

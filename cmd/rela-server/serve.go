@@ -344,10 +344,17 @@ func (s *server) startScheduler(g *generation) {
 		slog.Error("scheduler not started", "err", err)
 		return
 	}
+	// The generation's own app: its ACL policy is the binder's, and it stops
+	// with this scheduler (never the current generation's app).
+	cards, err := dataentry.CardFigures(g.app)
+	if err != nil {
+		slog.Error("scheduler not started", "err", err)
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	g.schedStop = cancel
 	// *appbuild.Services satisfies scheduler.WorkspaceProvider structurally.
-	sched := scheduler.StartBackground(ctx, g.svc, bind, slog.Default())
+	sched := scheduler.StartBackground(ctx, g.svc, bind, slog.Default(), scheduler.WithCards(cards))
 	leases := appbuild.WatchLeases(ctx, g.svc)
 	worker := appbuild.RunRealtimeWorker(ctx, g.svc)
 	flows := appbuild.RunFlowWorker(ctx, g.svc)

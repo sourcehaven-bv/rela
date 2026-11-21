@@ -50,9 +50,11 @@ func (s *Scheduler) reloadConfig(ctx context.Context) {
 		s.reloadErr = ""
 		s.logger.Info("scheduler config loads again")
 	}
+	cfg, skipped := s.supportedTasks(cfg)
 	if reflect.DeepEqual(old.Tasks, cfg.Tasks) {
 		return
 	}
+	s.noteSkippedCaptures(skipped)
 	s.config.Store(cfg)
 	added, removed, changed := taskDiff(old.Tasks, cfg.Tasks)
 	s.logger.Info("scheduler config reloaded",

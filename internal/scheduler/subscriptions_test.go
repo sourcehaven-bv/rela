@@ -75,7 +75,7 @@ func TestLoadConfig(t *testing.T) {
 			name: "no metamodel", subscriptions: subscriptionsYAML("1h"), noMeta: true,
 			wantTasks: []string{}, wantErr: "no metamodel", subsErr: true,
 		},
-		{name: "invalid schedules", schedules: "tasks: [{name: x}]", wantErr: "script or template"},
+		{name: "invalid schedules", schedules: "tasks: [{name: x}]", wantErr: "script, template or capture"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
