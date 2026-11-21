@@ -1002,7 +1002,11 @@ changes; an absent field stays as it is:
 - `state` is `active`, `read_only` or `suspended`. The tenant API resumes
   only a tenant it suspended itself. A tenant an operator or the IdP
   suspended answers 409 `tenant_held`; only they resume it. Suspending a
-  suspended tenant changes nothing and keeps its cause.
+  suspended tenant keeps its cause, but the tenant API also places its own
+  hold. If the IdP suspends a tenant the API suspended, the cause becomes
+  `idp`, and the API cannot resume it until the IdP has. A resume by the
+  IdP then leaves the tenant suspended by `api`. `tenant resume` clears
+  both.
 - `plan` is a name of at most 128 bytes. `""` clears it.
 - `entitlements` replaces the stored object as a whole; `{}` clears it.
   Names match `^[a-z][a-z0-9_]{0,63}$`, values are numbers of at most 32
@@ -1151,8 +1155,11 @@ suspended tenant too; other events for a suspended tenant still get 503.
 The event is not passed on to the tenant.
 
 The control table records who suspended a tenant, in the column
-`suspended_by` (`operator` or `idp`). `tenant suspend` sets `operator`,
-also on a tenant the IdP suspended, so the IdP can no longer resume it.
+`suspended_by` (`operator`, `idp` or `api`). `tenant suspend` sets
+`operator`, also on a tenant the IdP suspended, so the IdP can no longer
+resume it. The IdP takes over a suspension by `api` the same way; the
+column `api_hold` keeps the tenant API's hold, so the IdP's resume does
+not lift it.
 `tenant resume` resumes either kind and clears the column. `tenant show`
 prints who suspended a tenant. The first lifecycle command of this release
 adds the column to an existing control table. A tenant suspended before

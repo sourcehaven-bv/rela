@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS ` + controlTable + ` (
 	plan         text,
 	entitlements jsonb,
 	archived_at  timestamptz,
+	api_hold     boolean NOT NULL DEFAULT false,
 	created_at   timestamptz NOT NULL DEFAULT now(),
 	updated_at   timestamptz NOT NULL DEFAULT now()
 )`
@@ -68,7 +69,8 @@ const controlUpgradeDDL = `ALTER TABLE ` + controlTable + `
 	ADD COLUMN IF NOT EXISTS read_only boolean NOT NULL DEFAULT false,
 	ADD COLUMN IF NOT EXISTS plan text,
 	ADD COLUMN IF NOT EXISTS entitlements jsonb,
-	ADD COLUMN IF NOT EXISTS archived_at timestamptz;
+	ADD COLUMN IF NOT EXISTS archived_at timestamptz,
+	ADD COLUMN IF NOT EXISTS api_hold boolean NOT NULL DEFAULT false;
 DO $$
 DECLARE c name;
 BEGIN
@@ -87,9 +89,9 @@ ALTER TABLE ` + controlTable + ` ADD CONSTRAINT ` + suspendedByCheck + `
 // controlCurrentQuery reports whether the control table has every column
 // this release writes. [controlUpgradeDDL] adds them in one transaction
 // with the checks.
-const controlCurrentQuery = `SELECT count(*) = 6 FROM pg_attribute
+const controlCurrentQuery = `SELECT count(*) = 7 FROM pg_attribute
 	WHERE attrelid = to_regclass($1) AND NOT attisdropped
-	AND attname IN ('suspended_by', 'erased_at', 'read_only', 'plan', 'entitlements', 'archived_at')`
+	AND attname IN ('suspended_by', 'erased_at', 'read_only', 'plan', 'entitlements', 'archived_at', 'api_hold')`
 
 // recordQuery reads one control row and whether its schema exists. It reads
 // every column added after the first release through to_jsonb, which yields
@@ -101,6 +103,7 @@ const recordQuery = `SELECT t.org_id, t.status, coalesce(to_jsonb(t)->>'suspende
 	coalesce(to_jsonb(t)->>'plan', ''),
 	to_jsonb(t)->'entitlements',
 	(to_jsonb(t)->>'archived_at')::timestamptz,
+	coalesce((to_jsonb(t)->>'api_hold')::boolean, false),
 	EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname = t.schema_name)
 	FROM ` + controlTable + ` t WHERE t.schema_name = $1`
 
@@ -117,7 +120,7 @@ func queryRecord(ctx context.Context, q rowQuerier, schema string) (Record, bool
 	var erasedAt, archivedAt *time.Time
 	var entitlements []byte
 	err := q.QueryRow(ctx, recordQuery, schema).Scan(&rec.OrgID, &status, &suspendedBy, &erasedAt,
-		&rec.ReadOnly, &rec.Plan, &entitlements, &archivedAt, &rec.SchemaExists)
+		&rec.ReadOnly, &rec.Plan, &entitlements, &archivedAt, &rec.APIHold, &rec.SchemaExists)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Record{}, false, nil
 	}

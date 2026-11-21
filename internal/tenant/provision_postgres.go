@@ -4,6 +4,7 @@ package tenant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -239,7 +240,8 @@ func (p *Provisioner) reserve(ctx context.Context, conn *pgx.Conn, t Tenant, opt
 		// The erased row, recreated: a compare-and-set, so a concurrent
 		// recreate makes this one fail rather than both proceed.
 		tag, err := conn.Exec(ctx, "UPDATE "+controlTable+" SET status = $1, suspended_by = NULL, erased_at = NULL, "+
-			"read_only = false, plan = NULL, entitlements = NULL, archived_at = NULL, created_at = now(), updated_at = now() WHERE schema_name = $2 AND org_id = $3 AND status = $4",
+			"read_only = false, plan = NULL, entitlements = NULL, archived_at = NULL, api_hold = false, "+
+			"created_at = now(), updated_at = now() WHERE schema_name = $2 AND org_id = $3 AND status = $4",
 			string(StatusProvisioning), t.Schema, t.OrgID, string(StatusErased))
 		if err != nil {
 			return fmt.Errorf("tenant: create org_id %q: recreate: %w", t.OrgID, err)
@@ -284,11 +286,11 @@ func (p *Provisioner) Suspend(ctx context.Context, orgID string) error {
 // Resume serves a suspended orgID again, whoever suspended it. Only a
 // suspended tenant can be resumed: an erasing one is on its way out, and a
 // provisioning one is finished by running Create again. Resuming an
-// archived tenant unarchives it.
+// archived tenant unarchives it, and it also lifts a tenant API hold.
 func (p *Provisioner) Resume(ctx context.Context, orgID string) error {
 	return p.withRecord(ctx, orgID, func(ctx context.Context, conn *pgx.Conn, rec Record) error {
 		tag, err := conn.Exec(ctx, "UPDATE "+controlTable+" SET status = $1, suspended_by = NULL, archived_at = NULL, "+
-			"updated_at = now() WHERE schema_name = $2 AND org_id = $3 AND status = $4",
+			"api_hold = false, updated_at = now() WHERE schema_name = $2 AND org_id = $3 AND status = $4",
 			string(StatusActive), rec.Schema, orgID, string(StatusSuspended))
 		if err != nil {
 			return fmt.Errorf("set status %s: %w", StatusActive, err)
@@ -301,8 +303,10 @@ func (p *Provisioner) Resume(ctx context.Context, orgID string) error {
 }
 
 // SuspendForIDP suspends orgID because the IdP suspended its org. It reports
-// whether the status changed. A tenant that is already suspended stays so
-// and keeps its recorded cause, so an operator suspension stays one. An
+// whether the row changed. A tenant the tenant API suspended gets the IdP
+// as its cause, so the tenant API cannot resume it while the IdP holds it;
+// its API hold stays (see [Record.APIHold]). Any other suspended tenant
+// stays so and keeps its cause, so an operator suspension stays one. An
 // erasing or erased tenant is left alone. A provisioning tenant is refused with an
 // error that wraps [ErrTenantProvisioning]: its create would make it
 // active, so the caller retries once the create is done.
@@ -310,8 +314,9 @@ func (p *Provisioner) SuspendForIDP(ctx context.Context, orgID string) (bool, er
 	var changed bool
 	err := p.withRecord(ctx, orgID, func(ctx context.Context, conn *pgx.Conn, rec Record) error {
 		tag, err := conn.Exec(ctx, "UPDATE "+controlTable+" SET status = $1, suspended_by = $2, updated_at = now() "+
-			"WHERE schema_name = $3 AND org_id = $4 AND status = $5",
-			string(StatusSuspended), string(SuspendedByIDP), rec.Schema, orgID, string(StatusActive))
+			"WHERE schema_name = $3 AND org_id = $4 AND (status = $5 OR (status = $1 AND suspended_by = $6))",
+			string(StatusSuspended), string(SuspendedByIDP), rec.Schema, orgID, string(StatusActive),
+			string(SuspendedByAPI))
 		if err != nil {
 			return fmt.Errorf("tenant: org_id %q: suspend: %w", orgID, err)
 		}
@@ -328,21 +333,27 @@ func (p *Provisioner) SuspendForIDP(ctx context.Context, orgID string) (bool, er
 }
 
 // ResumeForIDP serves orgID again because the IdP reactivated its org. It
-// reports whether the status changed. Only a tenant the IdP suspended is
-// resumed: one an operator suspended is refused with
+// reports whether the tenant is served again. Only a tenant the IdP
+// suspended is resumed: one an operator suspended is refused with
 // [ErrOperatorSuspended], and so is one suspended before the cause was
-// recorded. Any other status is left alone.
+// recorded. A tenant with an API hold stays suspended, with the tenant API
+// as its cause again. Any other status is left alone.
 func (p *Provisioner) ResumeForIDP(ctx context.Context, orgID string) (bool, error) {
 	var changed bool
 	err := p.withRecord(ctx, orgID, func(ctx context.Context, conn *pgx.Conn, rec Record) error {
-		tag, err := conn.Exec(ctx, "UPDATE "+controlTable+" SET status = $1, suspended_by = NULL, updated_at = now() "+
-			"WHERE schema_name = $2 AND org_id = $3 AND status = $4 AND suspended_by = $5",
-			string(StatusActive), rec.Schema, orgID, string(StatusSuspended), string(SuspendedByIDP))
-		if err != nil {
-			return fmt.Errorf("tenant: org_id %q: resume: %w", orgID, err)
-		}
-		if changed = tag.RowsAffected() == 1; changed {
+		var status string
+		err := conn.QueryRow(ctx, "UPDATE "+controlTable+" SET "+
+			"status = CASE WHEN api_hold THEN status ELSE $1 END, "+
+			"suspended_by = CASE WHEN api_hold THEN $6 END, updated_at = now() "+
+			"WHERE schema_name = $2 AND org_id = $3 AND status = $4 AND suspended_by = $5 RETURNING status",
+			string(StatusActive), rec.Schema, orgID, string(StatusSuspended), string(SuspendedByIDP),
+			string(SuspendedByAPI)).Scan(&status)
+		switch {
+		case err == nil:
+			changed = status == string(StatusActive)
 			return nil
+		case !errors.Is(err, pgx.ErrNoRows):
+			return fmt.Errorf("tenant: org_id %q: resume: %w", orgID, err)
 		}
 		now, err := p.reread(ctx, conn, rec)
 		if err != nil || now.Status != StatusSuspended {
@@ -461,7 +472,7 @@ func (p *Provisioner) Erase(ctx context.Context, orgID string) (Tenant, Erasure,
 	// The tenant API's fields go with the data, so an erased row keeps only
 	// the tombstone.
 	if _, err := conn.Exec(ctx, "UPDATE "+controlTable+" SET status = $1, suspended_by = NULL, erased_at = now(), "+
-		"read_only = false, plan = NULL, entitlements = NULL, archived_at = NULL, "+
+		"read_only = false, plan = NULL, entitlements = NULL, archived_at = NULL, api_hold = false, "+
 		"updated_at = now() WHERE schema_name = $2 AND org_id = $3 AND status = $4",
 		string(StatusErased), t.Schema, t.OrgID, string(StatusErasing)); err != nil {
 		return t, res, fmt.Errorf("tenant: erase org_id %q: the data is gone, but the status was not set to "+

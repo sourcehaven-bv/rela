@@ -302,6 +302,7 @@ func TestProvisioner_UpgradesControlTableForTenantAPI(t *testing.T) {
 	}
 	if _, err := pv.conn.Exec(ctx, "ALTER TABLE "+tenant.ControlSchema+".tenants "+
 		"DROP COLUMN read_only, DROP COLUMN plan, DROP COLUMN entitlements, DROP COLUMN archived_at, "+
+		"DROP COLUMN api_hold, "+
 		"DROP CONSTRAINT tenants_suspended_by_check, "+
 		"ADD CONSTRAINT tenants_suspended_by_check CHECK (suspended_by IN ('operator','idp'))"); err != nil {
 		t.Fatal(err)
@@ -354,5 +355,72 @@ func TestRegistry_LeaseCarriesCurrentState(t *testing.T) {
 	defer second.Release()
 	if !second.Tenant.ReadOnly || second.Tenant.Plan != "team" {
 		t.Fatalf("lease on the open tenant = %+v; want read-only on plan team", second.Tenant)
+	}
+}
+
+// TestProvisioner_IDPAndAPIHolds pins that neither the IdP nor the tenant
+// API lifts the other's suspension, in either order (TKT-59HWQ76).
+func TestProvisioner_IDPAndAPIHolds(t *testing.T) {
+	pv := newProvisioned(t)
+	ctx := t.Context()
+	state := func(org string, want tenant.Status, by tenant.SuspendCause, hold bool) {
+		t.Helper()
+		got := pv.record(t, org)
+		if got.Status != want || got.SuspendedBy != by || got.APIHold != hold {
+			t.Fatalf("%s = %s by %q hold %v; want %s by %q hold %v",
+				org, got.Status, got.SuspendedBy, got.APIHold, want, by, hold)
+		}
+	}
+	resumeAPI := tenant.Change{State: new(tenant.StateActive)}
+	suspendAPI := tenant.Change{State: new(tenant.StateSuspended)}
+
+	// The tenant API first, then the IdP.
+	if _, err := pv.p.Create(ctx, "org-a", tenant.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pv.p.Apply(ctx, "org-a", suspendAPI); err != nil {
+		t.Fatal(err)
+	}
+	state("org-a", tenant.StatusSuspended, tenant.SuspendedByAPI, true)
+	if changed, err := pv.p.SuspendForIDP(ctx, "org-a"); err != nil || !changed {
+		t.Fatalf("SuspendForIDP over an API suspension = %v, %v; want the IdP to take the cause", changed, err)
+	}
+	state("org-a", tenant.StatusSuspended, tenant.SuspendedByIDP, true)
+	if _, err := pv.p.Apply(ctx, "org-a", resumeAPI); !errors.Is(err, tenant.ErrHeldSuspended) {
+		t.Fatalf("API resume while the IdP holds the tenant = %v; want ErrHeldSuspended", err)
+	}
+	state("org-a", tenant.StatusSuspended, tenant.SuspendedByIDP, true)
+	if changed, err := pv.p.ResumeForIDP(ctx, "org-a"); err != nil || changed {
+		t.Fatalf("IdP resume under an API hold = %v, %v; want it still suspended", changed, err)
+	}
+	state("org-a", tenant.StatusSuspended, tenant.SuspendedByAPI, true)
+	if _, err := pv.p.Apply(ctx, "org-a", resumeAPI); err != nil {
+		t.Fatal(err)
+	}
+	state("org-a", tenant.StatusActive, "", false)
+
+	// The IdP first, then the tenant API.
+	if _, err := pv.p.Create(ctx, "org-b", tenant.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pv.p.SuspendForIDP(ctx, "org-b"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pv.p.Apply(ctx, "org-b", suspendAPI); err != nil {
+		t.Fatal(err)
+	}
+	state("org-b", tenant.StatusSuspended, tenant.SuspendedByIDP, true)
+	if changed, err := pv.p.ResumeForIDP(ctx, "org-b"); err != nil || changed {
+		t.Fatalf("IdP resume under an API hold = %v, %v; want it still suspended", changed, err)
+	}
+	state("org-b", tenant.StatusSuspended, tenant.SuspendedByAPI, true)
+
+	// An operator resume lifts every hold.
+	if err := pv.p.Resume(ctx, "org-b"); err != nil {
+		t.Fatal(err)
+	}
+	state("org-b", tenant.StatusActive, "", false)
+	if changed, err := pv.p.ResumeForIDP(ctx, "org-b"); err != nil || changed {
+		t.Fatalf("IdP resume of an active tenant = %v, %v; want no change", changed, err)
 	}
 }

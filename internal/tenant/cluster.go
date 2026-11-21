@@ -140,7 +140,11 @@ type Record struct {
 	Entitlements Entitlements
 	// ArchivedAt is when the tenant API archived the tenant. It is zero
 	// unless SuspendedBy is [SuspendedByArchive].
-	ArchivedAt   time.Time
+	ArchivedAt time.Time
+	// APIHold reports that the tenant API suspended the tenant and has not
+	// resumed it. It outlives an IdP suspension that takes over the cause,
+	// so the IdP's resume leaves the tenant suspended by the tenant API.
+	APIHold      bool
 	SchemaExists bool
 }
 

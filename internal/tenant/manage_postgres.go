@@ -19,10 +19,12 @@ import (
 // A state change follows these rules:
 //   - active and read_only serve an active tenant with writes allowed or
 //     refused. They resume a tenant the tenant API suspended; one an
-//     operator or the IdP suspended is refused with [ErrHeldSuspended].
+//     operator or the IdP suspended is refused with [ErrHeldSuspended],
+//     even when the tenant API suspended it too.
 //   - suspended stops serving an active tenant and records the tenant API
 //     as the cause. A tenant that is already suspended stays so and keeps
-//     its cause.
+//     its cause. Either way the tenant API holds it (see [Record.APIHold]),
+//     so it stays suspended when the IdP resumes it.
 //   - A provisioning tenant is refused with an error that wraps
 //     [ErrTenantProvisioning]; the caller retries once the create is done.
 //
@@ -119,14 +121,18 @@ func applyState(ctx context.Context, tx pgx.Tx, cur Record, state AccessState) e
 	var args []any
 	switch {
 	case state == StateSuspended && cur.Status == StatusSuspended:
-		return nil
+		if cur.APIHold {
+			return nil
+		}
+		query = "api_hold = true"
+		args = []any{cur.Schema}
 	case state == StateSuspended:
-		query = "status = $2, suspended_by = $3"
+		query = "status = $2, suspended_by = $3, api_hold = true"
 		args = []any{cur.Schema, string(StatusSuspended), string(SuspendedByAPI)}
 	case cur.Status == StatusSuspended && cur.SuspendedBy != SuspendedByAPI:
 		return fmt.Errorf("%w: org_id %q (suspended by %s)", ErrHeldSuspended, cur.OrgID, causeName(cur.SuspendedBy))
 	default:
-		query = "status = $2, suspended_by = NULL, read_only = $3"
+		query = "status = $2, suspended_by = NULL, read_only = $3, api_hold = false"
 		args = []any{cur.Schema, string(StatusActive), state == StateReadOnly}
 	}
 	_, err := tx.Exec(ctx, "UPDATE "+controlTable+" SET "+query+", updated_at = now() WHERE schema_name = $1", args...)
