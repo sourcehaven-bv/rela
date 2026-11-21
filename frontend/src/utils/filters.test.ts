@@ -262,9 +262,9 @@ describe('filters', () => {
     })
 
     it('writes operator suffix for non-default ops', () => {
-      expect(filterStateToApiParams({ due_date: { value: '$today', op: '<=' } })).toEqual({
-        'filter[due_date][lte]': '$today',
-      })
+      expect(
+        filterStateToApiParams({ due_date: { value: '$today', op: '<=' } }),
+      ).toEqual({ 'filter[due_date][lte]': '$today' })
     })
 
     it('skips entries with empty value', () => {

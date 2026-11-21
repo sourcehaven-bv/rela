@@ -17,16 +17,7 @@ describe('styleSwatch', () => {
   })
 
   it('refuses a class outside the grammar', () => {
-    for (const cls of [
-      'kit-red-0',
-      'kit-purple-700',
-      'custom-',
-      'custom-a)b',
-      'x',
-      '',
-      'constructor',
-      'toString',
-    ]) {
+    for (const cls of ['kit-red-0', 'kit-purple-700', 'custom-', 'custom-a)b', 'x', '', 'constructor', 'toString']) {
       expect(styleSwatch(cls)).toBeUndefined()
     }
   })

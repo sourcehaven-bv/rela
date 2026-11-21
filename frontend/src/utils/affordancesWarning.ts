@@ -32,7 +32,7 @@ interface AffordanceCarrier {
  */
 export function actionAllowed(
   carrier: AffordanceCarrier | undefined | null,
-  verb: string
+  verb: string,
 ): boolean {
   return carrier?._actions?.[verb] !== false
 }
@@ -48,9 +48,8 @@ export function actionAllowed(
  * `computed()` boilerplate.
  */
 export function computeActionAllowed(
-  carrier:
-    Ref<AffordanceCarrier | undefined | null> | ComputedRef<AffordanceCarrier | undefined | null>,
-  verb: string
+  carrier: Ref<AffordanceCarrier | undefined | null> | ComputedRef<AffordanceCarrier | undefined | null>,
+  verb: string,
 ): ComputedRef<boolean> {
   return computed(() => actionAllowed(carrier.value, verb))
 }
@@ -64,7 +63,7 @@ const seen = new Set<string>()
  */
 export function warnIfMissingActions(
   response: AffordanceCarrier | { data?: AffordanceCarrier[] } | undefined,
-  requestPath: string
+  requestPath: string,
 ): void {
   if (!import.meta.env.DEV) return
   if (response === undefined) return
@@ -88,7 +87,7 @@ export function warnIfMissingActions(
     `[affordances] Response from ${requestPath} is missing the _actions field. ` +
       `The data-entry server should always emit it; this likely indicates a ` +
       `server-side regression. The UI will render write controls defensively; ` +
-      `the server still enforces ACLs on the write.`
+      `the server still enforces ACLs on the write.`,
   )
 }
 

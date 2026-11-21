@@ -11,8 +11,8 @@ describe('toBusyEntries', () => {
           { type: 'job', state: 'working', since },
           { type: 'run', state: 'review', since },
         ],
-        'run'
-      )
+        'run',
+      ),
     ).toEqual([
       { typeLabel: 'Agent run', label: 'Planning', since },
       { typeLabel: 'run', label: 'review', since },

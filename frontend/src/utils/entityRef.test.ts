@@ -3,9 +3,7 @@ import { entityRef, refBareId, refFace } from './entityRef'
 
 describe('entityRef', () => {
   it('reads the address off _self, face included', () => {
-    expect(entityRef({ id: 'POL-1', _self: '/api/v1/policys/POL-1@published' })).toBe(
-      'POL-1@published'
-    )
+    expect(entityRef({ id: 'POL-1', _self: '/api/v1/policys/POL-1@published' })).toBe('POL-1@published')
   })
 
   it('is the bare id for a bare face', () => {

@@ -22,7 +22,7 @@ describe('entityDisplayTitle', () => {
 describe('entityDisplayTitleWithId', () => {
   it('formats "Title (ID)" when title differs from id', () => {
     expect(entityDisplayTitleWithId({ id: 'PRS-DO-1', _title: 'Audit log' })).toBe(
-      'Audit log (PRS-DO-1)'
+      'Audit log (PRS-DO-1)',
     )
   })
 

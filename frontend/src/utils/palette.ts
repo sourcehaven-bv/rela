@@ -22,10 +22,7 @@ export function normalizeHex(raw: string): string {
 /** Parse a hex list (one per line, or comma/space separated). Accepts bare hex and #-prefixed. */
 export function parseHexList(text: string): string[] {
   const colors: string[] = []
-  const tokens = text
-    .split(/[\n,\s]+/)
-    .map((t) => t.trim())
-    .filter(Boolean)
+  const tokens = text.split(/[\n,\s]+/).map((t) => t.trim()).filter(Boolean)
   for (const token of tokens) {
     if (HEX_RE.test(token)) {
       colors.push(normalizeHex(token))
@@ -41,13 +38,8 @@ export function parseGPL(text: string): string[] {
   for (const line of lines) {
     const trimmed = line.trim()
     // Skip headers and comments
-    if (
-      !trimmed ||
-      trimmed.startsWith('GIMP Palette') ||
-      trimmed.startsWith('Name:') ||
-      trimmed.startsWith('Columns:') ||
-      trimmed.startsWith('#')
-    ) {
+    if (!trimmed || trimmed.startsWith('GIMP Palette') || trimmed.startsWith('Name:') ||
+        trimmed.startsWith('Columns:') || trimmed.startsWith('#')) {
       continue
     }
     // Parse "R G B [name]" — at least 3 numbers
@@ -75,16 +67,7 @@ export interface RelaPaletteResult {
 /** Detect if text is a rela palette YAML file. */
 function isRelaPalette(text: string): boolean {
   // Check for rela palette keys (at least 2 of the 8 role names at root level)
-  const roleKeys = [
-    'base:',
-    'surface:',
-    'accent:',
-    'text:',
-    'success:',
-    'error:',
-    'warning:',
-    'info:',
-  ]
+  const roleKeys = ['base:', 'surface:', 'accent:', 'text:', 'success:', 'error:', 'warning:', 'info:']
   let found = 0
   for (const key of roleKeys) {
     if (text.includes(key)) found++
@@ -102,16 +85,7 @@ export function parseRelaPalette(text: string): RelaPaletteResult {
   const dark: Record<string, string> = {}
   const allColors: string[] = []
 
-  const roleKeys = new Set([
-    'base',
-    'surface',
-    'accent',
-    'text',
-    'success',
-    'error',
-    'warning',
-    'info',
-  ])
+  const roleKeys = new Set(['base', 'surface', 'accent', 'text', 'success', 'error', 'warning', 'info'])
   const badgeKeys = new Set(['blue', 'purple', 'green', 'gray', 'red', 'orange', 'yellow'])
 
   let section: 'root' | 'badges' | 'dark' = 'root'
@@ -121,10 +95,7 @@ export function parseRelaPalette(text: string): RelaPaletteResult {
     if (!trimmed || trimmed.startsWith('#')) continue
 
     // Detect section changes (non-indented keys ending with :)
-    if (trimmed === 'badges:') {
-      section = 'badges'
-      continue
-    }
+    if (trimmed === 'badges:') { section = 'badges'; continue }
     if (trimmed === 'dark:' || trimmed.startsWith('dark:')) {
       // dark: auto / dark: false / dark: (object follows)
       if (trimmed === 'dark: auto' || trimmed === 'dark: false' || trimmed === 'dark:') {
@@ -157,12 +128,7 @@ export function parseRelaPalette(text: string): RelaPaletteResult {
     }
   }
 
-  return {
-    colors,
-    badges,
-    dark: Object.keys(dark).length > 0 ? dark : undefined,
-    allColors: dedupe(allColors),
-  }
+  return { colors, badges, dark: Object.keys(dark).length > 0 ? dark : undefined, allColors: dedupe(allColors) }
 }
 
 /** Auto-detect format and parse palette text. Returns flat color array for swatches. */
@@ -202,13 +168,9 @@ export function hexToHSL(hex: string): HSL {
   const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
 
   let h: number
-  if (max === r) {
-    h = (g - b) / d + (g < b ? 6 : 0)
-  } else if (max === g) {
-    h = (b - r) / d + 2
-  } else {
-    h = (r - g) / d + 4
-  }
+  if (max === r) { h = (g - b) / d + (g < b ? 6 : 0) }
+  else if (max === g) { h = (b - r) / d + 2 }
+  else { h = (r - g) / d + 4 }
   h /= 6
 
   return { h, s, l }
@@ -231,7 +193,7 @@ function hslToHex(h: number, s: number, l: number): string {
   return rgbToHex(
     Math.round(hueToRgb(h + 1 / 3) * 255),
     Math.round(hueToRgb(h) * 255),
-    Math.round(hueToRgb(h - 1 / 3) * 255)
+    Math.round(hueToRgb(h - 1 / 3) * 255),
   )
 }
 
@@ -242,41 +204,24 @@ function clamp01(v: number): number {
 function mixColors(hex1: string, hex2: string, ratio: number): string {
   const n1 = normalizeHex(hex1).replace('#', '')
   const n2 = normalizeHex(hex2).replace('#', '')
-  const r = Math.round(
-    parseInt(n1.slice(0, 2), 16) * (1 - ratio) + parseInt(n2.slice(0, 2), 16) * ratio
-  )
-  const g = Math.round(
-    parseInt(n1.slice(2, 4), 16) * (1 - ratio) + parseInt(n2.slice(2, 4), 16) * ratio
-  )
-  const b = Math.round(
-    parseInt(n1.slice(4, 6), 16) * (1 - ratio) + parseInt(n2.slice(4, 6), 16) * ratio
-  )
+  const r = Math.round(parseInt(n1.slice(0, 2), 16) * (1 - ratio) + parseInt(n2.slice(0, 2), 16) * ratio)
+  const g = Math.round(parseInt(n1.slice(2, 4), 16) * (1 - ratio) + parseInt(n2.slice(2, 4), 16) * ratio)
+  const b = Math.round(parseInt(n1.slice(4, 6), 16) * (1 - ratio) + parseInt(n2.slice(4, 6), 16) * ratio)
   return rgbToHex(r, g, b)
 }
 
 // Default light colors (must match backend defaults)
 const DEFAULTS = {
-  base: '#1a1a2e',
-  surface: '#f8fafc',
-  accent: '#6366f1',
-  text: '#1e293b',
-  success: '#10b981',
-  error: '#ef4444',
-  warning: '#f59e0b',
-  info: '#3b82f6',
+  base: '#1a1a2e', surface: '#f8fafc', accent: '#6366f1', text: '#1e293b',
+  success: '#10b981', error: '#ef4444', warning: '#f59e0b', info: '#3b82f6',
 }
 const DEFAULT_BADGES: Record<string, string> = {
-  blue: '#3b82f6',
-  purple: '#8b5cf6',
-  green: '#22c55e',
-  gray: '#6b7280',
-  red: '#ef4444',
-  orange: '#f97316',
-  yellow: '#eab308',
+  blue: '#3b82f6', purple: '#8b5cf6', green: '#22c55e', gray: '#6b7280',
+  red: '#ef4444', orange: '#f97316', yellow: '#eab308',
 }
 
 // Dark mode generation constants — must mirror Go palette.go.
-const DARK_BRIGHTEN_DELTA = 0.1
+const DARK_BRIGHTEN_DELTA = 0.10
 const DARK_SURFACE_TARGET = 0.08
 const DARK_TEXT_TARGET = 0.85
 const DARK_BASE_DELTA = -0.05
@@ -349,7 +294,7 @@ export function generateDarkBadges(badges: Record<string, string>): Record<strin
  */
 export function deriveTheme(
   colors: Record<string, string>,
-  badges: Record<string, string>
+  badges: Record<string, string>,
 ): Record<string, string> {
   // Fill gaps with defaults
   const c = { ...DEFAULTS, ...colors }
@@ -371,23 +316,21 @@ export function deriveTheme(
   }
 
   // card-bg: lighten surface ~2%
-  m['--card-bg'] =
-    surfaceHSL.l >= 0.98
-      ? c.surface
-      : hslToHex(surfaceHSL.h, surfaceHSL.s, clamp01(surfaceHSL.l + 0.02))
+  m['--card-bg'] = surfaceHSL.l >= 0.98
+    ? c.surface
+    : hslToHex(surfaceHSL.h, surfaceHSL.s, clamp01(surfaceHSL.l + 0.02))
   m['--input-bg'] = m['--card-bg']
 
   // hover-bg: darken surface ~3%
-  m['--hover-bg'] =
-    surfaceHSL.l <= 0.03
-      ? c.surface
-      : hslToHex(surfaceHSL.h, surfaceHSL.s, clamp01(surfaceHSL.l - 0.03))
+  m['--hover-bg'] = surfaceHSL.l <= 0.03
+    ? c.surface
+    : hslToHex(surfaceHSL.h, surfaceHSL.s, clamp01(surfaceHSL.l - 0.03))
 
   // border-color: mix surface and text at 15%
   m['--border-color'] = mixColors(c.surface, c.text, 0.15)
 
   // muted-text: lighten text 30%
-  m['--muted-text'] = hslToHex(textHSL.h, textHSL.s, clamp01(textHSL.l + 0.3))
+  m['--muted-text'] = hslToHex(textHSL.h, textHSL.s, clamp01(textHSL.l + 0.30))
 
   // sidebar-text: high contrast against base
   m['--sidebar-text'] = baseHSL.l < 0.5 ? '#e8e8e8' : '#1e293b'
@@ -414,27 +357,27 @@ function colorDist(c: HSL, target: HSL): number {
 // --- Smart Assignment ---
 
 export interface PaletteAssignment {
-  colors: Record<string, string> // role key → hex
-  badges: Record<string, string> // badge name → hex
+  colors: Record<string, string>   // role key → hex
+  badges: Record<string, string>   // badge name → hex
 }
 
 // Target hues for semantic roles (normalized [0,1])
 const SEMANTIC_TARGETS: { key: string; h: number; s: number; l: number }[] = [
   { key: 'success', h: 145 / 360, s: 0.6, l: 0.45 },
-  { key: 'error', h: 0 / 360, s: 0.8, l: 0.55 },
-  { key: 'warning', h: 38 / 360, s: 0.9, l: 0.52 },
-  { key: 'info', h: 217 / 360, s: 0.9, l: 0.6 },
+  { key: 'error',   h: 0 / 360,   s: 0.8, l: 0.55 },
+  { key: 'warning', h: 38 / 360,  s: 0.9, l: 0.52 },
+  { key: 'info',    h: 217 / 360, s: 0.9, l: 0.60 },
 ]
 
 // Target hues for badge colors
 const BADGE_TARGETS: { key: string; h: number; s: number; l: number; isGray?: boolean }[] = [
-  { key: 'red', h: 0 / 360, s: 0.8, l: 0.55 },
-  { key: 'orange', h: 25 / 360, s: 0.9, l: 0.53 },
-  { key: 'yellow', h: 48 / 360, s: 0.8, l: 0.47 },
-  { key: 'green', h: 142 / 360, s: 0.7, l: 0.45 },
-  { key: 'blue', h: 217 / 360, s: 0.9, l: 0.6 },
+  { key: 'red',    h: 0 / 360,   s: 0.8, l: 0.55 },
+  { key: 'orange', h: 25 / 360,  s: 0.9, l: 0.53 },
+  { key: 'yellow', h: 48 / 360,  s: 0.8, l: 0.47 },
+  { key: 'green',  h: 142 / 360, s: 0.7, l: 0.45 },
+  { key: 'blue',   h: 217 / 360, s: 0.9, l: 0.60 },
   { key: 'purple', h: 259 / 360, s: 0.9, l: 0.55 },
-  { key: 'gray', h: 0, s: 0, l: 0.5, isGray: true },
+  { key: 'gray',   h: 0,         s: 0,   l: 0.5, isGray: true },
 ]
 
 /** Options for assignPalette. `darkTheme=true` flips the lightness
@@ -547,7 +490,7 @@ export function assignPalette(hexColors: string[], options: AssignOptions = {}):
 function findClosest(
   colors: { hex: string; hsl: HSL }[],
   target: { h: number; s: number; l: number },
-  used: Set<string>
+  used: Set<string>,
 ): string | undefined {
   let bestHex: string | undefined
   let bestDist = Infinity

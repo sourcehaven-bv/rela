@@ -585,7 +585,8 @@ function markSelections(node: Node): boolean {
       const l = markSelections(node.left)
       const r = markSelections(node.right)
       const valueOperands = node.op === 'and' ? [node.right] : [node.left, node.right]
-      const selects = valueOperands.some(isValueLiteral) || r || (node.op === 'or' && l)
+      const selects =
+        valueOperands.some(isValueLiteral) || r || (node.op === 'or' && l)
       if (selects) propagateSelection(node)
       return selects
     }

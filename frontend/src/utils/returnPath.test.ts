@@ -41,13 +41,13 @@ describe('buildReturnTo', () => {
   })
 
   it('drops specified query keys', () => {
-    expect(buildReturnTo('/doc/x?refresh=true&from=list-id', ['refresh'])).toBe(
-      '/doc/x?from=list-id'
-    )
+    expect(buildReturnTo('/doc/x?refresh=true&from=list-id', ['refresh']))
+      .toBe('/doc/x?from=list-id')
   })
 
   it('keeps the path intact when drop key is absent', () => {
-    expect(buildReturnTo('/doc/x?from=list-id', ['refresh'])).toBe('/doc/x?from=list-id')
+    expect(buildReturnTo('/doc/x?from=list-id', ['refresh']))
+      .toBe('/doc/x?from=list-id')
   })
 
   it('drops multiple keys', () => {
@@ -59,7 +59,8 @@ describe('buildReturnTo', () => {
     // leaving it in would propagate into every rewritten form link's
     // return_to on re-render.
     expect(buildReturnTo('/doc/x#sec')).toBe('/doc/x')
-    expect(buildReturnTo('/doc/x?refresh=true#sec', ['refresh'])).toBe('/doc/x')
+    expect(buildReturnTo('/doc/x?refresh=true#sec', ['refresh']))
+      .toBe('/doc/x')
   })
 
   it('returns empty string on unsafe input', () => {

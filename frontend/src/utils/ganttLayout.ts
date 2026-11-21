@@ -112,8 +112,7 @@ export function withToday(
   const reach = SCROLL_UNIT_DAYS[zoom]
   // forestSpan's minimum pad, so the today line never sits on the edge.
   const pad = 2
-  if (today < axis.start && axis.start - today <= reach)
-    return { start: today - pad, end: axis.end }
+  if (today < axis.start && axis.start - today <= reach) return { start: today - pad, end: axis.end }
   if (today > axis.end && today - axis.end <= reach) return { start: axis.start, end: today + pad }
   return axis
 }
@@ -188,9 +187,7 @@ export function ticksFor(axis: { start: number; end: number }, zoom: GanttZoom):
       const m = cur.getUTCMonth()
       const month = t(MONTHS[m])
       const label =
-        m === 0
-          ? t('gantt.tick.monthYear', { month, yy: String(cur.getUTCFullYear()).slice(2) })
-          : month
+        m === 0 ? t('gantt.tick.monthYear', { month, yy: String(cur.getUTCFullYear()).slice(2) }) : month
       out.push({ day, label })
       cur.setUTCMonth(cur.getUTCMonth() + 1)
     } else {

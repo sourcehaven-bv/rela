@@ -57,9 +57,7 @@ export function toApiOperator(operator: string | undefined): string {
   if (!operator) return 'eq'
   const mapped = OPERATOR_MAP[operator]
   if (mapped) return mapped
-  console.warn(
-    `[filters] unknown filter operator ${JSON.stringify(operator)}; passing through to the API`
-  )
+  console.warn(`[filters] unknown filter operator ${JSON.stringify(operator)}; passing through to the API`)
   return operator
 }
 
@@ -160,7 +158,7 @@ export function parseFilterQueryParams(query: LocationQuery): FilterState {
  */
 export function buildQueryWithFilters(
   currentQuery: LocationQuery,
-  filters: FilterState
+  filters: FilterState,
 ): LocationQuery {
   const result: LocationQuery = {}
 
@@ -194,11 +192,15 @@ export function buildQueryWithFilters(
  * Uses `filter[prop]` (no operator suffix) for the default `=` form and
  * `filter[prop][api_op]` otherwise, mirroring buildQueryWithFilters.
  */
-export function filterStateToApiParams(filters: FilterState): Record<string, string> {
+export function filterStateToApiParams(
+  filters: FilterState,
+): Record<string, string> {
   const params: Record<string, string> = {}
   for (const [property, fv] of Object.entries(filters)) {
     if (!fv || fv.value === '') continue
-    const key = !fv.op || fv.op === '=' ? `filter[${property}]` : buildFilterKey(property, fv.op)
+    const key = (!fv.op || fv.op === '=')
+      ? `filter[${property}]`
+      : buildFilterKey(property, fv.op)
     params[key] = fv.value
   }
   return params
