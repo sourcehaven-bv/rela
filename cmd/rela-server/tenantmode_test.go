@@ -138,13 +138,12 @@ func TestValidateStatusSync(t *testing.T) {
 	}
 }
 
-// TestValidateTenantAPI pins the boot refusals of the tenant API: its
-// audience is its own, and it needs provisioning on.
+// TestValidateTenantAPI pins the boot refusals of the tenant API: a role
+// the edge can assert, and provisioning on.
 func TestValidateTenantAPI(t *testing.T) {
-	flags := func(aud, provision string) *serverFlags {
+	flags := func(role, provision string) *serverFlags {
 		f := jwtFlags()
-		f.tenant.enabled, f.tenant.apiAudience, f.tenant.provision = true, aud, provision
-		f.webhookAudience = "rela-webhook"
+		f.tenant.enabled, f.tenant.apiRole, f.tenant.provision = true, role, provision
 		return f
 	}
 	tests := []struct {
@@ -153,12 +152,12 @@ func TestValidateTenantAPI(t *testing.T) {
 		wantErr string
 	}{
 		{name: "off", flags: flags("", "")},
-		{name: "webhook mode", flags: flags("rela-tenant-api", "webhook")},
-		{name: "lazy mode", flags: flags("rela-tenant-api", "lazy")},
-		{name: "identity audience", flags: flags("rela", "webhook"), wantErr: "-jwt-audience"},
-		{name: "webhook audience", flags: flags("rela-webhook", "webhook"), wantErr: "-webhook-audience"},
-		{name: "provisioning unset", flags: flags("rela-tenant-api", ""), wantErr: "-tenant-provision"},
-		{name: "provisioning off", flags: flags("rela-tenant-api", "off"), wantErr: "-tenant-provision"},
+		{name: "webhook mode", flags: flags("tenant-manager", "webhook")},
+		{name: "lazy mode", flags: flags("tenant-manager", "lazy")},
+		{name: "scoped role", flags: flags("rela:tenant_admin", "lazy")},
+		{name: "bad role", flags: flags("Tenant Manager", "lazy"), wantErr: "must match"},
+		{name: "provisioning unset", flags: flags("tenant-manager", ""), wantErr: "-tenant-provision"},
+		{name: "provisioning off", flags: flags("tenant-manager", "off"), wantErr: "-tenant-provision"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -195,7 +194,7 @@ func TestRefuseTenantOnlyFlags(t *testing.T) {
 	}
 	for _, tf := range []tenantFlags{
 		{luaHTTPAllow: "10.0.0.0/8"}, {sharedHostConfig: true}, {provision: "lazy"}, {provisionRate: 5},
-		{apiAudience: "rela-tenant-api"},
+		{apiRole: "tenant-manager"},
 	} {
 		if err := refuseTenantOnlyFlags(tf); err == nil || !strings.Contains(err.Error(), "needs tenant mode") {
 			t.Errorf("%+v without tenant mode = %v; want a refusal", tf, err)

@@ -33,6 +33,8 @@ type schemaHandler struct {
 	store func() store.Store
 	// gitEnabled reports whether git operations are configured.
 	gitEnabled func() bool
+	// flowsEnabled reports whether the flows routes are served.
+	flowsEnabled func() bool
 	// channels describes the channel routes for /_schema/channels.
 	channels func() channelDescriber
 	// historyEnabled reports whether content versioning is wired.
@@ -54,6 +56,7 @@ func newSchemaHandler(app *App, templater templating.Templater) *schemaHandler {
 		schema:         app.State,
 		store:          func() store.Store { return app.store },
 		gitEnabled:     func() bool { return app.gitOps != nil },
+		flowsEnabled:   func() bool { return app.flows != nil },
 		channels:       func() channelDescriber { return app.channels.describer() },
 		historyEnabled: func() bool { return app.versions != nil },
 		collab:         func() *collabHandler { return app.collab },
@@ -90,11 +93,12 @@ func (h *schemaHandler) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		Types:      make(map[string]v1.CustomType),
 		Worlds:     schemaWorlds(r.Context(), s.Meta),
 		WorldOrder: metamodel.WorldOrderOf(s.Meta),
-		// Fixed by the store the app was wired with (TKT-ZMPDZ3R).
+		// Fixed when the app is wired (TKT-ZMPDZ3R).
 		Capabilities: v1.Capabilities{
 			AtomicBatch: store.TxRollsBack(st),
 			AsOf:        store.SupportsReadInstant(st),
 			Git:         h.gitEnabled(),
+			Flows:       h.flowsEnabled(),
 		},
 	}
 

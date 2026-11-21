@@ -8,7 +8,8 @@
  * Without `detailed`, for a reader who does not manage the flow, it says
  * only whom the step waits for and whether it is being processed or stuck:
  * the roles, guards, timers and attempts describe how the flow works, which
- * such a reader has no use for.
+ * such a reader has no use for. The last error of a job step comes only
+ * to a manager: the server leaves it out for everyone else.
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -20,14 +21,13 @@ const props = defineProps<{
   detailed: boolean
   /** The card shows the reader a form for this step. */
   canComplete?: boolean
+  /** The flow's `failed_message:`, said instead of the default to a reader who does not manage the run. */
+  failedMessage?: string
 }>()
 
 const { t } = useI18n()
 
 const roles = computed(() => (props.waiting.roles ?? []).join(', '))
-
-// A step whose job failed for good waits for a retry, not for anyone.
-const jobFailed = computed(() => props.waiting.pending?.job?.phase === 'failed')
 
 // The keys are literal so the i18n guard sees them used.
 const failKindKeys: Record<NonNullable<FlowJob['fail_kind']>, string> = {
@@ -48,6 +48,12 @@ function jobLine(job: FlowJob): string {
   const attempt = { n: Math.min(job.failed + 1, job.attempts), max: job.attempts }
   if (job.phase === 'waiting') {
     const at = props.waiting.pending?.next_attempt
+    // After a failed attempt the step is retrying, not merely waiting.
+    if (job.failed > 0) {
+      return at
+        ? t('flows.waiting.jobRetryingAt', { ...attempt, at: formatInstant(at) })
+        : t('flows.waiting.jobRetrying', attempt)
+    }
     return at
       ? t('flows.waiting.jobWaitingAt', { ...attempt, at: formatInstant(at) })
       : t('flows.waiting.jobWaiting', attempt)
@@ -59,7 +65,7 @@ function jobLine(job: FlowJob): string {
 const plainLine = computed(() => {
   const w = props.waiting
   if (w.stranded) return ''
-  if (w.pending?.job?.phase === 'failed') return t('flows.waiting.failedPlain')
+  if (w.pending?.job?.phase === 'failed') return props.failedMessage || t('flows.waiting.failedPlain')
   if (w.pending) return t('flows.waiting.processing')
   if (w.roles?.length && !w.you_hold) return t('flows.waiting.forOthers')
   // A role the reader holds without a form here, or a timer: nothing to do.
@@ -96,7 +102,7 @@ function branchVerdict(b: { holds: boolean; failed?: boolean }): string {
       <strong v-if="waiting.you_hold">{{ t('flows.waiting.youHold') }}</strong>
       <span v-else>{{ t('flows.waiting.youDoNotHold') }}</span>
     </p>
-    <p v-else-if="!waiting.stranded && !jobFailed" class="flow-waiting__line">
+    <p v-else-if="!waiting.stranded && !waiting.pending" class="flow-waiting__line">
       {{ t('flows.waiting.noRoles') }}
     </p>
     <p v-if="waiting.claimed_by" class="flow-waiting__line">
@@ -115,6 +121,14 @@ function branchVerdict(b: { holds: boolean; failed?: boolean }): string {
       <template v-if="waiting.pending.next_attempt">
         {{ t('flows.waiting.nextAttempt', { at: formatInstant(waiting.pending.next_attempt) }) }}
       </template>
+    </p>
+    <p
+      v-if="waiting.pending?.job?.error"
+      class="flow-waiting__line flow-waiting__muted"
+      data-testid="flow-waiting-job-error"
+    >
+      {{ t('flows.waiting.jobError') }}
+      <code class="flow-waiting__error">{{ waiting.pending.job.error }}</code>
     </p>
 
     <div v-if="waiting.branches?.length" class="flow-waiting__group">
@@ -213,6 +227,11 @@ function branchVerdict(b: { holds: boolean; failed?: boolean }): string {
 
 .flow-waiting__verdict.is-failed {
   color: var(--rl-color-danger);
+}
+
+.flow-waiting__error {
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
 }
 
 .flow-waiting__muted {

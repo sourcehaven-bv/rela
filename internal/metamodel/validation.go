@@ -136,6 +136,13 @@ type ValidationError struct {
 	Type     ValidationErrorType
 	Property string // The property name that failed validation (empty for entity-level errors)
 	Message  string // Human-readable error message
+	// Fields and Description are set for a [ValidationErrorRule] only:
+	// the properties the rule's then side reads (its when side's when the
+	// then side reads none), sorted, so a form can show the failure at a
+	// field; and the rule's operator-written description, without the
+	// rule name Message adds (BUG-53GP5F5).
+	Fields      []string
+	Description string
 }
 
 // Error implements the error interface.

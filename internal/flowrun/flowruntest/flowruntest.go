@@ -346,7 +346,8 @@ func fullState() flowrun.State {
 			{Name: "finance", Instance: in("reviewed", 6, 30), Arrived: true},
 			{Name: "it", Instance: in("it", 7, 40),
 				Pending: &flowrun.Pending{State: "it", Generation: 7, Job: &flowrun.JobAttempt{Seq: 2, Failed: 3,
-					Phase: flowrun.JobFailed, FailKind: flowrun.JobExhausted, NextAt: at(10)}}},
+					Phase: flowrun.JobFailed, FailKind: flowrun.JobExhausted, NextAt: at(10),
+					Error: "flows: webhook answered 503"}}},
 		},
 	}
 }

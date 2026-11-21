@@ -57,6 +57,8 @@ export interface FlowBranch {
   holds: boolean
   /** The guard could not be evaluated. */
   failed?: boolean
+  /** The step's written properties the guard reads, in `writes` order. */
+  fields?: string[]
 }
 
 /** Where a state's job step is (TKT-PY2G11W). */
@@ -67,6 +69,11 @@ export interface FlowJob {
   /** The budget: every execution, the first included. */
   attempts: number
   fail_kind?: 'exhausted' | 'permanent' | 'timeout' | 'lost'
+  /**
+   * The error of the last failed attempt, one line with secrets redacted.
+   * Only a caller who manages the run receives it.
+   */
+  error?: string
 }
 
 export interface FlowPending {
@@ -142,6 +149,8 @@ export interface FlowPlace {
 /** One run as the caller may see it. */
 export interface FlowRun {
   id: string
+  /** The title the run got when it started; absent for an older run. */
+  title?: string
   flow: string
   flow_label: string
   version: string
@@ -166,6 +175,11 @@ export interface FlowRun {
   diagram?: string
   /** Set while the run is in parallel branches; `state` is then their join. */
   parallel?: FlowPlace[]
+  /**
+   * The flow's `failed_message:`, for a reader who does not manage the run
+   * while a job step failed. Absent when flows.yaml sets none.
+   */
+  failed_message?: string
   _actions: FlowActions
 }
 
@@ -186,6 +200,13 @@ export interface FlowTask {
 
 export interface FlowTaskPage {
   tasks: FlowTask[]
+  /**
+   * Runs whose job step failed, for a caller who manages them. Not paged
+   * and not counted in `total`.
+   */
+  failed?: FlowTask[]
+  /** More runs sit in a job state than one call reads; `failed` may miss older ones. */
+  failed_truncated?: boolean
   /** The tasks found, before paging. */
   total: number
   /** More candidates exist than one call reads; a flow filter narrows them. */
@@ -227,6 +248,17 @@ export interface FlowCompleted {
    * condition of the next step holds, so the run stays.
    */
   problem?: 'guard' | 'moved' | 'settling' | 'blocked'
+  /**
+   * Soft findings on the written values, such as a failed pattern, for
+   * the step's written properties only.
+   */
+  warnings?: FlowFieldNote[]
+}
+
+/** A message about one field of a step form. */
+export interface FlowFieldNote {
+  field: string
+  message: string
 }
 
 export interface FlowRunQuery {
@@ -317,7 +349,7 @@ export async function cancelFlowRun(id: string): Promise<void> {
   await api.post<void>(`${runPath(id)}/_cancel`, {})
 }
 
-/** POST a retry of the pending outputs of a run. */
+/** POST a retry of the pending outputs or the failed job of a run. */
 export async function retryFlowRun(id: string): Promise<void> {
   await api.post<void>(`${runPath(id)}/_retry`, {})
 }

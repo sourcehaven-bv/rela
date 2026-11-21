@@ -3,9 +3,11 @@ package appbuild
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -206,4 +208,62 @@ func TestRunAction_LLMStep(t *testing.T) {
 			require.Equal(t, 1, tc.runner.runs)
 		})
 	}
+}
+
+// scriptSecretsHost serves global secrets and, for one script, its own.
+type scriptSecretsHost struct {
+	global map[string]string
+	script string
+	own    map[string]string
+}
+
+func (h scriptSecretsHost) File(string) ([]byte, error) { return nil, fs.ErrNotExist }
+func (h scriptSecretsHost) Path() string                { return "" }
+func (h scriptSecretsHost) Secrets(path string) (map[string]string, error) {
+	if path == h.script {
+		return h.own, nil
+	}
+	return h.global, nil
+}
+
+// TestRedact pins BUG-53GP5F5: the error a job returns names no secret
+// value the job's script or the project holds, and keeps its chain.
+func TestRedact(t *testing.T) {
+	host := scriptSecretsHost{
+		global: map[string]string{"api": "glob4l-key", "short": "ab"},
+		script: "flows/x.lua",
+		own:    map[string]string{"api": "scr1pt-key", "long": "scr1pt-key-and-more"},
+	}
+	r := &flowJobRunner{host: host}
+	err := flowengine.Permanent(errors.New("401 for glob4l-key, scr1pt-key-and-more and scr1pt-key; ab"))
+	got := r.redact("flows/x.lua", err)
+	require.Equal(t, "flowengine: permanent job failure: 401 for [secret], [secret] and [secret]; ab", got.Error(),
+		"a short value is kept: it would match ordinary words")
+	require.ErrorIs(t, got, flowengine.ErrPermanent)
+
+	require.Contains(t, r.redact("", err).Error(), "scr1pt-key", "without its script, a script's own secret is unknown")
+	require.NoError(t, r.redact("flows/x.lua", nil))
+	plain := errors.New("no secret here")
+	require.Same(t, plain, r.redact("flows/x.lua", plain), "an error without a secret passes unchanged")
+	require.Same(t, plain, (&flowJobRunner{}).redact("", plain))
+
+	encoded := &flowJobRunner{host: scriptSecretsHost{global: map[string]string{"tok": "a+b/c=d \"e\""}, script: "x"}}
+	got = encoded.redact("", fmt.Errorf("GET /x?k=%s: %q, path %s", url.QueryEscape("a+b/c=d \"e\""),
+		"a+b/c=d \"e\"", url.PathEscape("a+b/c=d \"e\"")))
+	require.NotContains(t, got.Error(), "a+b", "an escaped or quoted value is a secret too")
+	require.NotContains(t, got.Error(), "a%2Bb")
+
+	withheld := &flowJobRunner{host: withheldHost{err: lua.ErrHostConfigWithheld}}
+	require.Same(t, plain, withheld.redact("", plain), "withheld secrets are secrets the script could not read")
+	broken := &flowJobRunner{host: failingSecretsHost{}}
+	got = broken.redact("", errors.Join(flowengine.ErrPermanent, errors.New("glob4l-key")))
+	require.Equal(t, errSecretsUnread, got.Error(), "unreadable secrets withhold the error")
+	require.ErrorIs(t, got, flowengine.ErrPermanent)
+}
+
+// failingSecretsHost cannot read its secrets.
+type failingSecretsHost struct{ scriptSecretsHost }
+
+func (failingSecretsHost) Secrets(string) (map[string]string, error) {
+	return nil, errors.New("secrets.yaml: permission denied")
 }

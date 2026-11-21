@@ -596,7 +596,7 @@ Each entity type defines:
 | Field              | Description                                                                     |
 | ------------------ | ------------------------------------------------------------------------------- |
 | `label`            | Display name                                                                    |
-| `label_plural`     | Plural display name (defaults to label + "s")                                   |
+| `label_plural`     | Plural display name. See [Plural label](#plural-label) below.                   |
 | `description`      | Documentation explaining intent and usage (optional)                            |
 | `aliases`          | Alternative names for CLI (e.g., `req` for `requirement`)                       |
 | `id_type`          | `short` (default), `sequential`, or `manual` - controls ID generation           |
@@ -607,6 +607,18 @@ Each entity type defines:
 | `color`            | Fill color for graph visualizations (hex or named)                              |
 | `border_color`     | Border color for graph visualizations                                           |
 | `display_property` | Property whose value names the entity. See [Display name](#display-name) below. |
+
+### Plural label
+
+Set `label_plural` when the plural is not the label plus "s", for example
+`label: Person` with `label_plural: People`. Navigation groups and the API
+reference fall back to the label plus "s".
+
+The data-entry app uses `label_plural` only when it is set. An empty list then
+says "No People found." and the search box reads "Search People...". Without
+it, an empty list says "Nothing found." and the search box reads "Search...",
+so these never show a wrong plural such as "Persons". A list's own
+`empty_message:` replaces the empty list text.
 
 ### Display name
 
@@ -1406,7 +1418,8 @@ properties:
       link_text: Website
 ```
 
-Every value of `website` then shows as a link named "Website". A value that
+Every value of `website` then shows as a link named "Website". Screen readers
+read that name, and the link has no tooltip with the address. A value that
 does not become a link shows as itself, not as the link text. When a list or
 board column shows a property that several types declare, it uses the
 `link_text` only if all those types set the same one; otherwise it shows the

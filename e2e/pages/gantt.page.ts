@@ -20,6 +20,30 @@ export class GanttPage extends BasePage {
     await this.chart.waitFor();
   }
 
+  /** The ids of the rows, in the order the chart shows them. */
+  rowIds(): Promise<(string | null)[]> {
+    return this.page
+      .locator('.gantt-view .row[data-node-id]')
+      .evaluateAll((els) => els.map((el) => el.getAttribute('data-node-id')));
+  }
+
+  /** The titles of the rows, in the order the chart shows them. */
+  rowTitles(): Promise<string[]> {
+    return this.page
+      .locator('.gantt-view .row[data-node-id] .cell-tree')
+      .evaluateAll((els) => els.map((el) => (el.textContent ?? '').trim()));
+  }
+
+  /** The tree cell of the row whose title contains `text`. */
+  rowTreeCellWithText(text: string): Locator {
+    return this.page.locator('.gantt-view .row[data-node-id] .cell-tree').filter({ hasText: text });
+  }
+
+  /** The chart's rows. */
+  get rows(): Locator {
+    return this.page.locator('.gantt-view .row[data-node-id]');
+  }
+
   zoomButton(zoom: 'quarter' | 'month' | 'week'): Locator {
     return this.page.locator('.zoom-seg button', { hasText: zoom });
   }

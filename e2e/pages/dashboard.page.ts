@@ -143,7 +143,13 @@ export class DashboardPage extends BasePage {
 
   /** Cell `index` of the table card's row that contains `rowText`. */
   tableCell(cardTitle: string, rowText: string, index: number): Locator {
-    return this.card(cardTitle).locator('tbody tr').filter({ hasText: rowText }).locator('td').nth(index);
+    // The value span only: each cell also holds a phone-only column label.
+    return this.card(cardTitle)
+      .locator('tbody tr')
+      .filter({ hasText: rowText })
+      .locator('td')
+      .nth(index)
+      .locator('.cell-value');
   }
 
   /** The link in a table cell. */

@@ -86,6 +86,11 @@ func (f *fakeFlows) Tasks(_ context.Context, name string, page, perPage int) (fl
 	return flowview.Tasks{}, f.err
 }
 
+func (f *fakeFlows) FailedTasks(_ context.Context, name string) ([]flowview.Task, bool, error) {
+	f.rec("failed %s", name)
+	return nil, false, f.err
+}
+
 func flowRequest(t *testing.T, app *App, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -103,7 +108,7 @@ func TestFlowsAPI_Routes(t *testing.T) {
 	}{
 		{"flows", http.MethodGet, "/api/v1/_flows", "", http.StatusOK, "flows"},
 		{"tasks", http.MethodGet, "/api/v1/_flows/tasks?flow=onboarding&page=2&per_page=10", "", http.StatusOK,
-			"tasks onboarding 2 10"},
+			"tasks onboarding 2 10; failed onboarding"},
 		{"run list", http.MethodGet, "/api/v1/_flows/runs?flow=f&status=running", "", http.StatusOK,
 			"list f running 1 25"},
 		{"subject runs", http.MethodGet, "/api/v1/_flows/runs?subject=PER-1", "", http.StatusOK,
@@ -199,6 +204,32 @@ func TestFlowsAPI_NotWired(t *testing.T) {
 		require.True(t, json.Valid(w.Body.Bytes()))
 	}
 	require.Error(t, SetFlows(app, nil))
+}
+
+// TestSchemaCapabilities_Flows pins capabilities.flows: the SPA asks for
+// GET /_flows only when the schema says the project has flows, so a project
+// without them gets no 404 on every page.
+func TestSchemaCapabilities_Flows(t *testing.T) {
+	flowsCapability := func(app *App) bool {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		app.schemaAPI.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var got struct {
+			Capabilities struct {
+				Flows *bool `json:"flows"`
+			} `json:"capabilities"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		require.NotNil(t, got.Capabilities.Flows, "capabilities.flows is always present")
+		return *got.Capabilities.Flows
+	}
+
+	app := newHandlerTestApp(t)
+	require.False(t, flowsCapability(app), "no flows declared")
+
+	require.NoError(t, SetFlows(app, &fakeFlows{}))
+	require.True(t, flowsCapability(app), "flows declared")
 }
 
 // TestFlowsAPI_BodyLimit pins the 413 for a body past the limit.

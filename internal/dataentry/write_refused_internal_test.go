@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
@@ -28,12 +29,16 @@ func TestWriteWriteRefused_FieldErrors(t *testing.T) {
 				{Type: metamodel.ValidationErrorRequired, Property: "naam", Message: "naam is required"},
 				{Type: metamodel.ValidationErrorInvalidValue, Property: "a/b~c", Message: "not an allowed value"},
 				{Type: metamodel.ValidationErrorRule, Message: `validation rule "r" is not satisfied`},
+				{Type: metamodel.ValidationErrorRule, Message: `validation rule "s" is not satisfied: Pick one.`,
+					Fields: []string{"a", "b"}, Description: "Pick one."},
 			}}),
 			want: []v1.FieldError{
 				{Source: v1.ErrorSource{Pointer: "/properties/naam"}, Code: "required", Detail: "naam is required"},
 				{Source: v1.ErrorSource{Pointer: "/properties/a~1b~0c"}, Code: "invalid_value",
 					Detail: "not an allowed value"},
 				{Source: v1.ErrorSource{Pointer: ""}, Code: "rule", Detail: `validation rule "r" is not satisfied`},
+				{Source: v1.ErrorSource{Pointer: ""}, Code: "rule", Detail: `validation rule "s" is not satisfied: Pick one.`,
+					Fields: []string{"a", "b"}, Message: "Pick one."},
 			},
 		},
 		{
@@ -59,7 +64,7 @@ func TestWriteWriteRefused_FieldErrors(t *testing.T) {
 				t.Fatalf("errors = %+v, want %+v", got.Errors, tc.want)
 			}
 			for i := range tc.want {
-				if got.Errors[i] != tc.want[i] {
+				if !reflect.DeepEqual(got.Errors[i], tc.want[i]) {
 					t.Errorf("errors[%d] = %+v, want %+v", i, got.Errors[i], tc.want[i])
 				}
 			}

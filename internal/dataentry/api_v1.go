@@ -52,6 +52,7 @@ func toV1EntityType(
 ) v1.EntityType {
 	et := v1.EntityType{
 		Label:       def.Label,
+		LabelPlural: strings.TrimSpace(def.LabelPlural),
 		Plural:      def.GetPlural(name),
 		Description: def.Description,
 		Primary:     def.GetPrimaryProperty(),

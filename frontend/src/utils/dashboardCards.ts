@@ -55,6 +55,20 @@ export interface TableCell {
   widget?: DenseCell
   /** The formatted value when there is no widget: a link, or a plain value. */
   text: string
+  /**
+   * The text is one short word, such as an invoice number (`HM021-0001`) or
+   * a code. It stays on one line: a narrow column would otherwise break it
+   * at its hyphen, and half an id reads as a different id.
+   */
+  nowrap?: boolean
+}
+
+/** The longest text kept on one line; anything longer may wrap. */
+const NOWRAP_MAX = 24
+
+/** Whether a cell text is one short word that must not break. */
+export function isShortToken(text: string): boolean {
+  return text.length > 0 && text.length <= NOWRAP_MAX && !/\s/.test(text)
 }
 
 export interface TableRow {
@@ -210,13 +224,12 @@ export function tableRows(
       if (isPropertyRedacted(property, entity._redacted)) return { key, hidden: true, text: '' }
       const value = entity.properties[property]
       const widget = link ? undefined : resolve(value, property, type, tz)
-      return {
-        key,
-        link,
-        hidden: false,
-        widget,
-        text: widget ? '' : type ? formatCellValue(value, property, type, tz) : String(value ?? ''),
-      }
+      const text = widget
+        ? ''
+        : type
+          ? formatCellValue(value, property, type, tz)
+          : String(value ?? '')
+      return { key, link, hidden: false, widget, text, nowrap: isShortToken(text) }
     })
     return { entity, cells }
   })

@@ -276,7 +276,7 @@ describe('DashboardView', () => {
 
       const wrapper = await mountView()
 
-      const cells = wrapper.findAll('tbody td').map((td) => td.text())
+      const cells = wrapper.findAll('tbody td .cell-value').map((td) => td.text())
       expect(cells).toEqual(['a', 'b', 'c'])
 
       // Sorting reads each row's property, then rendering reads it once per
@@ -746,7 +746,7 @@ describe('DashboardView', () => {
     ]
 
     function expectDealRow(wrapper: Awaited<ReturnType<typeof mountView>>) {
-      const cells = wrapper.findAll('tbody td')
+      const cells = wrapper.findAll('tbody td .cell-value')
       expect(cells[0].find('a').attributes('data-to')).toBe('/entity/deal/D-1')
       expect(cells[0].text()).toBe('Big deal')
       const badge = cells[1].find('.badge')
@@ -819,10 +819,30 @@ describe('DashboardView', () => {
         card({ display: 'table', columns: [{ property: 'stage' }, { property: 'note' }] }),
       ])
 
-      const cells = (await mountView()).findAll('tbody td')
+      const cells = (await mountView()).findAll('tbody td .cell-value')
       expect(cells[0].text()).toBe('')
       expect(cells[0].find('.badge').exists()).toBe(false)
       expect(cells[1].text()).toBe('kept')
+    })
+
+    // On a phone each row stacks, and each value shows its column name.
+    it('labels each cell with its column header for the stacked layout', async () => {
+      seedDeals()
+      searchReturns([deal('D-1', { title: 'Bare', note: 'kept' })])
+      seedDashboard([
+        card({
+          display: 'table',
+          columns: [{ property: 'title' }, { property: 'note', label: 'Note' }],
+        }),
+      ])
+
+      const wrapper = await mountView()
+      const headers = wrapper.findAll('thead th').map((th) => th.text())
+      const labels = wrapper.findAll('tbody td .cell-label')
+      expect(labels.map((l) => l.text())).toEqual(headers)
+      expect(labels.every((l) => l.attributes('aria-hidden') === 'true')).toBe(true)
+      expect(wrapper.find('table').attributes('role')).toBe('table')
+      expect(wrapper.find('tbody td').attributes('role')).toBe('cell')
     })
   })
 

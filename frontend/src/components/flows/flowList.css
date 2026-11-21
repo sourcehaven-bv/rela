@@ -39,6 +39,11 @@
   text-decoration: underline;
 }
 
+.flow-list__heading {
+  margin: var(--space-md) 0 var(--space-xs);
+  font-size: var(--font-size-base);
+}
+
 .flow-list__empty,
 .flow-list__muted {
   color: var(--rl-color-text-muted);

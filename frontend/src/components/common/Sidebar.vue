@@ -610,6 +610,17 @@ async function handleAction(item: SidebarItem, ev?: Event) {
   flex-wrap: wrap;
 }
 
+/*
+ * The app or space name takes the room left beside the close and collapse
+ * buttons, and wraps within it. Without a zero basis the wrapping header
+ * would move a button to a row of its own whenever the name is longer than
+ * one line.
+ */
+.sidebar :deep(.space-switcher) {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 .sidebar.collapsed :deep(.as-of-picker) {
   display: none;
 }

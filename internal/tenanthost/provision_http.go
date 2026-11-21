@@ -32,19 +32,45 @@ const (
 	retryNeedsOperator = "300"
 )
 
-// tenantStatus is the body of [StatusPath] and of a 202 answer.
+// tenantStatus is the body of [StatusPath] and of a 202 answer. The plan
+// fields are set for an active tenant when the tenant API is on: they are
+// what the control plane stored, shown to the tenant's own users.
 type tenantStatus struct {
-	Status string `json:"status"`
+	Status       string              `json:"status"`
+	ReadOnly     bool                `json:"read_only,omitempty"`
+	Plan         string              `json:"plan,omitempty"`
+	Entitlements tenant.Entitlements `json:"entitlements,omitempty"`
 }
 
 func writeStatus(w http.ResponseWriter, code int, status string) {
+	writeStatusBody(w, code, tenantStatus{Status: status})
+}
+
+func writeStatusBody(w http.ResponseWriter, code int, body tenantStatus) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	if status == statusProvisioning {
+	if body.Status == statusProvisioning {
 		w.Header().Set("Retry-After", retryProvisioning)
 	}
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(tenantStatus{Status: status})
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+// activeStatus is the [StatusPath] body of orgID's active tenant. With the
+// tenant API on it adds the access state and plan from the control row; a
+// failed lookup leaves them out rather than failing the answer.
+func (h *Host) activeStatus(r *http.Request, orgID string) tenantStatus {
+	body := tenantStatus{Status: statusActive}
+	if h.cfg.TenantAPI == nil {
+		return body
+	}
+	rec, err := h.cfg.TenantAPI.Control.Lookup(r.Context(), orgID)
+	if err != nil {
+		slog.WarnContext(r.Context(), "tenant host: plan lookup failed", "org_id", orgID, "error", err)
+		return body
+	}
+	body.ReadOnly, body.Plan, body.Entitlements = rec.ReadOnly, rec.Plan, rec.Entitlements
+	return body
 }
 
 // writeProvisioning answers a request for a tenant being created. A read
@@ -68,7 +94,7 @@ func (h *Host) serveStatus(w http.ResponseWriter, r *http.Request, orgID string)
 	switch {
 	case err == nil:
 		release()
-		writeStatus(w, http.StatusOK, statusActive)
+		writeStatusBody(w, http.StatusOK, h.activeStatus(r, orgID))
 	case h.prov != nil && h.prov.lazy && provisionable(err):
 		h.provisionLazily(w, r, orgID, http.StatusOK)
 	case errors.Is(err, tenant.ErrTenantProvisioning):

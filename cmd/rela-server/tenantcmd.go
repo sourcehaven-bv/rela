@@ -251,8 +251,8 @@ func showTenant(ctx context.Context, a tenantArgs, base string, tio tenantIO) in
 		// The schema is gone by design; saying so would read as a fault.
 		exists = done(rec.SchemaExists, " (the schema still exists)", "")
 	}
-	_, _ = fmt.Fprintf(tio.out, "org_id %q: schema %q, %s%s%s%s\n", rec.OrgID, rec.Schema, rec.Status,
-		suspendedBy(rec), erasedAt(rec), exists)
+	_, _ = fmt.Fprintf(tio.out, "org_id %q: schema %q, %s%s%s%s%s%s\n", rec.OrgID, rec.Schema, rec.Status,
+		suspendedBy(rec), readOnly(rec), erasedAt(rec), plan(rec), exists)
 	return 0
 }
 
@@ -267,6 +267,23 @@ func erasedAt(rec tenant.Record) string {
 	return " at " + rec.ErasedAt.UTC().Format(time.RFC3339)
 }
 
+// readOnly marks an active tenant the tenant API made read-only, for
+// `tenant show`.
+func readOnly(rec tenant.Record) string {
+	if rec.Status == tenant.StatusActive && rec.ReadOnly {
+		return " (read-only)"
+	}
+	return ""
+}
+
+// plan names the plan the tenant API stored, for `tenant show`.
+func plan(rec tenant.Record) string {
+	if rec.Plan == "" {
+		return ""
+	}
+	return fmt.Sprintf(", plan %q", rec.Plan)
+}
+
 // suspendedBy describes who suspended a suspended tenant, for `tenant show`.
 func suspendedBy(rec tenant.Record) string {
 	if rec.Status != tenant.StatusSuspended {
@@ -277,6 +294,11 @@ func suspendedBy(rec tenant.Record) string {
 		return " by the IdP"
 	case tenant.SuspendedByOperator:
 		return " by an operator"
+	case tenant.SuspendedByAPI:
+		return " by the tenant API"
+	case tenant.SuspendedByArchive:
+		return " (archived through the tenant API at " + rec.ArchivedAt.UTC().Format(time.RFC3339) +
+			"; `tenant resume` unarchives it)"
 	}
 	return " (cause not recorded; the IdP does not resume it)"
 }

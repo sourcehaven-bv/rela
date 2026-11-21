@@ -920,13 +920,16 @@ type RelationProperty struct {
 // The plimsoll directive is the format-mirror exception documented on
 // [Config]: each exported field is one key of a list in data-entry.yaml.
 //
-//plimsoll:max-fields=21
+//plimsoll:max-fields=22
 type List struct {
-	EntityType     string          `yaml:"entity_type" json:"entity"`
-	Title          string          `yaml:"title" json:"title"`
-	Header         string          `yaml:"header" json:"header,omitempty"`
-	Footer         string          `yaml:"footer" json:"footer,omitempty"`
-	Description    string          `yaml:"description" json:"description,omitempty"`
+	EntityType  string `yaml:"entity_type" json:"entity"`
+	Title       string `yaml:"title" json:"title"`
+	Header      string `yaml:"header" json:"header,omitempty"`
+	Footer      string `yaml:"footer" json:"footer,omitempty"`
+	Description string `yaml:"description" json:"description,omitempty"`
+	// EmptyMessage replaces the text an empty list shows ("No People
+	// found."). Empty: the SPA builds that text from the type's plural label.
+	EmptyMessage   string          `yaml:"empty_message,omitempty" json:"empty_message,omitempty"`
 	Columns        []ListColumn    `yaml:"columns" json:"columns"`
 	Sort           []SortSpec      `yaml:"sort,omitempty" json:"default_sort,omitempty"`
 	Filters        []FilterConfig  `yaml:"filters" json:"filters,omitempty"`
