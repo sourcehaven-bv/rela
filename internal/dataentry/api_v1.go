@@ -117,7 +117,10 @@ func toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) v
 		System:      propDef.System,
 	}
 	if d := propDef.Display; d != nil {
-		pd.Display = &v1.PropertyDisplay{Currency: d.Currency, Link: d.Link, LinkText: d.LinkText, Image: d.Image}
+		pd.Display = &v1.PropertyDisplay{
+			Currency: d.Currency, Image: d.Image,
+			LinkDisplay: v1.LinkDisplay{Link: d.Link, LinkText: d.LinkText},
+		}
 	}
 	// Labels mirror Values: a property naming a custom type inherits that
 	// type's values and labels; an inline `labels` map on a custom-typed
