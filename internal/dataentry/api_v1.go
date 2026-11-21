@@ -1830,11 +1830,12 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		Types:      make(map[string]v1.CustomType),
 		Worlds:     schemaWorlds(r.Context(), s.Meta),
 		WorldOrder: metamodel.WorldOrderOf(s.Meta),
-		// Fixed by the store the app was wired with (TKT-ZMPDZ3R).
+		// Fixed when the app is wired (TKT-ZMPDZ3R).
 		Capabilities: v1.Capabilities{
 			AtomicBatch: store.TxRollsBack(a.store),
 			AsOf:        store.SupportsReadInstant(a.store),
 			Git:         a.gitOps != nil,
+			Flows:       a.flows != nil,
 		},
 	}
 
