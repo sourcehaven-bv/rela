@@ -730,7 +730,13 @@
       "dragHint": "or drag & drop",
       "atCapacity": "Maximum of {n} files reached — remove one to add another.",
       "notPermitted": "Editing this attachment is not permitted.",
-      "unavailable": "Attachment editing unavailable."
+      "unavailable": "Attachment editing unavailable.",
+      "imageNone": "No image",
+      "imageReplace": "Replace image",
+      "imageAdd": "Add an image",
+      "imageRemove": "Remove image",
+      "imageHint": "PNG, JPEG, GIF or WebP, up to 5 MB",
+      "imageOnly": "Choose a PNG, JPEG, GIF or WebP image."
     },
     "externalRef": {
       "setBySystem": "Set by the {system} sync",

@@ -558,4 +558,9 @@ export class ListPage extends BasePage {
     const totalText = this.page.locator('.results-count, .total-count, .pagination');
     await expect(totalText).toContainText(String(total));
   }
+
+  /** The first image thumbnail in a list column. */
+  firstImageThumbnail(): Locator {
+    return this.page.locator(".rl-table-row img.image-cell").first();
+  }
 }

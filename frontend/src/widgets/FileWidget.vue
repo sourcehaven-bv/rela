@@ -64,6 +64,18 @@ const canAdd = computed(
     (isSingle.value || !atCapacity.value)
 )
 
+// Image mode (`display: {image: true}`, TKT-WG1410D): one image shown as a
+// preview with replace and remove, instead of the file card. The server
+// checks the content; the picker filter and the type check below only save a
+// round trip.
+const imageMode = computed(() => props.propertyDef?.display?.image === true)
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
+const imageAccept = computed(() => (imageMode.value ? IMAGE_TYPES.join(',') : undefined))
+const imageSrc = computed(() => {
+  if (files.value.length) return apiUrl(files.value[0].href)
+  return staged.value.length ? stagedPreviewUrl(staged.value[0]) : undefined
+})
+
 const busy = ref(false)
 const progress = ref(0)
 const uploadError = ref('')
@@ -203,6 +215,10 @@ async function doDelete(att: AttachmentInfo) {
 // A picked file is STAGED in create mode and uploaded immediately in edit
 // mode — the single branch that separates the two behaviours.
 function acceptFile(file: File) {
+  if (imageMode.value && !IMAGE_TYPES.includes(file.type)) {
+    uploadError.value = t('widgets.file.imageOnly')
+    return
+  }
   if (canStage.value) stageFile(file)
   else void doUpload(file)
 }
@@ -231,7 +247,19 @@ function onDrop(event: DragEvent) {
          Staged cards are keyed by index, not by file content (RR-C6CXU1):
          name+size+mtime collides for two copies of the same file, which is
          reachable, since the picker is reset after each pick. -->
-    <RlAttachmentList v-if="files.length || staged.length" class="file-list">
+    <div v-if="imageMode && imageSrc" class="image-preview">
+      <img class="image-preview-img" :src="imageSrc" :alt="files[0]?.filename ?? staged[0]?.name" />
+      <button
+        v-if="canEdit || canStage"
+        type="button"
+        class="image-remove"
+        :disabled="busy"
+        @click="files.length ? doDelete(files[0]) : unstageFileAt(0)"
+      >
+        {{ t('widgets.file.imageRemove') }}
+      </button>
+    </div>
+    <RlAttachmentList v-else-if="!imageMode && (files.length || staged.length)" class="file-list">
       <RlAttachmentCard
         v-for="att in files"
         :key="att.id"
@@ -251,7 +279,9 @@ function onDrop(event: DragEvent) {
       />
     </RlAttachmentList>
 
-    <span v-else-if="mode !== 'edit'" class="file-empty">{{ t('widgets.file.none') }}</span>
+    <span v-else-if="mode !== 'edit'" class="file-empty">{{
+      imageMode ? t('widgets.file.imageNone') : t('widgets.file.none')
+    }}</span>
 
     <!-- Add / replace control (edit mode, with room). -->
     <div
@@ -263,14 +293,16 @@ function onDrop(event: DragEvent) {
       @drop.prevent="onDrop"
     >
       <label class="file-pick">
-        <input type="file" :disabled="busy" @change="onFileInput" />
+        <input type="file" :accept="imageAccept" :disabled="busy" @change="onFileInput" />
         <span>{{
           isSingle && (files.length || staged.length)
-            ? t('widgets.file.replace')
-            : t('widgets.file.add')
+            ? t(imageMode ? 'widgets.file.imageReplace' : 'widgets.file.replace')
+            : t(imageMode ? 'widgets.file.imageAdd' : 'widgets.file.add')
         }}</span>
       </label>
-      <span class="file-hint">{{ t('widgets.file.dragHint') }}</span>
+      <span class="file-hint">{{
+        imageMode ? t('widgets.file.imageHint') : t('widgets.file.dragHint')
+      }}</span>
       <span v-if="!isSingle" class="file-count">
         {{ files.length + staged.length }} / {{ maxCount }}
       </span>
@@ -359,6 +391,30 @@ function onDrop(event: DragEvent) {
   margin-left: auto;
   color: var(--text-muted, #6b7280);
   font-size: 12px;
+}
+
+.image-preview {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.image-preview-img {
+  max-width: 240px;
+  max-height: 160px;
+  object-fit: contain;
+  border: 1px solid var(--rl-color-border);
+  border-radius: 6px;
+  background: var(--rl-color-bg-raised);
+}
+
+.image-remove {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--rl-color-danger, #ef4444);
+  font-size: 13px;
+  cursor: pointer;
 }
 
 .file-progress {

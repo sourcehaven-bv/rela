@@ -852,7 +852,7 @@ entities:
 | `default`        | Default value for the property                                                        |
 | `format`         | Date format (Go layout string, e.g., `2006-01-02`)                                    |
 | `description`    | Documentation for the property                                                        |
-| `display`        | How the value is shown, such as `{currency: EUR}`, `{link: true}` or `{link: true, link_text: Website}` (see [Display formats](#display-formats)) |
+| `display`        | How the value is shown, such as `{currency: EUR}`, `{link: true}`, `{link: true, link_text: Website}` or `{image: true}` (see [Display formats](#display-formats)) |
 | `list: true`     | Allow multiple values (multi-select for enum types)                                   |
 | `computed`       | Pure entity-local expression materialized on every write; the property is read-only   |
 | `rollup`         | Summary of related entities, computed on read per reader; see [Roll-up properties](#roll-up-properties) |
@@ -860,7 +860,7 @@ entities:
 | `min` / `max`    | For `integer` and `decimal` properties: the lowest and highest allowed value, inclusive (see [Integer ranges](#integer-ranges-min-and-max)) |
 | `scale`          | For `decimal` properties: the most digits allowed after the point (see [Decimal numbers](#decimal-numbers)) |
 | `max`            | For `file` properties: max attachments (default 1)                                    |
-| `accept`         | For `file` properties: narrow the MIME allowlist (e.g. `[application/pdf]`)           |
+| `accept`         | For `file` properties: narrow the MIME allowlist (e.g. `[application/pdf]`); an image property accepts only image types |
 | `scan_cmd`       | For `file` properties: the scan command (array args); configuring it enables scanning |
 | `scan: off`      | For `file` properties: opt out of scanning despite a global `scan_cmd`                |
 | `transform`      | For `file` properties: ordered byte transforms, each `{cmd: [...]}` or `{image: {...}}` |
@@ -1409,6 +1409,51 @@ checked: a value that is not a web address still saves, and shows as text.
 
 `link` needs a single-valued `string` property without `values:`, and
 `link_text` needs `link: true` and may not be blank. Config load checks this.
+
+#### Image
+
+```yaml
+properties:
+  logo:
+    type: file
+    display:
+      image: true
+```
+
+A `file` property marked `image: true` holds one image. The server refuses
+anything else:
+
+- The content must be a PNG, JPEG, GIF or WebP image. The server judges the
+  bytes, not the file name or the type the browser reports, so a script
+  renamed to `logo.png` is refused.
+- SVG is refused, as are HTML and every other type. An SVG can carry script.
+- The file may be at most 5 MiB. A larger upload gets a 413 answer.
+- `accept:` may narrow the image types, for example `[image/png]`. It cannot
+  add a type that is not an image.
+
+The upload uses the same storage, permissions, scan and `transform:` steps as
+any `file` property. These checks run on the upload before any `transform:`
+step; a step is written by the operator and its output is not checked again.
+An `image:` transform step re-encodes the upload and drops its metadata.
+
+The image shows as follows:
+
+- The form shows an upload control with a preview, and replace and remove
+  actions. A create form stages the pick and uploads it after the entity is
+  saved.
+- The entity page shows the image as a preview.
+- A list column for the property (`columns: [{property: logo}]`) shows a
+  32 px thumbnail. The address of the image is built from the row's own value
+  and id, so the list asks the server for nothing extra. The browser loads
+  each image lazily, one request per visible row.
+
+Downloads are served with `Content-Disposition: attachment`,
+`X-Content-Type-Options: nosniff` and a sandboxing `Content-Security-Policy`,
+as for every attachment.
+
+`image` needs a `file` property that holds one file: no `list: true` and no
+`max` above 1. It cannot be combined with `currency` or `link`. Config load
+checks this.
 
 `display` is a map so that more formats can join later, such as a
 percentage or a unit.

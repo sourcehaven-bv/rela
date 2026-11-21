@@ -947,6 +947,22 @@ Create, and the entity is saved with its file. Two details are worth knowing:
   Nothing is silently dropped — but the failed files do have to be picked
   again, since the form that held them is gone by then.
 
+A `file` property with `display: {image: true}` in `schema.yaml` is an image
+(see "Image" under Display formats in the metamodel guide). Its form control
+shows a larger preview with replace and remove actions and offers only image
+files, and the entity page shows the image as a preview. In a list, name the
+property as an ordinary column and it shows as a small thumbnail:
+
+```yaml
+lists:
+  companies:
+    entity_type: company
+    columns:
+      - property: logo
+      - property: title
+        link: detail
+```
+
 Attachments inherit the owning entity's permissions: if you may not update the
 entity, you may not attach to it. A `fields:` rule that makes the file field
 read-only also blocks adding or removing its files.

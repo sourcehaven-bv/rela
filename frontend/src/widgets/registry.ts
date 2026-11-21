@@ -19,6 +19,7 @@ import MultiSelectWidget from './MultiSelectWidget.vue'
 import RruleWidget from './RruleWidget.vue'
 import FileWidget from './FileWidget.vue'
 import FileCellWidget from './FileCellWidget.vue'
+import ImageCellWidget from './ImageCellWidget.vue'
 import ExternalRefWidget from './ExternalRefWidget.vue'
 import UrlWidget from './UrlWidget.vue'
 
@@ -64,6 +65,7 @@ const hintKindToWidgetName: Record<WidgetHintKind, string> = {
 // no edit mode, so it must not be selectable there.
 const DENSE_HINT_WIDGETS: Record<Exclude<DenseHintKind, WidgetHintKind>, Component> = {
   file: FileCellWidget,
+  image: ImageCellWidget,
 }
 
 export function defineWidgetRegistry(): WidgetRegistry {
@@ -125,7 +127,7 @@ export function defineWidgetRegistry(): WidgetRegistry {
     resolveFromHint,
 
     resolveDense(hint) {
-      if (hint.kind === 'file') return DENSE_HINT_WIDGETS.file
+      if (hint.kind === 'file' || hint.kind === 'image') return DENSE_HINT_WIDGETS[hint.kind]
       return resolveFromHint({ kind: hint.kind, propertyName: hint.propertyName })
     },
   }

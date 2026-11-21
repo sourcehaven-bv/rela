@@ -24,6 +24,13 @@ func TestPolicyFor(t *testing.T) {
 			[]string{"image/png"}, []string{"g"}},
 		{"accept replaces global", &metamodel.Metamodel{Attachments: global},
 			metamodel.PropertyDef{Accept: []string{"application/pdf"}}, []string{"application/pdf"}, []string{"g"}},
+		{"image uses the image types", &metamodel.Metamodel{Attachments: global},
+			metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Display: &metamodel.PropertyDisplay{Image: true}},
+			metamodel.ImageMIMETypes, []string{"g"}},
+		{"image keeps a narrower accept", nil,
+			metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Accept: []string{"image/png"},
+				Display: &metamodel.PropertyDisplay{Image: true}},
+			[]string{"image/png"}, nil},
 		{"scan off", &metamodel.Metamodel{Attachments: global}, metamodel.PropertyDef{Scan: metamodel.ScanOff},
 			[]string{"image/png"}, nil},
 	} {

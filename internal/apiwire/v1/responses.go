@@ -804,7 +804,16 @@ type PropertyDef struct {
 // PropertyDisplay is the wire form of metamodel.PropertyDisplay.
 type PropertyDisplay struct {
 	Currency string `json:"currency,omitempty"`
-	Link     bool   `json:"link,omitempty"`
+	// Image marks a file property as an image (TKT-WG1410D).
+	Image bool `json:"image,omitempty"`
+	// LinkDisplay carries the link format; its fields sit at the top level
+	// of the JSON object.
+	LinkDisplay
+}
+
+// LinkDisplay is the link part of a property display (TKT-0101IO4).
+type LinkDisplay struct {
+	Link bool `json:"link,omitempty"`
 	// LinkText replaces the URL as the text of a link (TKT-IO9PTLD).
 	LinkText string `json:"link_text,omitempty"`
 }

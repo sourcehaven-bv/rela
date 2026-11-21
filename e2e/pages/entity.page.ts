@@ -866,4 +866,9 @@ export class EntityPage extends BasePage {
     await this.page.locator('.scope-nav').getByRole('link', { name: /^Next/ }).click();
     await this.page.waitForURL((url) => url.href !== startUrl);
   }
+
+  /** The image preview a file property with `display: {image: true}` shows. */
+  imagePreview(): Locator {
+    return this.page.locator("main img.image-preview-img");
+  }
 }

@@ -18,12 +18,13 @@ func TestToV1PropertyDef_Display(t *testing.T) {
 	}{
 		{"unset", nil, nil},
 		{"currency", &metamodel.PropertyDisplay{Currency: "EUR"}, &v1.PropertyDisplay{Currency: "EUR"}},
-		{"link", &metamodel.PropertyDisplay{Link: true}, &v1.PropertyDisplay{Link: true}},
+		{"link", &metamodel.PropertyDisplay{Link: true}, &v1.PropertyDisplay{LinkDisplay: v1.LinkDisplay{Link: true}}},
 		{
 			"link text",
 			&metamodel.PropertyDisplay{Link: true, LinkText: "Website"},
-			&v1.PropertyDisplay{Link: true, LinkText: "Website"},
+			&v1.PropertyDisplay{LinkDisplay: v1.LinkDisplay{Link: true, LinkText: "Website"}},
 		},
+		{"image", &metamodel.PropertyDisplay{Image: true}, &v1.PropertyDisplay{Image: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
