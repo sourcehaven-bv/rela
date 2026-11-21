@@ -139,18 +139,20 @@ const branches = computed(() =>
 )
 
 // The notice for each Completed.problem, keyed literally so the i18n guard
-// sees every message in use.
-const problemKeys: Record<NonNullable<FlowCompleted['problem']>, string> = {
+// sees every message in use. The step form shows a blocked step itself, at
+// its fields, where the reader is.
+const problemKeys: Record<Exclude<NonNullable<FlowCompleted['problem']>, 'blocked'>, string> = {
   guard: 'flows.step.problem.guard',
   moved: 'flows.step.problem.moved',
   settling: 'flows.step.problem.settling',
-  blocked: 'flows.step.problem.blocked',
 }
 
 async function onCompleted(result: FlowCompleted) {
-  if (result.problem === 'blocked') ui.warning(t(problemKeys.blocked))
-  else if (result.problem) ui.info(t(problemKeys[result.problem]))
-  else ui.success(result.finished ? t('flows.step.finished') : t('flows.step.done'))
+  if (result.problem && result.problem !== 'blocked') ui.info(t(problemKeys[result.problem]))
+  else if (!result.problem)
+    ui.success(result.finished ? t('flows.step.finished') : t('flows.step.done'))
+  // A form that stays shows its warnings at the fields; one that goes cannot.
+  if (result.moved && result.warnings?.length) ui.warning(t('flows.step.movedWithWarnings'))
   await reload()
   emit('changed')
 }
@@ -225,7 +227,12 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
       :aria-label="t('flows.waiting.title')"
     >
       <h4 v-if="manage" class="flow-run-card__heading">{{ t('flows.waiting.title') }}</h4>
-      <FlowWaiting :waiting="waiting" :detailed="manage" :can-complete="showStep" />
+      <FlowWaiting
+        :waiting="waiting"
+        :detailed="manage"
+        :can-complete="showStep"
+        :failed-message="shown.failed_message"
+      />
     </section>
 
     <section
@@ -261,6 +268,7 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
           :waiting="b.place.waiting"
           :detailed="manage"
           :can-complete="b.showStep"
+          :failed-message="shown.failed_message"
         />
         <FlowStepForm
           v-if="b.showStep"

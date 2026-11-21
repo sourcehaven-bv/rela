@@ -310,6 +310,8 @@ func (l *loader) flow(key, name string, n *yaml.Node) *Flow {
 	f.starts = l.starts(key+".start", raw.Start, f.subject, f.perSubject)
 	f.manage = l.manage(key+".manage", raw.Manage)
 	f.runAs = l.runAs(key+".run_as", raw.RunAs, f)
+	f.title = l.title(key+".title", raw.Title, f)
+	f.failedMessage = l.failedMessage(key+".failed_message", raw.FailedMessage)
 	if len(l.problems) > before {
 		return nil
 	}

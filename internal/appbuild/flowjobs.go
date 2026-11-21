@@ -15,7 +15,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -32,6 +34,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/secrets"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -139,8 +142,14 @@ func newFlowJobRunner(s *Services, as asIdentity) *flowJobRunner {
 	}
 }
 
-// RunJob implements [flowengine.JobRunner].
+// RunJob implements [flowengine.JobRunner]. The error it returns names no
+// secret value the project holds: the engine stores its text for the
+// managers of the run (BUG-53GP5F5).
 func (r *flowJobRunner) RunJob(ctx context.Context, call flowengine.JobCall) error {
+	return r.redact(call.Job.Script, r.runJob(ctx, call))
+}
+
+func (r *flowJobRunner) runJob(ctx context.Context, call flowengine.JobCall) error {
 	if call.RunAs == "" || principal.IsRelaIdentity(call.RunAs) {
 		return flowengine.Permanent(fmt.Errorf("flows: run_as %q may not run a job", call.RunAs))
 	}
@@ -250,7 +259,9 @@ func (r *flowJobRunner) runAction(ctx context.Context, call flowengine.JobCall) 
 	_, err = r.scripts.ExecuteActionRequest(ctx, a.Script, deps, script.ActionInvocation{
 		TriggerEntity: e, Params: params, Timeout: luaTimeout(ctx),
 	})
-	return scriptOutcome(err)
+	// The action's script may hold its own secrets; RunJob removes only
+	// the global ones and those of a job's own script.
+	return r.redact(a.Script, scriptOutcome(err))
 }
 
 // holdsPermission answers an action's `permission:` as the action route
@@ -337,6 +348,81 @@ func webhookSignature(key, ts string, body []byte) string {
 	mac.Write(body)
 	return hex.EncodeToString(mac.Sum(nil))
 }
+
+// minRedactLen is the shortest secret value [flowJobRunner.redact]
+// replaces: a shorter one would match ordinary words of the error.
+const minRedactLen = 4
+
+// redact returns err with every secret value visible to scriptPath, and
+// every global one, replaced by "[secret]": the value as is, URL-escaped
+// and quoted, the forms an error most often quotes it in. It keeps err's
+// chain, so [flowengine.ErrPermanent] still matches. Without secrets it
+// returns err. When the secrets cannot be read, it fails closed: the text
+// becomes [errSecretsUnread]'s.
+//
+// Nil: accepted, returns nil.
+func (r *flowJobRunner) redact(scriptPath string, err error) error {
+	if err == nil || r.host == nil {
+		return err
+	}
+	paths := []string{""}
+	if scriptPath != "" {
+		paths = append(paths, scriptPath)
+	}
+	var values []string
+	for _, path := range paths {
+		all, serr := r.host.Secrets(path)
+		if errors.Is(serr, secrets.ErrNotFound) || errors.Is(serr, lua.ErrHostConfigWithheld) {
+			// No secrets, or none the script could read either.
+			continue
+		}
+		if serr != nil {
+			return redactedError{msg: errSecretsUnread, err: err}
+		}
+		for _, v := range all {
+			values = append(values, secretForms(v)...)
+		}
+	}
+	msg := err.Error()
+	// The longest first, so a secret that contains another is replaced
+	// whole.
+	slices.SortFunc(values, func(a, b string) int { return len(b) - len(a) })
+	redacted := msg
+	for _, v := range values {
+		redacted = strings.ReplaceAll(redacted, v, "[secret]")
+	}
+	if redacted == msg {
+		return err
+	}
+	return redactedError{msg: redacted, err: err}
+}
+
+// errSecretsUnread replaces a job error whose secrets could not be read
+// to remove them.
+const errSecretsUnread = "flows: the job failed; its error is withheld because the secrets could not be read" //nolint:gosec // G101: a message about secrets, not one
+
+// secretForms returns v as is, URL-escaped and quoted, each form at least
+// [minRedactLen] long and once.
+func secretForms(v string) []string {
+	quoted := strconv.Quote(v)
+	forms := []string{v, url.QueryEscape(v), url.PathEscape(v), quoted[1 : len(quoted)-1]}
+	out := make([]string, 0, len(forms))
+	for _, f := range forms {
+		if len(f) >= minRedactLen && !slices.Contains(out, f) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// redactedError is an error whose text has its secret values removed.
+type redactedError struct {
+	msg string
+	err error
+}
+
+func (e redactedError) Error() string { return e.msg }
+func (e redactedError) Unwrap() error { return e.err }
 
 // secret reads the global secret name.
 func (r *flowJobRunner) secret(name string) (string, error) {

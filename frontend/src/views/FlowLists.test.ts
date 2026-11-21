@@ -13,6 +13,7 @@ const api = vi.hoisted(() => ({
   listFlows: vi.fn<() => Promise<Flow[]>>(),
   listFlowRuns: vi.fn<() => Promise<FlowRunPage>>(),
   listFlowTasks: vi.fn<() => Promise<FlowTaskPage>>(),
+  retryFlowRun: vi.fn<(id: string) => Promise<void>>(),
 }))
 vi.mock('@/api/flows', async (orig) => ({
   ...(await orig<typeof import('@/api/flows')>()),
@@ -107,5 +108,35 @@ describe('flow lists', () => {
     expect(cells.map((c) => c.text())).toEqual(['Ada', 'PER-2', 'Cy'])
     expect(cells[2].element.tagName).toBe('SPAN')
     for (const l of w.findAll('tbody a')) expect(l.classes()).toContain('flow-list__link')
+  })
+
+  it('lists failed runs with a Retry button above the tasks, and retries one', async () => {
+    api.listFlowTasks.mockResolvedValue({
+      tasks: [],
+      failed: [task({ run: 'R9', state: 'provision', state_label: 'Provision' })],
+      total: 0,
+      truncated: false,
+    })
+    api.retryFlowRun.mockResolvedValue()
+    const w = mount(FlowTasksView)
+    await flushPromises()
+    const rows = w.findAll('[data-testid="flow-failed-row"]')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].text()).toContain('Provision')
+    // A failed run is something to do, so the list is not empty.
+    expect(w.text()).not.toContain('Nothing waits for you')
+
+    await w.find('[data-testid="flow-failed-retry"]').trigger('click')
+    await flushPromises()
+    expect(api.retryFlowRun).toHaveBeenCalledWith('R9')
+    expect(api.listFlowTasks).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows no failed runs section when the server sends none', async () => {
+    api.listFlowTasks.mockResolvedValue({ tasks: [], failed: [], total: 0, truncated: false })
+    const w = mount(FlowTasksView)
+    await flushPromises()
+    expect(w.find('[data-testid="flow-tasks-failed"]').exists()).toBe(false)
+    expect(w.text()).toContain('Nothing waits for you')
   })
 })

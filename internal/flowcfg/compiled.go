@@ -147,6 +147,10 @@ type Flow struct {
 	// branch to its fork, by index, and its branch: a fork target.
 	forks  []Fork
 	region map[string]regionOf
+	// title is how the flow titles its runs; failedMessage is
+	// `failed_message:`, empty when the flow sets none.
+	title         runTitle
+	failedMessage string
 }
 
 // regionOf places a state in a fork's branch.

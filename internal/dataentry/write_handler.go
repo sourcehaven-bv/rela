@@ -921,7 +921,8 @@ func writeRuleRefusal(w http.ResponseWriter, r *http.Request, err error) bool {
 
 // validationFieldErrors maps each failure of a refused write to a
 // [v1.FieldError]. The detail is the failure's own message, which never
-// quotes a property value (see [metamodel.ValidationError]).
+// quotes a property value (see [metamodel.ValidationError]). A rule's
+// failure also carries the properties it reads and its description.
 func validationFieldErrors(invalid *entitymanager.ValidationError) []v1.FieldError {
 	out := make([]v1.FieldError, 0, len(invalid.Errors))
 	for _, e := range invalid.Errors {
@@ -930,9 +931,11 @@ func validationFieldErrors(invalid *entitymanager.ValidationError) []v1.FieldErr
 			pointer = "/properties/" + jsonPointerEscape(e.Property)
 		}
 		out = append(out, v1.FieldError{
-			Source: v1.ErrorSource{Pointer: pointer},
-			Code:   string(e.Type),
-			Detail: e.Message,
+			Source:  v1.ErrorSource{Pointer: pointer},
+			Code:    string(e.Type),
+			Detail:  e.Message,
+			Fields:  e.Fields,
+			Message: e.Description,
 		})
 	}
 	return out

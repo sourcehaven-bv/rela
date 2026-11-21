@@ -50,6 +50,8 @@
       "jobRunning": "De taak van deze stap loopt: poging {n} van {max}.",
       "jobWaiting": "De taak van deze stap wacht op poging {n} van {max}.",
       "jobWaitingAt": "De taak van deze stap wacht op poging {n} van {max}, om {at}.",
+      "jobRetrying": "De taak van deze stap is mislukt en wordt opnieuw geprobeerd: poging {n} van {max}.",
+      "jobRetryingAt": "De taak van deze stap is mislukt en wordt opnieuw geprobeerd: poging {n} van {max}, om {at}.",
       "jobFailed": "De taak van deze stap is mislukt na {n} mislukte poging: {why}. Probeer de run opnieuw om opnieuw te beginnen. | De taak van deze stap is mislukt na {n} mislukte pogingen: {why}. Probeer de run opnieuw om opnieuw te beginnen.",
       "jobFailKind": {
         "exhausted": "er zijn geen pogingen meer over",
@@ -71,7 +73,8 @@
       "forOthers": "Deze stap wacht op iemand anders.",
       "waiting": "Deze stap wacht.",
       "processing": "Deze stap wordt verwerkt.",
-      "failedPlain": "Deze stap kon niet worden afgerond. Iemand die deze flow beheert, moet hem opnieuw proberen."
+      "failedPlain": "Bij deze stap ging iets mis. De stap gaat verder zodra het team achter dit proces het heeft opgelost.",
+      "jobError": "Laatste fout:"
     },
     "step": {
       "title": "Stap",
@@ -82,6 +85,8 @@
       "completing": "Bezig met afronden…",
       "done": "Stap afgerond.",
       "finished": "Stap afgerond. De run is klaar.",
+      "blockedRequired": "De run blijft bij deze stap: de voorwaarde van de volgende stap is nog niet vervuld. Controleer de velden met een *. Uw invoer blijft bewaard.",
+      "movedWithWarnings": "De run is verder gegaan. Bij sommige ingevulde waarden staat een waarschuwing: controleer ze bij het onderwerp.",
       "problem": {
         "blocked": "De run blijft bij deze stap: nog geen voorwaarde van de volgende stap is vervuld. Uw invoer blijft bewaard.",
         "guard": "Uw waarden zijn opgeslagen, maar een voorwaarde van de volgende stap kon niet worden gecontroleerd. De run blijft staan.",
@@ -140,7 +145,11 @@
       "loadFailed": "Uw taken konden niet worden geladen.",
       "empty": "Er wacht niets op u.",
       "truncated": "Niet alle taken konden worden gelezen. Kies een flow om de rest te zien.",
-      "branchState": "{state} (tak {branch})"
+      "branchState": "{state} (tak {branch})",
+      "failedTitle": "Mislukte runs",
+      "failedHint": "De taak van deze runs is definitief mislukt. Probeer een run opnieuw als de oorzaak is opgelost.",
+      "waitingTitle": "Wacht op u",
+      "actions": "Acties"
     }
   },
   "inbox": {

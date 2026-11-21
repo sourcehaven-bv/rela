@@ -79,6 +79,8 @@ flows:
 | Key | Meaning |
 | --- | ------- |
 | `label` | The name people see. Defaults to the flow's name. |
+| `title` | The title a run stores when it starts, as a [template](#template-placeholders), such as `"Signup {{subject.company_name}}"`. At most 200 characters. Without it, a run is titled by the flow's label and the subject's title. See [Runs](#runs). |
+| `failed_message` | What someone who does not manage the flow reads while a job step of a run failed, such as how to reach support. Plain text, at most 500 characters. Without it, the web app says that something went wrong and that the step continues once the team behind the process has solved it. |
 | `subject` | The entity type a run follows. Required. Name the type itself, not an alias. A type with faces is not supported yet. |
 | `run_as` | The job identity the flow's outputs write as. Required when a state has outputs. acl.yaml must grant it every write the outputs make. |
 | `per_subject` | `one` (the default) allows one open run per subject; `many` allows several. |
@@ -400,9 +402,21 @@ the same for every attempt) let a receiver drop a repeat.
 **A failed job** leaves the run in its state, with status `failed` in the
 run's view and the reason: `exhausted`, `permanent`, `timeout` or `lost`.
 The run list shows the run as `failed` too. Its header keeps the status of
-the state, because a retry can move the run on. So the list's status filter
-finds the run under that status, `working` for example, and not under
-`failed`.
+the state, because a retry can move the run on. The list's status filter
+finds the run under `failed`, and also under the state's own status,
+`working` for example.
+
+rela keeps the error of the last failed attempt, as one line of at most
+512 bytes. Before it keeps the text, rela replaces each secret value the
+script may read with `[secret]`, also in URL-escaped and quoted form. A
+secret shorter than 4 characters, or another encoding of a secret such
+as base64, stays. The error can quote anything the job
+read as the flow's `run_as`, so only someone who manages the run sees
+it: the run's view leaves it out for everyone else. While attempts remain, the view shows
+which attempt comes next and when, with the last error.
+
+**Flow tasks** lists the failed runs you manage above your tasks, each
+with a Retry button.
 
 In a fork, the other branches go on. A branch whose job waits or failed
 has not arrived: a join that needs it waits, and one that does not (`any`,
@@ -491,6 +505,18 @@ ends, its body holds the run's timeline: each state it entered, when, and
 the user who moved it or cancelled it. Two relations
 link it to the graph: `_carries` points at the subject, and `_produced`
 points at each entity a step created.
+
+**Title.** A run stores a title when it starts, and keeps it. Entity
+lists, search and links show the stored title. The flow's `title:` sets
+it. A title template may read what an output template reads, except
+`{{run.id}}`, and no subject property that a `visible:` grant restricts:
+every reader of the subject reads the run. Like a value an output copies,
+a title that reads a subject property is a copy: it stays on the run when
+the subject changes or is deleted, and a later `visible:` grant does not
+change it. Without `title:`, the stored title is the flow's label, and the
+run's page and the API show the flow's label and the subject's title as
+you may read it, such as `Onboarding: Ada`. A run started before runs had
+titles shows its id in entity lists.
 
 **Who can read a run.** A run is readable exactly when its subject is.
 rela follows the run's `_carries` edge and applies the subject's read
@@ -655,8 +681,27 @@ then does not follow cleanly, the answer says why in `problem`: `guard`
 already moved on, for example by a timer), `settling` (the run moved,
 but a later output step failed and is retried) or `blocked` (you may take
 a branch, but no branch's `when` holds, so the run stays and waits for the
-step again; this also applies when you sent no values). The panel shows `blocked` as a warning, so that the person
-who completed the step knows that it did not go through.
+step again; this also applies when you sent no values). The step form
+shows `blocked` as a notice above its button, and keeps your entries on
+screen.
+
+**Feedback at the fields.** The step form marks a field as required
+when every `change` branch's `when` reads it. The mark is a hint: the
+branch's `when` decides. When the subject's schema refuses a value, the
+form shows why at the field:
+
+- A failed check of the property itself, such as a required value or an
+  enum, shows at that property.
+- A [validation rule](metamodel.md#enforcing-a-rule-on-write-enforce-write) with `enforce: write` shows
+  its `description` at the first field of the form that the rule's `then`
+  reads, or its `when` when `then` reads no property. A rule that reads
+  no field of the form shows above the button.
+- A value that fails its type's [`pattern`](metamodel.md#regex-validations) is still written. The form shows
+  the pattern's `error` as a warning at the field. When the run moves on
+  anyway, the panel says that some values have a warning. The answer of
+  `_complete` lists these warnings in `warnings`, by field.
+
+The first field with a message gets focus, and the form stays in view.
 
 The panel also offers a Start button for each flow with an `on: manual`
 start whose `permission:` you hold for the entity. A flow with
@@ -667,7 +712,9 @@ no `manage`. Retry tries the failed outputs of a step again now, instead
 of waiting for the next attempt.
 
 The sidebar has two pages when the project has flows. **Flow tasks**
-lists the runs that wait for a role you hold, oldest first. **Flow runs**
+lists the runs that wait for a role you hold, oldest first. Above them it
+lists the runs whose job step failed, when you manage them, with a Retry
+button each. **Flow runs**
 lists every run you can read, newest first, filtered by flow and status.
 Both lists read at most 500 (tasks) or 1,000 (runs) runs, the oldest
 tasks and the newest runs; past that they say the list is cut short, and a
@@ -708,14 +755,14 @@ second completion is refused.
 | Route | What it does |
 | ----- | ------------ |
 | `GET /api/v1/_flows` | The flows of `flows.yaml`, with their `per_subject` and diagrams |
-| `GET /api/v1/_flows/tasks?flow=&page=&per_page=` | Your tasks |
+| `GET /api/v1/_flows/tasks?flow=&page=&per_page=` | Your tasks, and in `failed` the runs you manage whose job step failed (not paged) |
 | `GET /api/v1/_flows/runs?flow=&status=&page=&per_page=` | The runs you can read |
 | `GET /api/v1/_flows/runs?subject=PER-12` | The runs on one entity, with why each waits, and in `startable` the flows you may start on it |
 | `POST /api/v1/_flows/runs` | Start a run: `{"flow":"onboarding","subject":"PER-12"}` |
 | `GET /api/v1/_flows/runs/{id}` | One run, with why it waits and `_actions` |
 | `POST /api/v1/_flows/runs/{id}/_complete` | Do the step: `{"generation":3,"properties":{"documents":true}}` |
 | `POST /api/v1/_flows/runs/{id}/_cancel` | Cancel the run |
-| `POST /api/v1/_flows/runs/{id}/_retry` | Retry the failed outputs now |
+| `POST /api/v1/_flows/runs/{id}/_retry` | Retry the failed outputs or the failed job now |
 
 `_actions` on a run says whether `complete`, `cancel` and `retry` would
 be accepted for you, by the same checks the POST routes make. `manage`
