@@ -32,10 +32,14 @@ const (
 	OpCreateRelation = "create-relation"
 	OpUpdateRelation = "update-relation"
 	OpDeleteRelation = "delete-relation"
+	// OpAppendRecords is one append of record rows, a ledger reversal
+	// included. Subject has Kind "record", the record type and the id of the
+	// first row; Summary names the row count, the last row id, the owners
+	// and any ledger transactions. One line covers the whole batch.
+	OpAppendRecords = "append-records"
 	// OpUpdateRecord and OpDeleteRecord are changes to a row of a mutable
 	// record type (TKT-ERO2X5G). Subject has Kind "record", the record type
-	// and the row id. Appends are not audited: an append-only row keeps its
-	// own attribution.
+	// and the row id.
 	OpUpdateRecord = "update-record"
 	OpDeleteRecord = "delete-record"
 

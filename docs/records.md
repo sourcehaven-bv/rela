@@ -128,9 +128,20 @@ existing transaction belongs to owners you cannot read. So a caller who
 may post can learn that a key is in use. Use keys that reveal nothing on
 their own, or keys the posting application generates.
 
-Appends are not in the audit log. Each row stores who appended it
-(`recorded_by`) and when (`recorded_at`). Changes and deletes of mutable
+Each row stores who appended it (`recorded_by`) and when
+(`recorded_at`). Every append also writes one `append-records` line to the
+audit log, however many rows it holds. The line names the record type, the
+row count, the first and last row id, the owners and, for a ledger, the
+transactions. A reversal writes the same line, starting with the
+transaction it reverses. An append refused because you may read an owner
+but not update it writes a `denied-write` line that names the owner. No
+other refusal writes a line: not a hidden owner, and not an invalid row, an
+unbalanced or reused transaction or a closed period. Changes and deletes of mutable
 rows are audited, as described above.
+
+Because the audit log gets one line per append request, a writer that
+produces many rows should send them in batches of up to 1,000 rows rather
+than one request per row.
 
 When an owner is renamed, its rows move with it. When an owner is deleted,
 its rows are deleted too. A soft-deleted owner keeps its rows until it is

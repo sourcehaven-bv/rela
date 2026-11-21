@@ -17,8 +17,9 @@
 // its own, an audit line, a search update, versioning, automations and
 // validation, none of which a reading needs. So rows stay out of the store,
 // the version sweep and the search index, as comments and channels do. A
-// row is attributed on itself ([Record.RecordedBy]); only a change to a
-// mutable row is audited.
+// row is attributed on itself ([Record.RecordedBy]). The audit log gets one
+// line per append, however many rows it holds, and one per change to a
+// mutable row.
 //
 // # What this package holds
 //

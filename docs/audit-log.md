@@ -123,7 +123,9 @@ serialized.
 
 Other records describe an event that is not a stored write, such as a
 refused write (`denied-write`) or the use of elevated access
-(`acl-bypass`). These go through a background writer that appends
+(`acl-bypass`). Writes to record rows (`append-records`,
+`update-record`, `delete-record`) are also recorded this way, after the
+write has committed. These go through a background writer that appends
 queued records in batches. A failed batch is retried for about 20
 seconds and then logged as `audit.write_failed` and dropped. The queue
 holds at most 100,000 records; records that arrive when it is full are
@@ -205,6 +207,8 @@ Every record is one line of JSON:
 | `create-entity`, `update-entity`, `delete-entity`, `rename-entity`, `convert-entity` | Entity writes, including type conversion |
 | `restore-entity`, `purge-deleted-entity` | Undo of a web-app delete, and the final removal once the undo window has passed. See "Undoable deletes" below |
 | `create-relation`, `update-relation`, `delete-relation` | Relation writes |
+| `append-records` | One append of record rows, a ledger reversal included. Subject has kind `record`, the record type and the first row id; the summary names the row count, the last row id, the owners and any ledger transactions. See [Records](records.md) |
+| `update-record`, `delete-record` | A change to or delete of one row of a mutable record type. The summary names the changed fields, never their values |
 | `denied-write` | A write the ACL refused, or an upload the attachment policy refused. Subject names the would-be target; the summary carries the rule that fired |
 | `acl-bypass`, `acl-bypass-read` | A write or read that skipped the ACL through an elevated script handle (`rela.bypass_acl`). The principal is the REAL triggering identity |
 | `acl-query` | An effective-access query (`rela acl who-can`) — who asked, when, and about which entity. **The answer is deliberately not recorded**: it is a list of principals and their access routes, so logging it would duplicate the disclosure rather than record it |
