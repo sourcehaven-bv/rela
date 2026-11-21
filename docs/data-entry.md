@@ -9413,8 +9413,8 @@ documents" below.
 
 Both kinds carry an **Export as ...** entry in the header's more menu (the
 ellipsis button) when the metamodel registers any `transforms:`, converting the
-document's markdown to PDF/DOCX/etc. Export is gated exactly like the render — same checks, same order — so a document you may
-view is one you may export. Documents using a `command:` renderer are not
+document's markdown to PDF/DOCX/etc. Export is gated exactly like the render — same checks, same order — so a
+document you may view is one you may export. Documents using a `command:` renderer are not
 exportable. See [View Export & Transforms](transforms.md#exporting-a-document).
 
 The frontend's `DocumentsPanel.vue` shows every entity-anchored document whose
