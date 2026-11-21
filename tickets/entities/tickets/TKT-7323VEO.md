@@ -4,7 +4,7 @@ type: ticket
 title: 'Detail view polish: composer and headings'
 kind: chore
 priority: low
-effort: small
+effort: xs
 status: done
 ---
 
