@@ -461,6 +461,9 @@ const conditionBindings = (): Bindings => ({
 
 // An embedded wizard keeps its step in memory: `?step=` is a single global key
 // that the host form already owns (see FormWizardOptions.syncUrl).
+// A create form is short unless it asks for the body with `body: true`; the
+// type's template body is still applied on save. Edit forms keep the editor.
+const showBodyEditor = computed(() => isEdit.value || !!formConfig.value?.body)
 const wizard = useFormWizard(formConfig, conditionBindings, { syncUrl: !props.embedded })
 
 // Field lookup by property, for reading per-field config (clear_when_hidden)
@@ -2995,7 +2998,7 @@ defineExpose({
         <p v-else class="section-description">{{ t('form.noFields') }}</p>
 
         <!-- Content field (markdown body). Shown on the final (or only) step. -->
-        <div v-if="wizard.isLastStep.value" class="form-field content-field">
+        <div v-if="wizard.isLastStep.value && showBodyEditor" class="form-field content-field">
           <label for="content">{{ t('form.content') }}</label>
           <MarkdownEditor
             ref="markdownEditorRef"

@@ -742,7 +742,7 @@ forms:
 | `title`          | string | Form heading                                              |
 | `description`    | string | Help text shown below the heading (Markdown)              |
 | `mode`           | string | `"edit"` for edit forms (omit for create forms)           |
-| `body`           | bool   | Show a markdown body editor                               |
+| `body`           | bool   | Show a markdown body editor. A create form shows it only with `true`; the type's template body is still applied on save |
 | `fields`         | list   | Property fields                                           |
 | `relations`      | list   | Relation picker fields                                    |
 
@@ -958,10 +958,14 @@ lists:
   companies:
     entity_type: company
     columns:
-      - property: logo
       - property: title
         link: detail
+      - property: logo
 ```
+
+The first column is the row title and link, so it cannot be an image. When
+a later column sets `link`, that column is the title and a first column such
+as `logo` shows as an ordinary column after it.
 
 Attachments inherit the owning entity's permissions: if you may not update the
 entity, you may not attach to it. A `fields:` rule that makes the file field
@@ -2735,6 +2739,9 @@ lists:
 | `buckets`  | string | `relative` groups a date by how far away it is. See [Date buckets](#date-buckets). |
 | `labels`   | map    | Section titles for the date buckets. Only with `buckets`. |
 | `max_rows` | int    | How many rows the list loads, from 1 to 2000. Default 500. |
+
+A grouped list that has a `create_form` shows **Add** in each section, so the
+header **New** button is hidden.
 
 The sections depend on the property:
 
@@ -5316,6 +5323,10 @@ as with **New**. **Add** on the **Other** column opens the form without a
 target. Because every column already offers **Add**, the header **New** button
 is hidden on such a board. **Create & add another** is not offered from a column, for the same
 reason as from a list section.
+
+A board whose columns come from an enum `column_property` offers **Add** in
+each column too. The card starts with that column's value, and the header
+**New** button is hidden. A board with swimlanes keeps **New**.
 
 A list can group on a relation the same way: `group_by` takes `relation`,
 `offered_by`, `order_by` and `style_from` with the same meaning, one section

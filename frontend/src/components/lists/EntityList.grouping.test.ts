@@ -89,7 +89,7 @@ describe('EntityList grouped by a property', () => {
 
   async function mountList(
     response: Partial<ListResponse<Entity>['meta']> = {},
-    pageScope?: { page: string; tab: string; entity: string },
+    pageScope?: { page: string; tab: string; entity: string }
   ) {
     seedSchema({
       property: 'status',
@@ -148,6 +148,11 @@ describe('EntityList grouped by a property', () => {
     expect(wrapper.text()).not.toContain('Status')
   })
 
+  it('hides the header New button because sections offer Add', async () => {
+    const wrapper = await mountList()
+    expect(wrapper.findAll('a,button').find((b) => b.text().startsWith('New'))).toBeUndefined()
+  })
+
   it("prefills the section's value when a row is added from it", async () => {
     const wrapper = await mountList()
     await wrapper.find('button[aria-label="Add to In progress"]').trigger('click')
@@ -179,11 +184,18 @@ describe('EntityList grouped by a property', () => {
         topic: {
           label: 'Topic',
           entity_type: 'topic',
-          tabs: [{
-            id: 'tabel', label: 'Tabel', view: 'list', target: listId,
-            scope: 'relation', relation: 'bestaat_uit', direction: 'outgoing',
-            links: [{ type: entityType, relation: 'bestaat_uit', direction: 'outgoing' }],
-          }],
+          tabs: [
+            {
+              id: 'tabel',
+              label: 'Tabel',
+              view: 'list',
+              target: listId,
+              scope: 'relation',
+              relation: 'bestaat_uit',
+              direction: 'outgoing',
+              links: [{ type: entityType, relation: 'bestaat_uit', direction: 'outgoing' }],
+            },
+          ],
         },
       })
     })
@@ -191,7 +203,12 @@ describe('EntityList grouped by a property', () => {
     it('reads only the anchor’s rows', async () => {
       await mountList({}, scope)
       const [, params] = listAllEntitiesMock.mock.calls[0]
-      expect(params).toMatchObject({ scope_page: 'topic', scope_tab: 'tabel', anchor: 'TOP-1', sort: 'status,title' })
+      expect(params).toMatchObject({
+        scope_page: 'topic',
+        scope_tab: 'tabel',
+        anchor: 'TOP-1',
+        sort: 'status,title',
+      })
     })
 
     it('links a row added from a section to the anchor', async () => {
@@ -200,7 +217,14 @@ describe('EntityList grouped by a property', () => {
       await wrapper.find('button[aria-label="Add to In progress"]').trigger('click')
       wrapper.findComponent(InlineCreateFormModal).vm.$emit('created', task('T-9', 'New', 'doing'))
       await flushPromises()
-      expect(createRelationMock).toHaveBeenCalledWith('topic', 'TOP-1', 'bestaat_uit', 'T-9', undefined, 'outgoing')
+      expect(createRelationMock).toHaveBeenCalledWith(
+        'topic',
+        'TOP-1',
+        'bestaat_uit',
+        'T-9',
+        undefined,
+        'outgoing'
+      )
     })
   })
 })

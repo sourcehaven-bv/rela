@@ -1232,9 +1232,10 @@ const createModal = useCreateModal(
 // an edge to the column's target, so it lands in the column it was added
 // from; on a page tab it is linked to the anchor as well (linkCreated above).
 // The Other column names no target, so its Add opens the plain form.
+// A property-backed board offers it too: the new card starts with the column's
+// value. A swimlane board has no column Add, so it keeps the header button.
 const showColumnAdd = computed(
-  () =>
-    (!!columnsFrom.value || isPlainWall.value) && !!kanbanConfig.value?.create_form && canCreate()
+  () => !!kanbanConfig.value?.create_form && canCreate() && boardLanes.value.length === 0
 )
 const createPrefill = ref<{
   properties: Record<string, unknown>
@@ -1243,10 +1244,17 @@ const createPrefill = ref<{
 function onColumnAdd(section: Section<BoardCard>) {
   const relation = columnsFrom.value?.relation
   const target = relationColumns.targetType.value
-  createPrefill.value =
-    relation && target && section.id !== OTHER_COLUMN
-      ? { properties: {}, relations: { [relation]: [{ id: section.id, type: target }] } }
-      : undefined
+  const property = kanbanConfig.value?.column_property
+  if (relation && target && section.id !== OTHER_COLUMN) {
+    createPrefill.value = {
+      properties: {},
+      relations: { [relation]: [{ id: section.id, type: target }] },
+    }
+  } else if (!columnsFrom.value && !isPlainWall.value && property && section.id) {
+    createPrefill.value = { properties: { [property]: section.id } }
+  } else {
+    createPrefill.value = undefined
+  }
   createModal.show()
 }
 // A column's prefill belongs to the one dialog it opened; New opens without.
