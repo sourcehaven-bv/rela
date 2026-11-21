@@ -64,6 +64,7 @@
     "capabilities": {
       "as_of": false,
       "atomic_batch": false,
+      "flows": false,
       "git": false
     }
   },

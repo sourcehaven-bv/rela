@@ -61,6 +61,8 @@ describe('Sidebar built-in rows', () => {
 
   async function mountSidebar(asOf = false) {
     const pinia = createPinia()
+    // A loaded schema of a project with flows (capabilities.flows).
+    Object.assign(useSchemaStore(pinia), { loaded: true, flowsEnabled: true })
     if (asOf) {
       useSchemaStore(pinia).asOfEnabled = true
     }

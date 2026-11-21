@@ -723,6 +723,10 @@ second completion is refused.
 | `POST /api/v1/_flows/runs/{id}/_cancel` | Cancel the run |
 | `POST /api/v1/_flows/runs/{id}/_retry` | Retry the failed outputs now |
 
+A project without `flows.yaml` serves none of these routes: they answer
+404. `GET /api/v1/_schema` says which applies in `capabilities.flows`, and
+the web app does not call the flow routes when it is `false`.
+
 `_actions` on a run says whether `complete`, `cancel` and `retry` would
 be accepted for you, by the same checks the POST routes make. `manage`
 says whether you hold the permission that cancels the run; the web app

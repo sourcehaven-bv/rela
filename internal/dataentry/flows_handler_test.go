@@ -201,6 +201,32 @@ func TestFlowsAPI_NotWired(t *testing.T) {
 	require.Error(t, SetFlows(app, nil))
 }
 
+// TestSchemaCapabilities_Flows pins capabilities.flows: the SPA asks for
+// GET /_flows only when the schema says the project has flows, so a project
+// without them gets no 404 on every page.
+func TestSchemaCapabilities_Flows(t *testing.T) {
+	flowsCapability := func(app *App) bool {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		app.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var got struct {
+			Capabilities struct {
+				Flows *bool `json:"flows"`
+			} `json:"capabilities"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		require.NotNil(t, got.Capabilities.Flows, "capabilities.flows is always present")
+		return *got.Capabilities.Flows
+	}
+
+	app := newHandlerTestApp(t)
+	require.False(t, flowsCapability(app), "no flows declared")
+
+	require.NoError(t, SetFlows(app, &fakeFlows{}))
+	require.True(t, flowsCapability(app), "flows declared")
+}
+
 // TestFlowsAPI_BodyLimit pins the 413 for a body past the limit.
 func TestFlowsAPI_BodyLimit(t *testing.T) {
 	app := newHandlerTestApp(t)
