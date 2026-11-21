@@ -115,7 +115,7 @@ func navStatusInGo(
 			// than a missing one.
 			return v1.NavStatus{}, false, fmt.Errorf("status[%d]: condition is not compiled", i)
 		}
-		kept, err := applyViewCondition(ctx, rows, m, a.redactedForSuggestion, a.Services().Store)
+		kept, err := applyViewCondition(ctx, rows, m, suggestionRedactor(a.affordances), a.Services().Store)
 		if err != nil {
 			return v1.NavStatus{}, false, fmt.Errorf("status[%d]: %w", i, err)
 		}
@@ -294,7 +294,7 @@ func configuredListRows(
 	if cond != nil {
 		ctx = primeVerdicts(ctx, a.fieldResolver, rows)
 	}
-	rows, err = applyViewCondition(ctx, rows, cond, a.redactedForSuggestion, a.Services().Store)
+	rows, err = applyViewCondition(ctx, rows, cond, suggestionRedactor(a.affordances), a.Services().Store)
 	if err != nil {
 		return ctx, nil, err
 	}

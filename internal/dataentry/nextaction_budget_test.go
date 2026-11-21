@@ -113,7 +113,7 @@ func TestNextAction_StaleCurrentOnAWholeReadReadsOnce(t *testing.T) {
 	once := counting.Cost().Calls
 
 	counting.Reset()
-	got, err := app.queryCandidates(ctx, query, nil,
+	got, err := app.nextActions.queryCandidates(ctx, query, nil,
 		nextaction.Want{First: nextaction.DefaultCandidateCap, Keep: "TKT-GONE"})
 	require.NoError(t, err)
 	require.Len(t, got, 30)

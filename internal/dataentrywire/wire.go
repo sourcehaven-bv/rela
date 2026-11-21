@@ -108,11 +108,8 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 		return fmt.Errorf("wire reconcile: %w", err)
 	}
 
-	if err := app.SetUserState(svc.UserState()); err != nil {
-		return fmt.Errorf("wire next-action state: %w", err)
-	}
-	if err := app.SetNextActionMatchers(appbuild.NextActionMatchers); err != nil {
-		return fmt.Errorf("wire next-action matchers: %w", err)
+	if err := app.SetNextActions(svc.UserState(), appbuild.NextActionMatchers); err != nil {
+		return fmt.Errorf("wire next actions: %w", err)
 	}
 	if err := app.SetViewConditions(dataentry.AdaptViewConditions(appbuild.ViewConditions)); err != nil {
 		return fmt.Errorf("wire view conditions: %w", err)

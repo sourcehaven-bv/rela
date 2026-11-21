@@ -309,6 +309,10 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		panic(pilesErr)
 	}
 
+	// Next-action handler (mirrors NewApp). Its state backend and condition
+	// compiler stay unset until a test installs them.
+	app.nextActions = newNextActionHandler(app)
+
 	// writeHandler mirrors production wiring (see NewApp): closures for the
 	// swappable acl/audit collaborators, values for the fixed service handles,
 	// and App's shared read/write helpers so both paths stay identical.

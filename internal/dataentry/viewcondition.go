@@ -146,7 +146,7 @@ func AdaptViewConditions[M ViewConditionMatcher](
 // SetViewConditions injects the predicate compiler backing a list's or
 // kanban's `condition:`.
 //
-// Separate from NewApp for the same reason as [App.SetNextActionMatchers]:
+// Separate from NewApp for the same reason as [App.SetNextActions]:
 // the compiler lives above this package, so the composition root supplies it.
 // Rejects nil for the same reason too — a silently absent compiler would
 // leave every condition unevaluated, showing rows the operator's view
@@ -169,7 +169,8 @@ func (a *App) SetViewConditions(fn ViewConditionFunc) error {
 //
 // Compiles per call rather than caching: config and metamodel reload at
 // runtime, so a lookup captured at boot would evaluate an expression the
-// operator has since edited — the trap the nextActionMatchers field documents.
+// operator has since edited — the trap the nextActionHandler.matchers field
+// documents.
 // Compilation is a parse of one short expression and the Evaluator memoizes
 // programs, so this is cheap next to the store read it gates.
 //

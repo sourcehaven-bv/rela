@@ -38,7 +38,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
-	"github.com/Sourcehaven-BV/rela/internal/userstate"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -153,7 +152,7 @@ type appEntityWriter interface {
 // handler as a parameter and `toolForPath` is a package function, so the
 // mount cost one method rather than three.
 //
-// TKT-N8XQ2R adds [App.SetNextActionMatchers] on the same terms (103 -> 104):
+// TKT-N8XQ2R adds SetNextActionMatchers on the same terms (103 -> 104):
 // the predicate compiler backing a source's `condition:` lives above this
 // package, so it arrives through the same setter idiom rather than a 13th
 // positional NewApp parameter. The compiling and matching themselves stay OFF
@@ -226,8 +225,15 @@ type appEntityWriter interface {
 // terms as SetComments: one wiring setter, with the routes on pilesHandler.
 // Ratchet target, as above.
 //
-//plimsoll:max-methods=92
-//plimsoll:max-exported-methods=24
+// The next-action cluster (the /_next_action handlers, the engine builder,
+// the candidate and pick_one reads, and the userState / nextActionMatchers
+// fields) moved to nextActionHandler, and redactedForSuggestion became a
+// package function (92 -> 80). SetUserState and SetNextActionMatchers merged
+// into one wiring setter, [App.SetNextActions] (23 -> 22 exported; the
+// exported pin had lagged at 24).
+//
+//plimsoll:max-methods=80
+//plimsoll:max-exported-methods=22
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -322,30 +328,13 @@ type App struct {
 	// the regular searcher on fs/memory builds, pgstore-native on the
 	// postgres build.
 	visibleSearcher search.VisibleSearcher
-	// userState backs the next-action layer's per-user snooze / mute /
-	// cooldown records. NOT graph content: a snooze is a fact about one
-	// person's relationship to a suggestion, and storing it as an entity
-	// would flood the audit log and the postgres version sweep (cooldown
-	// alone writes on every render). Nil when the deployment wires no
-	// backend — the next-action endpoints then report "not configured"
-	// rather than silently forgetting what users asked to hide.
-	userState userstate.Store
-
-	// nextActionMatchers compiles a source's `condition:` into a predicate
-	// matcher. Injected because the compiler lives above this package (it
-	// needs predicatefns + the metamodel), the same way the composition root
-	// picks the userstate backend while consumers take the seam.
-	//
-	// Takes the live config + metamodel rather than a prebuilt lookup: both
-	// reload at runtime, and a lookup captured at boot would evaluate a stale
-	// condition after an operator edits data-entry.yaml. Nil when no
-	// deployment wired it — sources declaring a condition then fail engine
-	// construction rather than silently matching everything.
-	nextActionMatchers NextActionMatcherFunc
+	// nextActions owns /_next_action, its per-user state and its condition
+	// compiler. Always non-nil after NewApp; see [App.SetNextActions].
+	nextActions *nextActionHandler
 
 	// viewConditions resolves a list's or kanban's compiled `condition:`.
-	// Injected for the same reason nextActionMatchers is: the compiler lives
-	// above this package, and arch-lint forbids dataentry importing
+	// Injected for the same reason the next-action condition compiler is: the
+	// compiler lives above this package, and arch-lint forbids dataentry importing
 	// conditionlint or predicate.
 	//
 	// Nil when no deployment wired it, which means every view behaves as it
@@ -1576,6 +1565,10 @@ func NewApp(
 		return nil, pilesErr
 	}
 	app.piles = pilesH
+
+	// nextActionHandler owns /_next_action, extracted on the same terms. Its
+	// state backend and condition compiler are installed by SetNextActions.
+	app.nextActions = newNextActionHandler(app)
 
 	// attachmentHandler owns the entity-attachment routes. Constructed after
 	// the runner wiring above so it captures the resolved runner. The acl/

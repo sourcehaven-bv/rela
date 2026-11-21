@@ -23,7 +23,7 @@ func TestNextAction_RelatedCondition(t *testing.T) {
 	seedAssignedTicket(app, "TKT-linked", "alice")
 	seedEntity(app, &entity.Entity{ID: "FEAT-1", Type: "feature", Properties: map[string]any{"title": "f"}})
 	seedRelation(app, &entity.Relation{From: "TKT-linked", Type: "implements", To: "FEAT-1"})
-	require.NoError(t, app.SetNextActionMatchers(appbuild.NextActionMatchers))
+	require.NoError(t, app.nextActions.setMatchers(appbuild.NextActionMatchers))
 
 	for _, tc := range []struct{ name, condition, want string }{
 		{"related", "related(entity, 'implements')", "TKT-linked"},
