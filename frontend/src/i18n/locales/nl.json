@@ -1684,5 +1684,10 @@
     "now": "Nu",
     "backToNow": "Terug naar nu",
     "readOnly": "Deze pagina toont een eerdere stand en is alleen-lezen. Ga terug naar nu om iets te wijzigen."
+  },
+  "notFound": {
+    "title": "Pagina niet gevonden",
+    "description": "Op dit adres staat geen pagina. Misschien is de pagina verplaatst, of klopt de link niet.",
+    "home": "Naar de startpagina"
   }
 }

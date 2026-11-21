@@ -4862,7 +4862,9 @@ company's page with the step form of that run in view.
 - **The button.** A `navigate` offer fills `{type}` and `{id}` with the
   subject and `{run}` with the run. Without a `navigate` offer, rela adds
   an "Open" button to `/entity/<type>/<id>?run=<run>`. On the entity page,
-  `?run=` scrolls to that run in the Flows panel and focuses it.
+  `?run=` scrolls the step form of that run in the Flows panel to the top of
+  the page and focuses the run. The form stays there while the rest of the
+  page loads, until you scroll yourself.
 - **Which task.** The source offers its oldest waiting task, by start of
   the run. A snoozed or dismissed task gives way to the next oldest.
   Other sources in the same band still compete with it as usual.
@@ -6611,6 +6613,10 @@ space instead.
 When the Search row is hidden, the `/` shortcut to the search page is off too.
 When every row is hidden, the pinned band is left out.
 
+On a page load the sidebar shows no rows until the sidebar endpoint has
+answered, so the built-in rows do not flash up before the space's own
+navigation. If the endpoint fails, the built-in rows are shown.
+
 `permission:` here works like [`permission:` on a navigation
 entry](#hiding-entries-a-user-cannot-act-on-permission), including the
 behaviour without `acl.yaml`, where every row is shown. Both settings only
@@ -6720,6 +6726,11 @@ page in the same space.
 **The app root** (`/`) opens the home of the current space: the space the user
 is in, else the space this browser was last in, else the first space the user
 may see. Without `spaces:` the root opens the dashboard. `/dashboard` always opens the dashboard.
+
+**An unknown address** shows a "Page not found" page with a link to the home
+page, with or without a space prefix. `/login` opens the home page, and
+`/s/<space>/login` the home of that space: the app only runs for a signed-in
+user, and the server or the proxy in front of it handles signing in.
 
 A portal for customers next to a back office for staff, where each group lands
 in its own space:
@@ -7588,7 +7599,9 @@ ACL.
 
 The script receives the entity in the `entity` global, including `entity.face`.
 After it finishes, the page shows the returned `message` and reloads the entity,
-so the new content is visible at once.
+so the new content is visible at once. The panels below the entity (Changes,
+documents, flow runs and "Mentioned by") are read again too, so the change the
+script made shows in the Changes list without a page reload.
 
 An action with `available_on` needs an entity, so it cannot be referenced from
 a list's `actions`, a navigation entry, or a next-action offer. The server

@@ -2148,7 +2148,10 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     } else {
       uiStore.error(getErrorMessage(err, t('form.saveEntityFailed')))
     }
-    console.error(err)
+    // A refusal (4xx) is an answer, shown to the user; only an unexpected
+    // failure (no response, or 5xx) is logged (BUG-UZGMHIK).
+    const status = err instanceof ApiError ? err.status : undefined
+    if (status === undefined || status >= 500) console.error(err)
   } finally {
     saving.value = false
   }

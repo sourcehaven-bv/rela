@@ -1137,6 +1137,9 @@ const detailActions = computed<DetailAction[]>(() => {
   return out.sort((a, b) => a.label.localeCompare(b.label))
 })
 const detailActionBusy = ref(false)
+// Bumped after an action, so the panels that read their own lists (changes,
+// documents, flow runs, mentions) read them again.
+const panelRevision = ref(0)
 // The action whose request is in flight; its button shows the pending label.
 const runningActionId = ref<string | null>(null)
 // The open proposal of an `llm:` action (TKT-4USH1HO). The action wrote
@@ -1147,6 +1150,14 @@ const llmProposal = ref<{ proposal: ActionProposal; label: string; entityType: s
   null
 )
 const { reportResult, reportError } = useActionFeedback()
+
+// After an action or an applied proposal wrote to this entity. The view
+// brings the sections and relations; the panels below it read their own
+// lists, so they are told to read again (BUG-UZGMHIK).
+async function reloadAfterWrite() {
+  await loadView()
+  panelRevision.value++
+}
 
 async function runDetailAction(action: DetailAction, ev?: Event) {
   if (detailActionBusy.value) return
@@ -1185,7 +1196,7 @@ async function runDetailAction(action: DetailAction, ev?: Event) {
     }
     // The script usually rewrote this entity; show the result without a
     // manual refresh.
-    await loadView()
+    await reloadAfterWrite()
   } catch (err) {
     reportError(err, triggerEl, label)
   } finally {
@@ -2811,7 +2822,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
         :entity-type="llmProposal.entityType"
         :label="llmProposal.label"
         @close="llmProposal = null"
-        @applied="loadView()"
+        @applied="reloadAfterWrite()"
       />
       <DuplicateModal
         v-if="showDuplicateModal && entry && duplicateFormId"
@@ -3523,11 +3534,19 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
              Nested here (not a sibling of .sections) so it picks up the
              container's flex `gap` for free instead of duplicating that
              spacing via its own margin. -->
-        <DocumentsPanel :entity-type="entityType" :entity-id="entityRef(entry)" />
+        <DocumentsPanel
+          :entity-type="entityType"
+          :entity-id="entityRef(entry)"
+          :revision="panelRevision"
+        />
 
         <!-- Flow runs on this entity (TKT-ZAXRXND). Self-gating: renders
              nothing unless flows.yaml declares a flow on this type. -->
-        <FlowRunsPanel :entity-type="entityType" :entity-id="entityRef(entry)" />
+        <FlowRunsPanel
+          :entity-type="entityType"
+          :entity-id="entityRef(entry)"
+          :revision="panelRevision"
+        />
 
         <!-- Backlinks: entities whose body mentions this one. Self-gating:
              renders nothing while nothing the reader can see mentions it.
@@ -3537,11 +3556,16 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           v-if="!viewData.hideMentionedByPanel && !readingPast"
           :entity-type="entityType"
           :entity-id="entityRef(entry)"
+          :revision="panelRevision"
         />
 
         <!-- Audit changes (TKT-X1ZFO04). Self-gating: renders nothing unless
              the sidebar reports a database audit log. -->
-        <ChangesPanel :entity-type="entityType" :entity-id="entityRef(entry)" />
+        <ChangesPanel
+          :entity-type="entityType"
+          :entity-id="entityRef(entry)"
+          :revision="panelRevision"
+        />
 
         <!-- Comment thread. Self-gating: renders nothing unless the schema
              marks this type commentable, so a project with no `comments:`

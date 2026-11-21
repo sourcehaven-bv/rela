@@ -1684,5 +1684,10 @@
     "now": "Now",
     "backToNow": "Back to now",
     "readOnly": "This page shows a past state and is read-only. Go back to now to make changes."
+  },
+  "notFound": {
+    "title": "Page not found",
+    "description": "There is no page at this address. It may have moved, or the link may be wrong.",
+    "home": "Go to the home page"
   }
 }
