@@ -5,6 +5,8 @@ import { ref, computed, onMounted } from 'vue'
 import { usePageTitle } from '@/composables/useDocumentTitle'
 import { RouterLink, useRoute, type RouteLocationRaw } from 'vue-router'
 import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlRenderedDiff from 'rela-components/components/doc/RlRenderedDiff.vue'
+import { hasChanges } from 'rela-components/components/doc/renderedDiff'
 import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 import { useUIStore, useSchemaStore } from '@/stores'
@@ -14,10 +16,8 @@ import { getErrorMessage, ApiError } from '@/api/errors'
 import { listVersions, getVersion, restoreVersion, type VersionMeta } from '@/api/history'
 import { getEntity as fetchEntity } from '@/api/entities'
 import {
-  lineDiff,
   propertyDiff,
   versionOpLabel as opLabel,
-  type DiffLine,
   type PropertyChange,
 } from '@/utils/lineDiff'
 import { useVersionSelectionSync, type Side } from '@/composables/useVersionSelectionSync'
@@ -90,7 +90,9 @@ function defaultSelection(): { base: Side; target: Side } {
   return { base: versions.value[versions.value.length - 1].version, target: 'current' }
 }
 
-const contentDiff = ref<DiffLine[]>([])
+// The two bodies, for the rendered diff.
+const beforeContent = ref('')
+const afterContent = ref('')
 const propDiff = ref<PropertyChange[]>([])
 const restoring = ref(false)
 
@@ -214,13 +216,15 @@ async function recompute() {
       sideState(targetSel.value),
     ])
     if (seq !== recomputeSeq) return // a newer recompute superseded this one
-    contentDiff.value = lineDiff(before.content, after.content)
+    beforeContent.value = before.content
+    afterContent.value = after.content
     propDiff.value = propertyDiff(before.properties, after.properties)
   } catch (err) {
     if (seq !== recomputeSeq) return
     // Clear the stale diff so the pane never shows a comparison that no longer
     // matches the dropdowns.
-    contentDiff.value = []
+    beforeContent.value = ''
+    afterContent.value = ''
     propDiff.value = []
     uiStore.showToast('error', getErrorMessage(err, t('history.diffFailed')))
   }
@@ -311,7 +315,7 @@ const faceLabel = computed(() => {
   return schemaStore.faceLabel(entityType.value, face.value) || face.value
 })
 
-const hasContentChanges = computed(() => contentDiff.value.some((l) => l.op !== 'equal'))
+const hasContentChanges = computed(() => hasChanges(beforeContent.value, afterContent.value))
 
 // Newest-first for the compare dropdowns (the timeline itself is oldest-first).
 const versionsNewestFirst = computed(() => [...versions.value].reverse())
@@ -471,11 +475,7 @@ onMounted(load)
 
         <div v-if="hasContentChanges" class="content-diff-block">
           <div class="content-diff-label">{{ t('history.content') }}</div>
-          <pre class="content-diff"><code
-          ><span v-for="(l, i) in contentDiff" :key="i" class="diff-line" :data-op="l.op">{{
-            l.op === 'add' ? '+ ' : l.op === 'del' ? '- ' : '  '
-          }}{{ l.text }}
-</span></code></pre>
+          <RlRenderedDiff class="content-diff" :before="beforeContent" :after="afterContent" />
         </div>
 
         <RlStatusRegion v-if="!propDiff.length && !hasContentChanges" tone="info" size="sm">
@@ -695,26 +695,11 @@ onMounted(load)
   margin-bottom: 6px;
 }
 .content-diff {
-  background: var(--code-bg, var(--rl-color-bg));
+  background: var(--rl-color-bg);
   border: 1px solid var(--rl-color-border);
   padding: 12px;
   border-radius: 6px;
-  overflow-x: auto;
-  font-size: 0.85em;
-  white-space: pre-wrap;
-  word-break: break-word;
   max-height: 420px;
   overflow-y: auto;
-  margin: 0;
-}
-.diff-line {
-  display: block;
-}
-.diff-line[data-op='add'] {
-  color: var(--rl-color-status-green);
-}
-.diff-line[data-op='del'] {
-  color: var(--rl-color-danger);
-  text-decoration: line-through;
 }
 </style>

@@ -271,6 +271,13 @@ export const NL_MESSAGES: Messages = {
 
   resultCount: ({ shown, total }) => `${shown} van ${total}`,
 
+  diffChangeCount: ({ count }) => `${count} ${count === 1 ? 'wijziging' : 'wijzigingen'}`,
+  diffPosition: ({ current, total }) => `${current} van ${total}`,
+  diffPrevious: 'Vorige wijziging',
+  diffNext: 'Volgende wijziging',
+  diffUnchangedBlocks: ({ count }) => `${count} ongewijzigde blokken`,
+  diffNoChanges: 'Geen wijzigingen',
+
   cardGrabbed: ({ title }) =>
     `${title}, opgepakt. Kies een kolom met de pijltjestoetsen, zet neer met Enter, annuleer met Escape.`,
   cardAtRest: ({ title, section }) =>
