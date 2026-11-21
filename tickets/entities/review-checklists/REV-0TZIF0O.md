@@ -39,7 +39,7 @@ unexplained suppression is a finding nobody can re-evaluate later.
 - [x] All significant review-responses addressed (RR-HH44NGN, RR-IG9MQ20)
 - [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** RR-JEKORKF, RR-HH44NGN, RR-IG9MQ20, RR-O7F0NZL, RR-XNQYTEH, RR-Z41KQIK, RR-I6NT67V, RR-0P1EN9J, RR-4UM9N28, RR-VXEJS3F
+**Review Responses:** RR-JEKORKF, RR-HH44NGN, RR-IG9MQ20, RR-O7F0NZL, RR-XNQYTEH, RR-Z41KQIK, RR-I6NT67V, RR-0P1EN9J, RR-4UM9N28, RR-VXEJS3F, RR-SEC1TTL, RR-SEC2JOB
 
 ## Acceptance Verification
 

@@ -411,8 +411,8 @@ rela keeps the error of the last failed attempt, as one line of at most
 script may read with `[secret]`, also in URL-escaped and quoted form. A
 secret shorter than 4 characters, or another encoding of a secret such
 as base64, stays. The error can quote anything the job
-read as the flow's `run_as`, so only someone who manages the run sees
-it: the run's view leaves it out for everyone else. While attempts remain, the view shows
+read as the flow's `run_as`, so only someone who manages the run and
+reads its subject sees it: the run's view leaves it out for everyone else. While attempts remain, the view shows
 which attempt comes next and when, with the last error.
 
 **Flow tasks** lists the failed runs you manage above your tasks, each
@@ -515,7 +515,8 @@ a title that reads a subject property is a copy: it stays on the run when
 the subject changes or is deleted, and a later `visible:` grant does not
 change it. Without `title:`, the stored title is the flow's label, and the
 run's page and the API show the flow's label and the subject's title as
-you may read it, such as `Onboarding: Ada`. A run started before runs had
+you may read it, such as `Onboarding: Ada`. Where the subject is withheld
+from you, a run shows only the flow's label, also with `title:`. A run started before runs had
 titles shows its id in entity lists.
 
 **Who can read a run.** A run is readable exactly when its subject is.

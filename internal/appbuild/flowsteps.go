@@ -512,7 +512,9 @@ func (c *FlowControl) unnamedViews(ctx context.Context, cl *caller, hdrs []*enti
 			})
 		}
 		manage := manages.may(ctx, run.Subject.ID, c.runManagePermissions(ctx, flows, run))
-		withholdJobError(&v, manage)
+		// The error text can hold subject values, so a manager who may not
+		// read the subject does not get it either.
+		withholdJobError(&v, manage && subj != nil)
 		failedMessage(ctx, flows, run, &v)
 		v.Actions = flowview.Actions{
 			Complete: len(x.Parallel) == 0 && mayStep(w, x),
@@ -548,8 +550,14 @@ func (c *FlowControl) nameSubjects(ctx context.Context, runs []flowview.Run) err
 		return err
 	}
 	for i := range runs {
-		runs[i].SubjectTitle = titles[runs[i].Subject].title
-		runs[i].Title = c.viewTitle(runs[i])
+		if subj, ok := titles[runs[i].Subject]; ok {
+			runs[i].SubjectTitle = subj.title
+			runs[i].Title = c.viewTitle(runs[i])
+		} else {
+			// The subject is withheld from this reader. A stored title can
+			// hold its values, so the run is named by its flow alone.
+			runs[i].Subject, runs[i].SubjectTitle, runs[i].Title = "", "", flowOnlyTitle(runs[i])
+		}
 		for j := range runs[i].Log {
 			e := &runs[i].Log[j]
 			if t, ok := titles[e.By]; ok && person != "" && t.typ == person && t.title != e.By {
@@ -571,6 +579,15 @@ func (c *FlowControl) viewTitle(v flowview.Run) string {
 		return v.Title
 	}
 	return v.FlowLabel + ": " + v.SubjectTitle
+}
+
+// flowOnlyTitle names v by its flow, for a reader who may not read its
+// subject.
+func flowOnlyTitle(v flowview.Run) string {
+	if v.FlowLabel != "" {
+		return v.FlowLabel
+	}
+	return v.Flow
 }
 
 // subjectOf reads the subject at ref through the gate, once per
@@ -613,9 +630,10 @@ func waitingOf(x flowengine.Explanation, holds func(string) bool) *flowview.Wait
 }
 
 // withholdJobError removes the job error from v and its branches unless
-// the caller manages the run (BUG-53GP5F5).
-func withholdJobError(v *flowview.Run, manage bool) {
-	if manage {
+// show is set: the caller manages the run and reads its subject
+// (BUG-53GP5F5).
+func withholdJobError(v *flowview.Run, show bool) {
+	if show {
 		return
 	}
 	strip := func(w *flowview.Waiting) {
