@@ -185,6 +185,17 @@ export class KanbanPage extends BasePage {
     await expect(this.createDialog).toBeVisible();
   }
 
+  /** The per-column "+" buttons of a board whose columns offer create. */
+  get columnAddButtons(): Locator {
+    return this.page.locator('.rl-board-column__add');
+  }
+
+  /** The board's columns offer Add, so the header carries no New button. */
+  async expectColumnAddWithoutHeaderNew() {
+    await expect(this.columnAddButtons.first()).toBeVisible();
+    await expect(this.page.getByRole('button', { name: 'New', exact: true })).toHaveCount(0);
+  }
+
   /** Press the dialog's Create, not "Create & add another". */
   async submitCreateDialog() {
     await this.createDialog.getByRole('button', { name: /^Create(?! &)/ }).click();

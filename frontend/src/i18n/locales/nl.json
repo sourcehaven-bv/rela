@@ -489,6 +489,8 @@
     "view": "Bekijken",
     "copyTo": "Kopiëren naar",
     "export": "Exporteren",
+    "moreActions": "Meer acties",
+    "exportAs": "Exporteren als {format}",
     "convertMenu": "Omzetten",
     "convert": {
       "defaultFaceLower": "standaardvariant",

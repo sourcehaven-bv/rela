@@ -1369,7 +1369,7 @@ async function quickAdd(
           {{ b.action.label || b.id }}
         </RlButton>
         <RlButton
-          v-if="kanbanConfig?.create_form && canCreate()"
+          v-if="kanbanConfig?.create_form && canCreate() && !showColumnAdd"
           variant="primary"
           icon="plus"
           @click="createModal.show"

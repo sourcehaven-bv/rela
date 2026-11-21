@@ -489,6 +489,8 @@
     "view": "View",
     "copyTo": "Copy to",
     "export": "Export",
+    "moreActions": "More actions",
+    "exportAs": "Export as {format}",
     "convertMenu": "Convert",
     "convert": {
       "defaultFaceLower": "default face",

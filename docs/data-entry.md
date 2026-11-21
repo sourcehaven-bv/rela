@@ -3237,6 +3237,11 @@ Omit `create:` entirely to keep a section read-only. There is no `create: false`
 — absence already means that, and a second spelling of one meaning is refused at
 load.
 
+A relation whose two ends are the same type works like any other, which is how
+sub-tasks are modelled: collect the children with `follow` or `follow_incoming`
+on the self-relation and add `create: {}` to the section. The new entity is
+linked in the direction the section collected by.
+
 **Which types are offered is derived, not configured.** A type appears only when
 all three hold: the section's relation can reach it, a form exists that can
 create it, and the user has permission to create it. So there is no list of
@@ -5289,7 +5294,8 @@ With a `create_form`, each column has an **Add** button. A card created from
 it starts with an edge to that column's target, so it lands in the column it
 was added from. On a page tab, the card is also linked to the page's entity,
 as with **New**. **Add** on the **Other** column opens the form without a
-target. **Create & add another** is not offered from a column, for the same
+target. Because every column already offers **Add**, the header **New** button
+is hidden on such a board. **Create & add another** is not offered from a column, for the same
 reason as from a list section.
 
 A list can group on a relation the same way: `group_by` takes `relation`,
@@ -9430,10 +9436,10 @@ paths (e.g. `/form/<form_id>/<entity_id>`, `/entity/ticket/TKT-001`) get a
 back on the document after submitting the form. See "Links in rendered
 documents" below.
 
-Both kinds carry an **"Export ▾"** menu when the metamodel registers any
-`transforms:`, converting the document's markdown to PDF/DOCX/etc. Export is
-gated exactly like the render — same checks, same order — so a document you may
-view is one you may export. Documents using a `command:` renderer are not
+Both kinds carry an **Export as ...** entry in the header's more menu (the
+ellipsis button) when the metamodel registers any `transforms:`, converting the
+document's markdown to PDF/DOCX/etc. Export is gated exactly like the render — same checks, same order — so a
+document you may view is one you may export. Documents using a `command:` renderer are not
 exportable. See [View Export & Transforms](transforms.md#exporting-a-document).
 
 The frontend's `DocumentsPanel.vue` shows every entity-anchored document whose
