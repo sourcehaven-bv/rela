@@ -38,3 +38,8 @@ property or relation, then the raw name.
 name shows only when no page title arrives within two seconds.
 - [ ] A currency amount always shows the currency's minor unit (€49.00).
 - [ ] The SPA skips the git status request when `/_schema` reports no git.
+
+## CI follow-ups
+
+The contract fixture and the inline-edit E2E now expect the schema label and
+the git capability; long lines in schema_labels.go are wrapped for lll.

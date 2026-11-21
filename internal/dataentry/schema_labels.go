@@ -47,12 +47,12 @@ func schemaRelationLabel(meta *metamodel.Metamodel, entityType, relation string,
 	if dir == "" {
 		// An ambiguous binding is refused at config load; reading it as
 		// outgoing here only picks which schema label to show.
-		if inferred, res := dataentryconfig.InferDirection(entityType, relation, meta); res == dataentryconfig.DirectionResolved {
+		inferred, res := dataentryconfig.InferDirection(entityType, relation, meta)
+		if res == dataentryconfig.DirectionResolved {
 			dir = inferred
 		}
 	}
-	if dir.IsIncoming() &&
-		def.Inverse != nil && def.Inverse.Label != "" {
+	if dir.IsIncoming() && def.Inverse != nil && def.Inverse.Label != "" {
 		return def.Inverse.Label
 	}
 	return def.Label
@@ -61,7 +61,9 @@ func schemaRelationLabel(meta *metamodel.Metamodel, entityType, relation string,
 // withSchemaLabels returns cols with each empty label filled from the
 // schema, read on the first of types that knows the property or relation.
 // The input is not changed: it is the loaded config.
-func withSchemaLabels(meta *metamodel.Metamodel, types []string, cols []dataentryconfig.ListColumn) []dataentryconfig.ListColumn {
+func withSchemaLabels(
+	meta *metamodel.Metamodel, types []string, cols []dataentryconfig.ListColumn,
+) []dataentryconfig.ListColumn {
 	if len(cols) == 0 {
 		return cols
 	}
