@@ -129,6 +129,7 @@ import { useConfirm, withConfirmError } from '@/composables/useConfirm'
 import { useDelayedPending } from '@/composables/useDelayedPending'
 import { beginRouteLoad } from '@/composables/useNavigationPending'
 import { useStickyHeight } from '@/composables/useStickyHeight'
+import { useHasHistory } from '@/composables/useHasHistory'
 import { PENDING_TIMINGS } from '@/composables/pendingTimings'
 import { recordRecentEntity } from '@/utils/recentEntities'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
@@ -1780,7 +1781,19 @@ watch([viewData, worldInfo], ([, info]) => {
 // The operator may also hide it with `header_buttons.history` (TKT-31822PN),
 // which the server resolves per principal. That is a UX choice, not access
 // control: `/_history` keeps its own ACL.
-const showHistory = computed(() => schemaStore.historyEnabled && schemaStore.headerButtons.history)
+//
+// It is also absent while the face has no recorded version (BUG-9WCZYOX):
+// a button that opens "No versions recorded yet" leads nowhere.
+const historyOffered = computed(
+  () => schemaStore.historyEnabled && schemaStore.headerButtons.history
+)
+const hasHistory = useHasHistory({
+  enabled: () => historyOffered.value,
+  entityType: () => props.entityType,
+  address: () => servedRef.value,
+  world: () => worldParam.value,
+})
+const showHistory = computed(() => historyOffered.value && hasHistory.value)
 
 // The export formats, for the action list. ExportMenu fetches the same cached
 // registry for the desktop button.

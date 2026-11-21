@@ -1615,6 +1615,12 @@
       "title": "Changes",
       "empty": "No changes recorded.",
       "system": "System",
+      "actor": {
+        "idp": "Identity provider ({event})",
+        "webhook": "Webhook {name}",
+        "integration": "Integration {name}"
+      },
+      "incoming": "{label}, from {source}",
       "changedFields": "Changed: {fields}",
       "op": {
         "created": "Created",

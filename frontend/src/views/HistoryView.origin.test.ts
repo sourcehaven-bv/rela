@@ -164,7 +164,8 @@ describe('HistoryView restore follows the face on screen', () => {
 
   it('offers Restore in the default world (the control)', async () => {
     const w = await mountWith([meta({ op: 'update' })], {
-      _actions: { update: true }, _self: '/api/v1/policys/POL-1',
+      _actions: { update: true },
+      _self: '/api/v1/policys/POL-1',
     })
     expect(w.text()).toContain('Restore')
   })
@@ -173,7 +174,8 @@ describe('HistoryView restore follows the face on screen', () => {
     mockRouteQuery.value = { world: 'published' }
     mockRestore.mockResolvedValue({} as never)
     const w = await mountWith([meta({ op: 'update' })], {
-      _actions: { update: true }, _self: '/api/v1/policys/POL-1@published',
+      _actions: { update: true },
+      _self: '/api/v1/policys/POL-1@published',
     })
     // RlButton also renders its pending label, hidden, after the label.
     const button = w.findAll('button').find((b) => b.text().startsWith('Restore'))
@@ -185,8 +187,36 @@ describe('HistoryView restore follows the face on screen', () => {
 
   it('withdraws Restore when the face is not writable', async () => {
     const w = await mountWith([meta({ op: 'update' })], {
-      _actions: { update: false }, _self: '/api/v1/policys/POL-1@published',
+      _actions: { update: false },
+      _self: '/api/v1/policys/POL-1@published',
     })
     expect(w.text()).not.toContain('Restore')
+  })
+})
+
+// BUG-9WCZYOX: the header names the entity by its title, not `type · id`.
+describe('HistoryView subject', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    mockRouteQuery.value = {}
+  })
+
+  it('names the entity by its title', async () => {
+    const w = await mountWith([meta()], { _title: 'Acceptable use' })
+    const header = w.find('.page-header p').text()
+    expect(header).toContain('Acceptable use')
+    expect(header).not.toContain('policy')
+    expect(header).not.toContain('POL-1')
+  })
+
+  it('falls back to the type and id when the live entity is gone', async () => {
+    const w = await mountWith([meta()])
+    mockGetEntity.mockRejectedValue(new Error('404'))
+    mockList.mockResolvedValue({ versions: [meta()], face: '', worldFaceAbsent: false })
+    w.unmount()
+    const again = mount(HistoryView, { global: { stubs: { Badge: true } } })
+    await vi.waitFor(() => expect(again.find('.timeline-item').exists()).toBe(true))
+    expect(again.find('.page-header p').text()).toContain('policy · POL-1')
   })
 })

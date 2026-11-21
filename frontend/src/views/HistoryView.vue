@@ -12,6 +12,7 @@ import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.v
 import { useUIStore, useSchemaStore } from '@/stores'
 import { useWorld } from '@/composables/useWorld'
 import { entityRef } from '@/utils/entityRef'
+import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { getErrorMessage, ApiError } from '@/api/errors'
 import { listVersions, getVersion, restoreVersion, type VersionMeta } from '@/api/history'
 import { getEntity as fetchEntity } from '@/api/entities'
@@ -315,6 +316,15 @@ const faceLabel = computed(() => {
   return schemaStore.faceLabel(entityType.value, face.value) || face.value
 })
 
+// The entity the timeline belongs to, by its title as the reader sees it
+// (BUG-9WCZYOX). Until the live entity loads, or when it is gone, the type's
+// label and the address.
+const subjectName = computed(() => {
+  if (current.value) return entityDisplayTitle(current.value)
+  const label = schemaStore.getEntityType(entityType.value)?.label || entityType.value
+  return `${label} · ${entityId.value}`
+})
+
 const hasContentChanges = computed(() => hasChanges(beforeContent.value, afterContent.value))
 
 // Newest-first for the compare dropdowns (the timeline itself is oldest-first).
@@ -329,7 +339,7 @@ onMounted(load)
       <div>
         <h2>{{ t('history.title') }}</h2>
         <p>
-          {{ entityType }} · {{ entityId }}
+          {{ subjectName }}
           <!--
             Named only under a world. In the default world there is one face and
             labelling it would be noise; under a world the label is the whole

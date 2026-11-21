@@ -55,7 +55,7 @@ const rows = computed(() =>
   changes.value.map((c) => ({
     seq: c.seq,
     time: c.time,
-    actor: actorText(c),
+    actor: actorText(c, titles.value),
     op: opText(c.op),
     subject: subjectText(c, selfId.value, titles.value, schema),
     fields: summaryText(c, schema),

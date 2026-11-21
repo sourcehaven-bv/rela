@@ -112,11 +112,11 @@ describe('ChangesPanel', () => {
           time: '2026-01-01T08:00:00Z',
           op: 'create-entity',
           subject: { kind: 'entity', type: 'ticket', id: 'TKT-1' },
-          user: 'carol',
+          user: 'PSN-19',
           summary: 'created',
         },
       ],
-      titles: { 'CON-7': 'Login' },
+      titles: { 'CON-7': 'Login', 'PSN-19': 'Carol' },
     })
     const wrapper = mountPanel()
     await flushPromises()
@@ -138,6 +138,9 @@ describe('ChangesPanel', () => {
     expect(rows[2]).not.toContain('updated')
     expect(rows[3]).toContain('Created')
     expect(rows[3]).not.toContain('created')
+    // A person who made a change reads by their title (BUG-9WCZYOX).
+    expect(rows[3]).toContain('Carol')
+    expect(rows[3]).not.toContain('PSN-19')
     // Text interpolation, never markup.
     expect(rows[2]).toContain('<b>bob</b>')
     expect(wrapper.find('b').exists()).toBe(false)
