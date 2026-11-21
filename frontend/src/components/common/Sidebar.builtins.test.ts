@@ -6,6 +6,7 @@ import { PiniaColada } from '@pinia/colada'
 import type { SidebarData } from '@/types'
 import type { Flow } from '@/api/flows'
 import { resetFlowList } from '@/composables/useFlowList'
+import { useSchemaStore } from '@/stores/schema'
 
 let sidebar: SidebarData
 
@@ -58,9 +59,13 @@ describe('Sidebar built-in rows', () => {
     vi.restoreAllMocks()
   })
 
-  async function mountSidebar() {
+  async function mountSidebar(asOf = false) {
+    const pinia = createPinia()
+    if (asOf) {
+      useSchemaStore(pinia).asOfEnabled = true
+    }
     wrapper = mount(Sidebar, {
-      global: { plugins: [createPinia(), PiniaColada, router] },
+      global: { plugins: [pinia, PiniaColada, router] },
     })
     await flushPromises()
     await flushPromises()
@@ -94,5 +99,17 @@ describe('Sidebar built-in rows', () => {
     const push = vi.spyOn(router, 'push')
     document.dispatchEvent(new KeyboardEvent('keydown', { key: '/', bubbles: true }))
     expect(push).not.toHaveBeenCalled()
+  })
+
+  it('shows the as-of picker unless as_of is hidden', async () => {
+    const shown = await mountSidebar(true)
+    expect(shown.find('[data-testid="as-of-picker"]').exists()).toBe(true)
+    shown.unmount()
+
+    sidebar.hidden_builtins = ['as_of']
+    const hidden = await mountSidebar(true)
+    expect(hidden.find('[data-testid="as-of-picker"]').exists()).toBe(false)
+    // The pinned rows are not affected.
+    expect(pinnedHrefs(hidden)).toEqual(['/search', '/flows/tasks', '/flows/runs', '/analyze'])
   })
 })

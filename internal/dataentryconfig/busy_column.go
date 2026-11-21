@@ -28,12 +28,17 @@ func checkListBusyColumn(listID string, i int, c ListColumn, earlierBusy bool) [
 // refuseListOnlyColumn rejects the list-only column keys on the other
 // surfaces that share [ListColumn]: dashboard card columns and view section
 // columns. Those surfaces do not request busy state, so a busy column there
-// would render nothing. It mirrors [refuseKanbanOnlyFields].
+// would render nothing, and they never drop columns to fit, so primary would
+// do nothing. It mirrors [refuseKanbanOnlyFields].
 func refuseListOnlyColumn(prefix string, c ListColumn) []string {
+	var errs []string
 	if c.Busy != "" {
-		return []string{prefix + ": busy is only supported on list columns"}
+		errs = append(errs, prefix+": busy is only supported on list columns")
 	}
-	return nil
+	if c.Primary != nil {
+		errs = append(errs, prefix+": primary is only supported on list columns")
+	}
+	return errs
 }
 
 // refuseSectionBusyColumns applies [refuseListOnlyColumn] to every column

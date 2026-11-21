@@ -807,21 +807,28 @@ const tableColumns = computed<TableColumn[]>(() =>
     },
     /*
      * Which columns survive `compact: 'compress'`, the one-line layout the
-     * list takes beside an open detail panel.
+     * list takes on a phone and beside an open detail panel.
      *
      * An enum badge earns the space and a date does not: the badge is the
      * state you scan the list for, while the rest of the row is in the panel
      * already. A face column is that kind of state too, and so is a busy
      * column: whether someone works on a row now is what a reader scans the
      * list for. In the compressed layout an empty busy cell keeps its slot,
-     * as any empty primary cell does, so the badges stay aligned. Derived
-     * from the widget hint rather than from config, because `ListColumn` has
-     * no way to say it — an operator-facing `primary:` is the extensibility
-     * pass, not this one.
+     * as any empty primary cell does, so the badges stay aligned. That is
+     * the default, derived from the widget hint. A list column's `primary:`
+     * overrides it either way, so an operator can keep an invoice's total on
+     * a phone, or drop a badge.
      */
-    primary: !!listColumnOf(column)?.face || !!listColumnOf(column)?.busy || isEnumColumn(column),
+    primary: isPrimaryColumn(column),
   })),
 )
+
+/** Whether a column stays in the one-line compressed row. */
+function isPrimaryColumn(column: TableColumn): boolean {
+  const listColumn = listColumnOf(column)
+  if (listColumn?.primary !== undefined) return listColumn.primary
+  return !!listColumn?.face || !!listColumn?.busy || isEnumColumn(column)
+}
 
 /** Whether a column renders as an enum badge, per the widget routing. */
 function isEnumColumn(column: TableColumn): boolean {

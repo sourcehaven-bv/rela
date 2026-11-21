@@ -2109,6 +2109,7 @@ the face each row was served in, or a busy indicator. Set exactly one of `proper
 | `direction` | string | Relation columns only: `"outgoing"` or `"incoming"`; inferred when omitted   |
 | `face`      | bool   | Shows the label of the face each row was served in; faced types only        |
 | `busy`      | string | Channel type; shows a busy indicator while a channel of this type on the row is in a working state; lists only |
+| `primary`   | bool   | Keeps the column on a narrow list, as on a phone; lists only; see [Columns on a phone](#columns-on-a-phone) |
 | `label`     | string | Column header (defaults to property / relation name, `Face` or `Busy`)      |
 | `sortable`  | bool   | Column can be sorted by clicking the header                                 |
 | `link`      | string | `detail` links the cell to the entity's detail page; `document/<name>` to a document |
@@ -2175,6 +2176,35 @@ These rules are checked by `rela validate`, when the server starts, when
 `data-entry.yaml` is reloaded and when you save in Configure. With realtime
 off the column loads with a warning and shows nothing. See the busy
 indicator section of the realtime guide for when it updates.
+
+#### Columns on a phone
+
+A list narrower than its columns, as on a phone, keeps only some of them.
+The first column, the row title, always stays. By default an enum column
+(such as a status), a face column and a busy column stay as well, and the
+other columns are dropped.
+
+Set `primary:` on a list column to choose for yourself. `primary: true`
+keeps the column; `primary: false` drops it, also when it is an enum. A
+column without `primary:` follows the default.
+
+```yaml
+lists:
+  invoices:
+    entity_type: invoice
+    columns:
+      - property: number
+        link: detail
+      - property: status
+        primary: false   # dropped on a phone
+      - property: total
+        primary: true    # kept on a phone
+      - property: pdf_url
+        primary: true
+```
+
+`primary:` is for lists only. On a dashboard card or a view section column it
+is a config error, because those tables do not drop columns.
 
 ### Static Filters
 
@@ -6452,6 +6482,11 @@ Inbox, Flow tasks, Flow runs and Analysis. Inbox appears only when the project
 has channels, and the two flow rows only when it has flows. By default every
 row is shown.
 
+The sidebar header also holds a date picker, "Now" until a date is picked, that
+shows the data as it was on that date. It appears only when the storage keeps
+version history (the database backends). `builtins:` hides it in the same way,
+under the name `as_of`.
+
 `builtins:` hides a row, or shows it only to users who hold a permission:
 
 ```yaml
@@ -6467,6 +6502,7 @@ builtins:
 | `flow_tasks` | Flow tasks |
 | `flow_runs`  | Flow runs  |
 | `analysis`   | Analysis   |
+| `as_of`      | The date picker in the sidebar header |
 
 Each entry sets exactly one of `hidden: true` or `permission:`. An unknown row
 name, an entry with both or neither, and a top-level `builtins:` next to

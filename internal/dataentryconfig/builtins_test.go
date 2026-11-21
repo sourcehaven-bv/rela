@@ -32,7 +32,7 @@ func TestValidateBuiltins(t *testing.T) {
 			"unknown row",
 			Builtins{"serach": {Hidden: true}},
 			nil,
-			`builtins: unknown built-in row "serach" (valid rows: search, inbox, flow_tasks, flow_runs, analysis)`,
+			`builtins: unknown built-in row "serach" (valid rows: search, inbox, flow_tasks, flow_runs, analysis, as_of)`,
 		},
 		{
 			"unknown row in a space",
@@ -131,9 +131,10 @@ func TestBuiltins_Hidden(t *testing.T) {
 		BuiltinAnalysis: {Hidden: true},
 		BuiltinSearch:   {Permission: "held"},
 		BuiltinInbox:    {Permission: "missing"},
+		BuiltinAsOf:     {Permission: "missing"},
 	}
 	got := b.Hidden(func(p string) bool { return p == "held" })
-	want := []BuiltinRow{BuiltinInbox, BuiltinAnalysis}
+	want := []BuiltinRow{BuiltinInbox, BuiltinAnalysis, BuiltinAsOf}
 	if !slices.Equal(got, want) {
 		t.Errorf("Hidden = %v, want %v (sidebar order)", got, want)
 	}

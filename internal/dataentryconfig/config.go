@@ -1057,6 +1057,12 @@ type ListColumn struct {
 	// `render:` stays inert on a table, so no existing config becomes
 	// editable on upgrade.
 	Render string `yaml:"render,omitempty" json:"render,omitempty"`
+	// Primary says whether the column stays in a list row that is too narrow
+	// for every column, as on a phone or beside an open detail panel. Unset
+	// keeps the default: enum badges, the face and the busy indicator stay,
+	// other columns go. The title column always stays. Lists only: dashboard
+	// card and view section columns refuse it.
+	Primary *bool `yaml:"primary,omitempty" json:"primary,omitempty"`
 }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.
