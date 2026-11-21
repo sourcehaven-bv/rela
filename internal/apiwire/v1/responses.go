@@ -551,7 +551,7 @@ type AbstractType struct {
 }
 
 // Capabilities lists optional API surfaces whose availability depends on
-// the deployment's storage, decided once when the server is wired.
+// the deployment, decided once when the server is wired.
 type Capabilities struct {
 	// AtomicBatch reports that POST /api/v1/_batch is served: the store
 	// rolls a failed transaction back. False on the markdown-file and
@@ -565,6 +565,10 @@ type Capabilities struct {
 	// GET /api/v1/_git/status with a status. False on a deployment without
 	// git, such as a database backend, where the SPA then skips the call.
 	Git bool `json:"git"`
+	// Flows reports that the project declares flows and serves the routes
+	// under /api/v1/_flows. False on a project without flows.yaml, where
+	// those routes answer 404 and the SPA then skips them.
+	Flows bool `json:"flows"`
 }
 
 // World is the JSON representation of one declared world — a named

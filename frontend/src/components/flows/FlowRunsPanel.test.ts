@@ -5,6 +5,7 @@ import FlowRunsPanel from './FlowRunsPanel.vue'
 import { ApiError } from '@/api/errors'
 import type { Flow, FlowRun } from '@/api/flows'
 import { resetFlowList } from '@/composables/useFlowList'
+import { useSchemaStore } from '@/stores/schema'
 
 const listFlowsMock = vi.fn<() => Promise<Flow[]>>()
 const listSubjectRunsMock = vi.fn<(subject: string, signal?: AbortSignal) => Promise<FlowRun[]>>()
@@ -76,6 +77,8 @@ enableAutoUnmount(afterEach)
 describe('FlowRunsPanel', () => {
   beforeEach(() => {
     resetFlowList()
+    // A loaded schema of a project with flows (capabilities.flows).
+    Object.assign(useSchemaStore(), { loaded: true, flowsEnabled: true })
     listFlowsMock.mockReset()
     listSubjectRunsMock.mockReset()
     startFlowRunMock.mockReset()
