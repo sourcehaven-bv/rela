@@ -1587,6 +1587,9 @@
       "busy": "A sync is running on this remote. Try again shortly."
     }
   },
+  "configureList": {
+    "emptyMessage": "Text when empty"
+  },
   "configureAutomations": {
     "title": "Automations",
     "one": "Automation",

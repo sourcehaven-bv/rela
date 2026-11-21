@@ -1587,6 +1587,9 @@
       "busy": "Er loopt een synchronisatie op deze remote. Probeer het zo opnieuw."
     }
   },
+  "configureList": {
+    "emptyMessage": "Tekst als de lijst leeg is"
+  },
   "configureAutomations": {
     "title": "Automatiseringen",
     "one": "Automatisering",

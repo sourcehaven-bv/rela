@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import RlSortableList from 'rela-components/components/data/RlSortableList.vue'
 import RlTable from 'rela-components/components/table/RlTable.vue'
 import RlTextField from 'rela-components/components/form/RlTextField.vue'
@@ -50,6 +51,7 @@ import { getIn, isMap, keys, newMap, remove } from '@/configure/tree'
 const props = defineProps<{ name: string }>()
 const draft = useConfigDraftStore()
 const router = useRouter()
+const { t } = useI18n()
 
 const list = computed(() => listModel(draft.currentDataEntry, props.name))
 const path = computed(() => ['lists', props.name])
@@ -313,7 +315,7 @@ const previewSections = computed<Section<{ id: string; title: string }>[]>(() =>
           />
           <RlTextField
             :model-value="list.emptyMessage"
-            label="Text when empty"
+            :label="t('configureList.emptyMessage')"
             @update:model-value="setting('empty_message', $event)"
           />
         </section>
