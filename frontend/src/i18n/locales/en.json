@@ -926,10 +926,19 @@
       "busy": "Busy"
     },
     "filter": {
+      "title": "Filters",
       "all": "All",
       "filterBy": "Filter by {label}",
       "clear": "Clear filters",
       "optionsLoadFailed": "Could not load filter options for “{label}”."
+    },
+    "sort": {
+      "button": "Sort",
+      "buttonActive": "Sort: {property}",
+      "menuLabel": "Sort by",
+      "default": "Default order",
+      "ascending": "Ascending",
+      "descending": "Descending"
     },
     "adhoc": {
       "button": "+ Filter",

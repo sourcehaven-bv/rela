@@ -425,9 +425,40 @@ export class ListPage extends BasePage {
   }
 
   async setFilter(property: string, value: string) {
-    const control = this.filterBar.locator('.filter-item').filter({ hasText: new RegExp(property, 'i') });
+    await this.openFilterMenu();
+    const control = this.filterPanel.locator('.filter-item').filter({ hasText: new RegExp(property, 'i') });
     await this.pickFilterOption(control, value);
     await this.waitForSpinnerToDisappear();
+  }
+
+  /** The first body row shows `text`: the order the list is in. */
+  async expectFirstRowContains(text: string) {
+    await expect(this.page.locator('.rl-table-row').first()).toContainText(text);
+  }
+
+  /** Open the Filters panel with the keyboard, from its trigger. */
+  async openFilterMenuWithKeyboard() {
+    await this.filterMenuButton.focus();
+    await this.page.keyboard.press('Enter');
+    await expect(this.filterPanel).toBeVisible();
+  }
+
+  /** Escape closes the Filters panel and returns focus to its trigger. */
+  async closeFilterMenuWithEscape() {
+    await this.page.keyboard.press('Escape');
+    await expect(this.filterPanel).toBeHidden();
+    await expect(this.filterMenuButton).toBeFocused();
+  }
+
+  /** Open the Sort menu with the arrow key and close it with Escape. */
+  async openAndCloseSortMenuWithKeyboard() {
+    await this.sortMenuButton.focus();
+    await this.page.keyboard.press('ArrowDown');
+    await expect(this.sortMenu).toBeVisible();
+    await expect(this.sortMenu.getByRole('menuitem').first()).toBeFocused();
+    await this.page.keyboard.press('Escape');
+    await expect(this.sortMenu).toBeHidden();
+    await expect(this.sortMenuButton).toBeFocused();
   }
 
   async goToPage(pageNumber: number) {
@@ -463,28 +494,32 @@ export class ListPage extends BasePage {
   /** Set the Nth filter in the filter bar to the given option value and wait
    *  for any resulting list refetch to settle. */
   async setFilterByIndex(index: number, value: string | string[] | { index: number }) {
-    await this.pickFilterOption(this.filterBar.locator('.filter-item').nth(index), value);
+    await this.openFilterMenu();
+    await this.pickFilterOption(this.filterPanel.locator('.filter-item').nth(index), value);
     await this.waitForSpinnerToDisappear();
   }
 
   async filterControlCount(): Promise<number> {
-    return this.filterBar.locator('.filter-item').count();
+    await this.openFilterMenu();
+    return this.filterPanel.locator('.filter-item').count();
   }
 
   /** The Nth filter-bar <select>. Only relation filters in select mode
    *  render one; enum filters draw their own option list. */
   private filterSelect(index = 0): Locator {
-    return this.filterBar.locator('select').nth(index);
+    return this.filterPanel.locator('select').nth(index);
   }
 
   /** Count how many <option>s in the Nth filter select carry the given text. */
   async filterOptionCount(text: string, index = 0): Promise<number> {
+    await this.openFilterMenu();
     return this.filterSelect(index).locator('option', { hasText: text }).count();
   }
 
   /** Select an option (by its value) in the Nth filter select and wait for the
    *  resulting list refetch. Pass '' to clear. */
   async selectFilterOption(value: string, index = 0) {
+    await this.openFilterMenu();
     await this.filterSelect(index).selectOption(value);
     await this.waitForSpinnerToDisappear();
   }

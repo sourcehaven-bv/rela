@@ -926,10 +926,19 @@
       "busy": "Bezig"
     },
     "filter": {
+      "title": "Filters",
       "all": "Alle",
       "filterBy": "Filteren op {label}",
       "clear": "Filters wissen",
       "optionsLoadFailed": "Kon de filteropties voor “{label}” niet laden."
+    },
+    "sort": {
+      "button": "Sorteren",
+      "buttonActive": "Sorteren: {property}",
+      "menuLabel": "Sorteren op",
+      "default": "Standaardvolgorde",
+      "ascending": "Oplopend",
+      "descending": "Aflopend"
     },
     "adhoc": {
       "button": "+ Filter",

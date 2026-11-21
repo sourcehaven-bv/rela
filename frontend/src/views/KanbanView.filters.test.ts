@@ -4,6 +4,7 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import KanbanView from './KanbanView.vue'
 import FilterBar from '@/components/lists/FilterBar.vue'
+import { withPageHeader } from '@/composables/pageHeaderTestHost'
 import { useSchemaStore } from '@/stores/schema'
 import { _setEntityPluralForTest } from '@/api/entities'
 import type { Entity, ListResponse } from '@/types'
@@ -83,7 +84,7 @@ async function mountBoard() {
     _actions: { create: true },
   } as never
   listAllEntitiesMock.mockResolvedValue(response)
-  const wrapper = mount(KanbanView, {
+  const wrapper = mount(withPageHeader(KanbanView), {
     props: { id: KANBAN_ID },
     attachTo: document.body,
     global: { plugins: [pinia, PiniaColada] },

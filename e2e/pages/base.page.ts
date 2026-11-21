@@ -23,6 +23,68 @@ export class BasePage {
     this.backButton = page.locator('[data-testid="back-button"]').first();
   }
 
+  /** The Filters drop-down's trigger, in the page header's tool row. */
+  get filterMenuButton(): Locator {
+    return this.page.getByTestId('filter-menu-button');
+  }
+
+  /** The open Filters panel, which holds the filter controls. */
+  get filterPanel(): Locator {
+    return this.page.getByRole('dialog', { name: 'Filters' });
+  }
+
+  /** The number shown on the Filters trigger while filters are active. */
+  get filterMenuCount(): Locator {
+    return this.page.getByTestId('filter-menu-count');
+  }
+
+  /** Open the Filters panel (a no-op when it is already open). */
+  async openFilterMenu() {
+    if (await this.filterPanel.isVisible()) return;
+    await this.filterMenuButton.click();
+    await expect(this.filterPanel).toBeVisible();
+  }
+
+  /** The free-text search box in the page header. */
+  get headerSearchInput(): Locator {
+    return this.page.locator('.rl-app-shell__header .search-box input[type="search"]');
+  }
+
+  /** Type a search and wait for the debounced query to reach the URL. */
+  async search(text: string) {
+    await this.headerSearchInput.fill(text);
+    await this.headerSearchInput.press('Enter');
+    await expect(this.page).toHaveURL(new RegExp(`[?&]q=${encodeURIComponent(text)}`));
+    await this.waitForSpinnerToDisappear();
+  }
+
+  /** The Sort menu's trigger, in the page header's tool row. */
+  get sortMenuButton(): Locator {
+    return this.page.getByTestId('sort-menu-button');
+  }
+
+  /** The open Sort menu. */
+  get sortMenu(): Locator {
+    return this.page.getByRole('menu');
+  }
+
+  /** Open the Sort menu from its trigger. */
+  async openSortMenu() {
+    await this.sortMenuButton.click();
+    await expect(this.sortMenu).toBeVisible();
+  }
+
+  /** Pick a property in the Sort menu, optionally then a direction. */
+  async sortBy(property: string, direction?: 'Ascending' | 'Descending') {
+    await this.openSortMenu();
+    await this.sortMenu.getByRole('menuitem', { name: property, exact: true }).click();
+    if (direction) {
+      await this.openSortMenu();
+      await this.sortMenu.getByRole('menuitem', { name: direction }).click();
+    }
+    await this.waitForSpinnerToDisappear();
+  }
+
   /** Set a filter control to one value, or an enum filter to several.
    *  Relation filters are native selects; enum filters are multi-selects whose
    *  panel holds a checkbox per value, named by the value's label. '' clears
