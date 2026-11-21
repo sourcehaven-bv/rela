@@ -248,6 +248,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// point (rebindVisibleSearcher, app.affordances = ...) are picked up.
 	app.queries = newQueryService(app)
 	app.gantt = newGanttHandler(app, app.store)
+	app.sankey = newSankeyHandler(app, app.store, app.gantt)
 	// commandHandler holds closures over App methods, which read the fields
 	// rebound above — so it stays valid after this rebind. (Rebuilt rather than
 	// relying on a nil zero value, since newHandlerTestApp bypasses NewApp.)

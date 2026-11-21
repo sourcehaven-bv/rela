@@ -447,6 +447,7 @@ type App struct {
 	// gantt owns the read-only gantt tree endpoint (TKT-MW28U5). Like views,
 	// it never mutates.
 	gantt     *ganttHandler
+	sankey    *sankeyHandler
 	templater templating.Templater
 	cfgLoader config.Loader
 	// assets is cfgLoader seen as the custom/ and apps/ reader; NewApp
@@ -1469,6 +1470,7 @@ func NewApp(
 	// seams its security pipeline hangs on — both closures over App so test
 	// builders that rebind collaborators stay live.
 	app.gantt = newGanttHandler(app, st)
+	app.sankey = newSankeyHandler(app, st, app.gantt)
 
 	// commandHandler owns the user-configured command surface. Its
 	// collaborators are narrow closures over App: the schema snapshot (command/
@@ -1689,6 +1691,7 @@ func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string, files lu
 	// report nothing, turning a typo into silently different behavior.
 	dataentryconfig.NormalizeCalendars(&cfg)
 	dataentryconfig.NormalizeGantts(&cfg)
+	dataentryconfig.NormalizeSankeys(&cfg)
 	dataentryconfig.NormalizeListGroupBy(&cfg)
 
 	// Verify action scripts exist on disk (catches typos at startup).

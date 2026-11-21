@@ -776,6 +776,9 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, meta *metamode
 	case entry.Gantt != "":
 		item.Href = "/gantt/" + entry.Gantt
 		item.Icon = derived.Gantt
+	case entry.Sankey != "":
+		item.Href = "/sankey/" + entry.Sankey
+		item.Icon = derived.Sankey
 	case entry.Dashboard.IsDefault():
 		item.Href = "/"
 		item.Icon = derived.Dashboard

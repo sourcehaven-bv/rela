@@ -64,6 +64,11 @@ const targetChoices = computed(() => [
     label: `Timeline: ${n}`,
     name: n,
   })),
+  ...keys(getIn(draft.currentDataEntry, ['sankeys'])).map((n) => ({
+    value: `sankey:${n}`,
+    label: `Flow: ${n}`,
+    name: n,
+  })),
   ...entityTypes(draft.currentSchema).map((t) => ({
     value: `entities:${t.name}`,
     label: `Records: ${t.plural || t.label} (in a group)`,

@@ -858,9 +858,9 @@ type CustomType struct {
 // Config is the JSON representation of the UI config.
 //
 // It mirrors the top-level keys of data-entry.yaml, so a new key raises the
-// pin by one; `builtins` (TKT-JEAR2UA) is the most recent.
+// pin by one; `sankeys` and `builtins` (TKT-JEAR2UA) are the most recent.
 //
-//plimsoll:max-fields=23
+//plimsoll:max-fields=24
 type Config struct {
 	App AppConfig `json:"app"`
 	// AboutDescription is the deployment description shown by the SPA's global
@@ -882,6 +882,7 @@ type Config struct {
 	Kanbans     map[string]dataentryconfig.Kanban              `json:"kanbans"`
 	Calendars   map[string]dataentryconfig.Calendar            `json:"calendars,omitempty"`
 	Gantts      map[string]dataentryconfig.Gantt               `json:"gantts,omitempty"`
+	Sankeys     map[string]dataentryconfig.Sankey              `json:"sankeys,omitempty"`
 	Dashboard   *dataentryconfig.DashboardConfig               `json:"dashboard,omitempty"`
 	Dashboards  map[string]dataentryconfig.DashboardConfig     `json:"dashboards,omitempty"`
 	Actions     map[string]dataentryconfig.Action              `json:"actions,omitempty"`
@@ -2290,4 +2291,52 @@ type TaskItemConversionResult struct {
 	// Warnings are the create's soft conditions, and a failure of a step
 	// after the commit. The entity exists either way.
 	Warnings []Warning `json:"warnings,omitempty"`
+}
+
+// SankeyResponse is the payload of GET /api/v1/_sankeys/{id}: the gated nodes
+// of the diagram's columns and the links among them. Truncated is true when
+// the node cap cut the list short; it is computed on the ACL-filtered set
+// only, so it never discloses that hidden nodes exist.
+type SankeyResponse struct {
+	Nodes     []SankeyNode `json:"nodes"`
+	Links     []SankeyLink `json:"links"`
+	Truncated bool         `json:"truncated,omitempty"`
+}
+
+// SankeyNode is one entity in the diagram, read through the row gate and
+// redacted before any property is read.
+type SankeyNode struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	// Face is the content state the node was read at, absent for a faceless type.
+	Face  string `json:"face,omitempty"`
+	Title string `json:"title,omitempty"`
+	// Tone is the value of the type's color_by property, or "".
+	Tone string `json:"tone,omitempty"`
+	// SortKey is the value of the type's order property, or "".
+	SortKey string `json:"sort_key,omitempty"`
+	// Pips are the related entities the principal may read, up to the type's
+	// pips max, ordered by id.
+	Pips []SankeyPip `json:"pips,omitempty"`
+	// PipsMore counts the readable related entities beyond Pips.
+	PipsMore int `json:"pips_more,omitempty"`
+}
+
+// SankeyPip is one related entity drawn as a dot beside a node. It is read
+// through the row gate and redacted like a node.
+type SankeyPip struct {
+	ID    string `json:"id"`
+	Type  string `json:"type"`
+	Face  string `json:"face,omitempty"`
+	Title string `json:"title,omitempty"`
+	// Tone is the value of the pips' color_by property, or "".
+	Tone string `json:"tone,omitempty"`
+}
+
+// SankeyLink is one relation between two nodes of the response. Source is the
+// relation's tail, whichever column it sits in.
+type SankeyLink struct {
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	Relation string `json:"relation"`
 }

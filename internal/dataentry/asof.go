@@ -150,8 +150,9 @@ func asOfCapablePath(path string) bool {
 
 		return true
 	}
-	// A gantt chart reads its nodes and edges through the store.
-	if isGanttPath(trimmed) {
+	// A gantt chart or a sankey diagram reads its nodes and edges through the
+	// store.
+	if isGanttPath(trimmed) || isSankeyPath(trimmed) {
 		return true
 	}
 	// `{plural}` (lists, kanban and calendar read it) and `{plural}/{id}`.
