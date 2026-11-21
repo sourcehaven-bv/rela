@@ -2,7 +2,7 @@
 id: TKT-FHM9XLA
 type: ticket
 title: Polish relation cards and attachment list
-kind: enhancement
+kind: chore
 priority: medium
 effort: s
 status: done
