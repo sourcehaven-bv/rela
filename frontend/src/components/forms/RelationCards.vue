@@ -27,7 +27,7 @@ import { ORDER_PROPERTY_OUT, ORDER_PROPERTY_IN, isNumericProperty } from '@/type
 import { computeNewOrder, extractFiniteNumber } from '@/composables/useRelationReorder'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlSpinner from 'rela-components/components/common/RlSpinner.vue'
-import { entityRef } from '@/utils/entityRef'
+import { entityRef, refBareId } from '@/utils/entityRef'
 
 // Re-export so existing `import type { RelationCardState } from './RelationCards.vue'`
 // callers keep working without a churn rename.
@@ -617,6 +617,7 @@ function onDragEnd() {
         v-for="entry in entries"
         :key="entry.id"
         class="relation-card"
+        :data-entity-id="refBareId(entry.id)"
         :class="{
           'card-added': entryStatus(entry.id) === 'added',
           'card-updated': entryStatus(entry.id) === 'updated',
