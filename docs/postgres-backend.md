@@ -835,7 +835,7 @@ schema and runs the migrations, exactly as `tenant create` does.
 | Value | What happens |
 | --- | --- |
 | `off` (default) | An unknown org gets 403. The IdP webhook acknowledges and drops events for it. |
-| `webhook` | A verified `organization.created` webhook creates the tenant. Requests for an unknown org still get 403. Needs `-webhook-audience` and `-webhook-action`. |
+| `webhook` | A verified `organization.created` webhook, or the tenant API, creates the tenant. Requests for an unknown org still get 403. Needs the IdP webhook (`-webhook-audience` and `-webhook-action`) or the tenant API (`-tenant-api-audience`). |
 | `lazy` | As `webhook`, and a request with a verified but unknown org also starts the create. Works without the webhook; then it is the only path. |
 
 The webhook waits up to 10 seconds for the create:
@@ -925,6 +925,59 @@ is why the default is `off`.
 
 The server still refuses to start when the control table does not exist,
 so create the first tenant with `rela-server tenant create`.
+
+### Creating tenants through the tenant API
+
+An external provisioning job can create an org's tenant before the org's
+first visit, and read its status, through the tenant API. Set
+`-tenant-api-audience` (`RELA_TENANT_API_AUDIENCE`) to turn it on. The API
+needs `-tenant-provision` set to `webhook` or `lazy`. In `webhook` mode the
+API may be the only create path; the IdP webhook is then optional.
+
+| Request | What happens |
+| --- | --- |
+| `PUT /api/v1/_tenants/<org_id>` | Creates the org's tenant, as an `organization.created` webhook does. |
+| `GET` or `HEAD /api/v1/_tenants/<org_id>` | Reads the tenant's status. Never starts a create. |
+
+**Authentication.** The API is for an operator or integration, not for end
+users. The caller sends `Authorization: Bearer <JWT>`. The server checks
+the token the same way as an IdP webhook body:
+
+- It is ES256, signed by the identity issuer's JWKS (`-jwt-issuer`,
+  `-jwt-jwks-url`), and carries `exp`.
+- Its `aud` is the `-tenant-api-audience` value. The server refuses to start
+  when that value equals `-jwt-audience` or `-webhook-audience`, so an end
+  user's assertion or a webhook body is never accepted here.
+- Its `org_id` claim names the org in the path. One token acts on one org.
+- `jti`, if present, is logged.
+
+Only the holder of the IdP's signing key can mint such a token. Have the IdP
+issue it to the provisioning job with a short lifetime, and with this
+audience only: a token whose `aud` lists several audiences is accepted
+wherever one of them matches. A token without the
+right audience, signature or expiry gets 401 with `WWW-Authenticate:
+Bearer`; a token for another org gets 403 `forbidden`.
+
+A response body is JSON: `{"org_id":"<org_id>","status":"<status>"}`, with
+`status` one of `active`, `provisioning`, `suspended` or `erased`. Errors
+use the problem body of the rest of the server.
+
+| `PUT` outcome | Response |
+| --- | --- |
+| Created now | 201 `active` |
+| Already active | 200 `active` |
+| Still running after 10 seconds, or another server is creating it | 202 `provisioning` with `Location` and `Retry-After`; poll the `GET` |
+| Suspended | 409 `tenant_suspended` |
+| Erased | 409 `tenant_erased`; only `tenant create -recreate` brings it back |
+| Needs an operator | 503 `provisioning_needs_operator` |
+| Failed, or over the rate or running cap | 503 `provisioning_failed` or `provisioning_busy` with `Retry-After` |
+| Not a valid org id | 400 `invalid_org_id` |
+
+A `GET` answers 200 with the status, or 404 `unknown_tenant` when the org
+has no tenant and no create is running. A `PUT` shares the start rate, the
+running cap and the failure holds with lazy and webhook provisioning, so
+retrying it inside a hold starts nothing. The trust assumption above
+applies to the API as well.
 
 ### Suspension follows the IdP
 

@@ -18,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/idporg"
+	"github.com/Sourcehaven-BV/rela/internal/jwtauth"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/tenant"
@@ -47,6 +48,9 @@ type tenantFlags struct {
 	// sharedHostConfig is -tenant-shared-host-config: share the .rela
 	// directory's secrets and ai.yaml with every tenant.
 	sharedHostConfig bool
+	// apiAudience is -tenant-api-audience: the audience of the tenant API's
+	// bearer tokens (TKT-84CD0PY). Empty turns the API off.
+	apiAudience string
 }
 
 // withheldHostConfigReason is what a tenant's script sees when it reads a
@@ -75,6 +79,11 @@ func registerTenantFlags(t *tenantFlags) {
 			"refused. webhook: on a verified organization.created IdP webhook (needs -webhook-*). lazy: also "+
 			"on the org's first request, which is answered 202 while the tenant is created. Trusts every "+
 			"assertion the one configured issuer signs. Also RELA_TENANT_PROVISION.")
+	flag.StringVar(&t.apiAudience, "tenant-api-audience", envOr("RELA_TENANT_API_AUDIENCE", ""),
+		"Tenant mode: turn on the tenant API (PUT and GET /api/v1/_tenants/<org_id>) for an external "+
+			"provisioning job. Its bearer token is a JWT the identity issuer signs with this audience "+
+			"(distinct from -jwt-audience and -webhook-audience) and the org's org_id. Needs "+
+			"-tenant-provision webhook or lazy. Also RELA_TENANT_API_AUDIENCE.")
 	flag.IntVar(&t.provisionRate, "tenant-provision-rate", envInt("RELA_TENANT_PROVISION_RATE"),
 		"Tenant mode: most tenant creations started per minute (default 10; at most 2 run at once). "+
 			"Also RELA_TENANT_PROVISION_RATE.")
@@ -227,8 +236,87 @@ func refuseTenantOnlyFlags(t tenantFlags) error {
 		return errors.New("-tenant-provision needs tenant mode (-tenant-mode)")
 	case t.provisionRate != 0:
 		return errors.New("-tenant-provision-rate needs tenant mode (-tenant-mode)")
+	case t.apiAudience != "":
+		return errors.New("-tenant-api-audience needs tenant mode (-tenant-mode)")
 	}
 	return nil
+}
+
+// validateTenantInbound refuses an IdP status-sync or tenant API
+// configuration the host cannot act on. secret is
+// $RELA_IDP_OPERATOR_SECRET.
+func validateTenantInbound(f *serverFlags, secret string) error {
+	if err := validateStatusSync(f, secret); err != nil {
+		return err
+	}
+	return validateTenantAPI(f)
+}
+
+// validateTenantAPI refuses a tenant API configuration that would weaken
+// its authentication. Its audience must differ from the identity and the
+// webhook audiences: otherwise an end user's assertion, or a webhook body,
+// would be accepted as a tenant API token. The API creates tenants through
+// the provisioning runner, so provisioning must be on.
+func validateTenantAPI(f *serverFlags) error {
+	aud := f.tenant.apiAudience
+	switch {
+	case aud == "":
+		return nil
+	case aud == f.jwtAudience:
+		return errors.New("-tenant-api-audience must differ from -jwt-audience")
+	case aud == f.webhookAudience:
+		return errors.New("-tenant-api-audience must differ from -webhook-audience")
+	case f.tenant.provision == "" || f.tenant.provision == string(tenanthost.ProvisionOff):
+		return errors.New("-tenant-api-audience needs -tenant-provision webhook or lazy")
+	}
+	return nil
+}
+
+// tenantAPIVerifierAdapter is the host's [tenanthost.TenantAPIVerifier]
+// over a jwtauth verifier pinned to the tenant API audience. It reuses the
+// webhook verifier type, which verifies an ES256 JWT of the identity issuer
+// against its own audience.
+type tenantAPIVerifierAdapter struct{ v *jwtauth.WebhookVerifier }
+
+func (a tenantAPIVerifierAdapter) VerifyTenantAPI(
+	ctx context.Context, raw string,
+) (tenanthost.TenantAPIClaims, error) {
+	c, err := a.v.VerifyWebhook(ctx, raw)
+	if err != nil {
+		return tenanthost.TenantAPIClaims{}, err
+	}
+	return tenanthost.TenantAPIClaims{OrgID: c.OrgID, ID: c.ID}, nil
+}
+
+// buildInboundVerifiers builds the verifiers of the host's two inbound
+// operator paths, the IdP webhook and the tenant API. Either is nil when
+// its audience is unset.
+func buildInboundVerifiers(
+	f *serverFlags, idv *jwtauth.Verifier,
+) (*jwtauth.WebhookVerifier, tenanthost.TenantAPIVerifier, error) {
+	webhook, err := buildWebhookVerifier(f, idv)
+	if err != nil {
+		return nil, nil, err
+	}
+	api, err := buildTenantAPIVerifier(f, idv)
+	if err != nil {
+		return nil, nil, err
+	}
+	return webhook, api, nil
+}
+
+// buildTenantAPIVerifier builds the tenant API's verifier, nil when the API
+// is off.
+func buildTenantAPIVerifier(f *serverFlags, idv *jwtauth.Verifier) (tenanthost.TenantAPIVerifier, error) {
+	if f.tenant.apiAudience == "" {
+		return nil, nil //nolint:nilnil // off is not an error
+	}
+	v, err := jwtauth.NewWebhookVerifier(idv, f.tenant.apiAudience)
+	if err != nil {
+		return nil, fmt.Errorf("tenant api: %w", err)
+	}
+	slog.Info("tenant api enabled", "audience", f.tenant.apiAudience)
+	return tenantAPIVerifierAdapter{v}, nil
 }
 
 // validateStatusSync refuses a status-sync configuration the host cannot
@@ -527,6 +615,7 @@ type tenantOptions struct {
 	provision      tenanthost.ProvisionConfig
 	orgStatus      tenanthost.OrgStatusSource
 	idpWriter      tenanthost.IDPSuspension
+	tenantAPI      tenanthost.TenantAPIVerifier
 }
 
 // tenantHost is a running multi-tenant server: the front handler and the
@@ -577,7 +666,7 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 		return nil, err
 	}
 	secret := os.Getenv(envIDPOperatorSecret)
-	if verr := validateStatusSync(f, secret); verr != nil {
+	if verr := validateTenantInbound(f, secret); verr != nil {
 		return nil, verr
 	}
 	absDir, err := filepath.Abs(f.projectDir)
@@ -622,7 +711,8 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 	}
 	adapter := assertionVerifierAdapter{s.idv}
 	s.assertion = tenanthost.ReuseAssertion(adapter)
-	if s.webhook, err = buildWebhookVerifier(f, s.idv); err != nil {
+	var apiVerifier tenanthost.TenantAPIVerifier
+	if s.webhook, apiVerifier, err = buildInboundVerifiers(f, s.idv); err != nil {
 		_ = resolver.Close()
 		return nil, err
 	}
@@ -634,7 +724,9 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 		_ = resolver.Close()
 		return nil, err
 	}
-	opts := tenantOptions{resident: f.tenant.maxResident, open: f.tenant.maxOpen, provision: prov}
+	opts := tenantOptions{
+		resident: f.tenant.maxResident, open: f.tenant.maxOpen, provision: prov, tenantAPI: apiVerifier,
+	}
 	if f.tenant.idpOrgAPI != "" {
 		if opts.orgStatus, err = statusSyncSource(f.tenant, secret); err != nil {
 			_ = resolver.Close()
@@ -683,6 +775,7 @@ func (s *server) tenantHost(
 		HeaderName: s.f.jwtHeader,
 		Static:     dataentry.StaticShell(),
 		Provision:  limits.provision,
+		TenantAPI:  limits.tenantAPI,
 		Acquire: func(ctx context.Context, orgID string) (http.Handler, func(), error) {
 			lease, aerr := registry.Acquire(ctx, orgID)
 			if aerr != nil {
@@ -711,7 +804,7 @@ func (s *server) tenantHost(
 		mode = tenanthost.ProvisionOff
 	}
 	slog.Info("tenant mode enabled", "max_resident", limits.resident, "max_open", limits.open,
-		"provision", string(mode), "idp_status_sync", hcfg.StatusSync != nil)
+		"provision", string(mode), "idp_status_sync", hcfg.StatusSync != nil, "tenant_api", hcfg.TenantAPI != nil)
 	return &tenantHost{addr: s.addr, handler: host, host: host, registry: registry}, nil
 }
 
