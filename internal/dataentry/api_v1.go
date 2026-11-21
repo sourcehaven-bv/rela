@@ -2841,8 +2841,7 @@ func servedETag(
 // once, for both.
 //
 // A package function, not a method: it needs nothing from App, and App is
-// pinned at its plimsoll cap. (The ETag split briefly took it to 105, which is
-// the load line doing its job — see the App type doc.)
+// pinned at its plimsoll cap (see the App type doc).
 func entityETagWithEdges(
 	e *entityPkg.Entity, hidden map[string]struct{}, edges []*entityPkg.Relation,
 ) string {
