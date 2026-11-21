@@ -63,7 +63,8 @@
     },
     "capabilities": {
       "as_of": false,
-      "atomic_batch": false
+      "atomic_batch": false,
+      "git": false
     }
   },
   "config": {
