@@ -1,9 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { defineComponent, nextTick, ref } from 'vue'
 import type { InboxSummary } from '@/types/channels'
 import { titleCount, useTabTitleBadge } from './useTabTitleBadge'
-import { useDocumentTitle } from './useDocumentTitle'
+import { TITLE_HOLD_MS, useDocumentTitle } from './useDocumentTitle'
 
 const summary = (mentions: number, waiting: number): InboxSummary => ({
   mentions,
@@ -16,6 +16,7 @@ const summary = (mentions: number, waiting: number): InboxSummary => ({
 const mounted: VueWrapper[] = []
 
 afterEach(() => {
+  vi.useRealTimers()
   mounted.splice(0).forEach((w) => w.unmount())
   document.title = ''
 })
@@ -27,6 +28,7 @@ describe('useTabTitleBadge', () => {
   })
 
   it('follows the summary and clears the count on unmount', async () => {
+    vi.useFakeTimers()
     const s = ref<InboxSummary | undefined>(summary(1, 0))
     const shell = mount(
       defineComponent({
@@ -45,6 +47,8 @@ describe('useTabTitleBadge', () => {
         },
       })
     )
+    // No page names the tab, so the app name shows after the hold.
+    vi.advanceTimersByTime(TITLE_HOLD_MS)
     await nextTick()
     expect(document.title).toBe('(1) Portal')
     s.value = summary(0, 0)

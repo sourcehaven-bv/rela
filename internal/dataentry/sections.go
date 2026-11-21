@@ -127,16 +127,20 @@ func buildSectionFieldData(
 	f ViewSectionField, e *entity.Entity, eDef *metamodel.EntityDef,
 	sectionRender string,
 ) SectionFieldData {
-	propType := ""
+	propType, schemaLabel := "", ""
 	if eDef != nil {
 		if pd, ok := eDef.Properties[f.Property]; ok {
-			propType = pd.Type
+			propType, schemaLabel = pd.Type, pd.Label
 		}
 	}
 	// A label is authored, never derived (DEC-6C1NAA): an unset label falls
-	// back to the raw property name rather than a title-cased guess, which
+	// back to the schema's label for the property, the one forms show, and
+	// then to the raw property name rather than a title-cased guess, which
 	// would bake an English convention into a language-neutral metamodel.
 	label := f.Label
+	if label == "" {
+		label = schemaLabel
+	}
 	if label == "" {
 		label = f.Property
 	}
@@ -397,11 +401,11 @@ func rowSelfHref(m *metamodel.Metamodel, e *entity.Entity) string {
 func (h *viewsHandler) buildTableSection(
 	ctx context.Context, s *Schema, sec ViewSection, entities []*entity.Entity, sd *SectionData,
 ) {
-	sd.Columns = sec.Columns
+	sd.Columns = withSchemaLabels(s.Meta, entityTypesOf(entities), sec.Columns)
 	if sec.ColumnsByType != nil {
 		sd.IsGrouped = true
 		for _, g := range groupByType(entities) {
-			cols := columnsFor(sec, g.entityType)
+			cols := withSchemaLabels(s.Meta, []string{g.entityType}, columnsFor(sec, g.entityType))
 			relValues := h.resolveRelationColumns(ctx, s, cols, g.entities)
 			gd := GroupData{GroupName: g.entityType, EntityType: g.entityType, Columns: cols}
 			if def, ok := s.Meta.GetEntityDef(g.entityType); ok && (def.Label != "" || def.LabelPlural != "") {
@@ -561,7 +565,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 					sd.Entities = append(sd.Entities, sed)
 				}
 			case dataentryconfig.DisplayNested:
-				sd.Columns = sec.Columns
+				sd.Columns = withSchemaLabels(s.Meta, entityTypesOf(entities), sec.Columns)
 				sd.Tree, sd.Truncated = h.buildNestedTree(ctx, sec, entities, result)
 			}
 		}

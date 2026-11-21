@@ -2120,9 +2120,13 @@ the face each row was served in, or a busy indicator. Set exactly one of `proper
 | `face`      | bool   | Shows the label of the face each row was served in; faced types only        |
 | `busy`      | string | Channel type; shows a busy indicator while a channel of this type on the row is in a working state; lists only |
 | `primary`   | bool   | Keeps the column on a narrow list, as on a phone; lists only; see [Columns on a phone](#columns-on-a-phone) |
-| `label`     | string | Column header (defaults to property / relation name, `Face` or `Busy`)      |
+| `label`     | string | Column header (defaults to the schema label, then the property / relation name, `Face` or `Busy`) |
 | `sortable`  | bool   | Column can be sorted by clicking the header                                 |
 | `link`      | string | `detail` links the cell to the entity's detail page; `document/<name>` to a document |
+
+An unset column `label` shows the label the schema gives the property, or the relation's
+label (its inverse label on an incoming column). Forms use the same schema label, so set a
+label in `schema.yaml` once instead of repeating it on every list and view.
 
 **Face column example** — on a list of a type with `concept` and `vastgesteld` faces, show
 which one the world serves for each row:
@@ -3102,7 +3106,7 @@ Each entry under `fields:` takes:
 | `property` | string | Property name                                                |
 | `relation` | string | Relation to show as a field, instead of `property` (see below) |
 | `style_from` | string | Relation fields only: enum property of the target that colours each target (see below) |
-| `label`    | string | Display label (defaults to the raw property name, or the relation's label) |
+| `label`    | string | Display label (defaults to the schema label, then the raw property name) |
 | `span`     | int    | Width on the 12-column grid (1-12; omit for full width)      |
 | `render`   | string | `display` or `input`; overrides the section's `render`        |
 | `widget`   | string | Which widget renders this property (see Widget Overrides)    |
@@ -5461,7 +5465,7 @@ Card fields use the same styling as lists — enum values are displayed with col
 
 A card field for a property with a display format, such as
 `display: {currency: EUR}`, shows the value in that format, such as
-"€ 3.500" in a Dutch browser. See
+"€ 3.500,00" in a Dutch browser. See
 [Display formats](metamodel.md#display-formats).
 
 #### Counts on cards

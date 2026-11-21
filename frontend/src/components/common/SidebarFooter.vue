@@ -68,11 +68,17 @@ const appDescription = computed(() => schemaStore.aboutDescription?.trim() || ''
 // render it so *emphasis*, lists, etc. display. renderMarkdown sanitizes.
 const appDescriptionHtml = computed(() => renderMarkdown(appDescription.value))
 
-// Initial fetch - SSE handles subsequent updates
+// The first status once the schema says the server has git; SSE handles
+// later updates.
+watch(
+  () => schemaStore.gitEnabled,
+  (on) => {
+    if (on) gitStore.fetchStatus().catch(() => {})
+  },
+  { immediate: true }
+)
+
 onMounted(() => {
-  gitStore.fetchStatus().catch(() => {
-    // Errors are already handled by the store
-  })
   // Resolve once per session. The composable is a singleton, so this and the
   // page-level card share one suggestion rather than racing for two.
   void naLoadOnce()

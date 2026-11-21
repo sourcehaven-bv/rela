@@ -186,6 +186,7 @@ body:
   ],
   "capabilities": {
     "atomic_batch": false,
-    "as_of": false
+    "as_of": false,
+    "git": false
   }
 }

@@ -1834,6 +1834,7 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		Capabilities: v1.Capabilities{
 			AtomicBatch: store.TxRollsBack(a.store),
 			AsOf:        store.SupportsReadInstant(a.store),
+			Git:         a.gitOps != nil,
 		},
 	}
 
@@ -1991,7 +1992,8 @@ func resolveConfigDirection(
 }
 
 // resolveListDirections returns a copy of lists with relation-column and
-// filter-control directions materialized. Copy-on-serve, like
+// filter-control directions materialized, and empty column labels filled
+// from the schema (withSchemaLabels). Copy-on-serve, like
 // resolveFormRelations: the in-memory config keeps what the operator wrote.
 func resolveListDirections(s *Schema, lists map[string]dataentryconfig.List) map[string]dataentryconfig.List {
 	out := make(map[string]dataentryconfig.List, len(lists))
@@ -2003,7 +2005,7 @@ func resolveListDirections(s *Schema, lists map[string]dataentryconfig.List) map
 			for i := range cols {
 				cols[i].Direction = resolveConfigDirection(s, l.EntityType, cols[i].Relation, cols[i].Direction)
 			}
-			l.Columns = cols
+			l.Columns = withSchemaLabels(s.Meta, []string{l.EntityType}, cols)
 		}
 		l.FilterControls = resolveFilterControlDirections(s, l.EntityType, l.FilterControls)
 		out[id] = l

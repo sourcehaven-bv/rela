@@ -561,6 +561,10 @@ type Capabilities struct {
 	// with the state at that instant. False on the markdown-file and memory
 	// stores, which keep no version history and answer such a read with 501.
 	AsOf bool `json:"as_of"`
+	// Git reports that the server keeps the project in git and serves
+	// GET /api/v1/_git/status with a status. False on a deployment without
+	// git, such as a database backend, where the SPA then skips the call.
+	Git bool `json:"git"`
 }
 
 // World is the JSON representation of one declared world — a named

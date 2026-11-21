@@ -347,8 +347,23 @@ function widthClass(width: DashboardCardEntry['width']): string | undefined {
   return undefined
 }
 
-function getColumnLabel(col: { property?: string; label?: string }): string {
-  return col.label || col.property || ''
+/**
+ * A table card's column header: its own label, then the schema label of the
+ * property on the first row type that has one (the label forms show), then
+ * the raw property name.
+ */
+function getColumnLabel(
+  col: { property?: string; label?: string },
+  rows: { entity: { type: string } }[]
+): string {
+  if (col.label) return col.label
+  if (col.property) {
+    for (const type of new Set(rows.map((r) => r.entity.type))) {
+      const label = schemaStore.getEntityType(type)?.properties[col.property]?.label
+      if (label) return label
+    }
+  }
+  return col.property || ''
 }
 
 // Lifecycle
@@ -483,7 +498,7 @@ watch([() => props.name, () => props.anchor, worldParam], () => void loadData())
               <thead>
                 <tr>
                   <th v-for="col in view.card.columns" :key="col.property" scope="col">
-                    {{ getColumnLabel(col) }}
+                    {{ getColumnLabel(col, view.rows) }}
                   </th>
                 </tr>
               </thead>

@@ -55,6 +55,9 @@ export const useSchemaStore = defineStore('schema', () => {
   // The storage keeps version history and serves reads at a past instant
   // (`?as_of=`). Only the database backends do.
   const asOfEnabled = ref<boolean>(false)
+  // The server keeps the project in git (capabilities.git), so the git
+  // status is worth asking for. False until the schema says so.
+  const gitEnabled = ref<boolean>(false)
   // Whether this server runs the co-editing relay (TKT-CJL604; see
   // AppConfig.collab_enabled). False keeps the single-writer editor.
   const collabEnabled = ref<boolean>(false)
@@ -484,6 +487,7 @@ export const useSchemaStore = defineStore('schema', () => {
       worlds.value = new Map(Object.entries(schemaData.worlds || {}))
       worldOrder.value = schemaData.world_order || []
       asOfEnabled.value = schemaData.capabilities?.as_of === true
+      gitEnabled.value = schemaData.capabilities?.git === true
 
       // Feed the API layer's plural registry so it doesn't have to import
       // this store (B1a). Mirror the server's GetPlural fallback (type+'s')
@@ -657,6 +661,7 @@ export const useSchemaStore = defineStore('schema', () => {
     historyEnabled,
     headerButtons,
     asOfEnabled,
+    gitEnabled,
     collabEnabled,
     collabEpoch,
     getInverseName,

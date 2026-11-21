@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { defineComponent, h, nextTick, ref } from 'vue'
 import PageTitle from '@/components/common/PageTitle.vue'
@@ -6,6 +6,7 @@ import {
   badgedTitle,
   composeTitle,
   setTitleBadgeCount,
+  TITLE_HOLD_MS,
   usePageTitle,
   useDocumentTitle,
 } from './useDocumentTitle'
@@ -27,6 +28,7 @@ function host(setup: () => void) {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   while (mounted.length) mounted.pop()!.unmount()
   setTitleBadgeCount(0)
   document.title = ''
@@ -52,16 +54,59 @@ describe('composeTitle', () => {
 })
 
 describe('useDocumentTitle', () => {
-  it('names the tab after the app before any page names it', async () => {
+  it('names the tab after the app when no page names it in time', async () => {
+    vi.useFakeTimers()
+    document.title = 'rela'
     host(() => useDocumentTitle('Harbourmaster'))
+    await nextTick()
+    expect(document.title).toBe('rela')
+    vi.advanceTimersByTime(TITLE_HOLD_MS)
     await nextTick()
     expect(document.title).toBe('Harbourmaster')
   })
 
+  it('goes straight to the page title on first load, without the bare app name', async () => {
+    vi.useFakeTimers()
+    document.title = 'rela'
+    host(() => useDocumentTitle('Harbourmaster'))
+    const page = ref<string | undefined>(undefined)
+    host(() => usePageTitle(page))
+    await nextTick()
+    expect(document.title).toBe('rela')
+    page.value = 'Invoices'
+    await nextTick()
+    expect(document.title).toBe('Invoices · Harbourmaster')
+  })
+
+  it('keeps the previous page title while the next page loads', async () => {
+    vi.useFakeTimers()
+    host(() => useDocumentTitle('Harbourmaster'))
+    const first = host(() => usePageTitle('Invoices'))
+    await nextTick()
+    expect(document.title).toBe('Invoices · Harbourmaster')
+
+    first.unmount()
+    const next = ref<string | undefined>(undefined)
+    host(() => usePageTitle(next))
+    await nextTick()
+    vi.advanceTimersByTime(TITLE_HOLD_MS - 1)
+    await nextTick()
+    expect(document.title).toBe('Invoices · Harbourmaster')
+
+    next.value = 'INV-001'
+    await nextTick()
+    expect(document.title).toBe('INV-001 · Harbourmaster')
+    vi.advanceTimersByTime(TITLE_HOLD_MS)
+    await nextTick()
+    expect(document.title).toBe('INV-001 · Harbourmaster')
+  })
+
   it('follows the app name as it loads', async () => {
+    vi.useFakeTimers()
     const name = ref('rela')
     host(() => useDocumentTitle(name))
     name.value = 'Harbourmaster'
+    vi.advanceTimersByTime(TITLE_HOLD_MS)
     await nextTick()
     expect(document.title).toBe('Harbourmaster')
   })
@@ -85,7 +130,11 @@ describe('useDocumentTitle', () => {
     await nextTick()
     expect(document.title).toBe('Quotes · Harbourmaster')
 
+    vi.useFakeTimers()
     first.unmount()
+    await nextTick()
+    expect(document.title).toBe('Quotes · Harbourmaster')
+    vi.advanceTimersByTime(TITLE_HOLD_MS)
     await nextTick()
     expect(document.title).toBe('Harbourmaster')
   })

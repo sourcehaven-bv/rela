@@ -18,7 +18,7 @@ export interface Schema {
   // /api/v1/_batch is served (the store rolls a failed write back). The
   // server always sends it; it is optional for a server too old to.
   // as_of: reads take `?as_of=` and answer for a past instant.
-  capabilities?: { atomic_batch: boolean; as_of?: boolean }
+  capabilities?: { atomic_batch: boolean; as_of?: boolean; git?: boolean }
   // Abstract root types, keyed by name. An abstract type stores no
   // entities; its concrete variants appear in `entities` with `extends`
   // set. For integrations; the SPA does not read it.

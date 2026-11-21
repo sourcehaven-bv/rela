@@ -223,3 +223,32 @@ func TestDisableGitSync(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &status))
 	require.False(t, status.Available)
 }
+
+// TestSchemaCapabilities_Git pins capabilities.git: the SPA skips
+// GET /_git/status when the schema says the server has no git, so a
+// deployment without git, or with git sync disabled, gets no such calls.
+func TestSchemaCapabilities_Git(t *testing.T) {
+	gitCapability := func(app *App) bool {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		app.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var got struct {
+			Capabilities struct {
+				Git *bool `json:"git"`
+			} `json:"capabilities"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		require.NotNil(t, got.Capabilities.Git, "capabilities.git is always present")
+		return *got.Capabilities.Git
+	}
+
+	app := newTestAppV1(t)
+	require.False(t, gitCapability(app), "no git configured")
+
+	app.gitOps = git.NewOps(gitSyncRepo(t), git.Config{Enabled: true, Branch: "master"})
+	require.True(t, gitCapability(app), "git configured")
+
+	DisableGitSync(app)
+	require.False(t, gitCapability(app), "git sync disabled, as in tenant mode")
+}

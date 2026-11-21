@@ -110,8 +110,15 @@ export function defineWidgetRegistry(): WidgetRegistry {
         throw new Error('[widget-registry] no widget could be resolved (text widget missing)')
       }
 
+      // The type default picked this widget itself, so there is nothing to
+      // warn about. This covers a schema `types:` entry without values,
+      // such as a pattern-checked vat_number: its property type is the
+      // custom name, which no widget lists, and the text widget is right
+      // for it. Warning there logged once per rendered field.
+      const chosenByDefault = !requested && entries.get(resolvedName) === entry
       const ptype = propertyDef?.type
       if (
+        !chosenByDefault &&
         ptype &&
         entry.supportedPropertyTypes &&
         !entry.supportedPropertyTypes.includes(ptype)
