@@ -1027,29 +1027,38 @@ func headlessRoot() http.Handler {
 //
 // Requests for real files (assets, favicon, …) are delegated untouched.
 func spaHandlerWithCustom(fsys fs.FS, custom *customAssets) http.Handler {
-	fallback := spaHandler(fsys)
+	return http.HandlerFunc(spaShell{fsys: fsys, custom: custom, fallback: spaHandler(fsys)}.handleShell)
+}
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body := custom.shell(r.Context())
-		// A non-shell path, or an unreadable shell (nil body): delegate to the
-		// plain file server exactly as before.
-		if body == nil || !servesSPAShell(fsys, r.URL.Path) {
-			fallback.ServeHTTP(w, r)
-			return
-		}
+// spaShell serves the SPA for [spaHandlerWithCustom]. A named handler, so a
+// trace of a request to the SPA names it.
+type spaShell struct {
+	fsys     fs.FS
+	custom   *customAssets
+	fallback http.Handler
+}
 
-		h := w.Header()
-		h.Set("Content-Type", "text/html; charset=utf-8")
-		// The shell is rewritten per filesystem state, so the embedded file's
-		// length/modtime no longer describe it. Set Content-Length explicitly
-		// rather than letting http.FileServer derive headers from bytes we did
-		// not serve.
-		h.Set("Content-Length", strconv.Itoa(len(body)))
-		if r.Method == http.MethodHead {
-			return
-		}
-		_, _ = w.Write(body)
-	})
+//archplan:auth=none reason="the SPA shell and its static files load before login"
+func (s spaShell) handleShell(w http.ResponseWriter, r *http.Request) {
+	body := s.custom.shell(r.Context())
+	// A non-shell path, or an unreadable shell (nil body): delegate to the
+	// plain file server exactly as before.
+	if body == nil || !servesSPAShell(s.fsys, r.URL.Path) {
+		s.fallback.ServeHTTP(w, r)
+		return
+	}
+
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	// The shell is rewritten per filesystem state, so the embedded file's
+	// length/modtime no longer describe it. Set Content-Length explicitly
+	// rather than letting http.FileServer derive headers from bytes we did
+	// not serve.
+	h.Set("Content-Length", strconv.Itoa(len(body)))
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = w.Write(body)
 }
 
 // servesSPAShell reports whether a request path falls through to the SPA shell

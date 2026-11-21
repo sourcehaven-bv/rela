@@ -302,7 +302,7 @@ func pickOptionsWire(in map[int][]nextaction.PickOption) map[string][]pickOption
 	return out
 }
 
-//archplan:auth=authz
+//archplan:auth=required reason="writes only the caller's own snoozes and mutes, keyed by principal"
 func (h *nextActionHandler) handleV1NextActionPost(w http.ResponseWriter, r *http.Request) {
 	state := h.userState
 	if state == nil {
