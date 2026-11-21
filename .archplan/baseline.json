@@ -2792,6 +2792,48 @@
       "reason": "Design: config shapes mirror data-entry.yaml on purpose. TKT-3VLKP3D added primary to ListColumn, which renamed this clump.",
       "at": "2026-11-21T12:30:00Z",
       "title": "The fields busy, face, link, property, relation and sortable appear together in 3 types across 3 components."
+    },
+    "structure.repeated_orchestration-545a7d43c1f7": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-11-21T13:30:00Z",
+      "title": "3 entry points make the same 4 calls: acl.RequestFrom → acl.UnmatchedVerified → dataentry.readAddressedOr → dataentry.familyReadableOr404."
+    },
+    "structure.repeated_orchestration-fa66fb12dc42": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-11-21T13:30:00Z",
+      "title": "4 entry points make the same 3 calls: acl.RequestFrom → acl.UnmatchedVerified → dataentry.readAddressedOr."
+    },
+    "data.orphan_table-ca9379cde700": {
+      "state": "accepted",
+      "reason": "Design: SQLite FTS5 shadow table of entity_search, created and maintained by the FTS5 module, not by rela code.",
+      "at": "2026-11-21T13:30:00Z",
+      "title": "Table entity_search_config has no use in the code."
+    },
+    "data.orphan_table-74442ea88723": {
+      "state": "accepted",
+      "reason": "Design: SQLite FTS5 shadow table of entity_search, created and maintained by the FTS5 module, not by rela code.",
+      "at": "2026-11-21T13:30:00Z",
+      "title": "Table entity_search_content has no use in the code."
+    },
+    "data.orphan_table-43603d905d67": {
+      "state": "accepted",
+      "reason": "Design: SQLite FTS5 shadow table of entity_search, created and maintained by the FTS5 module, not by rela code.",
+      "at": "2026-11-21T13:30:00Z",
+      "title": "Table entity_search_data has no use in the code."
+    },
+    "data.orphan_table-18305e9eec63": {
+      "state": "accepted",
+      "reason": "Design: SQLite FTS5 shadow table of entity_search, created and maintained by the FTS5 module, not by rela code.",
+      "at": "2026-11-21T13:30:00Z",
+      "title": "Table entity_search_docsize has no use in the code."
+    },
+    "data.orphan_table-f6683a0021ce": {
+      "state": "accepted",
+      "reason": "Design: SQLite FTS5 shadow table of entity_search, created and maintained by the FTS5 module, not by rela code.",
+      "at": "2026-11-21T13:30:00Z",
+      "title": "Table entity_search_idx has no use in the code."
     }
   },
   "labels": {},
