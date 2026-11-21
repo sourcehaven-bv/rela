@@ -24,6 +24,7 @@ func TestToV1PropertyDef_Display(t *testing.T) {
 			&metamodel.PropertyDisplay{Link: true, LinkText: "Website"},
 			&v1.PropertyDisplay{Link: true, LinkText: "Website"},
 		},
+		{"image", &metamodel.PropertyDisplay{Image: true}, &v1.PropertyDisplay{Image: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

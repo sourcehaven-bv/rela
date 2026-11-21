@@ -1327,17 +1327,25 @@ func validatePropertyDisplay(schemaName, propName string, propDef PropertyDef) [
 		return nil
 	}
 	at := fmt.Sprintf("%s: property %q: display", schemaName, propName)
+	formats := 0
+	for _, set := range []bool{d.Currency != "", d.Link, d.Image} {
+		if set {
+			formats++
+		}
+	}
 	switch {
 	case d.LinkText != "" && !d.Link:
 		return []string{at + ": link_text needs link: true"}
 	case d.LinkText != "" && strings.TrimSpace(d.LinkText) == "":
 		return []string{at + ": link_text is blank; leave it out to show the URL"}
-	case d.Currency == "" && !d.Link:
-		return []string{at + " names no format; use currency or link"}
-	case d.Currency != "" && d.Link:
-		return []string{at + " names two formats; use currency or link, not both"}
+	case formats == 0:
+		return []string{at + " names no format; use currency, link or image"}
+	case formats > 1:
+		return []string{at + " names two formats; use one of currency, link or image"}
 	case d.Link:
 		return validateLinkDisplay(at, propDef)
+	case d.Image:
+		return validateImageDisplay(at, propDef)
 	}
 	var errs []string
 	if !isCurrencyCode(d.Currency) {
@@ -1348,6 +1356,26 @@ func validatePropertyDisplay(schemaName, propName string, propDef PropertyDef) [
 		errs = append(errs, fmt.Sprintf("%s: currency needs an integer or decimal property, not %q", at, propDef.Type))
 	} else if propDef.List {
 		errs = append(errs, at+": currency is not supported on a list property")
+	}
+	return errs
+}
+
+// validateImageDisplay checks `display: {image: true}`. It needs a `file`
+// property that holds one file; an `accept` list may only narrow the image
+// types, so it can never admit SVG or a non-image.
+func validateImageDisplay(at string, propDef PropertyDef) []string {
+	var errs []string
+	switch {
+	case propDef.Type != PropertyTypeFile:
+		return []string{fmt.Sprintf("%s: image needs a file property, not %q", at, propDef.Type)}
+	case propDef.List || propDef.FileMax() > 1:
+		errs = append(errs, at+": image needs a single file; leave out list and max above 1")
+	}
+	for _, a := range propDef.Accept {
+		if !slices.Contains(ImageMIMETypes, strings.ToLower(strings.TrimSpace(a))) {
+			errs = append(errs, fmt.Sprintf("%s: accept %q is not an image type (allowed: %s; SVG is refused)",
+				at, a, strings.Join(ImageMIMETypes, ", ")))
+		}
 	}
 	return errs
 }

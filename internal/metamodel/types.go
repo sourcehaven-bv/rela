@@ -1065,6 +1065,25 @@ type PropertyDisplay struct {
 	// LinkText is the text a link shows instead of the URL (TKT-IO9PTLD).
 	// The URL stays the target. Only valid with Link.
 	LinkText string `yaml:"link_text,omitempty" json:"link_text,omitempty"`
+	// Image marks a single-valued `file` property as an image (TKT-WG1410D).
+	// The upload accepts only [ImageMIMETypes] up to [ImageMaxBytes], checked
+	// before any `transform:` step (an operator's step is trusted), and the
+	// SPA shows the file as a preview on the form and detail view and as a
+	// thumbnail in list rows.
+	Image bool `yaml:"image,omitempty" json:"image,omitempty"`
+}
+
+// ImageMaxBytes is the largest file an image property accepts.
+const ImageMaxBytes = 5 << 20
+
+// ImageMIMETypes are the sniffed content types an image property accepts.
+// SVG is not among them: it carries script, so it is refused everywhere.
+var ImageMIMETypes = []string{"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+// IsImage reports whether the property is a `file` property marked
+// `display: {image: true}`.
+func (p PropertyDef) IsImage() bool {
+	return p.Type == PropertyTypeFile && p.Display != nil && p.Display.Image
 }
 
 // TransformStep is one entry in a `transform:` pipeline. A step is EITHER an

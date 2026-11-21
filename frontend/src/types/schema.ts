@@ -161,6 +161,9 @@ export interface PropertyDisplay {
   link?: boolean
   // The text the link shows instead of the URL (TKT-IO9PTLD).
   link_text?: string
+  // The file property is an image: previewed on the form and detail view,
+  // a thumbnail in list rows (TKT-WG1410D).
+  image?: boolean
 }
 
 export interface PropertyDef {

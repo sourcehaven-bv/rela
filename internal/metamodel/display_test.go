@@ -30,12 +30,12 @@ func TestParse_PropertyDisplay(t *testing.T) {
 		{name: "on a list", yaml: prop("        type: integer\n        list: true\n        display:\n          currency: EUR\n"),
 			wantErr: "display: currency is not supported on a list property"},
 		{name: "empty display", yaml: prop("        type: integer\n        display: {}\n"),
-			wantErr: "display names no format; use currency or link"},
+			wantErr: "display names no format; use currency, link or image"},
 		{name: "format not yet supported", yaml: prop("        type: integer\n        display:\n          percent: true\n"),
-			wantErr: "display names no format; use currency or link"},
+			wantErr: "display names no format; use currency, link or image"},
 		{name: "link on a string", yaml: prop("        type: string\n        display:\n          link: true\n"), wantLink: true},
 		{name: "link false", yaml: prop("        type: string\n        display:\n          link: false\n"),
-			wantErr: "display names no format; use currency or link"},
+			wantErr: "display names no format; use currency, link or image"},
 		{name: "link on an integer", yaml: prop("        type: integer\n        display:\n          link: true\n"),
 			wantErr: `display: link needs a string property, not "integer"`},
 		{name: "link on a list", yaml: prop("        type: string\n        list: true\n        display:\n          link: true\n"),
@@ -51,7 +51,7 @@ func TestParse_PropertyDisplay(t *testing.T) {
 		{name: "link text with currency", yaml: prop("        type: integer\n        display:\n          currency: EUR\n          link_text: Website\n"),
 			wantErr: "display: link_text needs link: true"},
 		{name: "link and currency", yaml: prop("        type: integer\n        display:\n          link: true\n          currency: EUR\n"),
-			wantErr: "display names two formats; use currency or link, not both"},
+			wantErr: "display names two formats; use one of currency, link or image"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -67,6 +67,50 @@ func TestParse_PropertyDisplay(t *testing.T) {
 				}
 				if got == nil || *got != want {
 					t.Fatalf("display = %+v, want %+v", got, want)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("want error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestParse_ImageDisplay(t *testing.T) {
+	prop := func(body string) string {
+		return refSchemaHead + "      logo:\n" + body
+	}
+	img := "        display:\n          image: true\n"
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{name: "image file", yaml: prop("        type: file\n" + img)},
+		{name: "narrowed accept", yaml: prop("        type: file\n        accept: [image/png]\n" + img)},
+		{name: "on a string", yaml: prop("        type: string\n" + img),
+			wantErr: `image needs a file property, not "string"`},
+		{name: "list", yaml: prop("        type: file\n        list: true\n" + img),
+			wantErr: "image needs a single file"},
+		{name: "max above one", yaml: prop("        type: file\n        max: 2\n" + img),
+			wantErr: "image needs a single file"},
+		{name: "svg accept", yaml: prop("        type: file\n        accept: [image/svg+xml]\n" + img),
+			wantErr: "is not an image type"},
+		{name: "pdf accept", yaml: prop("        type: file\n        accept: [application/pdf]\n" + img),
+			wantErr: "is not an image type"},
+		{name: "image and link", yaml: prop("        type: file\n        display:\n          image: true\n          link: true\n"),
+			wantErr: "names two formats"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			meta, err := Parse([]byte(tt.yaml))
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if !meta.Entities["ticket"].Properties["logo"].IsImage() {
+					t.Fatal("IsImage = false, want true")
 				}
 				return
 			}

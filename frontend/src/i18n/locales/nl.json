@@ -730,7 +730,13 @@
       "dragHint": "of sleep het hierheen",
       "atCapacity": "Maximum van {n} bestanden bereikt. Haal er een weg om een ander toe te voegen.",
       "notPermitted": "Je mag deze bijlage niet bewerken.",
-      "unavailable": "Bijlagen bewerken is niet beschikbaar."
+      "unavailable": "Bijlagen bewerken is niet beschikbaar.",
+      "imageNone": "Geen afbeelding",
+      "imageReplace": "Afbeelding vervangen",
+      "imageAdd": "Afbeelding toevoegen",
+      "imageRemove": "Afbeelding verwijderen",
+      "imageHint": "PNG, JPEG, GIF of WebP, maximaal 5 MB",
+      "imageOnly": "Kies een PNG-, JPEG-, GIF- of WebP-afbeelding."
     },
     "externalRef": {
       "setBySystem": "Ingesteld door de synchronisatie met {system}",

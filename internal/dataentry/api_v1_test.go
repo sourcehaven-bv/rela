@@ -2800,13 +2800,15 @@ func newTestAppV1(t *testing.T) *App {
 					// test exercises the default-safe allowlist rejection path.
 					"screenshot": {Type: "file", Accept: []string{"text/plain"}},
 					"docs":       {Type: "file", Max: new(3), Accept: []string{"text/plain"}},
+					// An image property (TKT-WG1410D).
+					"logo": {Type: "file", Display: &metamodel.PropertyDisplay{Image: true}},
 					// A bounded integer (TKT-BRAM1A).
 					"points": {Type: "integer", Min: new(1), Max: new(5)},
 				},
 				// PropertyOrder is populated at YAML-load time in
 				// production; set it explicitly here so tests exercise
 				// the same code paths the runtime hits.
-				PropertyOrder: []string{"title", "status", "screenshot", "docs", "points"},
+				PropertyOrder: []string{"title", "status", "screenshot", "docs", "logo", "points"},
 			},
 			"feature": {
 				Label:    "Feature",

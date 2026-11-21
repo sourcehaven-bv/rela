@@ -161,6 +161,10 @@ func (h *attachmentHandler) handleV1PutAttachment(
 	if !ok {
 		return
 	}
+	// An image property has a smaller cap than other files.
+	if filePropertyDef(s, entity.Type, property).IsImage() {
+		limit = min(limit, metamodel.ImageMaxBytes)
+	}
 
 	// Take an upload slot before reading the body, which is when the bytes
 	// start to use memory and disk.

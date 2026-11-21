@@ -1130,6 +1130,17 @@ export class FormPage extends BasePage {
     });
   }
 
+  /** Attach binary bytes, such as an image, to a `file` property. */
+  async attachBinaryFile(property: string, name: string, buffer: Buffer, mimeType: string) {
+    await this.waitForFileWidget(property);
+    await this.fileInput(property).setInputFiles({ name, mimeType, buffer });
+  }
+
+  /** The preview `<img>` an image property shows (staged or uploaded). */
+  imagePreview(property: string): Locator {
+    return this.fileWidget(property).locator("img.image-preview-img");
+  }
+
   /** Edit mode only: attach a file and wait for its upload to succeed, so a
    *  following navigation cannot abort it. */
   async attachFileAndWaitForUpload(property: string, name: string, contents: string) {

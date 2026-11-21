@@ -29,12 +29,18 @@ type FilePolicy struct {
 // PolicyFor resolves the file property prop against meta's global
 // attachment settings, with the semantics of an entity `file` property:
 // `accept` replaces the global allow list, a property `scan_cmd` replaces the
-// global one, and `scan: off` opts out of scanning. The deny list of active
+// global one, and `scan: off` opts out of scanning. An image property
+// (`display: {image: true}`) accepts only [metamodel.ImageMIMETypes], or the
+// narrower `accept` it names. The deny list of active
 // content applies whatever the allow list says.
 //
 // Nil: meta accepted — no global settings apply.
 func PolicyFor(meta *metamodel.Metamodel, prop metamodel.PropertyDef) FilePolicy {
 	pol := FilePolicy{Accept: prop.Accept, Transform: prop.Transform}
+	if prop.IsImage() && len(pol.Accept) == 0 {
+		// An image property admits images only, whatever the global list says.
+		pol.Accept = metamodel.ImageMIMETypes
+	}
 	if meta == nil {
 		if prop.Scan != metamodel.ScanOff {
 			pol.ScanCmd = prop.ScanCmd

@@ -1086,6 +1086,21 @@ entities:
         type: file
         required: true
 
+  # image-field.spec.ts (TKT-WG1410D): a dedicated type with an image property,
+  # so no other test's entity gains a field.
+  brand:
+    label: Brand
+    id_type: sequential
+    id_prefix: BRAND
+    properties:
+      title:
+        type: string
+        required: true
+      logo:
+        type: file
+        display:
+          image: true
+
   task:
     label: Task
     id_type: sequential
@@ -1445,6 +1460,14 @@ forms:
       - property: title
       - property: document
 
+  # image-field.spec.ts (TKT-WG1410D): an image upload with preview.
+  brand:
+    entity_type: brand
+    title: "Brand"
+    fields:
+      - property: title
+      - property: logo
+
   task:
     entity_type: task
     title: "Task"
@@ -1630,6 +1653,14 @@ lists:
     columns:
       - property: title
       - property: doc_url
+
+  # image-field.spec.ts (TKT-WG1410D): a thumbnail column. Not in the sidebar.
+  brand_logos:
+    entity_type: brand
+    title: "Brands"
+    columns:
+      - property: title
+      - property: logo
 
   tasks:
     entity_type: task
