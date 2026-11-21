@@ -5,6 +5,7 @@ import { PiniaColada } from '@pinia/colada'
 import EntityList from './EntityList.vue'
 import FilterBar from './FilterBar.vue'
 import SortMenu from './SortMenu.vue'
+import RlTable from 'rela-components/components/table/RlTable.vue'
 import { withPageHeader } from '@/composables/pageHeaderTestHost'
 import { useSchemaStore } from '@/stores/schema'
 import { _setEntityPluralForTest } from '@/api/entities'
@@ -130,6 +131,27 @@ describe('EntityList toolbar', () => {
     await flushPromises()
     // The unsorted read is already cached, so the proof is the menu's state.
     expect(wrapper.findComponent(SortMenu).props('modelValue')).toEqual([])
+    wrapper.unmount()
+  })
+
+  it('shows a multi-key sort from shift-clicking column headers in the Sort menu', async () => {
+    seedSchema()
+    const wrapper = await mountList()
+    const table = wrapper.findComponent(RlTable)
+    const columns = (table.vm.$props as { columns: { key: string }[] }).columns
+    const title = (table.vm.$props as { nameColumn: { key: string } }).nameColumn
+    const status = columns.find((c) => c.key.includes('status'))!
+
+    table.vm.$emit('sort-click', title, { additive: false })
+    await flushPromises()
+    table.vm.$emit('sort-click', status, { additive: true })
+    await flushPromises()
+
+    expect(wrapper.findComponent(SortMenu).props('modelValue')).toEqual([
+      { property: 'title', direction: 'asc' },
+      { property: 'status', direction: 'asc' },
+    ])
+    expect(wrapper.find('[data-testid="sort-menu-button"]').text()).toContain('+1')
     wrapper.unmount()
   })
 

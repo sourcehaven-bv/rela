@@ -185,6 +185,19 @@ test.describe('Kanban Board', () => {
       await kanbanPage.sortByAndWaitForRead('title', 'Descending', '-title');
       await expect(kanbanPage.cards.filter({ hasText: 'Dashboard Analytics' })).toBeVisible();
     });
+
+    test('the sort is kept in the URL and survives a reload', async ({ appPage }) => {
+      const kanbanPage = new KanbanPage(appPage);
+
+      await kanbanPage.navigateToKanban('feature-board');
+      await kanbanPage.sortBy('title', 'Descending');
+      await expect(appPage).toHaveURL(/sort=-title/);
+
+      await appPage.reload();
+      await kanbanPage.sortMenuButton.waitFor();
+      await expect(kanbanPage.sortMenuButton).toContainText(/title/i);
+      await expect(appPage).toHaveURL(/sort=-title/);
+    });
   });
 
   test.describe('Create from Kanban', () => {

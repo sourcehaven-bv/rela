@@ -18,7 +18,6 @@ import type {
   KanbanSwimlane,
   ListParams,
   PageScope,
-  SortSpec,
 } from '@/types'
 import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
 import type { FilterState } from '@/types/filters'
@@ -27,6 +26,7 @@ import SearchBox from '@/components/lists/SearchBox.vue'
 import SortMenu, { type SortOption } from '@/components/lists/SortMenu.vue'
 import { useListKeyboard } from '@/composables/useListKeyboard'
 import { sortParam } from '@/utils/listParams'
+import { useUrlSort } from '@/composables/useUrlSort'
 import BackButton from '@/components/common/BackButton.vue'
 import PageHeaderContent from '@/components/common/PageHeaderContent'
 import EntityDetailPanel from '@/components/entity/EntityDetailPanel.vue'
@@ -166,22 +166,19 @@ const { filters, q: searchQuery, writeToQuery } = useUrlFilterSync({
   staticFilterProperties: () => new Set((kanbanConfig.value?.filters ?? []).map((f) => f.property)),
 })
 
-// The reader's sort, from the Sort menu. The server orders the cards, so a
-// column lists its cards in this order; no sort leaves the server default.
-const sortSpecs = ref<SortSpec[]>([])
-// This view is reused across boards, and another board's sort names
-// properties of another entity.
-watch(
-  () => props.id,
-  () => {
-    sortSpecs.value = []
-  }
-)
+// The reader's sort, from the Sort menu, kept in `?sort=` like the search in
+// `?q=`. The server orders the cards, so a column lists its cards in this
+// order; no sort leaves the server default. This view is reused across
+// boards, and another board's sort names properties of another entity, so a
+// key the board cannot sort on is left out.
+const sortSpecs = useUrlSort(() => new Set(sortOptions.value.map((o) => o.property)))
 
 // Every sortable property of the board's entity: a board has no column
 // headers to derive the choice from, and a card shows only some of them.
+// Read from the schema store, not `entityType`, which is declared further
+// down: the board's read depends on the sort and runs before that line.
 const sortOptions = computed<SortOption[]>(() =>
-  Object.entries(entityType.value?.properties ?? {})
+  Object.entries(schemaStore.getEntityType(kanbanConfig.value?.entity ?? '')?.properties ?? {})
     .filter(([, def]) => !def.list && def.type !== 'file')
     .map(([property]) => ({ property, label: property }))
 )
