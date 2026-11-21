@@ -3,6 +3,8 @@ id: TKT-CEI4OTO
 type: ticket
 title: Remaining data-entry UI gaps in New button and column Add and create forms and lists
 kind: chore
+priority: medium
+effort: s
 status: ready
 ---
 
