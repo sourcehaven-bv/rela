@@ -991,6 +991,23 @@ type AppConfig struct {
 	// a client served by an earlier process is refused rather than refilling
 	// a room with its old document.
 	CollabEpoch string `json:"collab_epoch,omitempty"`
+	// About is `app.about:`: the version and links the About dialog shows
+	// below the description. Absent when neither is configured. A link the
+	// server cannot serve safely is left out.
+	About *AppAbout `json:"about,omitempty"`
+}
+
+// AppAbout is [AppConfig.About].
+type AppAbout struct {
+	Version string         `json:"version,omitempty"`
+	Links   []AppAboutLink `json:"links,omitempty"`
+}
+
+// AppAboutLink is one link of [AppAbout]: a path on this host or an https
+// URL.
+type AppAboutLink struct {
+	Label string `json:"label"`
+	URL   string `json:"url"`
 }
 
 // Error is an RFC 7807 Problem Details response.
@@ -1486,7 +1503,8 @@ type SidebarResponse struct {
 	Create []SidebarCreate `json:"create,omitempty"`
 	// HiddenBuiltins names the built-in sidebar rows ("search", "inbox",
 	// "flow_tasks", "flow_runs", "analysis"), the as-of picker ("as_of") and
-	// the footer Shortcuts button ("shortcuts") that the current space, or the
+	// the footer Shortcuts, Settings and About buttons ("shortcuts",
+	// "settings", "about") that the current space, or the
 	// top-level sidebar without spaces, leaves out for this principal
 	// ([dataentryconfig.Builtins]). Absent when every row is shown. A UX
 	// filter: the pages behind the rows stay reachable by URL.

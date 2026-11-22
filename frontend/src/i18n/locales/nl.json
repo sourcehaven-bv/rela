@@ -166,6 +166,7 @@
   "footer": {
     "settings": "Instellingen",
     "about": "Over",
+    "aboutVersion": "Versie {version}",
     "shortcuts": "Sneltoetsen",
     "keyboardShortcuts": "Sneltoetsen",
     "clickToSync": "Klik om te synchroniseren",

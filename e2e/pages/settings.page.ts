@@ -33,6 +33,24 @@ export class SettingsPage extends BasePage {
     return { save: save.width, reset: reset.width };
   }
 
+  /**
+   * Asserts whether the page offers the shared settings a settings:edit
+   * holder gets (defaults, palette, logo, theme, Save) with their file
+   * paths, and that the user's own preferences show either way.
+   */
+  async expectEditorControls(shown: boolean) {
+    const count = shown ? 1 : 0;
+    const card = (title: string) =>
+      this.page.locator('.settings-card').filter({ has: this.page.getByRole('heading', { name: title, exact: true }) });
+    await expect(card('Display timezone')).toBeVisible();
+    await expect(this.appInfoCard).toBeVisible();
+    for (const title of ['Property Defaults', 'Relation Defaults', 'Overrides', 'Appearance', 'Logo', 'Theme package']) {
+      await expect(card(title)).toHaveCount(count);
+    }
+    await expect(this.saveButton).toHaveCount(count);
+    await expect(this.page.locator('.file-path')).toHaveCount(shown ? 3 : 0);
+  }
+
   async navigateToSettings() {
     await this.navigateTo('/settings');
     await this.waitForSpinnerToDisappear();

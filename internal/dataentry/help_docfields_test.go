@@ -1,9 +1,12 @@
 package dataentry
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -206,5 +209,30 @@ func TestAboutDescription(t *testing.T) {
 				t.Errorf("aboutDescription = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// aboutWire serves `app.about:` and drops a link that fails the load-time
+// rule, which a live reload does not re-run. Nothing configured serves no
+// block, so the SPA hides an About with nothing in it.
+func TestAboutWire(t *testing.T) {
+	if got := aboutWire(dataentryconfig.AboutConfig{}); got != nil {
+		t.Errorf("empty about = %+v, want nil", got)
+	}
+	got := aboutWire(dataentryconfig.AboutConfig{
+		Version: "2026.11",
+		Links: []dataentryconfig.AboutLink{
+			{Label: "Help", URL: "https://help.example.com/"},
+			{Label: "Bad", URL: "javascript:alert(1)"},
+			{Label: "", URL: "/no-label"},
+			{Label: "  ", URL: "/blank-label"},
+		},
+	})
+	want := &v1.AppAbout{Version: "2026.11", Links: []v1.AppAboutLink{{Label: "Help", URL: "https://help.example.com/"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("aboutWire = %+v, want %+v", got, want)
+	}
+	if got := aboutWire(dataentryconfig.AboutConfig{Links: []dataentryconfig.AboutLink{{Label: "x", URL: "data:x"}}}); got != nil {
+		t.Errorf("only invalid links = %+v, want nil", got)
 	}
 }

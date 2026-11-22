@@ -42,8 +42,18 @@ const props = withDefaults(
      * opens the help either way.
      */
     showShortcuts?: boolean
+    /**
+     * Whether to show the Settings button, from `builtins.settings`. The
+     * settings page stays reachable by URL.
+     */
+    showSettings?: boolean
+    /**
+     * Whether `builtins.about` lets the About button show. It shows only
+     * when the dialog has something to say as well.
+     */
+    showAbout?: boolean
   }>(),
-  { showShortcuts: true }
+  { showShortcuts: true, showSettings: true, showAbout: true }
 )
 
 const gitStore = useGitStore()
@@ -52,8 +62,9 @@ const route = useRoute()
 const router = useRouter()
 
 // Global "About" help: the deployment description (data-entry app.description,
-// falling back to the metamodel's top-level description on the server). The
-// button is shown only when there is a description to show (TKT-DUQBD0).
+// falling back to the metamodel's top-level description on the server), then
+// the version and links of `app.about:`. The button is shown only when one of
+// them is set (TKT-DUQBD0), so the dialog never holds the app name alone.
 const aboutOpen = ref(false)
 
 // The quietest prominence tier: a chip that says something exists, expanding
@@ -79,6 +90,11 @@ const appDescription = computed(() => schemaStore.aboutDescription?.trim() || ''
 // The description is authored as markdown (in data-entry.yaml or the metamodel);
 // render it so *emphasis*, lists, etc. display. renderMarkdown sanitizes.
 const appDescriptionHtml = computed(() => renderMarkdown(appDescription.value))
+const aboutVersion = computed(() => schemaStore.app?.about?.version?.trim() || '')
+const aboutLinks = computed(() => schemaStore.app?.about?.links ?? [])
+const hasAbout = computed(
+  () => !!appDescription.value || !!aboutVersion.value || aboutLinks.value.length > 0
+)
 
 // The first status once the schema says the server has git; SSE handles
 // later updates.
@@ -215,6 +231,8 @@ async function handleSync() {
     </RlPopover>
 
     <RlSidebarFooterLink
+      v-if="props.showSettings"
+      data-testid="footer-settings"
       :label="t('footer.settings')"
       icon="settings"
       :class="{ active: stripSpace(route.path) === '/settings' }"
@@ -229,7 +247,8 @@ async function handleSync() {
       @click="router.push('/remotes')"
     />
     <RlSidebarFooterLink
-      v-if="appDescription"
+      v-if="props.showAbout && hasAbout"
+      data-testid="footer-about"
       :label="t('footer.about')"
       icon="help"
       @click="aboutOpen = true"
@@ -245,11 +264,19 @@ async function handleSync() {
       <span class="shortcuts-text">{{ t('footer.shortcuts') }}</span>
     </button>
 
-    <!-- About: the deployment description. RlModal owns the scrim, the focus
-         trap, Escape and the overlay stack. -->
+    <!-- About: the deployment description, version and links. RlModal owns
+         the scrim, the focus trap, Escape and the overlay stack. -->
     <RlModal :open="aboutOpen" :title="appName" @close="aboutOpen = false">
       <!-- eslint-disable-next-line vue/no-v-html -->
-      <div class="about-body md-body" v-html="appDescriptionHtml" />
+      <div v-if="appDescription" class="about-body md-body" v-html="appDescriptionHtml" />
+      <p v-if="aboutVersion" class="about-version" data-testid="about-version">
+        {{ t('footer.aboutVersion', { version: aboutVersion }) }}
+      </p>
+      <ul v-if="aboutLinks.length" class="about-links" data-testid="about-links">
+        <li v-for="link in aboutLinks" :key="link.url">
+          <a :href="link.url" target="_blank" rel="noopener noreferrer">{{ link.label }}</a>
+        </li>
+      </ul>
     </RlModal>
   </div>
 </template>
@@ -365,5 +392,15 @@ async function handleSync() {
 
 .about-body :deep(p:last-child) {
   margin-bottom: 0;
+}
+
+.about-version {
+  margin: var(--rl-space-3) 0 0;
+  color: var(--rl-color-text-muted);
+}
+
+.about-links {
+  margin: var(--rl-space-3) 0 0;
+  padding-left: var(--rl-space-5);
 }
 </style>

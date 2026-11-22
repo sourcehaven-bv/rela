@@ -496,6 +496,9 @@ type AppConfig struct {
 	// Settings page cannot be read. A root-relative path or an https URL,
 	// validated at load like the account links. Empty shows the app name.
 	Logo string `yaml:"logo,omitempty" json:"logo,omitempty"`
+	// About adds a version and links to the About dialog, below the
+	// description. See [AboutConfig].
+	About AboutConfig `yaml:"about,omitempty" json:"about,omitzero"`
 	// DefaultWorld names the world a request lands in when the URL carries no
 	// `?world=`. Empty (the default) means the default world — the raw stored
 	// faces, which is right for an authoring tool and wrong for a reader.

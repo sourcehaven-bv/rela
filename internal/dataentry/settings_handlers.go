@@ -314,13 +314,21 @@ func (h *appearanceHandler) handleAPIGetSettings(w http.ResponseWriter, _ *http.
 //
 //archplan:guard=authz reason="checks the settings:edit permission; read-only refuses"
 func (h *appearanceHandler) refuseSettingsEdit(w http.ResponseWriter, r *http.Request, action string) bool {
-	ctx := r.Context()
-	if access.ModeOf(h.acl()).PermitsProjectWrite(ctx, readGateFromContext(ctx), acl.PermSettingsEdit) {
+	if permitsSettingsEdit(h.acl(), r) {
 		return false
 	}
 	writeV1Error(w, r, http.StatusForbidden, "forbidden", "Forbidden",
 		action+" needs the "+acl.PermSettingsEdit+" permission.")
 	return true
+}
+
+// permitsSettingsEdit reports whether the request's principal may save the
+// settings page: [acl.PermSettingsEdit] under a policy, and never on a
+// read-only instance. refuseSettingsEdit enforces it; `_me` reports it as
+// can_edit_settings so the page leaves out the controls a save would refuse.
+func permitsSettingsEdit(impl acl.ACL, r *http.Request) bool {
+	ctx := r.Context()
+	return access.ModeOf(impl).PermitsProjectWrite(ctx, readGateFromContext(ctx), acl.PermSettingsEdit)
 }
 
 // handleAPISaveSettings saves the user defaults from JSON input. The

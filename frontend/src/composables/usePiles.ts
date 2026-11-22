@@ -19,6 +19,7 @@ import {
   type UpdatePileInput,
 } from '@/api/piles'
 import { getErrorMessage } from '@/api/errors'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 import { t } from '@/i18n'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useEvents } from '@/composables/useEvents'
@@ -120,6 +121,10 @@ export function usePiles() {
   const { on, off } = useEvents()
 
   const available = computed(() => schemaStore.pilesAvailable)
+  // A read-only workspace refuses every pile write, so the entries that add
+  // to a pile, take an item off one or tick a pile toggle are left out there,
+  // like the other write actions. Reading piles stays available.
+  const writable = computed(() => available.value && !workspaceReadOnly.value)
 
   const query = useQuery({
     key: () => [PILES_KEY_ROOT, worldParam.value ?? ''],
@@ -330,6 +335,7 @@ export function usePiles() {
 
   return {
     available,
+    writable,
     piles,
     declared,
     collected,

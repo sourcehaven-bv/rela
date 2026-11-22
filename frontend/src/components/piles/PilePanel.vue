@@ -93,6 +93,8 @@ function typeLabel(type: string): string {
 }
 
 const locked = computed(() => !!pile.value?.locked)
+// Rename, delete and remove are writes, which a read-only workspace refuses.
+const editable = computed(() => !locked.value && piles.writable.value)
 const readState = computed(() => !!pile.value?.read_state)
 const unreadCount = computed(() => items.value.filter((i) => !i.read).length)
 
@@ -307,7 +309,7 @@ const renaming = ref(false)
               <RlMenuSeparator />
             </template>
             <RlMenuItem
-              v-if="!locked"
+              v-if="editable"
               icon="edit"
               data-testid="pile-rename"
               @click="renaming = true"
@@ -316,7 +318,7 @@ const renaming = ref(false)
             <RlMenuItem icon="copy" :disabled="!items.length" @click="copyIds">{{
               t('piles.panel.copyIds')
             }}</RlMenuItem>
-            <template v-if="!locked">
+            <template v-if="editable">
               <RlMenuSeparator />
               <RlMenuItem
                 icon="trash-2"
@@ -365,6 +367,7 @@ const renaming = ref(false)
             {{ t('piles.panel.markRead') }}
           </RlButton>
           <RlButton
+            v-if="piles.writable.value"
             size="sm"
             variant="secondary"
             tone="danger"

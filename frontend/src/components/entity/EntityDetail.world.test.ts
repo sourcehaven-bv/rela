@@ -14,6 +14,7 @@ import EntityActionsMenu from './EntityActionsMenu.vue'
 import type { EntityAction } from './entityActions'
 import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 import type { Entity, CopyOffer, EntityWorld } from '@/types'
 import type { ViewEntity, ViewResponse, ViewSection } from '@/api'
 import type { CopyInvokeResult } from '@/api/copies'
@@ -1649,6 +1650,21 @@ describe('EntityDetail world binding', () => {
       expect(hidden.find('.desktop-actions').text()).not.toContain('Add to pile')
       expect(overflowText(hidden)).toContain('Publish this policy')
       expect(overflowText(hidden)).not.toContain('Add to new pile')
+    })
+
+    // A read-only workspace refuses pile writes, so neither block offers them.
+    it('hides Add to pile in a read-only workspace', async () => {
+      const store = useSchemaStore()
+      store.setPiles({ piles_available: true })
+      workspaceReadOnly.value = true
+      try {
+        const w = await mountDetail(viewResponse({ _copies: [promoteOffer()] }))
+        rendersProof(w)
+        expect(w.find('.desktop-actions').text()).not.toContain('Add to pile')
+        expect(overflowText(w)).not.toContain('Add to new pile')
+      } finally {
+        workspaceReadOnly.value = false
+      }
     })
   })
 

@@ -9,7 +9,8 @@
  * every auto-read pile (notifications). That is sent only when the entity is
  * unread on one, so most page views send nothing.
  *
- * Renders nothing when piles are not available to this principal.
+ * Renders nothing when piles are not available to this principal, or the
+ * workspace is read-only.
  */
 import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -29,7 +30,7 @@ const schemaStore = useSchemaStore()
 const piles = usePiles()
 
 const toggles = computed(() => {
-  if (!piles.available.value) return []
+  if (!piles.writable.value) return []
   return (schemaStore.pilesConfig?.toggles ?? []).flatMap((tg) => {
     const types = tg.entity_types ?? []
     if (types.length && !types.includes(props.entityType)) return []

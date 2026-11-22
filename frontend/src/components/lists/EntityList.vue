@@ -4,6 +4,7 @@ import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-rout
 import { useI18n } from 'vue-i18n'
 import { useQuery, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 import { accessRefusal } from '@/api/workspaceAccess'
 import { useListKeyboard } from '@/composables/useListKeyboard'
 import { useListSelection } from '@/composables/useListSelection'
@@ -583,8 +584,11 @@ const hasRelationColumns = computed(() => {
 })
 
 const hasActions = computed(() => resolvedActions.value.length > 0)
-// "Add to pile" needs piles, and `list_buttons.add_to_pile` may hide it.
-const canAddToPile = computed(() => schemaStore.pilesAvailable && schemaStore.listButtons.add_to_pile)
+// "Add to pile" needs piles a write can reach (not a read-only workspace),
+// and `list_buttons.add_to_pile` may hide it.
+const canAddToPile = computed(
+  () => schemaStore.pilesAvailable && !workspaceReadOnly.value && schemaStore.listButtons.add_to_pile
+)
 // Rows are selectable when there is something to do with a selection: a
 // configured bulk action, a row the principal may delete, or a pile to add
 // the rows to (TKT-K3RJLH). With none of these the list shows no checkboxes.

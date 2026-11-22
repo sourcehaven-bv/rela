@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { usePageTitle } from '@/composables/useDocumentTitle'
 import { useI18n } from 'vue-i18n'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useConfirm } from '@/composables/useConfirm'
+import { useMe } from '@/queries/me'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 import {
   getSettings,
   saveSettings,
@@ -52,6 +54,16 @@ const { t } = useI18n()
 usePageTitle(() => t('settings.title'))
 const uiStore = useUIStore()
 const { confirm } = useConfirm()
+
+// The shared create-form defaults, palette, logo and theme are one value for
+// every user, and saving them needs settings:edit (a read-only workspace
+// refuses every save). Without it the page shows only the user's own
+// preferences: offering controls the server refuses, with the schema's
+// internal property names and file paths, only confuses. A UX choice, not
+// concealment: the configuration is not a secret, and every save checks the
+// permission itself.
+const { data: me, isPending: meLoading } = useMe()
+const canEdit = computed(() => me.value?.can_edit_settings === true && !workspaceReadOnly.value)
 
 // Display-timezone picker. The list comes from Intl (all IANA zones); the
 // empty value maps to "Browser default". Changing it only affects how datetime
@@ -519,6 +531,7 @@ async function loadSettings() {
 }
 
 async function handleSave() {
+  if (!canEdit.value) return
   saving.value = true
   error.value = null
   try {
@@ -761,9 +774,16 @@ function getAvailableOverrideRelations(overrideIndex: number): SettingsRelationD
   return allRelations.value.filter((r) => !(r.name in used))
 }
 
-onMounted(() => {
-  loadSettings()
-})
+// The settings data feeds only the controls a settings editor gets, so it
+// is read once /_me says the user is one.
+watch(
+  [canEdit, meLoading],
+  ([edit, pending]) => {
+    if (edit) void loadSettings()
+    else if (!pending) loading.value = false
+  },
+  { immediate: true }
+)
 </script>
 
 <template>
@@ -771,8 +791,10 @@ onMounted(() => {
     <div class="page-header">
       <div>
         <h1>{{ t('settings.title') }}</h1>
-        <p class="subtitle">Configure default values for new entities</p>
-        <p class="file-path">.rela/user-defaults.yaml</p>
+        <template v-if="canEdit">
+          <p class="subtitle">Configure default values for new entities</p>
+          <p class="file-path">.rela/user-defaults.yaml</p>
+        </template>
       </div>
     </div>
 
@@ -787,7 +809,7 @@ onMounted(() => {
 
     <form v-else class="settings-form" @submit.prevent="handleSave">
       <!-- Property Defaults -->
-      <div class="settings-card">
+      <div v-if="canEdit" class="settings-card">
         <h3>Property Defaults</h3>
         <p class="description">Default values applied when creating any entity type.</p>
 
@@ -859,7 +881,7 @@ onMounted(() => {
       </div>
 
       <!-- Relation Defaults -->
-      <div class="settings-card">
+      <div v-if="canEdit" class="settings-card">
         <h3>Relation Defaults</h3>
         <p class="description">Default relations created when making a new entity.</p>
 
@@ -903,7 +925,7 @@ onMounted(() => {
       </div>
 
       <!-- Override Groups -->
-      <div class="settings-card">
+      <div v-if="canEdit" class="settings-card">
         <h3>Overrides</h3>
         <p class="description">
           Override defaults for specific entity types. First matching override takes precedence.
@@ -1051,7 +1073,7 @@ onMounted(() => {
       </div>
 
       <!-- Appearance / Palette -->
-      <div class="settings-card">
+      <div v-if="canEdit" class="settings-card">
         <h3>Appearance</h3>
         <p class="description">Customize the color palette. Empty fields use built-in defaults.</p>
         <p class="file-path">.rela/palette.yaml</p>
@@ -1375,7 +1397,7 @@ onMounted(() => {
       </div>
 
       <!-- Logo -->
-      <div class="settings-card">
+      <div v-if="canEdit" class="settings-card">
         <h3>Logo</h3>
         <p class="description">
           Upload an image to replace the sidebar app name. PNG, JPEG, SVG, or WebP. Max 256 KiB.
@@ -1433,7 +1455,7 @@ onMounted(() => {
       </div>
 
       <!-- Theme package -->
-      <div class="settings-card">
+      <div v-if="canEdit" class="settings-card">
         <h3>Theme package</h3>
         <p class="description">
           Bundle the current palette and logo into a portable
@@ -1504,7 +1526,7 @@ onMounted(() => {
       </div>
 
       <!-- Form Actions -->
-      <div class="form-actions">
+      <div v-if="canEdit" class="form-actions">
         <RlButton type="submit" variant="primary" :loading="saving" pending-label="Saving…">
           Save
         </RlButton>

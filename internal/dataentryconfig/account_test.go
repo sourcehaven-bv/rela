@@ -49,6 +49,19 @@ func TestValidateConfig_Account(t *testing.T) {
 		{"archived text too long", "account: {archived_text: " + strings.Repeat("x", 501) + "}", "account.archived_text: longer than 500"},
 		{"app logo", "app: {logo: https://cdn.example.com/logo.svg}", ""},
 		{"app logo javascript", "app: {logo: 'javascript:alert(1)'}", `app.logo: "javascript:alert(1)"`},
+		{"app about", `app:
+  about:
+    version: "2026.11"
+    links:
+      - {label: Help, url: https://help.example.com/}
+      - {label: Terms, url: /terms}`, ""},
+		{"app about link javascript", "app: {about: {links: [{label: x, url: 'javascript:alert(1)'}]}}",
+			`app.about.links[0].url: "javascript:alert(1)"`},
+		{"app about link without url", "app: {about: {links: [{label: Help}]}}", `app.about.links[0].url: ""`},
+		{"app about link without label", "app: {about: {links: [{url: /help}]}}", "app.about.links[0]: label is required"},
+		{"app about unknown key", "app: {about: {vers: '1'}}", `app.about: unknown key "vers"`},
+		{"app about link unknown key", "app: {about: {links: [{label: x, url: /x, href: /y}]}}",
+			`app.about.links[0]: unknown key "href"`},
 
 		{"javascript scheme", "account: {sign_out: 'javascript:alert(1)'}", `account.sign_out: "javascript:alert(1)"`},
 		{"data scheme", "account: {account: 'data:text/html,x'}", "account.account:"},

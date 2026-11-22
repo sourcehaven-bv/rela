@@ -113,6 +113,20 @@ export class AppShellPage extends BasePage {
     await expect(this.chromeFooter.getByRole('button', { name: 'Settings' })).toBeVisible();
   }
 
+  /** Asserts whether the footer offers Settings and About. */
+  async expectSettingsAndAbout(settings: boolean, about: boolean) {
+    await expect(this.chromeFooter.getByTestId('footer-settings')).toHaveCount(settings ? 1 : 0);
+    await expect(this.chromeFooter.getByTestId('footer-about')).toHaveCount(about ? 1 : 0);
+  }
+
+  /** Opens About and returns its version line and link labels. */
+  async readAbout(): Promise<{ version: string; links: string[] }> {
+    await this.chromeFooter.getByTestId('footer-about').click();
+    const version = (await this.page.getByTestId('about-version').textContent())?.trim() ?? '';
+    const links = await this.page.getByTestId('about-links').getByRole('link').allTextContents();
+    return { version, links };
+  }
+
   async expectShortcutsButtonVisible() {
     await expect(this.chromeFooter.getByRole('button', { name: /Shortcuts/ })).toBeVisible();
   }

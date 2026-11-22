@@ -8,7 +8,8 @@
  * the user was looking at, and a bare id of a faced type is refused as
  * ambiguous. Callers pass each row's `entityRef`.
  *
- * Renders nothing when piles are not available to this principal.
+ * Renders nothing when piles are not available to this principal, or the
+ * workspace is read-only.
  */
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -66,7 +67,7 @@ function startNew() {
 </script>
 
 <template>
-  <template v-if="piles.available.value">
+  <template v-if="piles.writable.value">
     <RlMenu :placement="placement" align="start" data-testid="add-to-pile">
       <template #trigger="{ toggle, attrs }">
         <RlButton :variant="variant" :size="size" icon="layers" v-bind="attrs" @click="toggle">

@@ -445,6 +445,9 @@ var locked = map[File][]string{
 		// The logo the server writes into the shell for the workspace pages,
 		// like the account links: operator config, not in the Configure space.
 		"app.logo",
+		// The About dialog's version and links: operator config, not in the
+		// Configure space yet.
+		"app.about.**",
 		// Built-in sidebar rows (TKT-JEAR2UA): not in the Configure space yet.
 		"builtins.**", "spaces.[].builtins.**",
 		// Where suggestions appear (TKT-6EEXXE), locked like next_actions.
