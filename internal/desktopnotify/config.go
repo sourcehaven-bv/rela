@@ -72,12 +72,15 @@ type Config struct {
 type condition struct {
 	entityType string
 	prog       *predicate.Program
-	// exact reports that pushed answers prog on its own, so the store
-	// decides which entities match and prog is not run. Otherwise pushed
-	// holds only the equalities prog implies: they narrow the read, and
-	// prog judges every row it returns.
+	// exact reports that pushed and where answer prog on their own, so the
+	// store decides which entities match and prog is not run. Otherwise
+	// they hold only the conjuncts of prog that lower: they narrow the
+	// read, and prog judges every row it returns.
 	exact  bool
 	pushed []store.PropPredicate
+	// where is the rest of the store filter, ANDed with pushed; nil when
+	// there is none.
+	where *store.Cond
 }
 
 type rule struct {
@@ -123,7 +126,9 @@ func Load(
 	for _, opt := range opts {
 		opt(&o)
 	}
-	cfg := &Config{meta: meta, eval: predicatefns.NewEvaluatorWithClock(meta, o.now)}
+	// LoweringSemantics: the store answers a lowered condition, and a
+	// condition that does not lower must read unset values the same way.
+	cfg := &Config{meta: meta, eval: predicatefns.NewEvaluatorWithClock(meta, o.now).LoweringSemantics()}
 
 	data, err := files.Load(ctx, ConfigFile)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -223,34 +228,51 @@ func (c *Config) compileCondition(entityType, source string) (condition, error) 
 			"condition %q: related() is not available in %s", source, ConfigFile)
 	}
 	cond := condition{entityType: canonical, prog: prog}
-	cond.pushed, cond.exact = c.lower(prog, canonical)
+	cond.pushed, cond.where, cond.exact = c.lower(prog, canonical)
 	return cond, nil
 }
 
-// lower returns the store predicates for prog on entityType, and whether
-// they answer prog exactly.
+// lower returns the store filter for prog on entityType, and whether it
+// answers prog exactly.
+//
+// A condition [queryplan.LowerCondition] lowers is answered by the store:
+// `and`, `or`, `not`, `~=` and ordered comparisons on string and integer
+// properties. The evaluator runs with LoweringSemantics, so the Go path
+// reads an ordered comparison on an unset value as the store does.
+//
+// Any other condition, mainly a date compared with today() (TKT-4Z2BIRG),
+// pushes the top-level conjuncts that do lower
+// ([queryplan.ConditionSuperset]). Those keep every row prog matches, and
+// the Go evaluation judges each row they return.
 //
 // The desktop has no current user, so the identity is empty: a condition
-// naming current_user does not compile here, and an empty identity makes
-// both lowerings decline what such a condition would need. A traversal
-// never lowers, because compileCondition refuses related().
-//
-// A condition that does not lower exactly still pushes the equalities
-// [queryplan.ConditionPrefilters] finds. Those are a superset: the Go
-// evaluation re-checks every row they return.
-func (c *Config) lower(prog *predicate.Program, entityType string) ([]store.PropPredicate, bool) {
-	var pushed []store.PropPredicate
-	low, exact := queryplan.LowerScope(prog, c.meta, entityType, "")
-	if exact && len(low.Traversals) == 0 {
-		pushed = low.Props
-	} else {
+// naming current_user does not compile here. compileCondition refuses
+// related(), so no traversal reaches either lowering.
+func (c *Config) lower(prog *predicate.Program, entityType string) ([]store.PropPredicate, *store.Cond, bool) {
+	low, exact := queryplan.LowerCondition(prog, c.meta, entityType, "")
+	if exact && len(low.Traversals) > 0 {
 		exact = false
-		pushed = queryplan.ConditionPrefilters(prog, c.meta, []string{entityType}, "")
 	}
+	if !exact {
+		low = queryplan.ConditionSuperset(prog, c.meta, entityType, "")
+	}
+	var where *store.Cond
+	if low.Where != nil {
+		w, ok := low.Where.PropCond()
+		if !ok {
+			// Unreachable while related() is refused; reading the type
+			// unfiltered is still correct, because prog judges each row.
+			return nil, nil, false
+		}
+		where = &w
+	}
+	pushed := low.Props
 	slices.SortFunc(pushed, func(a, b store.PropPredicate) int {
-		return cmp.Or(strings.Compare(a.Property, b.Property), strings.Compare(a.Value, b.Value))
+		return cmp.Or(
+			strings.Compare(a.Property, b.Property), cmp.Compare(a.Op, b.Op),
+			strings.Compare(a.Value, b.Value))
 	})
-	return pushed, exact
+	return pushed, where, exact
 }
 
 // RuleIDs returns the notification rule ids in declaration order.

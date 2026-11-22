@@ -48,20 +48,20 @@ type Result struct {
 	// EvalErrors holds conditions that failed to evaluate for one entity,
 	// for example because a stored value has the wrong type. Such an entity
 	// counts as not matching; the error is kept so it can be logged. A
-	// condition the store answers never adds one: its string equalities
-	// cannot fail.
+	// condition the store answers never adds one: it is not evaluated in
+	// Go.
 	EvalErrors []error
 }
 
 // Evaluate returns the current matches and badge count. A store error fails
 // the whole evaluation.
 //
-// A condition that lowers exactly to store predicates (see
-// Config.compileCondition) is answered by the store: its rule reads at most
-// [MaxMatchesPerRule] plus one headers, and a badge is one count. Any other
-// condition reads every header of its type that passes the condition's
-// pushable equalities, and judges the rest in Go. Conditions that share a
-// type and those equalities share that read.
+// A condition that lowers exactly to store predicates (see Config.lower)
+// is answered by the store: its rule reads at most [MaxMatchesPerRule] plus
+// one headers, and a badge is one count. Any other condition, mainly a date
+// compared with today(), reads every header of its type that passes the
+// condition's conjuncts that do lower, and judges the rest in Go.
+// Conditions that share a type and that filter share the read.
 //
 // world is the world the entities are read in: one face per entity, the one
 // the desktop shows. An unset world is rejected.
@@ -136,6 +136,7 @@ func (ev *evaluation) ruleMatches(ctx context.Context, r rule) ([]store.EntityHe
 		q := store.GraphQuery{
 			EntityType: r.entityType,
 			Props:      slices.Clone(r.pushed),
+			Where:      r.where,
 			Faces:      store.InWorld(ev.world),
 			Limit:      MaxMatchesPerRule + 1,
 		}
@@ -167,6 +168,7 @@ func (ev *evaluation) count(ctx context.Context, cond condition) (int, error) {
 		n, err := store.CountMatched(ctx, ev.entities, store.GraphQuery{
 			EntityType: cond.entityType,
 			Props:      slices.Clone(cond.pushed),
+			Where:      cond.where,
 			Faces:      store.InWorld(ev.world),
 		})
 		if err != nil {
@@ -188,8 +190,10 @@ func (ev *evaluation) count(ctx context.Context, cond condition) (int, error) {
 }
 
 // scan reads the candidates of a condition that does not lower exactly:
-// every header of its type that passes its pushed equalities. Its cost
-// grows with those rows, not with the matches.
+// every header of its type that passes the conjuncts of the condition that
+// do lower. Its cost grows with those rows, not with the matches. It
+// remains for conditions that compare a date with today(), until the store
+// answers those (TKT-4Z2BIRG).
 func (ev *evaluation) scan(ctx context.Context, cond condition) ([]store.EntityHeader, error) {
 	key := scanKey(cond)
 	if hs, ok := ev.scans[key]; ok {
@@ -199,6 +203,7 @@ func (ev *evaluation) scan(ctx context.Context, cond condition) ([]store.EntityH
 	q := store.GraphQuery{
 		EntityType: cond.entityType,
 		Props:      slices.Clone(cond.pushed),
+		Where:      cond.where,
 		Faces:      store.InWorld(ev.world),
 	}
 	for h, err := range store.GraphQueryHeaders(ctx, ev.entities, q) {
@@ -211,15 +216,38 @@ func (ev *evaluation) scan(ctx context.Context, cond condition) ([]store.EntityH
 	return hs, nil
 }
 
-// scanKey identifies a scan by its type and pushed predicates. They are
-// sorted by Config.lower, so equal sets give equal keys.
+// scanKey identifies a scan by its type and store filter. The pushed
+// predicates are sorted by Config.lower, so equal sets give equal keys. The
+// where tree keeps the source order of its conjuncts, so `a or b` and
+// `b or a` read twice; that costs a read, never a wrong answer.
 func scanKey(cond condition) string {
 	var b strings.Builder
 	b.WriteString(cond.entityType)
 	for _, p := range cond.pushed {
-		fmt.Fprintf(&b, "\x00%s\x00%d\x00%t\x00%s", p.Property, p.Op, p.Scalar, p.Value)
+		writePropKey(&b, p)
+	}
+	if cond.where != nil {
+		b.WriteString("\x00where")
+		writeCondKey(&b, *cond.where)
 	}
 	return b.String()
+}
+
+func writePropKey(b *strings.Builder, p store.PropPredicate) {
+	fmt.Fprintf(b, "\x00%q\x00%d\x00%t\x00%d\x00%q", p.Property, p.Op, p.Scalar, p.Kind, p.Value)
+}
+
+// writeCondKey writes c in prefix form. A relation leaf cannot occur:
+// Config.lower converts only trees without one.
+func writeCondKey(b *strings.Builder, c store.Cond) {
+	fmt.Fprintf(b, "\x00(%d", c.Op)
+	if c.Op == store.CondProp {
+		writePropKey(b, c.Prop)
+	}
+	for _, a := range c.Args {
+		writeCondKey(b, a)
+	}
+	b.WriteString("\x00)")
 }
 
 // matches evaluates cond for h. An evaluation error is recorded on the

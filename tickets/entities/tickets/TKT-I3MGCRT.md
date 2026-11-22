@@ -5,7 +5,8 @@ title: Lower ordered and negated desktop notification conditions
 kind: enhancement
 priority: low
 effort: m
-status: backlog
+started: "2026-11-22"
+status: in-progress
 ---
 
 ## Description

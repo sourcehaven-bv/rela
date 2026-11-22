@@ -64,6 +64,29 @@ func (p *Program) ConditionTree(spec PrefilterSpec) (CondTree, bool) {
 	return condTree(p.root, spec)
 }
 
+// ConditionConjuncts reads each conjunct of the program's top-level AND as
+// a [CondTree], as [Program.ConditionTree] would read it alone. A conjunct
+// it cannot read is left out, so the result may be shorter than the AND.
+// A program that is not an AND has one conjunct: itself.
+//
+// The program implies each returned tree, so the AND of any subset of them
+// is a superset filter: it keeps every entity the program matches. It does
+// not replace evaluating the program.
+func (p *Program) ConditionConjuncts(spec PrefilterSpec) []CondTree {
+	if p == nil || spec.RecordVar == "" {
+		return nil
+	}
+	var leaves []node
+	collectConjuncts(p.root, &leaves)
+	var out []CondTree
+	for _, n := range leaves {
+		if t, ok := condTree(n, spec); ok {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 func condTree(n node, spec PrefilterSpec) (CondTree, bool) {
 	switch x := n.(type) {
 	case *logicalNode:

@@ -266,11 +266,19 @@ Conditions use the same expression language as list `condition:` in
 - `current_user`: the desktop app has no person record for its user.
 - `related(...)`: conditions see the entity's own properties only.
 
-A condition made only of `==` comparisons of text properties joined by `and`,
-such as `entity.status == 'open'`, is answered by the database, so a check
-costs the same however many entities the type has. Any other condition reads
-every entity of the type that passes its `==` comparisons, and checks the rest
-in the app.
+The database answers a condition built from comparisons of text and whole
+number properties with fixed values, joined by `and`, `or` and `not`. For
+example, `entity.status ~= 'done' or entity.points >= 3` is answered by the
+database, so a check costs the same however many entities the type has.
+
+A condition that compares a date with `today()` is checked in the app. Rela
+first reads the entities of the type that pass the parts of the condition the
+database can answer, and checks the rest in the app. In
+`entity.status != 'done' and entity.due < today()`, the database reads the
+entities that are not done, and the app checks their dates.
+
+A comparison such as `entity.points < 3` is false for an entity that has no
+value for `points`. This is the same rule as in list conditions.
 
 ### When rules run
 
