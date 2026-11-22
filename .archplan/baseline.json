@@ -2852,6 +2852,18 @@
       "reason": "Design: config shapes mirror data-entry.yaml on purpose. BUG-ST02A0S added empty_message to lists, which renamed this clump.",
       "at": "2026-11-21T21:00:00Z",
       "title": "The fields columns, condition, create_form, description, detail_view, … and title appear together in 2 types across 2 components."
+    },
+    "security.untested_denial-9a0cc89b9dbb": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test. Id changed when TKT-3KUIROC moved the handler to a new receiver.",
+      "at": "2026-11-21T16:00:00Z",
+      "title": "No test shows handleGitStatus refusing a caller."
+    },
+    "security.untested_denial-bccda73173fa": {
+      "state": "accepted",
+      "reason": "Detector gap: the refusal is tested in internal/dataentry/sse_acl_test.go. Id changed when TKT-3KUIROC moved the handler to a new receiver.",
+      "at": "2026-11-21T16:00:00Z",
+      "title": "No test shows handleSSE refusing a caller."
     }
   },
   "labels": {},

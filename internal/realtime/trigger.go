@@ -366,7 +366,7 @@ func addID(m map[string]map[string]time.Time, typ, id string, at time.Time) {
 // oldestFirst returns the ids of m in the order they were noted, so a
 // rule's queue is first come, first served.
 func oldestFirst(m map[string]time.Time) []string {
-	ids := sortedKeys(m)
+	ids := slices.Sorted(maps.Keys(m))
 	slices.SortStableFunc(ids, func(a, b string) int { return m[a].Compare(m[b]) })
 	return ids
 }
@@ -561,7 +561,7 @@ func (t *Triggers) queuedRefs(ruleID, id string) []string {
 	if q == nil {
 		return nil
 	}
-	return sortedKeys(q.byID[id])
+	return slices.Sorted(maps.Keys(q.byID[id]))
 }
 
 // enqueue queues a post of rule ruleID. Past [realtimelimits.MaxTriggerQueue]
@@ -693,7 +693,7 @@ func (r *round) run(work map[string]map[string]time.Time, full map[string]bool, 
 			return err
 		}
 	}
-	for _, typ := range sortedKeys(full) {
+	for _, typ := range slices.Sorted(maps.Keys(full)) {
 		cands, err := r.candidates(typ)
 		if err != nil {
 			return err
@@ -702,7 +702,7 @@ func (r *round) run(work map[string]map[string]time.Time, full map[string]bool, 
 			addID(work, typ, id, r.now)
 		}
 	}
-	for _, typ := range sortedKeys(work) {
+	for _, typ := range slices.Sorted(maps.Keys(work)) {
 		if err := r.process(typ, oldestFirst(work[typ]), work[typ]); err != nil {
 			return err
 		}
@@ -824,7 +824,7 @@ func (r *round) collect() error {
 	if err := r.t.seen.saveIndex(r.ctx, r.idx); err != nil {
 		return err
 	}
-	for _, id := range sortedKeys(gone) {
+	for _, id := range slices.Sorted(maps.Keys(gone)) {
 		r.t.forgetRule(id)
 		if err := r.t.seen.dropShards(r.ctx, id, gone[id].Shards); err != nil {
 			slog.WarnContext(r.ctx, "realtime: could not delete the seen-set of a removed trigger",
@@ -1347,7 +1347,7 @@ func (r *round) pushBack(q *effectQueue, ref string, it queued) {
 func (r *round) save(parent context.Context) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), saveTimeout)
 	defer cancel()
-	for _, key := range sortedKeys(r.shards) {
+	for _, key := range slices.Sorted(maps.Keys(r.shards)) {
 		sh := r.shards[key]
 		if !sh.changed {
 			continue
@@ -1358,7 +1358,7 @@ func (r *round) save(parent context.Context) {
 		}
 		r.saveShard(ctx, key, sh)
 	}
-	for _, key := range sortedKeys(r.t.lead.dirty) {
+	for _, key := range slices.Sorted(maps.Keys(r.t.lead.dirty)) {
 		d := r.t.lead.dirty[key]
 		if _, done := r.shards[key]; done {
 			continue

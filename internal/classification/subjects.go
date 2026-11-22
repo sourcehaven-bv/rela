@@ -2,6 +2,7 @@ package classification
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 )
 
@@ -71,7 +72,7 @@ func (f *File) labeledFields(prefix string, ta TypeAssignments, fields []string)
 // The subject override wins either way.
 func (f *File) Subjects(shape Shape) []Subject {
 	var out []Subject
-	for _, name := range sortedKeys(shape.Entities) {
+	for _, name := range slices.Sorted(maps.Keys(shape.Entities)) {
 		if forced, ok := f.Overrides.Subject[name]; ok {
 			if forced {
 				out = append(out, Subject{Type: name, Reason: "subject override"})
@@ -152,9 +153,9 @@ func (f *File) Profiles(shape Shape) []Profile {
 		}
 	}
 
-	w := &walker{f: f, subjects: subjects, links: links, linkNames: sortedKeys(links)}
+	w := &walker{f: f, subjects: subjects, links: links, linkNames: slices.Sorted(maps.Keys(links))}
 	out := make([]Profile, 0, len(subjects))
-	for _, subject := range sortedKeys(subjects) {
+	for _, subject := range slices.Sorted(maps.Keys(subjects)) {
 		out = append(out, w.profile(subject))
 	}
 	return out
@@ -192,12 +193,12 @@ func (w *walker) profile(subject string) Profile {
 		}
 		frontier = next
 	}
-	for _, t := range sortedKeys(paths) {
+	for _, t := range slices.Sorted(maps.Keys(paths)) {
 		if t != subject {
 			p.Reached = append(p.Reached, Reach{Type: t, Path: paths[t]})
 		}
 	}
-	p.Relations = sortedKeys(relations)
+	p.Relations = slices.Sorted(maps.Keys(relations))
 	return p
 }
 

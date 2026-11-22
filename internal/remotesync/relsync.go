@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
@@ -221,7 +222,7 @@ func (r relSync) push(ctx context.Context) error {
 			run.ends[row.Local] = row
 		}
 	}
-	for _, src := range sortedKeys(r.m.Relations) {
+	for _, src := range slices.Sorted(maps.Keys(r.m.Relations)) {
 		rm := r.m.Relations[src]
 		if !r.merges(rm) {
 			r.issue(IssueKept, "", "", notPushedReason(r.d.RelationMetaGated == nil, rm.Local))

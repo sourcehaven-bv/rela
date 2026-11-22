@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -111,7 +112,7 @@ func (v verifier) attachments(ctx context.Context) {
 			families[e.ID] = true
 		}
 	}
-	for _, id := range sortedKeys(families) {
+	for _, id := range slices.Sorted(maps.Keys(families)) {
 		infos, err := v.src.store.ListFamilyAttachments(ctx, id)
 		if err != nil {
 			v.rep.fail("verify: list attachments of %s: %v", id, err)

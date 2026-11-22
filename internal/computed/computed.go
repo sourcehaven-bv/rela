@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -51,7 +52,7 @@ func CompileWithClock(meta *metamodel.Metamodel, now func() time.Time) (*Set, er
 	}
 	set := &Set{meta: meta, now: now, plans: map[string][]compiledProperty{}, all: map[string]map[string]bool{}}
 	var problems []string
-	for _, entityType := range sortedKeys(meta.Entities) {
+	for _, entityType := range slices.Sorted(maps.Keys(meta.Entities)) {
 		def := meta.Entities[entityType]
 		env := predicate.NewEnv()
 		if err := env.DeclareVar("entity", predicatefns.EntityRecordType(meta, &def)); err != nil {
@@ -63,7 +64,7 @@ func CompileWithClock(meta *metamodel.Metamodel, now func() time.Time) (*Set, er
 			continue
 		}
 		compiled := map[string]compiledProperty{}
-		for _, name := range sortedKeys(def.Properties) {
+		for _, name := range slices.Sorted(maps.Keys(def.Properties)) {
 			pd := def.Properties[name]
 			if pd.Computed == "" {
 				continue
@@ -267,21 +268,12 @@ func topo(entityType string, compiled map[string]compiledProperty) ([]string, er
 		order = append(order, name)
 		return nil
 	}
-	for _, name := range sortedKeys(compiled) {
+	for _, name := range slices.Sorted(maps.Keys(compiled)) {
 		if err := visit(name); err != nil {
 			return nil, err
 		}
 	}
 	return order, nil
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func joinLines(lines []string) string {

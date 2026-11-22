@@ -51,7 +51,7 @@ func TestBatchSQLite_CapabilityIsAdvertised(t *testing.T) {
 	require.True(t, app.batch.atomic)
 
 	rec := httptest.NewRecorder()
-	app.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
+	app.schemaAPI.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
 	var got v1.Schema
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 	require.True(t, got.Capabilities.AtomicBatch)

@@ -240,7 +240,7 @@ func TestConfigHistoryEnabled_AgreesWithTheHandler(t *testing.T) {
 			app.versions = tc.versions
 
 			rec := httptest.NewRecorder()
-			app.handleV1Config(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody))
+			app.schemaAPI.handleV1Config(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody))
 			if rec.Code != http.StatusOK {
 				t.Fatalf("config: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 			}

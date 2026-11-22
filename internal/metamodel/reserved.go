@@ -2,6 +2,8 @@ package metamodel
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -35,7 +37,7 @@ func reservedMsg(what, name string) string {
 func reservedEntityNames(m *Metamodel) []string {
 	var errs []string
 	reserved := func(what, name string) { errs = append(errs, reservedMsg(what, name)) }
-	for _, name := range sortedKeys(m.Entities) {
+	for _, name := range slices.Sorted(maps.Keys(m.Entities)) {
 		def := m.Entities[name]
 		if m.isManagedDecl(name) {
 			continue
@@ -48,7 +50,7 @@ func reservedEntityNames(m *Metamodel) []string {
 				reserved(fmt.Sprintf("entity %q: alias", name), alias)
 			}
 		}
-		for _, prop := range sortedKeys(def.Properties) {
+		for _, prop := range slices.Sorted(maps.Keys(def.Properties)) {
 			if IsReservedName(prop) {
 				reserved(fmt.Sprintf("entity %q: property", name), prop)
 			}
@@ -61,7 +63,7 @@ func reservedEntityNames(m *Metamodel) []string {
 func reservedRelationNames(m *Metamodel) []string {
 	var errs []string
 	reserved := func(what, name string) { errs = append(errs, reservedMsg(what, name)) }
-	for _, name := range sortedKeys(m.Relations) {
+	for _, name := range slices.Sorted(maps.Keys(m.Relations)) {
 		rel := m.Relations[name]
 		if m.isManagedDecl(name) {
 			continue
@@ -72,7 +74,7 @@ func reservedRelationNames(m *Metamodel) []string {
 		if rel.Inverse != nil && IsReservedName(rel.Inverse.ID) {
 			reserved(fmt.Sprintf("relation %q: inverse", name), rel.Inverse.ID)
 		}
-		for _, prop := range sortedKeys(rel.Properties) {
+		for _, prop := range slices.Sorted(maps.Keys(rel.Properties)) {
 			if prop == OrderPropertyOut || prop == OrderPropertyIn {
 				continue
 			}

@@ -2,6 +2,7 @@ package remotesync
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -139,7 +140,7 @@ func (r guarder) emptiedHere(sends []*ledgerRow) (string, bool) {
 			linked[row.Kind+row.Type]++
 		}
 	}
-	for _, k := range sortedKeys(deleting) {
+	for _, k := range slices.Sorted(maps.Keys(deleting)) {
 		if linked[k] == 0 {
 			kind := "entity type"
 			if k[0] == 'R' {
@@ -169,7 +170,7 @@ func (r guarder) emptied(diff reconclient.Result, goneOf map[string]int, skipped
 	for _, el := range diff.OnlyRemote {
 		listed[kindLetter(el.Kind)+elementType(el)]++
 	}
-	for _, k := range sortedKeys(linked) {
+	for _, k := range slices.Sorted(maps.Keys(linked)) {
 		if linked[k] > 0 && listed[k]-goneOf[k] <= 0 && (k[0] != 'R' || !skipped[k[1:]]) {
 			kind := "entity type"
 			if k[0] == 'R' {

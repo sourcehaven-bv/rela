@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"os"
+	"slices"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -171,7 +173,7 @@ func mergeDraft(d *draft, def *metamodel.EntityDef, t *lua.LTable) error {
 	}
 	d.props = merged
 	d.absent = d.absent[:0]
-	for _, name := range sortedKeys(d.em.Properties) {
+	for _, name := range slices.Sorted(maps.Keys(d.em.Properties)) {
 		if _, has := merged[name]; !has {
 			d.absent = append(d.absent, name)
 		}

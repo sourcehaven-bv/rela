@@ -3,8 +3,9 @@ package configedit
 import (
 	"context"
 	"fmt"
+	"maps"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -101,13 +102,13 @@ func planMigration(
 		mapped[[3]string{m.EntityType, m.Property, m.From}] = m.To
 	}
 
-	for _, typeName := range sortedKeys(before.Entities) {
+	for _, typeName := range slices.Sorted(maps.Keys(before.Entities)) {
 		newDef, ok := after.Entities[typeName]
 		if !ok {
 			continue
 		}
 		oldDef := before.Entities[typeName]
-		for _, oldProp := range sortedKeys(oldDef.Properties) {
+		for _, oldProp := range slices.Sorted(maps.Keys(oldDef.Properties)) {
 			prop := oldProp
 			if renamed, ok := newName[[2]string{typeName, oldProp}]; ok {
 				prop = renamed
@@ -230,12 +231,12 @@ func checkRename(before, after *metamodel.Metamodel, r Rename) string {
 // relations holding the option would be left with a value nothing accepts.
 func relationValueProblems(before, after *metamodel.Metamodel) []Problem {
 	var out []Problem
-	for _, relName := range sortedKeys(before.Relations) {
+	for _, relName := range slices.Sorted(maps.Keys(before.Relations)) {
 		rel, ok := after.Relations[relName]
 		if !ok {
 			continue
 		}
-		for _, propName := range sortedKeys(before.Relations[relName].Properties) {
+		for _, propName := range slices.Sorted(maps.Keys(before.Relations[relName].Properties)) {
 			newPD, ok := rel.Properties[propName]
 			if !ok {
 				continue
@@ -338,19 +339,19 @@ func aclReferences(aclText []byte, before, after *metamodel.Metamodel) []Problem
 			})
 		}
 	}
-	for _, t := range sortedKeys(before.Entities) {
+	for _, t := range slices.Sorted(maps.Keys(before.Entities)) {
 		newDef, ok := after.Entities[t]
 		if !ok {
 			check("entity type", t)
 			continue
 		}
-		for _, prop := range sortedKeys(before.Entities[t].Properties) {
+		for _, prop := range slices.Sorted(maps.Keys(before.Entities[t].Properties)) {
 			if !hasKey(newDef.Properties, prop) {
 				check("property", prop)
 			}
 		}
 	}
-	for _, r := range sortedKeys(before.Relations) {
+	for _, r := range slices.Sorted(maps.Keys(before.Relations)) {
 		if !hasKey(after.Relations, r) {
 			check("relation", r)
 		}
@@ -362,7 +363,7 @@ func aclReferences(aclText []byte, before, after *metamodel.Metamodel) []Problem
 			removedValues[v] = true
 		}
 	}
-	for _, v := range sortedKeys(removedValues) {
+	for _, v := range slices.Sorted(maps.Keys(removedValues)) {
 		check("option", v)
 	}
 	return out
@@ -390,13 +391,4 @@ func declaredOptions(m *metamodel.Metamodel) map[string]bool {
 func hasKey[V any](m map[string]V, k string) bool {
 	_, ok := m[k]
 	return ok
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

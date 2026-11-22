@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"hash"
+	"maps"
+	"slices"
 )
 
 // RenderProjection is the render-relevant slice of a metamodel: exactly the
@@ -116,7 +118,7 @@ func (p RenderProjection) Hash() string {
 
 	h.str("entities")
 	h.count(len(p.Entities))
-	for _, name := range sortedKeys(p.Entities) {
+	for _, name := range slices.Sorted(maps.Keys(p.Entities)) {
 		ep := p.Entities[name]
 		h.str(name)
 		h.str("display")
@@ -128,7 +130,7 @@ func (p RenderProjection) Hash() string {
 		}
 		h.str("props")
 		h.count(len(ep.Properties))
-		for _, pname := range sortedKeys(ep.Properties) {
+		for _, pname := range slices.Sorted(maps.Keys(ep.Properties)) {
 			pp := ep.Properties[pname]
 			h.str(pname)
 			h.str(pp.Type)
@@ -141,7 +143,7 @@ func (p RenderProjection) Hash() string {
 
 	h.str("types")
 	h.count(len(p.Types))
-	for _, name := range sortedKeys(p.Types) {
+	for _, name := range slices.Sorted(maps.Keys(p.Types)) {
 		h.str(name)
 		h.strList(p.Types[name])
 	}

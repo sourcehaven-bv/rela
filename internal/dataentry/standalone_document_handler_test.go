@@ -444,8 +444,8 @@ func TestSidebarAndConfig_PrincipalIndependent(t *testing.T) {
 	})
 
 	t.Run("config is byte-identical for a holder and a non-holder", func(t *testing.T) {
-		alice := bodyFor(t, aliceCtx(), "/api/v1/_config", app.handleV1Config)
-		bob := bodyFor(t, principalCtx("bob"), "/api/v1/_config", app.handleV1Config)
+		alice := bodyFor(t, aliceCtx(), "/api/v1/_config", app.schemaAPI.handleV1Config)
+		bob := bodyFor(t, principalCtx("bob"), "/api/v1/_config", app.schemaAPI.handleV1Config)
 		if alice != bob {
 			t.Errorf("config differs by principal:\n alice=%s\n bob=%s", alice, bob)
 		}

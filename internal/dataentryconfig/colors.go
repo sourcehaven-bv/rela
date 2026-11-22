@@ -2,6 +2,7 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"regexp"
 	"slices"
@@ -214,7 +215,7 @@ type OperatorColor struct {
 
 // validateOperatorColors checks `palette.colors`.
 func validateOperatorColors(colors map[string]OperatorColor) error {
-	for _, name := range sortedMapKeys(colors) {
+	for _, name := range slices.Sorted(maps.Keys(colors)) {
 		c := colors[name]
 		if !operatorColorNameRe.MatchString(name) {
 			return fmt.Errorf("colors: name %q must be lower-case letters, digits and hyphens, starting with a letter", name)
@@ -242,7 +243,7 @@ func validateOperatorColors(colors map[string]OperatorColor) error {
 // validateDarkKitOverrides checks `palette.dark.colors`: kit shades only, with
 // an opaque hex. An operator color sets its dark value on itself.
 func validateDarkKitOverrides(colors map[string]string) error {
-	for _, name := range sortedMapKeys(colors) {
+	for _, name := range slices.Sorted(maps.Keys(colors)) {
 		c, err := ParseColor(name, nil)
 		if err != nil || c.Kind != ColorShade {
 			return fmt.Errorf("colors: %q is not a kit shade such as red/700", name)

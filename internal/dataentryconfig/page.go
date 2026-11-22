@@ -2,6 +2,7 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -267,7 +268,7 @@ func (c *Config) NavEntryList(entry NavigationEntry) string {
 // where there is one, so an author can find the line.
 func validatePages(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
-	for _, id := range sortedMapKeys(cfg.Pages) {
+	for _, id := range slices.Sorted(maps.Keys(cfg.Pages)) {
 		page := cfg.Pages[id]
 		name := fmt.Sprintf("pages[%s]", id)
 		if !urlSegmentPattern.MatchString(id) {
@@ -366,7 +367,7 @@ func PageDoneEntries(cfg *Config) []PageDoneEntry {
 		return nil
 	}
 	var out []PageDoneEntry
-	for _, id := range sortedMapKeys(cfg.Pages) {
+	for _, id := range slices.Sorted(maps.Keys(cfg.Pages)) {
 		for _, tab := range cfg.Pages[id].Tabs {
 			if tab.DoneWhen == "" || tab.List == "" {
 				continue

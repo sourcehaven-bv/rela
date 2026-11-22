@@ -2,6 +2,8 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -119,7 +121,7 @@ func validateSectionByType(viewID string, i int, s ViewSection, view ViewConfig,
 	}
 	allowed := collectionTypes(view, s.Source, meta)
 	errs := validateFieldsByType(prefix, s.FieldsByType, allowed, meta)
-	for _, t := range sortedMapKeys(s.ColumnsByType) {
+	for _, t := range slices.Sorted(maps.Keys(s.ColumnsByType)) {
 		if len(s.ColumnsByType[t]) == 0 {
 			errs = append(errs, fmt.Sprintf("%s columns_by_type[%q] is empty (omit the type to use columns:)", prefix, t))
 		}
@@ -160,7 +162,7 @@ func validateByTypeShape(prefix string, s ViewSection) []string {
 func validateFieldsByType(
 	prefix string, byType map[string][]ViewSectionField, allowed []string, meta *metamodel.Metamodel,
 ) []string {
-	keys := sortedMapKeys(byType)
+	keys := slices.Sorted(maps.Keys(byType))
 	errs := validateFieldTypeKeys(prefix, keys, allowed, meta)
 	for _, t := range keys {
 		def, ok := meta.GetEntityDef(t)

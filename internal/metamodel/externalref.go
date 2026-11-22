@@ -3,7 +3,9 @@ package metamodel
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -323,10 +325,10 @@ func validSystemName(s string) bool {
 // or writes one. The display_property rule lives in validateDisplayPropertyRef.
 func validateExternalRefs(m *Metamodel) []string {
 	var errs []string
-	for _, typeName := range sortedKeys(m.Entities) {
+	for _, typeName := range slices.Sorted(maps.Keys(m.Entities)) {
 		def := m.Entities[typeName]
 		bySystem := map[string][]string{}
-		for _, name := range sortedKeys(def.Properties) {
+		for _, name := range slices.Sorted(maps.Keys(def.Properties)) {
 			pd := def.Properties[name]
 			if pd.Type != PropertyTypeExternalRef {
 				continue
@@ -339,7 +341,7 @@ func validateExternalRefs(m *Metamodel) []string {
 					"supported on a type with faces", typeName, name))
 			}
 		}
-		for _, system := range sortedKeys(bySystem) {
+		for _, system := range slices.Sorted(maps.Keys(bySystem)) {
 			if names := bySystem[system]; len(names) > 1 {
 				errs = append(errs, fmt.Sprintf("entity %q: properties %s all declare system %q; "+
 					"a type may declare each system once", typeName, strings.Join(names, ", "), system))

@@ -3,6 +3,7 @@ package acl
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -211,7 +212,7 @@ func (p *Policy) validateIdentityStructure(meta MetamodelView) (errs []error, re
 		errs = append(errs, facedEndpointErrors(meta, refused, key, "group", info.To)...)
 	}
 
-	for _, relType := range sortedKeys(p.RoleRelations) {
+	for _, relType := range slices.Sorted(maps.Keys(p.RoleRelations)) {
 		info := meta.RelationInfo(relType)
 		if !info.Exists || relType == membership || p.RoleRelations[relType].Confers == "" {
 			// Undeclared, already checked above more strictly as the membership
@@ -263,13 +264,4 @@ func facedEndpointErrors(meta MetamodelView, refused map[string]bool, key, side 
 			key, side, canonical, strings.Join(faces, ", ")))
 	}
 	return errs
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	return keys
 }
