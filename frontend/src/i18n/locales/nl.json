@@ -1445,6 +1445,15 @@
     "applying": "Toepassen…",
     "apply": "Oplossing toepassen"
   },
+  "sankey": {
+    "truncated": "Niet alle onderdelen getoond",
+    "truncatedTitle": "Het diagram heeft meer onderdelen dan de limiet toestaat, dus een deel ontbreekt.",
+    "unknown": "Dit diagram is niet ingesteld.",
+    "empty": "Nog niets om te tonen.",
+    "diagramLabel": "Stroomdiagram: {title}",
+    "nodeLabel": "{type}: {name}",
+    "pipLabel": "{type}: {name}"
+  },
   "gantt": {
     "sortTitle": "Titel",
     "sortStart": "Startdatum",

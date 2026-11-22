@@ -186,7 +186,7 @@ var editable = map[File][]string{
 		// export_render runs Lua and stays locked.
 		"views.*.title", "views.*.entry.**", "views.*.traverse.**", "views.*.sections.**",
 		"entity_views.**", "detail_view", "lists.*.detail_view", "duplicate.**",
-		"forms.*.side_panel.**", "calendars.**", "gantts.**",
+		"forms.*.side_panel.**", "calendars.**", "gantts.**", "sankeys.**",
 		"app.name",
 		"app.description",
 		"app.language",
@@ -325,6 +325,7 @@ var editable = map[File][]string{
 		"nav.document",
 		"nav.entities",
 		"nav.gantt",
+		"nav.sankey",
 		"nav.group",
 		"nav.icon",
 		"nav.items_from.**",

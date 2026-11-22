@@ -551,7 +551,7 @@ export const CompressToTitle: Story = {
  * A playground for the props that change the table's shape.
  *
  * The width slider is the control that makes the rest legible: `compact` does
- * nothing until the table is narrower than 767px, and the table measures
+ * nothing until the table is narrower than 640px, and the table measures
  * itself rather than the window, so this story reaches the narrow layouts by
  * resizing the pane instead of the browser. Drag it past the threshold and
  * switch `compact` to see the two answers against the same rows.
@@ -642,7 +642,7 @@ export const Playground: Story = {
             <input type="range" min="280" max="1100" step="10" v-model.number="width" />
             <strong>{{ width }}px</strong>
             <span style="color:var(--rl-color-text-subtle)">
-              ({{ width <= 767 ? 'narrow: compact applies' : 'wide: full columns' }})
+              ({{ width <= 639 ? 'narrow: compact applies' : 'wide: full columns' }})
             </span>
           </label>
           <RlCheckbox label="Selectable" :model-value="selectable" @update:model-value="selectable = $event" />

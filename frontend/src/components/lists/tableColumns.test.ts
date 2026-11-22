@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { ListColumn } from '@/types/config'
-import { columnHeader, columnKey, listColumnOf, nameColumn, toTableColumns } from './tableColumns'
+import type { PropertyDef } from '@/types'
+import { columnHeader, columnKey, listColumnOf, nameColumn, propertyColumnSize, toTableColumns } from './tableColumns'
 
 /**
  * The column key is the one thing here that fails silently when it is wrong.
@@ -174,5 +175,48 @@ describe('nameColumn', () => {
 
   it('is undefined when the list declares no columns', () => {
     expect(nameColumn([])).toBeUndefined()
+  })
+})
+
+describe('column widths', () => {
+  const properties: Record<string, PropertyDef> = {
+    issued: { type: 'date' },
+    total: { type: 'decimal' },
+    status: { type: 'enum', values: ['open', 'paid'] },
+    note: { type: 'string' },
+    tags: { type: 'string', list: true },
+  }
+
+  it('sizes a property column by its type', () => {
+    const [issued, total, status] = toTableColumns(
+      [{ property: 'number' }, { property: 'issued' }, { property: 'total' }, { property: 'status' }],
+      undefined,
+      properties
+    )
+    expect(issued).toMatchObject(propertyColumnSize(properties.issued)!)
+    expect(total).toMatchObject(propertyColumnSize(properties.total)!)
+    expect(status).toMatchObject(propertyColumnSize(properties.status)!)
+  })
+
+  it('gives every typed column less than the library default text width', () => {
+    // The default is what pushed a five-column invoice list past a laptop
+    // page beside the sidebar (BUG-UX4P9T2).
+    for (const type of ['date', 'integer', 'decimal', 'boolean', 'enum'] as const) {
+      const size = propertyColumnSize({ type, values: type === 'enum' ? ['a'] : undefined })
+      expect(size?.width).toBeLessThan(150)
+      expect(size!.minWidth!).toBeLessThanOrEqual(size!.width!)
+    }
+  })
+
+  it('leaves text, lists, relations and unknown properties at the default', () => {
+    const [note, tags, relation, unknown] = toTableColumns(
+      [{ property: 'title' }, { property: 'note' }, { property: 'tags' }, { relation: 'blocks' }, { property: 'gone' }],
+      undefined,
+      properties
+    )
+    for (const column of [note, tags, relation, unknown]) {
+      expect(column.width).toBeUndefined()
+      expect(column.minWidth).toBeUndefined()
+    }
   })
 })

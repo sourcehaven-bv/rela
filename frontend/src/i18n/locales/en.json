@@ -1445,6 +1445,15 @@
     "applying": "Applying…",
     "apply": "Apply Resolution"
   },
+  "sankey": {
+    "truncated": "Not all nodes shown",
+    "truncatedTitle": "The diagram has more nodes than its limit allows, so some are left out.",
+    "unknown": "This diagram is not configured.",
+    "empty": "Nothing to show yet.",
+    "diagramLabel": "Flow diagram: {title}",
+    "nodeLabel": "{type}: {name}",
+    "pipLabel": "{type}: {name}"
+  },
   "gantt": {
     "sortTitle": "Title",
     "sortStart": "Start date",

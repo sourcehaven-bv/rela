@@ -119,6 +119,12 @@ const routes: RouteRecordRaw[] = [
     props: true,
   },
   {
+    path: '/sankey/:id',
+    name: 'sankey',
+    component: () => import('@/views/SankeyView.vue'),
+    props: true,
+  },
+  {
     path: '/search',
     name: 'search',
     component: () => import('@/views/SearchView.vue'),

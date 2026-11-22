@@ -805,7 +805,7 @@ const visibleListColumns = computed(() => {
  * instead of a blank column. See tableColumns.ts.
  */
 const tableColumns = computed<TableColumn[]>(() =>
-  toTableColumns(visibleListColumns.value, titleColumn.value).map((column) => ({
+  toTableColumns(visibleListColumns.value, titleColumn.value, entityType.value?.properties).map((column) => ({
     ...column,
     /*
      * A stacked row drops an empty cell so a bare label is never left beside

@@ -564,6 +564,31 @@ claimed, changes status, is released or lapses, although no entity was
 written. A plain renewal changes nothing `show_entity` shows, so it does not
 end a wait.
 
+### Record Tools
+
+Record types hold typed rows owned by an entity, outside the graph (see
+[Records](records.md)). These tools exist when the schema declares a record
+type. Both servers offer them.
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `list_record_types` | The declared record types and their fields | none |
+| `append_records` | Append rows, stored together or not at all | `type`, `rows` (at most 1000 of `{owner, ts?, fields}`) |
+| `list_records` | One page of an owner's rows, oldest first | `type`, `owner`, `from?`, `to?`, `after?`, `limit?` |
+| `aggregate_records` | Fold rows into points | `type`, `owners?`, `field?`, `bucket?`, `per_owner?`, `from?`, `to?` |
+
+`append_records` answers `{"records":[...]}` as stored. `list_records` answers
+`{"records":[...],"next":"..."}`; pass `next` as `after` to read on.
+`aggregate_records` answers `{"points":[...]}`, with `count` and, when `field`
+is set, `sum`, `min`, `max`, `avg` and `latest` as exact decimal text. Send a
+decimal as a string, such as `"1.25"`, so no precision is lost.
+
+The tools go through the same service as the HTTP API, so the same access rules
+hold. An append needs `update` on every face of the owner. A row is readable
+when its owner is: a hidden owner gets the same `not found` as a missing one,
+and an aggregate folds readable owners only. A failure that is not the
+caller's, such as a storage error, is logged and answered without its text.
+
 ### Flow Tools
 
 These tools let an agent do the steps of flows. They are listed only when

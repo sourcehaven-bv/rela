@@ -374,9 +374,10 @@ watch(
         </RlPageHeader>
       </template>
 
-      <!-- Full width below the header, over the content and the panel both:
+      <!-- Full width above the header, over the content and the panel both:
            in the content pane a sticky table header covered it, and an open
-           panel squeezed it. -->
+           panel squeezed it. Above the header, so it is at the top on every
+           screen, with or without a header band. -->
       <template v-if="workspaceReadOnly && !presentation.presenting.value" #banner>
         <ReadOnlyBanner />
       </template>
