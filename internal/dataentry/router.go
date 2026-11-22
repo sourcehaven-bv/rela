@@ -254,7 +254,10 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	// deployment.
 	root := headlessRoot()
 	if serveUI {
-		root = spaHandlerWithCustom(spaFS, custom, a.shellBoot)
+		root = spaHandlerWithCustom(spaFS, custom, func() ShellBoot {
+			app := a.State().Cfg.App
+			return shellBootOf(app.Name, app.Language)
+		})
 	}
 	spa := withSpecLink(root)
 	if a.caldavAliases != nil {

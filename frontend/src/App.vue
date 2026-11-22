@@ -9,7 +9,7 @@ import { localeMessages } from 'rela-components/composables/localeMessages'
 import { resolvedLanguage } from '@/i18n'
 import { getErrorMessage } from '@/api'
 import { tenantProvisioning } from '@/api/tenantProvisioning'
-import { accessRefusal, loginUrl, refusalDetail } from '@/api/workspaceAccess'
+import { REFUSAL, accessRefusal, loginUrl, refusalDetail } from '@/api/workspaceAccess'
 import { loadWorkspaceReadOnly } from '@/api/workspaceReadOnly'
 import {
   useKeyboardShortcuts,
@@ -27,6 +27,7 @@ import { useShellAppConfig } from '@/composables/useShellAppConfig'
 import { usePresentationOutlet } from '@/composables/usePresentation'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { unknownWorldQuery } from '@/composables/useWorld'
+import { isPageHidden } from '@/composables/visibleRefetch'
 import AsOfBanner from '@/components/common/AsOfBanner.vue'
 import ReadOnlyBanner from '@/components/common/ReadOnlyBanner.vue'
 import WorkspaceAccessScreen from '@/components/common/WorkspaceAccessScreen.vue'
@@ -182,7 +183,7 @@ watch(
   { immediate: true }
 )
 function refreshReadOnlyOnReturn() {
-  if (document.visibilityState === 'visible' && schemaStore.loaded) void loadWorkspaceReadOnly()
+  if (!isPageHidden() && schemaStore.loaded) void loadWorkspaceReadOnly()
 }
 onMounted(() => document.addEventListener('visibilitychange', refreshReadOnlyOnReturn))
 onBeforeUnmount(() => document.removeEventListener('visibilitychange', refreshReadOnlyOnReturn))
@@ -261,7 +262,7 @@ watch(
     ended session is a dialog over the app instead; see the end of the file.
   -->
   <WorkspaceAccessScreen
-    v-if="accessRefusal && accessRefusal !== 'session_ended'"
+    v-if="accessRefusal && accessRefusal !== REFUSAL.sessionEnded"
     :refusal="accessRefusal"
     :detail="refusalDetail"
   />
@@ -422,7 +423,7 @@ watch(
 
   <!-- Over the app, so a half-filled form keeps its input until the user signs in again. -->
   <WorkspaceAccessScreen
-    v-if="accessRefusal === 'session_ended'"
+    v-if="accessRefusal === REFUSAL.sessionEnded"
     refusal="session_ended"
     :login-url="loginUrl"
   />

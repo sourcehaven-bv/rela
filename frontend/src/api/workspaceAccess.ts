@@ -23,8 +23,16 @@ import { ref } from 'vue'
 import { apiUrl } from './base'
 import { problemCode } from '@/i18n/apiErrors'
 
-export type AccessRefusal =
-  'session_ended' | 'no_identity' | 'suspended' | 'archived' | 'unknown_workspace'
+/** The refusals, named once so other modules compare against these. */
+export const REFUSAL = {
+  sessionEnded: 'session_ended',
+  noIdentity: 'no_identity',
+  suspended: 'suspended',
+  archived: 'archived',
+  unknownWorkspace: 'unknown_workspace',
+} as const
+
+export type AccessRefusal = (typeof REFUSAL)[keyof typeof REFUSAL]
 
 export const accessRefusal = ref<AccessRefusal | null>(null)
 
@@ -35,15 +43,15 @@ export const loginUrl = ref<string | null>(null)
 export const refusalDetail = ref<string | null>(null)
 
 const PROBLEM_REFUSALS: Readonly<Record<string, AccessRefusal>> = {
-  tenant_suspended: 'suspended',
-  tenant_archived: 'archived',
-  unknown_tenant: 'unknown_workspace',
+  tenant_suspended: REFUSAL.suspended,
+  tenant_archived: REFUSAL.archived,
+  unknown_tenant: REFUSAL.unknownWorkspace,
 }
 
 /** The refusal a response stands for, or null for an ordinary answer. */
 export function refusalOf(status: number, data: unknown): AccessRefusal | null {
   if (status === 401) {
-    return detailOf(data) && !loginUrlOf(data) ? 'no_identity' : 'session_ended'
+    return detailOf(data) && !loginUrlOf(data) ? REFUSAL.noIdentity : REFUSAL.sessionEnded
   }
   if (status !== 403 || typeof data !== 'object' || data === null) return null
   const code = problemCode((data as { type?: string }).type)
@@ -84,8 +92,8 @@ export function loginUrlOf(data: unknown): string | null {
 export function trackAccess(status: number, data: unknown): void {
   const refusal = refusalOf(status, data)
   if (!refusal || accessRefusal.value) return
-  loginUrl.value = refusal === 'session_ended' ? loginUrlOf(data) : null
-  refusalDetail.value = refusal === 'no_identity' ? detailOf(data) : null
+  loginUrl.value = refusal === REFUSAL.sessionEnded ? loginUrlOf(data) : null
+  refusalDetail.value = refusal === REFUSAL.noIdentity ? detailOf(data) : null
   accessRefusal.value = refusal
 }
 

@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
-import type { AccessRefusal } from '@/api/workspaceAccess'
+import { REFUSAL, type AccessRefusal } from '@/api/workspaceAccess'
 
 /**
  * What the app shows when the server refuses the session or the workspace
@@ -33,27 +33,30 @@ const { t } = useI18n()
 
 const text = computed(() => {
   switch (props.refusal) {
-    case 'session_ended':
+    case REFUSAL.sessionEnded:
       return {
         title: t('shell.access.sessionEndedTitle'),
         body: t('shell.access.sessionEndedBody'),
       }
-    case 'no_identity':
+    case REFUSAL.noIdentity:
       return { title: t('shell.access.noIdentityTitle'), body: props.detail ?? '' }
-    case 'suspended':
+    case REFUSAL.suspended:
       return { title: t('shell.access.suspendedTitle'), body: t('shell.access.suspendedBody') }
-    case 'archived':
+    case REFUSAL.archived:
       return { title: t('shell.access.archivedTitle'), body: t('shell.access.archivedBody') }
     default:
       return { title: t('shell.access.unknownTitle'), body: t('shell.access.unknownBody') }
   }
 })
 
-const showContact = computed(() =>
-  ['suspended', 'archived', 'unknown_workspace'].includes(props.refusal)
-)
+const CONTACT_REFUSALS: readonly AccessRefusal[] = [
+  REFUSAL.suspended,
+  REFUSAL.archived,
+  REFUSAL.unknownWorkspace,
+]
+const showContact = computed(() => CONTACT_REFUSALS.includes(props.refusal))
 const offersReload = computed(
-  () => props.refusal === 'unknown_workspace' || props.refusal === 'no_identity'
+  () => props.refusal === REFUSAL.unknownWorkspace || props.refusal === REFUSAL.noIdentity
 )
 
 const loc = () => props.location ?? window.location
@@ -71,14 +74,14 @@ function reload() {
 
 const signInButton = ref<InstanceType<typeof RlButton> | null>(null)
 onMounted(() => {
-  if (props.refusal !== 'session_ended') return
+  if (props.refusal !== REFUSAL.sessionEnded) return
   ;(signInButton.value?.$el as HTMLElement | undefined)?.focus()
 })
 </script>
 
 <template>
   <div
-    v-if="refusal === 'session_ended'"
+    v-if="refusal === REFUSAL.sessionEnded"
     class="access-overlay"
     role="alertdialog"
     aria-modal="true"
