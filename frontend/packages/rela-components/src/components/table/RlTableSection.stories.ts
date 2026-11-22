@@ -4,6 +4,7 @@ import RlTableSection from './RlTableSection.vue'
 import type { Task } from '../../types'
 import { storyComponent } from '../storyGeneric'
 import { tableColumns, tableSections } from '../../fixtures'
+import { NAME_MIN_WIDTH } from './columnSizing'
 
 /* The section is generic over its item; `Task` is this library's demo row. */
 const meta: Meta<typeof RlTableSection<Task>> = {
@@ -47,8 +48,8 @@ export const ReportsCollapse: Story = {
 }
 
 /**
- * More fixed columns than the pane can hold. The name keeps its floor and the
- * section grows past the pane, so the table scrolls sideways instead of
+ * More columns than the pane can hold, even at their minimums. The name keeps
+ * its floor and the section grows past the pane, so the table scrolls sideways instead of
  * squeezing the name to nothing under the column beside it.
  */
 export const MoreColumnsThanFit: Story = {
@@ -60,6 +61,6 @@ export const MoreColumnsThanFit: Story = {
   decorators: [() => ({ template: '<div style="width: 800px; overflow-x: auto"><story /></div>' })],
   play: async ({ canvasElement }) => {
     const name = canvasElement.querySelector<HTMLElement>('.rl-table-row__name')!
-    await expect(name.getBoundingClientRect().width).toBeGreaterThanOrEqual(240)
+    await expect(name.getBoundingClientRect().width).toBeGreaterThanOrEqual(NAME_MIN_WIDTH)
   },
 }
