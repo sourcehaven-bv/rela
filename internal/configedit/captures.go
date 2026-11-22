@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 )
 
 // schedulesFile holds the capture tasks. It is operator-only: the Configure
@@ -91,7 +93,7 @@ func capturedCard(schema, dataEntry []byte, dashboard, title string) string {
 	_ = yaml.Unmarshal(schema, &sc)
 
 	dash := mapAt(de, "dashboard")
-	if dashboard != "" && dashboard != "default" {
+	if dashboard != "" && !dataentryconfig.DashboardRef(dashboard).IsDefault() {
 		dash = mapAt(mapAt(de, "dashboards"), dashboard)
 	}
 	type part struct {

@@ -192,13 +192,13 @@ func foldFigure(display, prop string, rows []*entityPkg.Entity) (*big.Rat, error
 			}
 		}
 	}
-	switch display {
-	case "sum", "avg":
+	switch fn := summaryDisplays[display]; fn {
+	case dataentryconfig.SummarySum, dataentryconfig.SummaryAvg:
 		sum, _, n := sumDecimals(prop, rows)
 		if n == 0 {
 			return nil, fmt.Errorf("%w: no row has a value for %s", errCardNotCapturable, strconv.Quote(prop))
 		}
-		if display == "avg" {
+		if fn == dataentryconfig.SummaryAvg {
 			sum.Quo(sum, new(big.Rat).SetInt64(int64(n)))
 		}
 		return sum, nil
