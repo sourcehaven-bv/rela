@@ -225,7 +225,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	if a.taskItems != nil {
 		mux.HandleFunc("/api/v1/_task_item_conversions/", a.taskItems.handleV1TaskItemConversions)
 	}
-	a.registerDiagramRoutes(mux)
+	registerDiagramRoutes(mux, a)
 	mux.HandleFunc("/api/v1/_action/", a.write.handleV1Action)
 	mux.HandleFunc("/api/v1/_apps/", a.handleV1App)
 
@@ -234,7 +234,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 }
 
 // registerDiagramRoutes registers the read-only gantt and sankey endpoints.
-func (a *App) registerDiagramRoutes(mux *http.ServeMux) {
+func registerDiagramRoutes(mux *http.ServeMux, a *App) {
 	mux.HandleFunc("/api/v1/_gantts/", a.gantt.handleV1Gantt)
 	mux.HandleFunc("/api/v1/_sankeys/", a.sankey.handleV1Sankey)
 }
