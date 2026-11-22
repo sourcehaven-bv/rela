@@ -440,9 +440,6 @@ func (s *mcpServices) deps(svc *appbuild.Services) relamcp.Deps {
 		// Request with foreign readers.
 		BindIdentity: reads.Rebind,
 	}
-	if reads.Traversals != nil {
-		deps.Related.Traversals = reads.Traversals
-	}
 	deps.Related.Conditions = reads.Conditions
 	if reads.Rollups != nil {
 		deps.Related.Rollups = reads.Rollups

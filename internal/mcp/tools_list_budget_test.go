@@ -10,7 +10,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
@@ -139,32 +138,6 @@ func TestHandleListEntities_PagedTotals(t *testing.T) {
 	}
 }
 
-// A filter the store answers and the same filter answered in Go serve the
-// same page and the same total.
-func TestHandleListEntities_PushedFilterMatchesGoFilter(t *testing.T) {
-	t.Parallel()
-	srv, _ := newListBudgetServer(t, 9)
-	d := snapshotFor(context.Background(), srv).deps
-	prog, err := compileListFilter(d.Meta, d.Related, "requirement", "entity.status == 'accepted'")
-	if err != nil {
-		t.Fatal(err)
-	}
-	page := listPage{faces: store.InWorld(store.TrivialScope()), offset: 1, limit: 3}
-	pushed, pushedTotal, err := page.ofType(context.Background(), d, "requirement", prog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	inGo, goTotal, err := page.filterInGo(context.Background(), d, "requirement", prog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.EqualFunc(pushed, inGo, func(a, b *entity.Entity) bool { return a.ID == b.ID }) ||
-		pushedTotal != goTotal {
-
-		t.Errorf("pushed %d rows of %d, Go %d rows of %d", len(pushed), pushedTotal, len(inGo), goTotal)
-	}
-}
-
 // The pushed filter is answered by the store: one count and one page, no
 // read of the whole type.
 func TestHandleListEntities_LoweredFilterIsPushed(t *testing.T) {
@@ -193,8 +166,40 @@ func TestHandleListEntities_LimitIsCapped(t *testing.T) {
 	}
 }
 
-// A filter that does not lower still answers, in Go.
-func TestHandleListEntities_UnloweredFilterKeepsGoPath(t *testing.T) {
+// A filter that does not lower is refused with a reason naming the part
+// that does not, and reads nothing (TKT-9BKVQ9I).
+func TestHandleListEntities_UnloweredFilterIsRefused(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ filter, names string }{
+		{"entity.title == entity.status", "entity.title == entity.status"},
+		{"entity.status == ''", "entity.status == \"\""},
+		{"entity.status == 'draft' or entity.title > entity.status", "entity.title > entity.status"},
+	} {
+		t.Run(tc.filter, func(t *testing.T) {
+			t.Parallel()
+			srv, st := newListBudgetServer(t, 6)
+			st.Reset()
+			result, err := srv.handleListEntities(context.Background(), makeToolRequest(map[string]any{
+				"type": "requirement", "filter": tc.filter,
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := getResultText(t, result)
+			if !isErrorResult(result) || !strings.Contains(text, "unsupported filter") ||
+				!strings.Contains(text, tc.names) {
+
+				t.Errorf("want a refusal naming %q, got %s", tc.names, text)
+			}
+			if calls := st.String(); strings.Contains(calls, "ListEntities=") || strings.Contains(calls, "CountMatched") {
+				t.Errorf("a refused filter read the store: %s", calls)
+			}
+		})
+	}
+}
+
+// A `not` lowers: the store answers it.
+func TestHandleListEntities_NotFilterIsPushed(t *testing.T) {
 	t.Parallel()
 	srv, _ := newListBudgetServer(t, 6)
 	ids, total, _ := listIDs(t, srv, map[string]any{

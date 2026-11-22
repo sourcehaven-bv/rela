@@ -7,8 +7,7 @@ package archguard
 // Each entry has a category (see readCategory) and a reason that says what
 // the read is for. requestPath entries are debt. Each names the open ticket
 // that removes it: TKT-T0DK37 and TKT-PSBGQLY (structured search),
-// TKT-C5H506O (scopedHeaders), TKT-9BKVQ9I (mcp filters) and TKT-I3MGCRT
-// (desktopnotify).
+// TKT-C5H506O (scopedHeaders) and TKT-I3MGCRT (desktopnotify).
 var unpagedReadAllowlist = map[string]unpagedRead{
 	// aclmap: the who-can report.
 	"internal/aclmap/enumerate.go#Engine.enumeratePrincipals": {2, batchJob,
@@ -181,10 +180,6 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 		"analyze properties tool: validates every face row"},
 	"internal/mcp/tools_analysis.go#Server.handleAnalyzeUnique": {1, batchJob,
 		"analyze unique tool: compares the unique values of every entity of each type"},
-	"internal/mcp/tools_entity.go#listPage.filterInGo": {1, requestPath,
-		"list_entities tool with a filter the store cannot answer (see its doc): reads the whole readable " +
-			"type, then filters and pages in Go. The exact total needs every row judged, so paging the read " +
-			"would not bound it (TKT-9BKVQ9I)"},
 
 	// remotesync: a sync pass over the mapped types.
 	"internal/remotesync/push.go#pusher.localRows": {1, batchJob, "remote sync push: every local row of a mapped type"},

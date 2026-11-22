@@ -1004,3 +1004,46 @@ func IDMatcher(fm FaceMatcher) func(ctx context.Context, q GraphQuery, ids []str
 		return MatchingIDs(ctx, fm, q, ids)
 	}
 }
+
+// RowCond returns q's row predicate as a [Cond]: the AND of its Props, its
+// Related entries and its Where, so that `Where: &c` on a query of the same
+// type matches the rows q matches. A Related entry with Pred.Negate set
+// becomes a [CondNot] over the entry without it, the one way a Cond
+// negates. It refuses a query with a predicate a Cond cannot express:
+// FaceIn (a face test), Any, Narrowing, HasInbound or HasOutbound. Faces,
+// OrderBy, Limit, Offset and SkipUnreadable select or page rows rather than
+// test one, and are ignored.
+//
+// A field grant's `when:` (search.FieldGrant) is a query of this shape;
+// a reader that pushes a filter on a property hidden on some rows ANDs it
+// with the grant's condition (TKT-9BKVQ9I).
+func (q GraphQuery) RowCond() (Cond, error) {
+	switch {
+	case len(q.FaceIn) > 0:
+		return Cond{}, fmt.Errorf("%w: a face set has no condition form", ErrInvalidQuery)
+	case len(q.Any) > 0, len(q.Narrowing) > 0:
+		return Cond{}, fmt.Errorf("%w: branches have no condition form", ErrInvalidQuery)
+	case q.HasInbound != nil, q.HasOutbound != nil:
+		return Cond{}, fmt.Errorf("%w: HasInbound and HasOutbound have no condition form", ErrInvalidQuery)
+	}
+	args := make([]Cond, 0, len(q.Props)+len(q.Related)+1)
+	for _, p := range q.Props {
+		args = append(args, PropLeaf(p))
+	}
+	for _, r := range q.Related {
+		negate := r.Pred.Negate
+		r.Pred.Negate = false
+		leaf := RelatedCond(r)
+		if negate {
+			leaf = NotCond(leaf)
+		}
+		args = append(args, leaf)
+	}
+	if q.Where != nil {
+		args = append(args, *q.Where)
+	}
+	if len(args) == 1 {
+		return args[0], nil
+	}
+	return AndCond(args...), nil
+}

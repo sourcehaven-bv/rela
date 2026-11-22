@@ -5,7 +5,9 @@ title: Narrow the list_entities Go path for filters that do not lower
 kind: enhancement
 priority: low
 effort: m
-status: backlog
+started: "2026-11-21"
+completed: "2026-11-22"
+status: done
 ---
 
 ## Description
