@@ -6604,13 +6604,31 @@ builtins:
 | `flow_runs`  | Flow runs  |
 | `analysis`   | Analysis   |
 | `as_of`      | The date picker in the sidebar header |
+| `shortcuts`  | The Shortcuts button in the sidebar footer, which opens the keyboard shortcuts help |
 
-Each entry sets exactly one of `hidden: true` or `permission:`. An unknown row
-name, an entry with both or neither, and a top-level `builtins:` next to
+An entry sets `hidden: true`, or `permission:`, `hidden_on_phone: true` or
+both. An unknown row name, an entry with none of them, `hidden` together with
+`permission` or `hidden_on_phone`, and a top-level `builtins:` next to
 `spaces:` all fail to load. With [spaces](#spaces), set `builtins:` on each
 space instead.
 
-When the Search row is hidden, the `/` shortcut to the search page is off too.
+`hidden_on_phone: true` hides the row when the browser window is narrower
+than 768 pixels, where the sidebar opens as a drawer. That covers phones, and
+also a desktop window made that narrow. Wider windows keep the row. It applies
+to every user. With `permission:` on the same entry, the row is shown only to
+users who hold the permission, and to nobody on a phone. Keyboard shortcuts are of little use on a
+phone, so this hides the Shortcuts button there:
+
+```yaml
+builtins:
+  shortcuts: { hidden_on_phone: true }
+```
+
+Hiding the Shortcuts button does not turn off the `?` key, which still opens
+the keyboard shortcuts help.
+
+When the Search row is hidden, the `/` shortcut to the search page is off too,
+also where `hidden_on_phone` hides it.
 When every row is hidden, the pinned band is left out.
 
 On a page load the sidebar shows no rows until the sidebar endpoint has
@@ -6626,7 +6644,9 @@ to every user.
 
 The sidebar endpoint names the rows it leaves out for the current user in
 `hidden_builtins`, for example `"hidden_builtins": ["search", "analysis"]`. The
-field is absent when every row is shown.
+field is absent when every row is shown. It names the rows with
+`hidden_on_phone: true` in `phone_hidden_builtins`, and the browser leaves them
+out on a phone-sized screen. That field is absent when no row sets it.
 
 ## Spaces
 
@@ -7425,6 +7445,8 @@ actions:
 | `confirm`     | bool or string | Show a confirmation dialog before a list, list-button or detail-page action runs (default: `false`). A string is the dialog text. An unquoted `yes`, `no`, `on`, `off`, `y` or `n` is refused, also in a block scalar (`\|` or `>`); quote it or tag it `!!str` to show it as text. The sidebar does not ask |
 | `available_on`| map    | Offer the action on detail pages — see [Actions on the detail page](#actions-on-the-detail-page). Requires `script` or `llm` |
 | `when`        | string | Predicate that must hold for the entity. Requires `available_on` |
+| `style`       | string | `danger` draws the button on the detail page as a destructive action. See [Order and style](#order-and-style-on-the-detail-page) |
+| `order`       | int    | Position among the detail page's actions: lower first. See [Order and style](#order-and-style-on-the-detail-page) |
 | `permission`  | string | Global named permission the caller must hold to run the action from a list, a list button, the sidebar, a next-action offer or a detail page |
 | `request`     | map    | Opt into request-scoped execution — see [Request-scoped actions](#request-scoped-actions). Requires `script` |
 | `capabilities`| map    | Ambient capability grant (`http`, `ai`, `write_file`, named `secrets`). Omitting it grants none |
@@ -7602,6 +7624,46 @@ After it finishes, the page shows the returned `message` and reloads the entity,
 so the new content is visible at once. The panels below the entity (Changes,
 documents, flow runs and "Mentioned by") are read again too, so the change the
 script made shows in the Changes list without a page reload.
+
+#### Order and style on the detail page
+
+The detail page shows its action buttons after the commands, sorted by
+`order:` and then by label. `order:` is a whole number, and lower numbers come
+first. An action without `order:` counts as 0, so it comes before actions with
+a positive number and after actions with a negative one. Without any `order:`,
+the buttons are sorted by label, as before.
+
+`style: danger` draws the button as a destructive action, in the same color as
+Delete. Leave it out for the normal button. Any other value is a startup
+error.
+
+```yaml
+actions:
+  workspace-activate:
+    label: "Make active"
+    script: tenant-state.lua
+    available_on: { entity_types: [tenant] }
+    order: 10
+  workspace-suspend:
+    label: "Suspend"
+    script: tenant-state.lua
+    available_on: { entity_types: [tenant] }
+    order: 20
+  workspace-archive:
+    label: "Archive"
+    script: tenant-state.lua
+    available_on: { entity_types: [tenant] }
+    order: 90
+    style: danger
+```
+
+Here the buttons read Make active, Suspend, Archive, with Archive in red.
+`style:` and `order:` need `available_on`; on an action without it, they are
+a startup error. The
+"⋯" menu on a phone and in a narrow header uses the same order and color.
+Both keys only change how the page draws the buttons. They do not change who
+may run an action, and lists, boards and the sidebar ignore them.
+`/api/v1/_config` serves both keys with the action.
 
 An action with `available_on` needs an entity, so it cannot be referenced from
 a list's `actions`, a navigation entry, or a next-action offer. The server

@@ -28,7 +28,8 @@ import { useMe } from '@/queries/me'
 import { UNKNOWN_USER } from '@/utils/userToken'
 import { useEntitySession } from '@/composables/useEntitySession'
 import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
-import type { ActionConfig, Command } from '@/types'
+import type { Command } from '@/types'
+import { offeredDetailActions, type DetailAction } from '@/components/entity/detailActions'
 import { getEditFormId } from '@/types'
 import { anchorSections } from '@/utils/rowAnchors'
 import { editFormRoute, entityDetailHref, ownedEntityHref } from '@/utils/entityRoute'
@@ -1120,22 +1121,11 @@ function runCommand(cmd: Command) {
 // Lua actions offered on this page (TKT-VVS16W). The server publishes each
 // as `_actions['action:<id>']` only when type, face, `when` and `permission`
 // all hold, so the page renders exactly the keys it is given and decides
-// nothing itself. Sorted by label so the order does not depend on map order.
-interface DetailAction {
-  id: string
-  label: string
-  config: ActionConfig
-}
-const detailActions = computed<DetailAction[]>(() => {
-  const out: DetailAction[] = []
-  for (const [key, allowed] of Object.entries(entry.value?._actions ?? {})) {
-    if (!allowed || !key.startsWith('action:')) continue
-    const id = key.slice('action:'.length)
-    const config = schemaStore.getAction(id)
-    if (config) out.push({ id, label: config.label || id, config })
-  }
-  return out.sort((a, b) => a.label.localeCompare(b.label))
-})
+// nothing itself. Sorted by the action's `order:`, then by label, so the
+// order does not depend on map order.
+const detailActions = computed<DetailAction[]>(() =>
+  offeredDetailActions(entry.value?._actions, (id) => schemaStore.getAction(id))
+)
 const detailActionBusy = ref(false)
 // Bumped after an action, so the panels that read their own lists (changes,
 // documents, flow runs, mentions) read them again.
@@ -1836,6 +1826,7 @@ const actions = computed<EntityAction[]>(() => {
       label: a.label,
       group: 'command',
       icon: 'play',
+      tone: a.config.style === 'danger' ? 'danger' : undefined,
       disabled: detailActionBusy.value,
       run: () => void runDetailAction(a),
     })
@@ -2703,6 +2694,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
               v-for="a in detailActions"
               :key="`action-${a.id}`"
               variant="secondary"
+              :tone="a.config.style === 'danger' ? 'danger' : undefined"
               :disabled="detailActionBusy && runningActionId !== a.id"
               :loading="runningActionId === a.id"
               :pending-label="t('entity.action.running')"

@@ -104,6 +104,52 @@ describe('Sidebar built-in rows', () => {
     expect(push).not.toHaveBeenCalled()
   })
 
+  function hasShortcutsButton(w: VueWrapper): boolean {
+    return w.find('.shortcuts-btn').exists()
+  }
+
+  // A fake matchMedia that answers the phone query with `phone`.
+  function screen(phone: boolean) {
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query: string) =>
+        ({
+          matches: phone && query.includes('max-width'),
+          media: query,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList
+    )
+  }
+
+  it('shows the Shortcuts button by default, also on a phone', async () => {
+    screen(true)
+    const w = await mountSidebar()
+    expect(hasShortcutsButton(w)).toBe(true)
+  })
+
+  it('hides the Shortcuts button when shortcuts is hidden', async () => {
+    sidebar.hidden_builtins = ['shortcuts']
+    const w = await mountSidebar()
+    expect(hasShortcutsButton(w)).toBe(false)
+    expect(pinnedHrefs(w)).toEqual(['/search', '/flows/tasks', '/flows/runs', '/analyze'])
+  })
+
+  it('hides a hidden_on_phone row only on a phone-sized screen', async () => {
+    sidebar.phone_hidden_builtins = ['shortcuts', 'analysis']
+
+    screen(false)
+    const wide = await mountSidebar()
+    expect(hasShortcutsButton(wide)).toBe(true)
+    expect(pinnedHrefs(wide)).toEqual(['/search', '/flows/tasks', '/flows/runs', '/analyze'])
+    wide.unmount()
+    vi.restoreAllMocks()
+
+    screen(true)
+    const phone = await mountSidebar()
+    expect(hasShortcutsButton(phone)).toBe(false)
+    expect(pinnedHrefs(phone)).toEqual(['/search', '/flows/tasks', '/flows/runs'])
+  })
+
   it('shows the as-of picker unless as_of is hidden', async () => {
     const shown = await mountSidebar(true)
     expect(shown.find('[data-testid="as-of-picker"]').exists()).toBe(true)
