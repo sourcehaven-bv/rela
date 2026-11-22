@@ -1098,6 +1098,25 @@ when a type does not match. `min`, `max` and `latest_by` take a `date` only in
 the default `YYYY-MM-DD` format, and no `datetime`: rela orders these values as
 text, and only that date format sorts as text in time order.
 
+**Over records.** A roll-up can read the rows of a [record type](records.md)
+owned by the entity instead of related entities. `records` names the record
+type; `latest`, `sum` or `avg` names one `integer` or `decimal` field of it;
+`window` keeps the rows of the last `30d` (hours, days, weeks or years, as in a
+retention). It cannot be combined with `via`, `where` or the relation
+functions. `sum` and `latest` have the field's type, `avg` is a `decimal`. A
+`decimal` field needs a declared `scale`, so a value does not change with the
+other entities on the page. A window ends now: rows dated later do not count.
+
+```yaml
+saldo:
+  type: decimal
+  rollup: { records: boeking, sum: bedrag, window: 30d }
+```
+
+The rows are as visible as their owner, so a hidden owner's rows never reach
+a value. A page of entities costs one record read per roll-up, whatever its
+size. An entity without rows has no value.
+
 **Paths.** `via` can name a list of relations. The roll-up then follows each
 relation in turn and summarizes the entities at the far end. A requirement
 that refers to ISO controls can ask whether any active measure implements one

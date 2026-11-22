@@ -18,6 +18,11 @@ const (
 	RollupMax    RollupFunc = "max"
 	RollupSum    RollupFunc = "sum"
 	RollupLatest RollupFunc = "latest_by"
+	// RollupAvg and RollupLatestRow are the functions of a roll-up over a
+	// record type (TKT-VMSWSWP): the average, and the value of the newest
+	// row, of one field.
+	RollupAvg       RollupFunc = "avg"
+	RollupLatestRow RollupFunc = "latest"
 )
 
 // RollupDef declares a property whose value aggregates the entities related
@@ -33,6 +38,14 @@ const (
 //	gedekt:
 //	  type: boolean
 //	  rollup: { via: [verwijst_naar, wordt_geimplementeerd_door], exists: true }
+//	saldo:
+//	  type: decimal
+//	  rollup: { records: boeking, sum: bedrag, window: 30d }
+//
+// A roll-up with `records` reads the rows of a record type owned by the
+// entity instead of related entities (TKT-VMSWSWP): `latest`, `sum` or `avg`
+// of one field, over the rows of the last `window` (all rows when empty).
+// The rows are as visible as their owner.
 //
 // The value is computed when the entity is read, with the reader's access:
 // a related entity the reader cannot read does not count, an entity on the
@@ -52,13 +65,21 @@ type RollupDef struct {
 	// name, or a list of up to [MaxRollupPath]. A canonical name walks
 	// FROM -> TO, the relation's inverse id walks TO -> FROM, as in
 	// related().
-	Via StringOrSlice `yaml:"via"`
+	Via StringOrSlice `yaml:"via,omitempty"`
 	// Type picks the related type when the last relation's far side names
 	// several.
 	Type string `yaml:"type,omitempty"`
 	// Where keeps the related entities whose properties equal these values.
 	// It filters the far end of the path only.
 	Where map[string]string `yaml:"where,omitempty"`
+
+	// Records names a record type owned by the entity type; the roll-up
+	// then reads its rows and declares none of via, type, where, pick or
+	// the relation functions.
+	Records string `yaml:"records,omitempty"`
+	// Window keeps the rows of the last window, such as "30d" (the units
+	// of a record retention). Only with Records.
+	Window string `yaml:"window,omitempty"`
 
 	Count    bool   `yaml:"count,omitempty"`
 	Exists   bool   `yaml:"exists,omitempty"`
@@ -67,6 +88,10 @@ type RollupDef struct {
 	Sum      string `yaml:"sum,omitempty"`
 	Pick     string `yaml:"pick,omitempty"`
 	LatestBy string `yaml:"latest_by,omitempty"`
+	// Avg and Latest are the record functions: the average of the named
+	// field, and its value on the newest row that holds one.
+	Avg    string `yaml:"avg,omitempty"`
+	Latest string `yaml:"latest,omitempty"`
 }
 
 // MaxRollupPath is the most relations a roll-up's via may name. Each hop is
@@ -112,7 +137,8 @@ func (r *RollupDef) Func() (fn RollupFunc, property string, ok bool) {
 	for _, c := range []struct {
 		fn   RollupFunc
 		prop string
-	}{{RollupMin, r.Min}, {RollupMax, r.Max}, {RollupSum, r.Sum}, {RollupLatest, r.LatestBy}} {
+	}{{RollupMin, r.Min}, {RollupMax, r.Max}, {RollupSum, r.Sum}, {RollupLatest, r.LatestBy},
+		{RollupAvg, r.Avg}, {RollupLatestRow, r.Latest}} {
 		if strings.TrimSpace(c.prop) != "" {
 			found, fn, property = append(found, c.fn), c.fn, c.prop
 		}
@@ -138,6 +164,12 @@ func validateRollupShape(schemaName, propName string, pd PropertyDef, allowRollu
 		errs = append(errs, at+" is only supported on entity properties")
 	}
 	switch {
+	case r.Records != "":
+		errs = append(errs, validateRecordsRollupShape(at, r)...)
+	case r.Window != "":
+		errs = append(errs, at+": window is only valid with records")
+	case r.Avg != "" || r.Latest != "":
+		errs = append(errs, at+": avg and latest are only valid with records")
 	case len(r.Via) == 0, len(r.Via) == 1 && strings.TrimSpace(r.Via[0]) == "":
 		// A blank scalar via is a missing via, not an empty path element.
 		errs = append(errs, at+" needs via: the relation to aggregate over")
@@ -153,7 +185,7 @@ func validateRollupShape(schemaName, propName string, pd PropertyDef, allowRollu
 	}
 	fn, _, ok := r.Func()
 	if !ok {
-		errs = append(errs, at+" must declare exactly one of count, exists, min, max, sum or latest_by")
+		errs = append(errs, at+" must declare exactly one of count, exists, min, max, sum, avg, latest or latest_by")
 	}
 	latestBy, pick := strings.TrimSpace(r.LatestBy) != "", strings.TrimSpace(r.Pick) != ""
 	if latestBy && !pick {
@@ -190,6 +222,31 @@ func validateRollupShape(schemaName, propName string, pd PropertyDef, allowRollu
 			errs = append(errs, fmt.Sprintf("%s cannot be combined with %s: a roll-up is computed on read and never stored",
 				at, c.name))
 		}
+	}
+	return errs
+}
+
+// validateRecordsRollupShape checks a roll-up over a record type: one of
+// sum, avg or latest, a valid window, and none of the relation options.
+func validateRecordsRollupShape(at string, r *RollupDef) []string {
+	var errs []string
+	for _, c := range []struct {
+		set  bool
+		name string
+	}{
+		{len(r.Via) > 0, "via"}, {r.Type != "", "type"}, {len(r.Where) > 0, "where"},
+		{r.Pick != "", "pick"}, {r.LatestBy != "", "latest_by"}, {r.Min != "", "min"},
+		{r.Max != "", "max"}, {r.Count, "count"}, {r.Exists, "exists"},
+	} {
+		if c.set {
+			errs = append(errs, fmt.Sprintf("%s: records cannot be combined with %s", at, c.name))
+		}
+	}
+	if fn, _, ok := r.Func(); ok && fn != RollupSum && fn != RollupAvg && fn != RollupLatestRow {
+		errs = append(errs, at+": a roll-up over records declares sum, avg or latest")
+	}
+	if _, err := ParseRetention(r.Window); err != nil {
+		errs = append(errs, fmt.Sprintf("%s: window: %s", at, err))
 	}
 	return errs
 }

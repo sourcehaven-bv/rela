@@ -935,6 +935,9 @@ func gatedRollups(s *Services) *visibility.Rollups {
 		slog.Error("appbuild: roll-ups unavailable", "err", err)
 		return nil
 	}
+	if f := RecordRollups(s); f != nil {
+		r = r.WithRecords(f, nil)
+	}
 	return r
 }
 

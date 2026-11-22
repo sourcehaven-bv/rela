@@ -25,6 +25,10 @@ type rollupSource struct {
 	// fields is the `visible:` scope source, late-bound because tests
 	// reassign the App's field resolver after construction.
 	fields func() visibility.FieldScoper
+	// records is the record service of a roll-up over a record type,
+	// late-bound because [SetRecords] runs after the source is made. It
+	// returns nil when none is installed.
+	records func() visibility.RecordAggregator
 }
 
 // newRollupSource returns the roll-up source over app's store and field
@@ -34,7 +38,25 @@ func newRollupSource(app *App) rollupSource {
 		schema: app.State,
 		st:     app.store,
 		fields: func() visibility.FieldScoper { return app.fieldResolver },
+		records: func() visibility.RecordAggregator {
+			if app.records == nil || app.records.rollups == nil {
+				return nil
+			}
+			return app.records.rollups
+		},
 	}
+}
+
+// withRecords gives r the record service, when one is installed, so a
+// roll-up over a record type has a value.
+func (s rollupSource) withRecords(r *visibility.Rollups) *visibility.Rollups {
+	if s.records == nil {
+		return r
+	}
+	if agg := s.records(); agg != nil {
+		return r.WithRecords(agg, nil)
+	}
+	return r
 }
 
 // rollupRow is one served row to add roll-ups to.
@@ -77,6 +99,7 @@ func (s rollupSource) add(
 			// stripped below either way.
 			slog.WarnContext(ctx, "roll-ups not computed", "type", entityType, "error", err)
 		} else {
+			r = s.withRecords(r)
 			refs := make([]entityPkg.Ref, len(rows))
 			for i, row := range rows {
 				refs[i] = row.ref
