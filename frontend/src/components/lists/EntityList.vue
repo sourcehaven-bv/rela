@@ -1594,8 +1594,8 @@ watch(searchQuery, () => {
         @collapse="onSectionCollapse"
       >
         <!--
-          The row's primary control. A plain link with no class of its own:
-          the row wraps this in a `display: contents` span and stretches ONE
+          The row's primary control. A plain link with no row-overlay class
+          of its own (its one class only sets the link colour): the row wraps this in a `display: contents` span and stretches ONE
           overlay over whatever it gets, so rela keeps cmd/middle-click and a
           hover URL preview without the `.row-link::after` it used to own.
           Two stretched overlays would fight, which is why this slot exists.
@@ -1605,7 +1605,7 @@ watch(searchQuery, () => {
           <RouterLink
             v-else-if="rowTargets.get(item.id)"
             :to="rowTargets.get(item.id)!"
-            :class="{ 'entity-list__title-link': !!linkColumn }"
+            class="entity-list__title-link"
             @click.capture="onRowClick(item as Entity, $event)"
           >
             <component
@@ -1893,11 +1893,11 @@ watch(searchQuery, () => {
 }
 
 /*
- * A title column the list config marks with `link:` reads as a link, in the
- * theme's link colour, as a link does on every other surface. Without
- * `link:` the title stays row text, and the whole row is still the hit
- * area. The ancestor class outranks the table row's own `color: inherit`
- * for the control in its name slot (RlTableRow).
+ * The row title links to the entity, so it reads as a link, in the theme's
+ * link colour, as dashboard cards and every other surface show it. That
+ * holds with or without `link:` on the column. The ancestor class outranks
+ * the table row's own `color: inherit` for the control in its name slot
+ * (RlTableRow).
  */
 .rl-table-row .entity-list__title-link {
   color: var(--rl-color-accent);

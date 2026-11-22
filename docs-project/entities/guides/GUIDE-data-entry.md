@@ -2136,9 +2136,9 @@ label (its inverse label on an incoming column). Forms use the same schema label
 label in `schema.yaml` once instead of repeating it on every list and view.
 
 The row's title is the column with `link:`, or the first column when no column
-has one. A click anywhere on the row opens the entity. A title column with
-`link:` shows in the link colour, as links do elsewhere in the app; without
-`link:` the title is plain text.
+has one. A click anywhere on the row opens the entity. The title shows in the
+link colour when the row links to an entity, as links do elsewhere in the app,
+also when its column has no `link:`.
 
 **Face column example** — on a list of a type with `concept` and `vastgesteld` faces, show
 which one the world serves for each row:
@@ -3511,6 +3511,12 @@ sections:
       - {property: total}
       - {property: pdf_url}
 ```
+
+#### Nested and card sections on a phone
+
+A `display: nested` section 480 pixels wide or narrower puts each row's column
+values on their own line under the title, where they wrap. A card in a
+`display: cards` section shrinks to fit a section narrower than 300 pixels.
 
 ### Widget Overrides
 

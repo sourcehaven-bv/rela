@@ -6,8 +6,8 @@ import EntityList from './EntityList.vue'
 import { withPageHeader } from '@/composables/pageHeaderTestHost'
 import { useSchemaStore } from '@/stores/schema'
 
-// A title column the list marks with `link:` reads as a link, in the link
-// colour (BUG-6WQ1U8S). Without `link:` the title stays row text. The colour
+// The row title links to the entity, so it reads as a link, in the link
+// colour (BUG-E4XWNGR), with or without `link:` on its column. The colour
 // itself is CSS, which Vitest does not apply; this pins the class it hangs on.
 
 const listEntitiesMock = vi.fn()
@@ -73,20 +73,12 @@ async function mountInvoices(link: boolean) {
 }
 
 describe('EntityList title link', () => {
-  it('marks the title as a link when the column sets link:', async () => {
-    const wrapper = await mountInvoices(true)
+  it.each([true, false])('marks the title as a link (link: on the column: %s)', async (link) => {
+    const wrapper = await mountInvoices(link)
     const title = wrapper.find('.rl-table-row__primary a')
     expect(title.exists()).toBe(true)
     expect(title.text()).toContain('HM021-0001')
     expect(title.classes()).toContain('entity-list__title-link')
-    wrapper.unmount()
-  })
-
-  it('leaves the title as row text without link:', async () => {
-    const wrapper = await mountInvoices(false)
-    const title = wrapper.find('.rl-table-row__primary a')
-    expect(title.exists()).toBe(true)
-    expect(title.classes()).not.toContain('entity-list__title-link')
     wrapper.unmount()
   })
 })

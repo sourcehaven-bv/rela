@@ -3932,7 +3932,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 /* Cards grid (relation sections etc.) */
 .cards-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  /* min(): a pane narrower than 300px, as on a small phone, gets one card
+     that fits instead of one that overflows (BUG-E4XWNGR). */
+  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
   gap: var(--space-lg);
 }
 
@@ -4169,6 +4171,46 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   font-size: var(--font-size-sm);
   color: var(--rl-color-text-muted);
   white-space: nowrap;
+}
+
+/*
+ * A narrow nested section, as on a phone, moves the column values onto
+ * their own line under the title and lets them wrap (BUG-E4XWNGR). In one
+ * line they cannot shrink, so the tree's `overflow: hidden` cut them off.
+ */
+.nested-tree-wrap {
+  container: nested-tree / inline-size;
+}
+
+@container nested-tree (max-width: 480px) {
+  .nested-row,
+  .nested-child {
+    flex-wrap: wrap;
+  }
+
+  /* A zero basis keeps a long title on the first line beside the twisty and
+     badge, where it wraps; only the values move to a line of their own. */
+  .nested-link {
+    flex: 1 1 0;
+  }
+
+  /* A level without columns renders an empty values span; as its own line
+     it would add a row gap to every row. */
+  .nested-values:empty {
+    display: none;
+  }
+
+  .nested-values {
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    margin-left: 0;
+    row-gap: var(--space-xs);
+    white-space: normal;
+  }
+
+  .nested-row .nested-values {
+    padding-left: calc(18px + var(--space-md));
+  }
 }
 
 .nested-children {
