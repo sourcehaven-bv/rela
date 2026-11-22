@@ -181,6 +181,29 @@ test.describe("Mobile app shell", () => {
     await expect(labels.nth(1)).toHaveText(/status/i);
   });
 
+  /*
+   * A long value without spaces, such as an ID, wraps inside its properties
+   * row. It used to run past the screen and scroll the pane sideways. The
+   * task view shows the assignee in a display section ("Task") and in an
+   * inline-edit section ("Narrow fields"), so both renderings are covered.
+   */
+  test("a long unbroken property value wraps instead of scrolling", async ({ appPage, api }) => {
+    const longId = "org_01J9ZQ7K3M5N8P2R4T6V8X0Y1A3C5E7G9H2K4M6P8R0T2V4X6Z8B";
+    await api.updateEntity("tasks", SEED.tasks.writeUnitTests, { assignee: longId });
+    const mobile = new MobileLayoutPage(appPage);
+    await mobile.openEntitySection("task", SEED.tasks.writeUnitTests, "Task");
+
+    for (const heading of ["Task", "Narrow fields"]) {
+      const value = mobile.sectionValue(heading, longId);
+      await expect(value).toBeVisible();
+      // Wrapped onto more lines, not clipped to one.
+      expect(await mobile.lineCount(value)).toBeGreaterThan(1);
+    }
+    expect(await mobile.sectionValueOverflows("Task")).toBe(false);
+    expect(await mobile.sectionValueOverflows("Narrow fields")).toBe(false);
+    expect(await mobile.paneScrollsSideways()).toBe(false);
+  });
+
   // The header's tools hold the list's search, sort and filter. A phone
   // needs them as much as a desktop does.
   test("a list keeps its search box on a phone", async ({ appPage }) => {

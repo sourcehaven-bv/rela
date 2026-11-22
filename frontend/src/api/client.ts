@@ -5,6 +5,7 @@ import { isProvisioningResponse, startProvisioningPoll } from './tenantProvision
 import { trackWorkspaceReadOnly } from './workspaceReadOnly'
 import { probeSessionEnded, trackAccess } from './workspaceAccess'
 import { carriesAsOf, currentAsOf } from './asOf'
+import { htmlResponseError, isHtmlResponse } from './htmlResponse'
 import { t } from '@/i18n'
 
 // The error types and helpers live in errors.ts; re-export so existing
@@ -56,6 +57,14 @@ class ApiClient {
         if (isProvisioningResponse(response.status, response.data)) {
           void startProvisioningPoll()
           return Promise.reject(toApiError(new Error('tenant_provisioning')))
+        }
+        // An HTML page in place of JSON is not data: reject it rather than
+        // hand a string to the caller. It may be the edge's sign-in page,
+        // reached through a redirect the browser followed, so ask once
+        // whether the session ended, as for a request with no response.
+        if (isHtmlResponse(response)) {
+          void probeSessionEnded()
+          return Promise.reject(htmlResponseError(response))
         }
         trackWorkspaceReadOnly(response.config, response.status, response.data)
         return response

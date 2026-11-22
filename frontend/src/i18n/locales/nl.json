@@ -235,7 +235,8 @@
     "historyUnsupported": "Deze installatie bewaart geen versiegeschiedenis",
     "tenantReadOnly": "Deze werkruimte is alleen-lezen",
     "originNotAllowed": "Deze pagina is geopend via een adres dat deze server niet accepteert. Open de pagina via het gebruikelijke adres.",
-    "originMissing": "De browser gaf niet door welke pagina dit verzoek stuurde, dus de server weigerde het. Laad de pagina opnieuw en probeer het nog eens."
+    "originMissing": "De browser gaf niet door welke pagina dit verzoek stuurde, dus de server weigerde het. Laad de pagina opnieuw en probeer het nog eens.",
+    "unexpectedResponse": "De server stuurde een pagina in plaats van gegevens. Misschien is je sessie verlopen. Laad de pagina opnieuw."
   },
   "dashboard": {
     "openList": "Open de lijst",
