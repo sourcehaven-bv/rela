@@ -80,7 +80,7 @@ test.describe("Space landing and built-in rows", () => {
 
   test("hidden_on_phone drops the Shortcuts button on a phone only", async ({ appPage, serverUrl }) => {
     const spaces = new SpacesPage(appPage);
-    const shortcuts = appPage.locator("#main-sidebar .shortcuts-btn");
+    const shortcuts = spaces.shortcutsButton;
 
     await appPage.goto(`${serverUrl}/s/portal/list/bugs`);
     await expect(spaces.sidebarLink("Bugs")).toBeVisible();
