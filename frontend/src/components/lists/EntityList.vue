@@ -785,15 +785,14 @@ const visibleListColumns = computed(() => {
   const columns = listConfig.value?.columns ?? []
   const grouping = groupBy.value
   if (!grouping || grouping.buckets) return columns
-  // The first column is the title, which toTableColumns takes off. Keep it
-  // in place and filter only the rest: filtering it out would make the next
-  // column the title, and that column would be sliced away unseen.
-  const [title, ...rest] = columns
+  // The name column is taken off by toTableColumns. Keep it in place and
+  // filter only the rest: filtering it out would make another column the name.
+  const title = titleColumn.value
   if (!title) return columns
-  const kept = grouping.relation
-    ? rest.filter((column) => column.relation !== grouping.relation)
-    : rest.filter((column) => column.property !== grouping.property)
-  return [title, ...kept]
+  return columns.filter((column) => {
+    if (column === title) return true
+    return grouping.relation ? column.relation !== grouping.relation : column.property !== grouping.property
+  })
 })
 
 /**
@@ -806,7 +805,7 @@ const visibleListColumns = computed(() => {
  * instead of a blank column. See tableColumns.ts.
  */
 const tableColumns = computed<TableColumn[]>(() =>
-  toTableColumns(visibleListColumns.value).map((column) => ({
+  toTableColumns(visibleListColumns.value, titleColumn.value).map((column) => ({
     ...column,
     /*
      * A stacked row drops an empty cell so a bare label is never left beside
@@ -1422,7 +1421,7 @@ watch(searchQuery, () => {
           {{ a.label }}
         </RlButton>
         <RlButton
-          v-if="createFormTarget && canCreate()"
+          v-if="createFormTarget && canCreate() && !grouping.grouped.value"
           :as="RouterLink"
           :to="createFormTarget"
           variant="primary"

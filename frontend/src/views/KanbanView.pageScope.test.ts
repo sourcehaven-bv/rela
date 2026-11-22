@@ -63,11 +63,18 @@ function seed() {
     topic: {
       label: 'Topic',
       entity_type: 'topic',
-      tabs: [{
-        id: 'board', label: 'Board', view: 'kanban', target: 'taken_bord',
-        scope: 'relation', relation: 'bestaat_uit', direction: 'outgoing',
-        links: [{ type: 'taak', relation: 'bestaat_uit', direction: 'outgoing' }],
-      }],
+      tabs: [
+        {
+          id: 'board',
+          label: 'Board',
+          view: 'kanban',
+          target: 'taken_bord',
+          scope: 'relation',
+          relation: 'bestaat_uit',
+          direction: 'outgoing',
+          links: [{ type: 'taak', relation: 'bestaat_uit', direction: 'outgoing' }],
+        },
+      ],
     },
   })
   listAllEntitiesMock.mockResolvedValue({
@@ -120,13 +127,23 @@ describe('KanbanView in an entity-page tab', () => {
       return Promise.resolve()
     })
 
-    const newButton = wrapper.findAll('button').find((b) => b.text() === 'New')
-    expect(newButton).toBeDefined()
-    await newButton?.trigger('click')
-    wrapper.findComponent(ModalStub).vm.$emit('created', { id: 'TAAK-9', type: 'taak', properties: {} })
+    wrapper
+      .findComponent({ name: 'RlBoard' })
+      .vm.$emit('add', { id: 'todo', title: 'Todo', items: [] })
+    await flushPromises()
+    wrapper
+      .findComponent(ModalStub)
+      .vm.$emit('created', { id: 'TAAK-9', type: 'taak', properties: {} })
     await flushPromises()
 
-    expect(createRelationMock).toHaveBeenCalledWith('topic', 'TOP-1', 'bestaat_uit', 'TAAK-9', undefined, 'outgoing')
+    expect(createRelationMock).toHaveBeenCalledWith(
+      'topic',
+      'TOP-1',
+      'bestaat_uit',
+      'TAAK-9',
+      undefined,
+      'outgoing'
+    )
     expect(listAllEntitiesMock.mock.calls.length).toBeGreaterThan(reads)
   })
 })

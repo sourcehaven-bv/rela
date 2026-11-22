@@ -83,13 +83,16 @@ afterEach(() => {
   })
 })
 
-async function mountWithPrefill(prefill: {
-  properties: Record<string, unknown>
-  content?: string
-  relations: Record<string, { id: string; type: string }[]>
-}) {
+async function mountWithPrefill(
+  prefill: {
+    properties: Record<string, unknown>
+    content?: string
+    relations: Record<string, { id: string; type: string }[]>
+  },
+  body = false
+) {
   const schema = useSchemaStore()
-  schema.forms.set(FORM.id, FORM as never)
+  schema.forms.set(FORM.id, { ...FORM, body } as never)
   schema.entityTypes.set('ticket', ENTITY_TYPE as never)
   for (const [name, def] of Object.entries(RELATION_TYPES)) {
     schema.relationTypes.set(name, def as never)
@@ -116,6 +119,18 @@ async function mountWithPrefill(prefill: {
   await flushPromises()
   return { wrapper, create }
 }
+
+describe('body editor on create forms', () => {
+  const prefill = { properties: {}, relations: {} }
+  it('is hidden unless the form sets body: true', async () => {
+    const { wrapper } = await mountWithPrefill(prefill)
+    expect(wrapper.find('.content-field').exists()).toBe(false)
+  })
+  it('is shown when the form sets body: true', async () => {
+    const { wrapper } = await mountWithPrefill(prefill, true)
+    expect(wrapper.find('.content-field').exists()).toBe(true)
+  })
+})
 
 /** The relations body of the single create call. */
 function relationsBody(create: ReturnType<typeof vi.spyOn>) {
@@ -294,8 +309,18 @@ describe('DynamicForm — duplicate prefill', () => {
 // second target: the server refuses two targets on `max_outgoing: 1`.
 describe('DynamicForm — single-valued relation prefill', () => {
   const templates = [
-    { name: 'default', properties: {}, content: '', relations: [{ relation: 'has_status', target: 'ST-1' }] },
-    { name: 'urgent', properties: {}, content: 'urgent body', relations: [{ relation: 'has_status', target: 'ST-2' }] },
+    {
+      name: 'default',
+      properties: {},
+      content: '',
+      relations: [{ relation: 'has_status', target: 'ST-1' }],
+    },
+    {
+      name: 'urgent',
+      properties: {},
+      content: 'urgent body',
+      relations: [{ relation: 'has_status', target: 'ST-2' }],
+    },
   ]
 
   it('replaces the template value instead of adding to it', async () => {
@@ -334,7 +359,12 @@ describe('DynamicForm — single-valued relation prefill', () => {
 
   it('still adds to a multi-valued relation', async () => {
     vi.mocked(getTemplates).mockResolvedValueOnce([
-      { name: 'default', properties: {}, content: '', relations: [{ relation: 'refs', target: 'TKT-1' }] },
+      {
+        name: 'default',
+        properties: {},
+        content: '',
+        relations: [{ relation: 'refs', target: 'TKT-1' }],
+      },
     ] as never)
     const { wrapper } = await mountWithPrefill({
       properties: {},

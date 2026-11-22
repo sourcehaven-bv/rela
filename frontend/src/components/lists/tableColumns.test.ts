@@ -1,12 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { ListColumn } from '@/types/config'
-import {
-  columnHeader,
-  columnKey,
-  listColumnOf,
-  nameColumn,
-  toTableColumns,
-} from './tableColumns'
+import { columnHeader, columnKey, listColumnOf, nameColumn, toTableColumns } from './tableColumns'
 
 /**
  * The column key is the one thing here that fails silently when it is wrong.
@@ -42,7 +36,7 @@ describe('columnKey', () => {
 
   it('treats an unspecified direction as outgoing', () => {
     expect(columnKey({ relation: 'blocks' })).toBe(
-      columnKey({ relation: 'blocks', direction: 'outgoing' }),
+      columnKey({ relation: 'blocks', direction: 'outgoing' })
     )
   })
 
@@ -51,7 +45,7 @@ describe('columnKey', () => {
     // retitling a column in data-entry.yaml would silently detach its cell
     // slot, and the column would go blank rather than error.
     expect(columnKey({ property: 'due', label: 'Due date' })).toBe(
-      columnKey({ property: 'due', label: 'Deadline' }),
+      columnKey({ property: 'due', label: 'Deadline' })
     )
   })
 })
@@ -83,7 +77,9 @@ describe('busy column', () => {
   })
 
   it('keeps a key distinct from a face column in the same list', () => {
-    const keys = toTableColumns([{ property: 'title' }, { face: true }, { busy: 'run' }]).map((c) => c.key)
+    const keys = toTableColumns([{ property: 'title' }, { face: true }, { busy: 'run' }]).map(
+      (c) => c.key
+    )
     expect(keys).toEqual(['face', 'busy'])
   })
 })
@@ -100,6 +96,16 @@ describe('toTableColumns', () => {
     const result = toTableColumns(columns)
     expect(result).toHaveLength(2)
     expect(result.map((c) => c.header)).toEqual(['Status', 'Blocked by'])
+  })
+
+  it('keeps a non-title first column when another column is the name', () => {
+    const cols: ListColumn[] = [
+      { property: 'logo' },
+      { property: 'title', link: 'detail' },
+      { property: 'status' },
+    ]
+    const result = toTableColumns(cols, cols[1])
+    expect(result.map((c) => c.key)).toEqual(['prop:logo', 'prop:status'])
   })
 
   it('gives every column a distinct key', () => {

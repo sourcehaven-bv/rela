@@ -2,9 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
-import { defineComponent, h } from 'vue'
 import KanbanView from './KanbanView.vue'
-import { usePageHeaderOutlet } from '@/composables/usePageHeader'
 import { useSchemaStore } from '@/stores/schema'
 import { _setEntityPluralForTest } from '@/api/entities'
 import type { Entity, EntityWorld, ListResponse } from '@/types'
@@ -17,12 +15,6 @@ import type { Entity, EntityWorld, ListResponse } from '@/types'
 
 const listAllEntitiesMock = vi.fn()
 
-// The header is painted by the app shell, so the view's actions are read off
-// the page-header outlet rather than the view's own DOM.
-function headerActions() {
-  const actions = usePageHeaderOutlet().content.value?.actions
-  return mount(defineComponent({ render: () => h('div', actions?.()) }))
-}
 vi.mock('@/api', async (orig) => ({
   ...(await orig<typeof import('@/api')>()),
   listAllEntities: (...args: unknown[]) => listAllEntitiesMock(...args),
@@ -141,14 +133,28 @@ describe('KanbanView world scoping', () => {
 })
 
 describe('KanbanView per-card world badge', () => {
-  it('badges only the card that resolved to a stand-in, in the operator\'s words', async () => {
+  it("badges only the card that resolved to a stand-in, in the operator's words", async () => {
     mockRoute.query = { world: 'site-nl' }
     const store = seedSchema()
-    store.worlds.set('site-nl', { name: 'site-nl', readable: true, messages: { stand_in: '{face}' } } as never)
+    store.worlds.set('site-nl', {
+      name: 'site-nl',
+      readable: true,
+      messages: { stand_in: '{face}' },
+    } as never)
     listAllEntitiesMock.mockResolvedValue({
       data: [
-        card('PRC-1', 'Herstellen vanaf back-up', { name: 'site-nl', face: 'nl', via: 'chain', chain_position: 0 }),
-        card('PRC-2', "Revoke a leaver's access", { name: 'site-nl', face: 'en', via: 'chain', chain_position: 1 }),
+        card('PRC-1', 'Herstellen vanaf back-up', {
+          name: 'site-nl',
+          face: 'nl',
+          via: 'chain',
+          chain_position: 0,
+        }),
+        card('PRC-2', "Revoke a leaver's access", {
+          name: 'site-nl',
+          face: 'en',
+          via: 'chain',
+          chain_position: 1,
+        }),
       ],
       meta: { total: 2, page: 1, per_page: 100, has_more: false },
       included: {},
@@ -175,7 +181,12 @@ describe('KanbanView per-card world badge', () => {
   it('renders no badge for a stand-in when the world declares no stand_in text', async () => {
     mockRoute.query = { world: 'site-nl' }
     const wrapper = await mountBoard([
-      card('PRC-2', "Revoke a leaver's access", { name: 'site-nl', face: 'en', via: 'chain', chain_position: 1 }),
+      card('PRC-2', "Revoke a leaver's access", {
+        name: 'site-nl',
+        face: 'en',
+        via: 'chain',
+        chain_position: 1,
+      }),
     ])
     expect(wrapper.text()).toContain("Revoke a leaver's access")
     expect(wrapper.find('.world-badge').exists()).toBe(false)
@@ -216,13 +227,13 @@ describe('KanbanView write affordances under a world', () => {
   // empty.
   it('keeps the create button under a world when _actions permits it', async () => {
     mockRoute.query = { world: 'site-nl' }
-    await mountBoard([card('PRC-1', 'Herstellen vanaf back-up')])
-    expect(headerActions().text()).toContain('New')
+    const wrapper = await mountBoard([card('PRC-1', 'Herstellen vanaf back-up')])
+    expect(wrapper.findComponent({ name: 'RlBoard' }).props('showAdd')).toBe(true)
   })
 
   it('shows the create button in the default world', async () => {
-    await mountBoard([card('PRC-1', 'Restore from backup')])
-    expect(headerActions().text()).toContain('New')
+    const wrapper = await mountBoard([card('PRC-1', 'Restore from backup')])
+    expect(wrapper.findComponent({ name: 'RlBoard' }).props('showAdd')).toBe(true)
   })
 
   // A card with `edit_form` opens the form on the card's ADDRESS, so an edit
@@ -260,14 +271,16 @@ describe('KanbanView write affordances under a world', () => {
 })
 
 describe('KanbanView world banner', () => {
-  it('renders the operator\'s projection note on a board of a FACED type', async () => {
+  it("renders the operator's projection note on a board of a FACED type", async () => {
     // A board under a world is a projection: cards may be missing entirely.
     // What that says to a reader is the operator's `messages.projection`;
     // the app has no sentence of its own (TKT-5SZG2L).
     mockRoute.query = { world: 'site-nl' }
     const store = seedSchema()
     store.worlds.set('site-nl', {
-      name: 'site-nl', readable: true, messages: { projection: 'Alleen vertaalde procedures.' },
+      name: 'site-nl',
+      readable: true,
+      messages: { projection: 'Alleen vertaalde procedures.' },
     } as never)
     listAllEntitiesMock.mockResolvedValue({
       data: [card('PRC-1', 'Herstellen vanaf back-up')],
