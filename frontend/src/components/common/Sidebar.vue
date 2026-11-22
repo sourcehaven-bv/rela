@@ -48,6 +48,7 @@ import { useFlyout } from '@/composables/useFlyout'
 import { useInboxNotifications } from '@/composables/useInboxNotifications'
 import { useTabTitleBadge } from '@/composables/useTabTitleBadge'
 import { shouldDeferToBrowser } from '@/utils/openIntent'
+import { usePhoneScreen } from '@/composables/usePhoneScreen'
 import { useI18n } from 'vue-i18n'
 import { apiUrl } from '@/api/base'
 import { createPile } from '@/api/piles'
@@ -186,6 +187,7 @@ const configNavGroupsWithPiles = computed(() =>
  * come just before it, in a group of their own.
  */
 const navGroups = computed(() => {
+  if (!navLoaded.value) return []
   const groups = configNavGroupsWithPiles.value
   if (!piles.available.value) return groups
   const unpinned = (p: { id: string }) => !pinnedPileIds.value.has(p.id)
@@ -259,12 +261,26 @@ const { hasFlows } = useFlowList()
  * it is a UX filter, and the pages behind the rows stay reachable by URL.
  */
 const hiddenBuiltins = ref<ReadonlySet<BuiltinRow>>(new Set())
-const showsBuiltin = (row: BuiltinRow) => !hiddenBuiltins.value.has(row)
+// The rows `hidden_on_phone:` leaves out on a phone-sized screen. The server
+// names them; only the browser knows the screen width.
+const phoneHiddenBuiltins = ref<ReadonlySet<BuiltinRow>>(new Set())
+const phoneScreen = usePhoneScreen()
+const showsBuiltin = (row: BuiltinRow) =>
+  !hiddenBuiltins.value.has(row) && !(phoneScreen.value && phoneHiddenBuiltins.value.has(row))
 // The as-of picker waits for the first answer, so a space that hides it does
 // not show it for a moment first.
 const builtinsKnown = ref(false)
+/*
+ * Whether the first sidebar answer is in, or has failed. Until then the
+ * sidebar draws its frame without nav rows: the built-in rows alone would
+ * show the generic Search, Flow tasks, Flow runs and Analysis for a moment
+ * before the space's own navigation replaced them (BUG-UZGMHIK). A failed
+ * load still shows the built-in rows, so the app stays navigable.
+ */
+const navLoaded = ref(false)
 
 const pinnedGroups = computed(() => {
+  if (!navLoaded.value) return []
   const rows: { row: BuiltinRow; item: SidebarItem; when: boolean }[] = [
     {
       row: 'search',
@@ -352,7 +368,9 @@ async function loadSidebar() {
     sidebarAppName.value = data.app.name
     sidebarGroups.value = data.navigation
     hiddenBuiltins.value = new Set(data.hidden_builtins ?? [])
+    phoneHiddenBuiltins.value = new Set(data.phone_hidden_builtins ?? [])
     builtinsKnown.value = true
+    navLoaded.value = true
     schemaStore.setLogoUrl(data.logoUrl ?? null)
     // Principal-scoped inline-create offers ride on this payload; see
     // SidebarData.inline_create for why the sidebar carries them.
@@ -366,6 +384,9 @@ async function loadSidebar() {
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
     // (see BUG-6C3V and src/composables/usePageData.ts).
+    // A failed or cancelled current request still ends the wait, so the
+    // built-in rows show instead of an empty sidebar.
+    if (request === sidebarRequest) navLoaded.value = true
     if (isCancelledFetch(err)) return
     console.error('Failed to load sidebar:', err)
   }
@@ -567,7 +588,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
       the whole band, toggle included.
     -->
     <template #footer>
-      <SidebarFooter />
+      <SidebarFooter :show-shortcuts="showsBuiltin('shortcuts')" />
       <AccountMenu />
       <RlThemeToggle v-if="!schemaStore.darkDisabled" v-model="theme" class="sidebar-theme" />
     </template>
@@ -608,6 +629,17 @@ async function handleAction(item: SidebarItem, ev?: Event) {
  */
 .sidebar :deep(.rl-sidebar__header) {
   flex-wrap: wrap;
+}
+
+/*
+ * The app or space name takes the room left beside the close and collapse
+ * buttons, and wraps within it. Without a zero basis the wrapping header
+ * would move a button to a row of its own whenever the name is longer than
+ * one line.
+ */
+.sidebar :deep(.space-switcher) {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .sidebar.collapsed :deep(.as-of-picker) {

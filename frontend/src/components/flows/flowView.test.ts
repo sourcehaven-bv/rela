@@ -127,6 +127,21 @@ describe('flowView', () => {
     expect(entries.map((e) => e.actor)).toEqual(['ann', 'Nina'])
   })
 
+  // BUG-UZGMHIK: the timeline showed `system:signup-bot` raw, where Changes
+  // says "System" for the same principal.
+  it('names a system principal as the Changes list does', () => {
+    const entries = timelineEntries(
+      run({
+        log: [
+          { at: '2026-01-01T10:00:00Z', state: 'collect', via: 'start', by: 'system:signup-bot' },
+          { at: '2026-01-02T10:00:00Z', state: 'review', via: 'timer' },
+        ],
+      }),
+      t
+    )
+    expect(entries.map((e) => e.actor)).toEqual([undefined, 'System'])
+  })
+
   it('says in which state a run was cancelled', () => {
     const entries = timelineEntries(
       run({

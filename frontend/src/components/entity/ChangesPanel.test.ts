@@ -225,4 +225,32 @@ describe('ChangesPanel', () => {
       expect(wrapper.find('.panel-error').exists()).toBe(true)
     })
   })
+  // BUG-UZGMHIK: an action on the page bumps `revision`, and the list is read
+  // again in place, with the rows on screen kept until the answer lands.
+  it('reads the list again in place when the revision changes', async () => {
+    useSchemaStore().setAudit({ changes: true, global: false })
+    getChangesMock.mockResolvedValue({
+      changes: [{ seq: 1, time: '2026-01-01T10:00:00Z', op: 'create-entity', user: 'a' }],
+    })
+    const wrapper = mount(ChangesPanel, {
+      props: { entityType: 'ticket', entityId: 'TKT-1', revision: 0 },
+    })
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="change-row"]')).toHaveLength(1)
+
+    let answer: (p: ChangesPage) => void = () => {}
+    getChangesMock.mockReturnValueOnce(new Promise((r) => (answer = r)))
+    await wrapper.setProps({ revision: 1 })
+    expect(getChangesMock).toHaveBeenCalledTimes(2)
+    expect(wrapper.findAll('[data-testid="change-row"]')).toHaveLength(1)
+
+    answer({
+      changes: [
+        { seq: 2, time: '2026-01-01T11:00:00Z', op: 'update-entity', user: 'a' },
+        { seq: 1, time: '2026-01-01T10:00:00Z', op: 'create-entity', user: 'a' },
+      ],
+    })
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="change-row"]')).toHaveLength(2)
+  })
 })

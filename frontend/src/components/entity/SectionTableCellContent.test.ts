@@ -4,7 +4,7 @@ import { createRouter, createMemoryHistory } from 'vue-router'
 import { prefixResolvedLinks } from '@/router/spaceLinks'
 import SectionTableCellContent from './SectionTableCellContent.vue'
 
-function mountIn(space: string | undefined, link: string) {
+function mountIn(space: string | undefined, link: string, values: string[] | null = ['2026-001']) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/:rest(.*)*', component: { template: '<div />' } }],
@@ -12,7 +12,7 @@ function mountIn(space: string | undefined, link: string) {
   prefixResolvedLinks(router, () => space)
   return mount(SectionTableCellContent, {
     props: {
-      cell: { values: ['2026-001'], link },
+      cell: { values, link },
       row: { entityId: 'INV-001', entityType: 'invoice', cells: {} },
     } as never,
     global: { plugins: [router], stubs: { ViewTableCell: true } },
@@ -32,5 +32,12 @@ describe('SectionTableCellContent', () => {
 
   it('renders no link for a path that is not same-origin', () => {
     expect(mountIn('portal', '//evil.example/x').find('a').exists()).toBe(false)
+  })
+
+  // BUG-6WQ1U8S: an empty anchor is an invisible tab stop, and the stacked
+  // phone layout hides the empty cell it sits in.
+  it('renders no link for an empty cell', () => {
+    expect(mountIn('portal', '/entity/invoice/INV-001', null).find('a').exists()).toBe(false)
+    expect(mountIn('portal', '/entity/invoice/INV-001', []).find('a').exists()).toBe(false)
   })
 })

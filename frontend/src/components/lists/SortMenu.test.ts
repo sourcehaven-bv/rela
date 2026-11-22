@@ -41,6 +41,16 @@ describe('SortMenu', () => {
     wrapper.unmount()
   })
 
+  // The icon goes in the button's icon slot. Inside the label it took a
+  // line of its own, so the button read as an arrow above the word.
+  it('puts the icon beside the label, not inside it', () => {
+    const wrapper = mountMenu()
+    const button = wrapper.find('[data-testid="sort-menu-button"]')
+    expect(button.find('svg').exists()).toBe(true)
+    expect(button.find('.rl-button__label svg').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('choosing a property sorts it ascending', async () => {
     const wrapper = mountMenu()
     await openMenu(wrapper)

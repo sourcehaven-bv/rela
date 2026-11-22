@@ -67,6 +67,16 @@ export class MobileLayoutPage extends BasePage {
     return this.page.locator(".rl-kbd");
   }
 
+  /** The list's search box, in the header's tools row. */
+  get listSearch(): Locator {
+    return this.page.locator(".rl-page-header__tools .search-box input");
+  }
+
+  /** The drawer's computed box-shadow. */
+  async drawerShadow(): Promise<string> {
+    return this.drawer.evaluate((el) => getComputedStyle(el).boxShadow);
+  }
+
   /** Whether this screen renders a sticky topbar at all. */
   async hasTopbar(): Promise<boolean> {
     return (await this.topbar.count()) > 0;
@@ -212,5 +222,50 @@ export class MobileLayoutPage extends BasePage {
         right: s.paddingRight,
       };
     });
+  }
+
+  /**
+   * The empty space between the bottom of the shell's header band and the
+   * top of the list's table, in pixels. The table is the first thing under
+   * the header, so anything above a few pixels is a band (BUG-6WQ1U8S).
+   */
+  async headerToTableGap(): Promise<number> {
+    const header = await this.page.locator(".rl-app-shell__header").boundingBox();
+    const table = await this.page.locator(".entity-list .rl-table").first().boundingBox();
+    if (!header || !table) throw new Error("header or table not laid out");
+    const firstRow = await this.page.locator(".rl-table-row").first().boundingBox();
+    if (!firstRow) throw new Error("no table row laid out");
+    // On a phone the column headers are hidden, so the first row is the
+    // first thing in the table; the table's own top is where it starts.
+    return Math.min(table.y, firstRow.y) - (header.y + header.height);
+  }
+
+  /** Open an entity page and wait for its `display: table` section. */
+  async openEntityTable(type: string, id: string, heading: string) {
+    await this.navigateTo(`/entity/${type}/${id}`);
+    await expect(this.sectionTable(heading)).toBeVisible();
+  }
+
+  /** The table of the view section with this heading. */
+  sectionTable(heading: string): Locator {
+    return this.page
+      .locator(".view-section", {
+        has: this.page.getByRole("heading", { name: heading, exact: true }),
+      })
+      .locator(".data-table")
+      .first();
+  }
+
+  /** Whether the section's table is wider than its wrapper (scrolls sideways). */
+  async sectionTableScrolls(heading: string): Promise<boolean> {
+    return this.sectionTable(heading).evaluate((table) => {
+      const wrapper = table.closest(".table-wrapper");
+      return !!wrapper && wrapper.scrollWidth > wrapper.clientWidth + 1;
+    });
+  }
+
+  /** The column-name labels a stacked section row shows beside its values. */
+  sectionCellLabels(heading: string): Locator {
+    return this.sectionTable(heading).locator("tbody td .section-cell__label");
   }
 }

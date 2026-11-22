@@ -85,6 +85,16 @@ func (*Provisioner) Erase(context.Context, string) (Tenant, Erasure, error) {
 	return Tenant{}, Erasure{}, ErrUnsupportedBuild
 }
 
+// Apply refuses on a build with no PostgreSQL.
+func (*Provisioner) Apply(context.Context, string, Change) (Record, error) {
+	return Record{}, ErrUnsupportedBuild
+}
+
+// Archive refuses on a build with no PostgreSQL.
+func (*Provisioner) Archive(context.Context, string) (Record, bool, error) {
+	return Record{}, false, ErrUnsupportedBuild
+}
+
 // CheckBareTarget has no database to check on a build with no PostgreSQL.
 func CheckBareTarget(context.Context, string) error { return nil }
 

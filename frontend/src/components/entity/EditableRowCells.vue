@@ -24,6 +24,7 @@ import { defaultRegistry } from '@/widgets/registry'
 import { isFieldWritable, optionVerdictsFor } from '@/utils/affordances'
 import { entityRef } from '@/utils/entityRef'
 import InlinePropertyValue from '@/components/forms/InlinePropertyValue.vue'
+import { sectionCellClasses, sectionColumnLabel } from '@/utils/sectionTable'
 
 const props = defineProps<{
   row: ViewRow
@@ -88,16 +89,30 @@ const { formData, autoSave, updateField } = useSectionAutoSave({
 })
 
 const ownerId = entityRef({ id: props.row.entityId, _self: props.row._self })
+
+/** Whether this reader edits the cell in place. */
+function editsInPlace(idx: number): boolean {
+  const col = editColumns.value[idx]
+  return !!col && isFieldWritable(verdictOf(col.property))
+}
 </script>
 
 <template>
+  <!-- The label shows only in a stacked row; see utils/sectionTable. -->
   <td
     v-for="(cell, idx) in row.cells"
     :key="idx"
-    :class="{ 'data-table-cell--numeric': editColumns[idx]?.numeric }"
+    role="cell"
+    :class="{
+      'data-table-cell--numeric': editColumns[idx]?.numeric,
+      ...sectionCellClasses(columns[idx], cell, idx, editsInPlace(idx)),
+    }"
   >
+    <span class="section-cell__label" aria-hidden="true">{{
+      sectionColumnLabel(columns[idx])
+    }}</span>
     <InlinePropertyValue
-      v-if="editColumns[idx] && isFieldWritable(verdictOf(editColumns[idx]!.property))"
+      v-if="editsInPlace(idx)"
       :property="editColumns[idx]!.property"
       :label="editColumns[idx]!.label"
       :widget="editColumns[idx]!.widget"

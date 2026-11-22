@@ -353,7 +353,7 @@ func (r *Registry[R]) Acquire(ctx context.Context, orgID string) (*Lease[R], err
 			r.mu.Unlock()
 			return nil, fmt.Errorf("tenant %q: %w", t.OrgID, ErrRevoking)
 		}
-		if lease, ok := r.takeLocked(t.OrgID); ok {
+		if lease, ok := r.takeLocked(t); ok {
 			evicted := r.evictLocked()
 			r.mu.Unlock()
 			r.closeInBackground(evicted)
@@ -458,14 +458,17 @@ func (r *Registry[R]) recheck(ctx context.Context, orgID string) error {
 // recheckTimeout bounds the re-check after a tenant opens.
 const recheckTimeout = 10 * time.Second
 
-// takeLocked leases the resident for orgID when there is one, reviving it if
-// it was marked evicting. Requires r.mu.
+// takeLocked leases the resident for t's org when there is one, reviving it
+// if it was marked evicting. Requires r.mu. The lease carries t, the tenant
+// this request resolved, not the one the resident was opened with: the
+// access state and plan on it change while the resident stays open.
 //
 // Reviving rather than opening a second store is what keeps "one resident per
 // org" true: an evicting resident is still open (a request holds it), so
 // opening another would put two pools on one schema and let the old one's
 // release land on the new one's count.
-func (r *Registry[R]) takeLocked(orgID string) (*Lease[R], bool) {
+func (r *Registry[R]) takeLocked(t Tenant) (*Lease[R], bool) {
+	orgID := t.OrgID
 	res, ok := r.residents[orgID]
 	if !ok {
 		return nil, false
@@ -477,7 +480,7 @@ func (r *Registry[R]) takeLocked(orgID string) (*Lease[R], bool) {
 		r.recency.MoveToFront(res.element)
 	}
 	res.refs++
-	return &Lease[R]{Tenant: res.tenant, res: res, registry: r}, true
+	return &Lease[R]{Tenant: t, res: res, registry: r}, true
 }
 
 // release drops one reference, closing the resident if it was already evicted

@@ -1178,6 +1178,10 @@ entities:
         type: date
       end:
         type: date
+      # view-toolbar.spec.ts: the property the gantt and calendar filter on.
+      phase:
+        type: enum
+        values: [draft, active]
 
   step:
     label: Step
@@ -2144,6 +2148,20 @@ gantts:
     sources:
       plan: { start: start, end: end, where: ["start!="] }
       step: { start: start, end: end, where: ["start!="] }
+    filter_controls:
+      - property: phase
+
+# view-toolbar.spec.ts: a calendar of the plans, with the search box and filters.
+calendars:
+  plan-calendar:
+    title: "Plan calendar"
+    sources:
+      - entity_type: plan
+        date: start
+        summary: title
+        color: blue
+    filter_controls:
+      - property: phase
 `;
 
 /** Custom-app HTML used by apps.spec.ts. Exercises the rela bridge end-to-end:

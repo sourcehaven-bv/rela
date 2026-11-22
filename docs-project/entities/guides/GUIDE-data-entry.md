@@ -2065,6 +2065,7 @@ lists:
 | `header`          | string | Markdown rendered above the list (info/help; see below)     |
 | `footer`          | string | Markdown rendered below the list                            |
 | `description`     | string | Fallback for `header`; used only when `header` is unset      |
+| `empty_message`   | string | Text an empty list shows instead of "No People found." (the type's `label_plural`) |
 | `columns`         | list   | Column definitions                                          |
 | `sort`            | object | Default sort order                                          |
 | `filters`         | list   | Static filters (always applied)                             |
@@ -2125,7 +2126,7 @@ the face each row was served in, or a busy indicator. Set exactly one of `proper
 | `direction` | string | Relation columns only: `"outgoing"` or `"incoming"`; inferred when omitted   |
 | `face`      | bool   | Shows the label of the face each row was served in; faced types only        |
 | `busy`      | string | Channel type; shows a busy indicator while a channel of this type on the row is in a working state; lists only |
-| `primary`   | bool   | Keeps the column on a narrow list, as on a phone; lists only; see [Columns on a phone](#columns-on-a-phone) |
+| `primary`   | bool   | Keeps or drops the column on a narrow list, as on a phone; on a table section, `false` drops it from a stacked row; see [Columns on a phone](#columns-on-a-phone) |
 | `label`     | string | Column header (defaults to the schema label, then the property / relation name, `Face` or `Busy`) |
 | `sortable`  | bool   | Column can be sorted by clicking the header                                 |
 | `link`      | string | `detail` links the cell to the entity's detail page; `document/<name>` to a document |
@@ -2133,6 +2134,11 @@ the face each row was served in, or a busy indicator. Set exactly one of `proper
 An unset column `label` shows the label the schema gives the property, or the relation's
 label (its inverse label on an incoming column). Forms use the same schema label, so set a
 label in `schema.yaml` once instead of repeating it on every list and view.
+
+The row's title is the column with `link:`, or the first column when no column
+has one. A click anywhere on the row opens the entity. A title column with
+`link:` shows in the link colour, as links do elsewhere in the app; without
+`link:` the title is plain text.
 
 **Face column example** — on a list of a type with `concept` and `vastgesteld` faces, show
 which one the world serves for each row:
@@ -2223,8 +2229,10 @@ lists:
         primary: true
 ```
 
-`primary:` is for lists only. On a dashboard card or a view section column it
-is a config error, because those tables do not drop columns.
+A `display: table` section of a view takes `primary:` too. It does not drop
+columns by default: see [Table sections on a phone](#table-sections-on-a-phone).
+On a dashboard card, and on a view section that is not `display: table`,
+`primary:` is a config error, because those surfaces do not drop columns.
 
 ### Static Filters
 
@@ -2549,7 +2557,8 @@ taking the first, since the request asked two different things.
 
 Interactive filters, opened from a **Filters** drop-down in the page header. The
 button shows how many filters are active. Lists and boards also have a search
-box and a **Sort** menu (a property and a direction) beside it. A control
+box and a **Sort** menu (a property and a direction) beside it. On a phone the
+search box, **Sort** and **Filters** share a row below the page title. A control
 filters on either a **property** or a **relation** (set exactly one):
 
 ```yaml
@@ -2655,6 +2664,13 @@ sort:
 ```
 
 You can also sort a list by the virtual property `id` (entity ID).
+
+In the browser, the Sort menu in the page header picks the sort. Shift-click on
+column headers adds a second or third key. The menu lists every key, marks the
+direction of each, and shows "Sort: Title +1" on its button when more than one
+key is set. Click a listed key to flip its direction, and again to remove it.
+A board keeps its sort in the URL (`?sort=-title`), as a list does, so the link
+shares it and a reload keeps it.
 
 **Enum properties sort in their declared order.** A `status` whose schema lists
 `values: [backlog, ready, in-progress, done]` sorts in that order rather than
@@ -3470,6 +3486,32 @@ shows its new value. A total the reader may not see, or one that is not set,
 is left out rather than shown as zero. `totals:` is valid on `display: table`
 sections only.
 
+#### Table sections on a phone
+
+A `display: table` section 480 pixels wide or narrower, as on a phone or in a
+narrow detail panel, shows each row as a block instead of a table. The width
+that counts is the section's own, not the screen's. The first
+column heads the block, beside the edit button. Every other column is a line
+with the column name and the value, so the table never scrolls sideways. A
+line with no value is left out, unless the reader can fill it in.
+
+Set `primary: false` on a column to leave it out of the block. The first
+column always stays. Every other column stays by default; `primary: true`
+changes nothing here.
+
+```yaml
+sections:
+  - heading: Invoices
+    source: invoices
+    display: table
+    columns:
+      - {property: invoice_number, link: detail}
+      - {property: issued}
+      - {property: due, primary: false}   # left out on a phone
+      - {property: total}
+      - {property: pdf_url}
+```
+
 ### Widget Overrides
 
 By default the widget is chosen from the property's declared type — `boolean`
@@ -4251,7 +4293,12 @@ column count (`width: 2`), fails config load.
 
 The number of columns follows the width of the screen, so `width` names a size
 rather than a column count. On a phone (a screen 480 pixels wide or less),
-every card takes the whole row, whatever its `width`. Cards have no height
+every card takes the whole row, whatever its `width`, and a table card shows
+each row as a stack of column names and values, so it never scrolls sideways.
+A long value without spaces, such as an email address, wraps within its line.
+At every width, a short value of one word, such as an invoice number, stays on
+one line instead of breaking at a hyphen.
+Cards have no height
 setting: a card grows to fit its content, and the cards in one row share the
 height of the tallest.
 
@@ -4815,7 +4862,9 @@ company's page with the step form of that run in view.
 - **The button.** A `navigate` offer fills `{type}` and `{id}` with the
   subject and `{run}` with the run. Without a `navigate` offer, rela adds
   an "Open" button to `/entity/<type>/<id>?run=<run>`. On the entity page,
-  `?run=` scrolls to that run in the Flows panel and focuses it.
+  `?run=` scrolls the step form of that run in the Flows panel to the top of
+  the page and focuses the run. The form stays there while the rest of the
+  page loads, until you scroll yourself.
 - **Which task.** The source offers its oldest waiting task, by start of
   the run. A snoozed or dismissed task gives way to the next oldest.
   Other sources in the same band still compete with it as usual.
@@ -6555,14 +6604,36 @@ builtins:
 | `flow_runs`  | Flow runs  |
 | `analysis`   | Analysis   |
 | `as_of`      | The date picker in the sidebar header |
+| `shortcuts`  | The Shortcuts button in the sidebar footer, which opens the keyboard shortcuts help |
 
-Each entry sets exactly one of `hidden: true` or `permission:`. An unknown row
-name, an entry with both or neither, and a top-level `builtins:` next to
+An entry sets `hidden: true`, or `permission:`, `hidden_on_phone: true` or
+both. An unknown row name, an entry with none of them, `hidden` together with
+`permission` or `hidden_on_phone`, and a top-level `builtins:` next to
 `spaces:` all fail to load. With [spaces](#spaces), set `builtins:` on each
 space instead.
 
-When the Search row is hidden, the `/` shortcut to the search page is off too.
+`hidden_on_phone: true` hides the row when the browser window is narrower
+than 768 pixels, where the sidebar opens as a drawer. That covers phones, and
+also a desktop window made that narrow. Wider windows keep the row. It applies
+to every user. With `permission:` on the same entry, the row is shown only to
+users who hold the permission, and to nobody on a phone. Keyboard shortcuts are of little use on a
+phone, so this hides the Shortcuts button there:
+
+```yaml
+builtins:
+  shortcuts: { hidden_on_phone: true }
+```
+
+Hiding the Shortcuts button does not turn off the `?` key, which still opens
+the keyboard shortcuts help.
+
+When the Search row is hidden, the `/` shortcut to the search page is off too,
+also where `hidden_on_phone` hides it.
 When every row is hidden, the pinned band is left out.
+
+On a page load the sidebar shows no rows until the sidebar endpoint has
+answered, so the built-in rows do not flash up before the space's own
+navigation. If the endpoint fails, the built-in rows are shown.
 
 `permission:` here works like [`permission:` on a navigation
 entry](#hiding-entries-a-user-cannot-act-on-permission), including the
@@ -6573,7 +6644,9 @@ to every user.
 
 The sidebar endpoint names the rows it leaves out for the current user in
 `hidden_builtins`, for example `"hidden_builtins": ["search", "analysis"]`. The
-field is absent when every row is shown.
+field is absent when every row is shown. It names the rows with
+`hidden_on_phone: true` in `phone_hidden_builtins`, and the browser leaves them
+out on a phone-sized screen. That field is absent when no row sets it.
 
 ## Spaces
 
@@ -6673,6 +6746,11 @@ page in the same space.
 **The app root** (`/`) opens the home of the current space: the space the user
 is in, else the space this browser was last in, else the first space the user
 may see. Without `spaces:` the root opens the dashboard. `/dashboard` always opens the dashboard.
+
+**An unknown address** shows a "Page not found" page with a link to the home
+page, with or without a space prefix. `/login` opens the home page, and
+`/s/<space>/login` the home of that space: the app only runs for a signed-in
+user, and the server or the proxy in front of it handles signing in.
 
 A portal for customers next to a back office for staff, where each group lands
 in its own space:
@@ -7367,6 +7445,8 @@ actions:
 | `confirm`     | bool or string | Show a confirmation dialog before a list, list-button or detail-page action runs (default: `false`). A string is the dialog text. An unquoted `yes`, `no`, `on`, `off`, `y` or `n` is refused, also in a block scalar (`\|` or `>`); quote it or tag it `!!str` to show it as text. The sidebar does not ask |
 | `available_on`| map    | Offer the action on detail pages — see [Actions on the detail page](#actions-on-the-detail-page). Requires `script` or `llm` |
 | `when`        | string | Predicate that must hold for the entity. Requires `available_on` |
+| `style`       | string | `danger` draws the button on the detail page as a destructive action. See [Order and style](#order-and-style-on-the-detail-page) |
+| `order`       | int    | Position among the detail page's actions: lower first. See [Order and style](#order-and-style-on-the-detail-page) |
 | `permission`  | string | Global named permission the caller must hold to run the action from a list, a list button, the sidebar, a next-action offer or a detail page |
 | `request`     | map    | Opt into request-scoped execution — see [Request-scoped actions](#request-scoped-actions). Requires `script` |
 | `capabilities`| map    | Ambient capability grant (`http`, `ai`, `write_file`, named `secrets`). Omitting it grants none |
@@ -7541,7 +7621,49 @@ ACL.
 
 The script receives the entity in the `entity` global, including `entity.face`.
 After it finishes, the page shows the returned `message` and reloads the entity,
-so the new content is visible at once.
+so the new content is visible at once. The panels below the entity (Changes,
+documents, flow runs and "Mentioned by") are read again too, so the change the
+script made shows in the Changes list without a page reload.
+
+#### Order and style on the detail page
+
+The detail page shows its action buttons after the commands, sorted by
+`order:` and then by label. `order:` is a whole number, and lower numbers come
+first. An action without `order:` counts as 0, so it comes before actions with
+a positive number and after actions with a negative one. Without any `order:`,
+the buttons are sorted by label, as before.
+
+`style: danger` draws the button as a destructive action, in the same color as
+Delete. Leave it out for the normal button. Any other value is a startup
+error.
+
+```yaml
+actions:
+  workspace-activate:
+    label: "Make active"
+    script: tenant-state.lua
+    available_on: { entity_types: [tenant] }
+    order: 10
+  workspace-suspend:
+    label: "Suspend"
+    script: tenant-state.lua
+    available_on: { entity_types: [tenant] }
+    order: 20
+  workspace-archive:
+    label: "Archive"
+    script: tenant-state.lua
+    available_on: { entity_types: [tenant] }
+    order: 90
+    style: danger
+```
+
+Here the buttons read Make active, Suspend, Archive, with Archive in red.
+`style:` and `order:` need `available_on`; on an action without it, they are
+a startup error. The
+"⋯" menu on a phone and in a narrow header uses the same order and color.
+Both keys only change how the page draws the buttons. They do not change who
+may run an action, and lists, boards and the sidebar ignore them.
+`/api/v1/_config` serves both keys with the action.
 
 An action with `available_on` needs an entity, so it cannot be referenced from
 a list's `actions`, a navigation entry, or a next-action offer. The server
@@ -8386,7 +8508,24 @@ navigation:
 | `max_events_per_day` | int | Chips per month-view day cell before `+N more` (default 3) |
 | `edit_form` | string | Form offered when editing from an event's preview |
 | `create_form` | string | Form opened by the "New" button |
-| `filter_controls` | list | Interactive filters, as on lists and kanbans |
+| `filter_controls` | list | Interactive filters in the Filters menu (property controls only; see below) |
+
+### Search and filters
+
+A calendar has the list's search box and Filters menu in its header. Both are
+kept in the URL (`?q=`, `?filter[status]=open`), so a link shares them.
+
+- The search box matches the event's source entity, as on a list, and narrows
+  what each source reads.
+- A filter applies to the sources whose entity type has that property. A source
+  whose type lacks it is not narrowed.
+- The reader's search and filters narrow the events. They never widen what
+  `where:` and the visible period already select.
+- `filter_controls` on a calendar take property controls only. A relation
+  control is not offered.
+
+A calendar has no Sort menu: an event sits on its date. Document views have no
+toolbar either, because a document is one rendered entity and not a list.
 
 ### Source fields
 
@@ -8730,7 +8869,31 @@ colour-blindness and greyscale where amber-versus-red alone would not.
 | `max_nodes` | int | Nodes per response (default 2000); exceeding it flags the response as truncated |
 | `sources` | map | Date-role mapping keyed by entity **type** |
 | `tooltip` | object | Extra fields on the hover card — `fields:` of `- property:` entries with optional `label:`, shared shape with kanban cards. Property fields only: values come from the redacted entity, so field-level `visible:` policy holds; relation fields are refused at load (neighbor titles would bypass row-gating) |
-| `filter_controls` | list | Interactive filters, as on lists and kanbans |
+| `filter_controls` | list | Interactive filters in the Filters menu (property controls only; see below) |
+
+### Search, filters and sort
+
+A gantt has the list's search box and Filters menu, and a Sort menu for its
+rows. Search and filters go to the server with the read (`q`, `filter[...]`).
+The state is in the URL, so a link shares it.
+
+- The server applies them to the visible rows **before** the roll-up. A row
+  that does not match is dropped and is in no ancestor's rolled span, so the
+  bars never show dates from a row the reader filtered out or cannot see.
+- A matching child of a dropped parent becomes a root row.
+- A drilled root stays in the chart, whether or not it matches.
+- `q` searches the id and the text properties of each row, not its body.
+- A filter applies to the source types that have the property. `filter_controls`
+  take property controls only; a relation control is not offered.
+- A filter on a property no source type has is refused with `invalid_filter`.
+- A filter on a property the reader may not see is refused with
+  `property_not_visible`, and a hidden value never matches a search.
+
+The Sort menu orders the siblings at every level by `title`, `start` or `end`
+(`?sort=-start`). It runs in the browser on the rows the server returned, so
+changing the sort does not read again or collapse the chart. Rows without a
+date sort last in both directions. The date is the rolled span when there is
+one, else the planned window.
 
 ### Source fields
 

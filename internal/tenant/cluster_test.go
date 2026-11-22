@@ -3,6 +3,7 @@ package tenant
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -149,7 +150,7 @@ func TestClusterResolver_Resolve(t *testing.T) {
 		{"org-noschema", false},
 	} {
 		got, err := r.Resolve(t.Context(), tc.org)
-		if err == nil || got != (Tenant{}) {
+		if err == nil || !reflect.DeepEqual(got, Tenant{}) {
 			t.Errorf("Resolve(%q) = %+v, %v; want a refusal", tc.org, got, err)
 			continue
 		}
@@ -171,7 +172,7 @@ func TestClusterResolver_RefusesInvalidOrgID(t *testing.T) {
 	ctrl := &countingControl{}
 	r := newClusterResolver(clusterBase, ctrl, nil)
 	for _, org := range invalidOrgIDs {
-		if got, err := r.Resolve(t.Context(), org); !errors.Is(err, ErrUnknownTenant) || got != (Tenant{}) {
+		if got, err := r.Resolve(t.Context(), org); !errors.Is(err, ErrUnknownTenant) || !reflect.DeepEqual(got, Tenant{}) {
 			t.Errorf("Resolve(%q) = %+v, %v; want ErrUnknownTenant", org, got, err)
 		}
 		if _, err := r.Lookup(t.Context(), org); !errors.Is(err, ErrUnknownTenant) {
@@ -208,7 +209,7 @@ func TestClusterResolver_Collision(t *testing.T) {
 		t.Fatalf("Lookup(org-a): %v", err)
 	}
 	got, err := r.Resolve(t.Context(), "org-b")
-	if !errors.Is(err, ErrSchemaCollision) || got != (Tenant{}) {
+	if !errors.Is(err, ErrSchemaCollision) || !reflect.DeepEqual(got, Tenant{}) {
 		t.Fatalf("Resolve(colliding org) = %+v, %v; want ErrSchemaCollision", got, err)
 	}
 	if errors.Is(err, ErrUnknownTenant) {

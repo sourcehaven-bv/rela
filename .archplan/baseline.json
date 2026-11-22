@@ -2834,6 +2834,24 @@
       "reason": "Design: SQLite FTS5 shadow table of entity_search, created and maintained by the FTS5 module, not by rela code.",
       "at": "2026-11-21T13:30:00Z",
       "title": "Table entity_search_idx has no use in the code."
+    },
+    "concepts.data_clump-d7d6b811fa2b": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose. BUG-ST02A0S added empty_message to lists, which renamed this clump.",
+      "at": "2026-11-21T21:00:00Z",
+      "title": "The fields columns, create_form, description, edit_form, empty_message, … and title appear together in 3 types across 3 components."
+    },
+    "concepts.data_clump-6e9ca12b6029": {
+      "state": "accepted",
+      "reason": "Design: the wire EntityType mirrors the schema entity definition on purpose. BUG-ST02A0S added label_plural, which renamed this clump.",
+      "at": "2026-11-21T21:00:00Z",
+      "title": "The fields description, extends, faces, id_prefix, id_prefixes, … and properties appear together in 3 types across 3 components."
+    },
+    "concepts.data_clump-5c8c800bec51": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose. BUG-ST02A0S added empty_message to lists, which renamed this clump.",
+      "at": "2026-11-21T21:00:00Z",
+      "title": "The fields columns, condition, create_form, description, detail_view, … and title appear together in 2 types across 2 components."
     }
   },
   "labels": {},

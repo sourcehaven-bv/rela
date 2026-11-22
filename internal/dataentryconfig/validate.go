@@ -2826,6 +2826,16 @@ func validateActionKey(id, key string) []string {
 	return nil
 }
 
+// validateActionStyle refuses a `style:` other than empty or danger.
+func validateActionStyle(id string, style ActionStyle) []string {
+	switch style {
+	case "", ActionStyleDanger:
+		return nil
+	}
+	return []string{fmt.Sprintf("actions: %q style %q is not known (use %q or leave it out)",
+		id, style, ActionStyleDanger)}
+}
+
 // validateActions checks action definitions: ID format, set/script exclusivity,
 // script path safety, and key shortcut validity.
 //
@@ -2839,6 +2849,8 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 				"actions: invalid action ID %q (must match ^[a-z0-9_-]{1,64}$)", id))
 			continue
 		}
+
+		errs = append(errs, validateActionStyle(id, action.Style)...)
 
 		hasScript := action.Script != ""
 		hasSet := len(action.Set) > 0
@@ -3027,7 +3039,8 @@ func validateKanbanActions(kanbanID string, kanban Kanban, cfg *Config) []string
 }
 
 // validateActionScope checks the detail-page keys of one action
-// (TKT-VVS16W): available_on, and when, which only means something with it.
+// (TKT-VVS16W): available_on, and when, style and order, which only mean
+// something with it.
 // The when expression itself is compiled by conditionlint, which knows the
 // predicate language; this checks only the structure.
 func validateActionScope(id string, action Action, hasScript bool, meta *metamodel.Metamodel) []string {
@@ -3038,6 +3051,11 @@ func validateActionScope(id string, action Action, hasScript bool, meta *metamod
 			errs = append(errs, fmt.Sprintf(
 				"actions: %q has when but no available_on (when decides which detail pages "+
 					"offer the action, so it needs available_on to apply to)", id))
+		}
+		if action.Style != "" || action.Order != 0 {
+			errs = append(errs, fmt.Sprintf(
+				"actions: %q has style or order but no available_on (both only change "+
+					"the buttons on a detail page, so they need available_on to apply to)", id))
 		}
 		return errs
 	}

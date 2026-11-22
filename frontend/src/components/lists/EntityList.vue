@@ -285,8 +285,23 @@ const entityNoun = computed(() => {
   const type = listConfig.value?.entity ?? ''
   const def = schemaStore.getEntityType(type)
   const singular = def?.label || type || t('list.item')
-  return { singular, plural: def?.label_plural || def?.plural || undefined }
+  return { singular, plural: schemaStore.pluralLabel(type) || def?.plural || undefined }
 })
+
+// The empty list and the search box name the type by its plural label
+// ("No people found."), or leave it out when the schema has none.
+const typePlural = computed(() => schemaStore.pluralLabel(listConfig.value?.entity ?? ''))
+// A list's own `empty_message:` wins over both.
+const emptyTitle = computed(() => {
+  const own = listConfig.value?.empty_message?.trim()
+  if (own) return own
+  return typePlural.value ? t('list.noEntities', { entity: typePlural.value }) : t('list.noItems')
+})
+const searchPlaceholder = computed(() =>
+  typePlural.value
+    ? t('list.searchEntities', { entity: typePlural.value })
+    : t('list.searchPlaceholder')
+)
 
 const listIdRef = computed(() => props.listId)
 const batchAction = useBatchAction()
@@ -1429,7 +1444,7 @@ watch(searchQuery, () => {
         <SearchBox
           ref="searchBoxRef"
           :model-value="searchQuery"
-          :placeholder="t('list.searchEntities', { entity: listConfig.entity })"
+          :placeholder="searchPlaceholder"
           @update:model-value="handleSearchUpdate"
         />
         <FilterBar
@@ -1527,7 +1542,7 @@ watch(searchQuery, () => {
         :title="
           searchQuery
             ? t('list.noMatches', { query: searchQuery })
-            : t('list.noEntities', { entity: listConfig.entity })
+            : emptyTitle
         "
       >
         <template #actions>
@@ -1590,6 +1605,7 @@ watch(searchQuery, () => {
           <RouterLink
             v-else-if="rowTargets.get(item.id)"
             :to="rowTargets.get(item.id)!"
+            :class="{ 'entity-list__title-link': !!linkColumn }"
             @click.capture="onRowClick(item as Entity, $event)"
           >
             <component
@@ -1860,6 +1876,31 @@ watch(searchQuery, () => {
  */
 .list-content > :not(.rl-table) {
   padding-inline: var(--rl-page-gutter-left) var(--rl-page-gutter-right);
+}
+
+/*
+ * The table starts right under the header band when nothing comes between
+ * them (BUG-6WQ1U8S). The pane's top padding and the table's own top padding
+ * added up to an empty band above the column headers. A banner, the filter
+ * chips or the view text keep that space, because the table is then not the
+ * first thing on the page. `--pane-padding-top` is the main pane's top
+ * padding (App.vue); a list always fills the shell's header slot, so no
+ * hamburger bar sits in that padding.
+ */
+.entity-list > .list-content:first-child > .rl-table:first-child {
+  margin-top: calc(-1 * var(--pane-padding-top, 0px));
+  padding-top: 0;
+}
+
+/*
+ * A title column the list config marks with `link:` reads as a link, in the
+ * theme's link colour, as a link does on every other surface. Without
+ * `link:` the title stays row text, and the whole row is still the hit
+ * area. The ancestor class outranks the table row's own `color: inherit`
+ * for the control in its name slot (RlTableRow).
+ */
+.rl-table-row .entity-list__title-link {
+  color: var(--rl-color-accent);
 }
 
 .empty-state {

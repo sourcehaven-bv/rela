@@ -100,7 +100,11 @@ describe('EntityDetail table section cells', () => {
       },
     })
     await flushPromises()
-    return wrapper.findAll('table.data-table tbody tr td')
+    // The value of each cell, without the column label a stacked row shows
+    // beside it on a phone (BUG-6WQ1U8S).
+    return wrapper
+      .findAll('table.data-table tbody tr td')
+      .map((td) => (td.find('.section-cell__value').exists() ? td.find('.section-cell__value') : td))
   }
 
   it('renders a title as its link text, without a badge', async () => {

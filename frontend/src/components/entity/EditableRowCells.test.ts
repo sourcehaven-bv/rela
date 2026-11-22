@@ -113,4 +113,24 @@ describe('EditableRowCells', () => {
       id: 'LINE-1@draft',
     })
   })
+
+  // BUG-6WQ1U8S: a stacked row on a phone shows each column's name beside its
+  // value, and an editable cell stays even when its value is empty.
+  it('labels each cell and never hides an editable one as empty', () => {
+    const row = makeRow({
+      cells: [{ values: [''] }, { values: ['2'] }, { values: [''] }],
+      _props: { description: '', quantity: 2, price: '' },
+    })
+    const cells = mountCells(row).findAll('td:not(.actions)')
+    expect(cells.map((c) => c.find('.section-cell__label').text())).toEqual([
+      'description',
+      'quantity',
+      'price',
+    ])
+    expect(cells[0]!.classes()).toContain('section-cell--title')
+    // price is read-only here (no render: input) and empty.
+    expect(cells[2]!.classes()).toContain('section-cell--empty')
+    // description edits in place, so its empty value is never hidden.
+    expect(cells[0]!.classes()).not.toContain('section-cell--empty')
+  })
 })

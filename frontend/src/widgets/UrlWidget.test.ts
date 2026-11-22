@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { mount } from '@vue/test-utils'
 import type { ViewSectionField } from '@/api'
 import type { PropertyDef } from '@/types'
@@ -103,7 +105,10 @@ describe('UrlWidget (display)', () => {
     }).find('a')
     expect(a.text()).toBe('Website')
     expect(a.attributes('href')).toBe('https://example.com/')
-    expect(a.attributes('title')).toBe('https://example.com/')
+    // No title: it would give the link the URL as its description, and
+    // some screen readers announce it in place of the text.
+    expect(a.attributes('title')).toBeUndefined()
+    expect(a.attributes('aria-label')).toBeUndefined()
     expect(a.classes()).not.toContain('url-link--truncated')
   })
 
@@ -251,5 +256,22 @@ describe('url routing', () => {
     const hint = densePropertyRoutingHint(linkDef, 'pdf_url')
     expect(hint).toEqual({ kind: 'url', propertyName: 'pdf_url', preformatted: false })
     expect(defaultRegistry.resolveDense(hint)).toBe(UrlWidget)
+  })
+})
+
+// Vitest does not apply an SFC's scoped style, so the link style is checked
+// in the source, as styles/focusRing.test.ts does for focus rings.
+describe('UrlWidget link style', () => {
+  const source = readFileSync(resolve(__dirname, 'UrlWidget.vue'), 'utf8')
+
+  it('takes the theme link colour, not the browser default', () => {
+    const rule = source.match(/\.url-link \{([^}]*)\}/)?.[1] ?? ''
+    expect(rule).toContain('color: var(--rl-color-accent)')
+    expect(rule).toContain('text-decoration: none')
+  })
+
+  it('underlines the link on hover', () => {
+    const rule = source.match(/\.url-link:hover \{([^}]*)\}/)?.[1] ?? ''
+    expect(rule).toContain('text-decoration: underline')
   })
 })
