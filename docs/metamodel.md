@@ -1970,6 +1970,11 @@ An ACL `when:` in `acl.yaml` refuses `current_user.id` in `related(...)` at
 load. A grant must not depend on a second derivation of who is calling. Use
 `role_relations:` to grant access through a relation to the user.
 
+To create such a relation to the user when an entity is created, such as a
+note's author, use the trigger placeholder `{{current_user.id}}` in a `relate`
+output. See [relate](flows.md#relate). Unlike the condition variable, it is
+empty rather than the raw login when no user entity was resolved.
+
 #### Where `related(...)` works
 
 Every surface below checks the path and constraints when it loads. A surface

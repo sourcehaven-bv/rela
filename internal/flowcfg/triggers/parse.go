@@ -398,7 +398,8 @@ func placeholderErrors(where string, r Rule) []string {
 		for _, ph := range placeholders(tmpl) {
 			if !knownPlaceholder(ph) {
 				errs = append(errs, fmt.Sprintf("%s: %s: unknown placeholder {{%s}}; use new.<property>, "+
-					"old.<property>, entity.id, entity.type, user.name, user.email, today or now", where, field, ph))
+					"old.<property>, entity.id, entity.type, current_user.id, user.name, user.email, today or now",
+					where, field, ph))
 			}
 		}
 	}
@@ -449,7 +450,7 @@ func knownPlaceholder(ph string) bool {
 		return false
 	}
 	switch ph {
-	case "now", "today", "user.name", "user.email", "entity.id", "entity.type":
+	case "now", "today", "user.name", "user.email", "entity.id", "entity.type", PlaceholderCurrentUserID:
 		return true
 	}
 	for _, prefix := range []string{"new.", "old."} {

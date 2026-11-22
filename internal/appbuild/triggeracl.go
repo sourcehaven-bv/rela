@@ -313,6 +313,12 @@ func (j *triggerJudge) actionReads(a triggers.Action) (reads, problems []string)
 	reads = placeholderReads(a.Value)
 	switch {
 	case a.CreateRelation == nil:
+	case a.CreateRelation.To == "{{"+triggers.PlaceholderCurrentUserID+"}}":
+		// The acting user links the record to their own user entity. No
+		// one writes the value, so it cannot probe for another record;
+		// relationViolations below still refuses a relation acl.yaml
+		// decides access by. Readers of the record see the user's entity
+		// id on the edge, which is the point of an author relation.
 	case strings.Contains(a.CreateRelation.To, "{{"):
 		problems = append(problems, "names its relation target with a placeholder, so whoever writes the value "+
 			"can link to, and probe for, any record.")

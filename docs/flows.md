@@ -1178,6 +1178,32 @@ outputs:
 `relate` creates a relation of `type` from the entity to the id in `to`. When
 `to` is empty after the placeholders are filled in, nothing happens.
 
+With `{{current_user.id}}`, a rule records who made the write. This links
+every new note to its author:
+
+```yaml
+triggers:
+  note-author:
+    on: { entity: note, created: true }
+    outputs:
+      - relate: { type: authored-by, to: "{{current_user.id}}" }
+```
+
+The relation goes to the user entity the signed-in user resolved to, through
+`user_entity_type` and `principal_property` in `acl.yaml`. A record that the
+rule's own outputs create counts as made by the same user. Without a resolved
+user the placeholder is empty and the rule writes no relation. That is the
+case for the CLI, scheduled and background jobs, a flow's `run_as`, a
+principal that matches no user entity, and a deployment without
+`principal_property`. Unlike `current_user.id` in a condition, the
+placeholder never falls back to the raw login, because a relation needs an
+entity id. A rule that needs more, such as falling back to another user, can
+read `rela.principal.user` in a
+[trigger script](lua-scripting.md#elevated-access--relabypass_acl).
+
+rela does not check at load that the relation can point at the user entity
+type. A wrong `type` gives an automation error on each write.
+
 #### create
 
 ```yaml
@@ -1457,6 +1483,7 @@ rule fires.
 | `{{old.<property>}}` | A property of the entity before the change. |
 | `{{entity.id}}` | The entity's id. |
 | `{{entity.type}}` | The entity's type. |
+| `{{current_user.id}}` | The id of the user entity of the user who made the write, as resolved through `user_entity_type` and `principal_property` in `acl.yaml`. Empty without a resolved user, such as from the CLI or a background job. A `set` value or `create.properties` value that uses it is then left out, so a stored value is not erased. |
 | `{{user.name}}` | The git `user.name` of the machine that runs rela, or `$USER` without one. |
 | `{{user.email}}` | The git `user.email` of the machine that runs rela. |
 | `{{today}}` | The current date, such as `2026-11-15`. |
@@ -1464,7 +1491,9 @@ rule fires.
 
 Placeholders work in `set` values, `relate.to`, `create.template`,
 `create.properties`, `add_to_pile.pile`, `add_to_pile.owner` and
-`check.message`. Any other placeholder is a load error. Earlier releases
+`check.message`. Inline script code gets only `{{today}}`, `{{now}}`,
+`{{user.name}}` and `{{user.email}}`; a script reads the user as
+`rela.principal.user`. Any other placeholder is a load error. Earlier releases
 wrote an unknown placeholder into the data as literal text. The state outputs
 of a flow use `{{subject.<property>}}`; a trigger does not.
 

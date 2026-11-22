@@ -18,6 +18,16 @@ type TemplateVars struct {
 
 	// User holds user identity information.
 	User UserVars
+
+	// CurrentUserID is the user entity the acting principal resolved to,
+	// bound to {{current_user.id}}. Empty when the write has no resolved
+	// user entity. [Engine.Process] sets it per event from ctx.
+	CurrentUserID string
+
+	// currentUser enables {{current_user.id}}. Only the trigger engine sets
+	// it: copy fields and conversion templates also call [Interpolate], and
+	// there the placeholder stays literal text as before.
+	currentUser bool
 }
 
 // UserVars holds user identity information.
@@ -76,6 +86,7 @@ func gitConfig(ctx context.Context, key string) (string, error) {
 //   - {{user.email}}  - Git user email
 //   - {{entity.id}}   - Current entity ID
 //   - {{entity.type}} - Current entity type
+//   - {{current_user.id}} - User entity of the acting principal, or empty
 //   - {{old.<prop>}}  - Previous value of a property
 //   - {{new.<prop>}}  - New value of a property
 //
@@ -96,6 +107,8 @@ func Interpolate(template string, vars TemplateVars, entity, oldEntity *entity.E
 			return entity.ID, true
 		case key == "entity.type" && entity != nil:
 			return entity.Type, true
+		case key == PlaceholderCurrentUserID && vars.currentUser:
+			return vars.CurrentUserID, true
 		case strings.HasPrefix(key, "old."):
 			return propertyValue(oldEntity, strings.TrimPrefix(key, "old.")), true
 		case strings.HasPrefix(key, "new."):
@@ -116,6 +129,7 @@ func Interpolate(template string, vars TemplateVars, entity, oldEntity *entity.E
 //
 // NOT interpolated (left as-is or accessed via Lua globals):
 //   - {{entity.*}}   - Entity fields
+//   - {{current_user.id}} - The acting user (scripts read rela.principal)
 //   - {{old.*}}      - Previous property values
 //   - {{new.*}}      - New property values
 func InterpolateSafeOnly(template string, vars TemplateVars) string {
