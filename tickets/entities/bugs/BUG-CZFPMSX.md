@@ -19,4 +19,4 @@ status: done
 ## Description
 
 See the description property. Reproduced deterministically by
-TestProvision_LazyNoRerunAfterSuccess.
+TestProvision_NoRerunAfterSuccess.

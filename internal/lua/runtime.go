@@ -1023,6 +1023,7 @@ func (r *Runtime) registerReadBindings(rela *lua.LTable) {
 	registerHistoryBindings(r, rela)
 	registerVersionTagReadBindings(r, rela)
 	registerSyncBindings(r, rela)
+	registerRecordReads(r, rela)
 
 	// Graph traversal
 	r.L.SetField(rela, "trace_from", r.L.NewFunction(r.luaTraceFrom))

@@ -31,7 +31,7 @@ status: done
 - [x] Each acceptance criterion verified with test scenario from planning
 - [x] Edge cases manually verified
 
-**Verification Evidence:** TestProvision_LazyNoRerunAfterSuccess failed (calls =
+**Verification Evidence:** TestProvision_NoRerunAfterSuccess failed (calls =
 2) before the fix and passes after. go test -race -count=1000 of it and
 TestProvision_LazySingleFlight passes; the whole package passes with -race
 -count=3; golangci-lint and comment-lint report 0 issues.

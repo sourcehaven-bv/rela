@@ -418,6 +418,19 @@ export class ListPage extends BasePage {
     return this.columnHeader(columnName).getByRole('button').count();
   }
 
+  /**
+   * Resize the window to a laptop screen. The list then shares the width
+   * with the sidebar, as it does on a 1024px laptop.
+   */
+  async useLaptopWidth() {
+    await this.page.setViewportSize({ width: 1024, height: 768 });
+  }
+
+  /** Assert the column header row is on screen, not dropped for the compact rows. */
+  async expectColumnHeadersVisible(names: string[]) {
+    for (const name of names) await expect(this.columnHeader(name)).toBeVisible();
+  }
+
   /** A column header cell, by its visible label. */
   columnHeader(name: string | RegExp): Locator {
     const matcher = name instanceof RegExp ? name : new RegExp(name, 'i');

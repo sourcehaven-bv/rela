@@ -45,6 +45,7 @@ import BackButton from '@/components/common/BackButton.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import AddToPileMenu from '@/components/piles/AddToPileMenu.vue'
 import PageHeaderContent from '@/components/common/PageHeaderContent'
+import NotFoundPage from '@/components/common/NotFoundPage.vue'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { useCreateModal } from '@/composables/useCreateModal'
 import { usePageTabScope } from '@/composables/usePageTabScope'
@@ -805,7 +806,7 @@ const visibleListColumns = computed(() => {
  * instead of a blank column. See tableColumns.ts.
  */
 const tableColumns = computed<TableColumn[]>(() =>
-  toTableColumns(visibleListColumns.value, titleColumn.value).map((column) => ({
+  toTableColumns(visibleListColumns.value, titleColumn.value, entityType.value?.properties).map((column) => ({
     ...column,
     /*
      * A stacked row drops an empty cell so a bare label is never left beside
@@ -1766,9 +1767,7 @@ watch(searchQuery, () => {
     />
   </div>
 
-  <RlStatusRegion v-else tone="error">
-    {{ t('list.unknownList', { id: listId }) }}
-  </RlStatusRegion>
+  <NotFoundPage v-else />
 </template>
 
 <style scoped>

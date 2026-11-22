@@ -1,5 +1,5 @@
 import { test, expect, SEED } from "./fixtures";
-import { withDataEntryBlock } from "./next-action-fixture";
+import { withDataEntryBlock, withDataEntryEdit } from "./next-action-fixture";
 import { MobileLayoutPage, NextActionPage } from "../pages";
 
 /**
@@ -350,6 +350,86 @@ withBanner.describe("Mobile app shell with a banner", () => {
       // About 8px of air between the button and the card. Boxes are
       // fractional on a phone, so allow half a pixel of rounding.
       expect(card.y - (button.y + button.height)).toBeGreaterThanOrEqual(7.5);
+    },
+  );
+});
+
+/*
+ * A phone list with more kept columns than fit beside the title. The title
+ * used to keep what the fixed-width cells left over, which on a 375px phone
+ * was one letter ("H" for an invoice). It now keeps its own line, and the
+ * kept cells go on a line under it (BUG-UX4P9T2).
+ */
+const FEATURE_COLUMNS = `    title: "Features"
+    columns:
+      - property: title
+      - property: status
+      - property: priority
+`;
+const withThreeKept = withDataEntryEdit(
+  FEATURE_COLUMNS,
+  `${FEATURE_COLUMNS}      - property: description
+        primary: true
+`,
+);
+
+withThreeKept.describe("Mobile list with three kept columns", () => {
+  withThreeKept(
+    "the title keeps its own line and the kept cells go under it",
+    async ({ appPage }) => {
+      const mobile = new MobileLayoutPage(appPage);
+      await mobile.openList("features");
+
+      const { row, title, cells } = await mobile.firstRowBoxes();
+      expect(cells.length).toBe(3);
+      // The title cell has the row to itself, not one letter of it.
+      expect(title.width).toBeGreaterThan(row.width * 0.8);
+      expect(await mobile.firstRowTitleTruncated()).toBe(false);
+      for (const cell of cells) {
+        expect(cell.y).toBeGreaterThanOrEqual(title.y + title.height - 1);
+        expect(cell.x + cell.width).toBeLessThanOrEqual(row.x + row.width + 0.5);
+      }
+      // Still lined up as columns down the list.
+      const rows = await mobile.keptCellLefts();
+      for (const lefts of rows) expect(lefts).toEqual(rows[0]);
+    },
+  );
+});
+
+/*
+ * A dashboard's title is in the header band, above a notice, as a list's
+ * is. It used to sit under the notice, indented for a menu button that the
+ * notice had pushed onto a row of its own (BUG-UX4P9T2).
+ */
+const withOverviewNotice = withDataEntryBlock(`next_action_bands:
+  - id: overview
+    prominence: notice
+next_actions:
+  look-at-features:
+    band: overview
+    query: "type:feature"
+    suggest: "Look at {title}"
+    visible_on: [dashboard]
+    cooldown: 0s
+`);
+
+withOverviewNotice.describe("Mobile dashboard with a notice", () => {
+  withOverviewNotice(
+    "the title comes before the notice, beside the menu button",
+    async ({ appPage }) => {
+      const mobile = new MobileLayoutPage(appPage);
+      const na = new NextActionPage(appPage);
+      await mobile.openDashboard();
+      await na.expectShowing(/^Look at /);
+
+      const title = await mobile.pageHeaderTitle().boundingBox();
+      const button = await mobile.hamburger.boundingBox();
+      const card = await na.card.boundingBox();
+      if (!title || !button || !card) throw new Error("title, button or card has no box");
+      // On the button's row, right after it.
+      expect(Math.abs(title.y + title.height / 2 - (button.y + button.height / 2))).toBeLessThan(4);
+      expect(title.x - (button.x + button.width)).toBeLessThan(24);
+      expect(card.y).toBeGreaterThanOrEqual(title.y + title.height);
     },
   );
 });

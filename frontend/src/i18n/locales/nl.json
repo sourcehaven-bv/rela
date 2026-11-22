@@ -801,7 +801,7 @@
     },
     "inlineCreate": {
       "discardTitle": "Nieuw item ({type}) weggooien?",
-      "discardMessage": "Dit item is nog niet aangemaakt. Wat je hebt ingevuld, gaat verloren."
+      "discardMessage": "Je nieuwe {type} is nog niet aangemaakt. Wat je hebt ingevuld, gaat verloren."
     },
     "discard": "Weggooien",
     "newOfType": "Nieuw: {type}",
@@ -915,7 +915,6 @@
     "prevStep": "← Vorige stap",
     "nextStep": "Volgende stap →",
     "createAndAddAnother": "Aanmaken en nog een toevoegen",
-    "missingForm": "Het formulier \"{id}\" bestaat niet in de configuratie.",
     "autosave": {
       "fieldConflict": "Iemand anders heeft dit veld gewijzigd terwijl jij aan het bewerken was. Jouw wijziging is niet opgeslagen. Bewerk het opnieuw om hun waarde te overschrijven.",
       "contentConflict": "Iemand anders heeft dezelfde regels van de tekst gewijzigd. Jouw wijziging is niet opgeslagen. Bewerk het opnieuw om hun versie te overschrijven.",
@@ -940,7 +939,6 @@
     "noItems": "Niets gevonden.",
     "createOne": "Aanmaken",
     "inaccessible": "niet toegankelijk",
-    "unknownList": "De lijst \"{id}\" bestaat niet in de configuratie.",
     "moveFailed": "Kon de rij niet verplaatsen",
     "pagination": {
       "summary": "{first} - {last} van {total}"
@@ -1444,6 +1442,15 @@
     "manualContent": "Handmatige inhoud",
     "applying": "Toepassen…",
     "apply": "Oplossing toepassen"
+  },
+  "sankey": {
+    "truncated": "Niet alle onderdelen getoond",
+    "truncatedTitle": "Het diagram heeft meer onderdelen dan de limiet toestaat, dus een deel ontbreekt.",
+    "unknown": "Dit diagram is niet ingesteld.",
+    "empty": "Nog niets om te tonen.",
+    "diagramLabel": "Stroomdiagram: {title}",
+    "nodeLabel": "{type}: {name}",
+    "pipLabel": "{type}: {name}"
   },
   "gantt": {
     "sortTitle": "Titel",

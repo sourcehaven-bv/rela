@@ -27,6 +27,21 @@ test.describe('List View', () => {
       await listPage.expectColumnHeader('priority');
     });
 
+    /*
+     * A 1024px laptop leaves the list about 760px beside the sidebar. Every
+     * column used to be 150px and the narrow layout started below 768px of
+     * table, so the list dropped its header row and its secondary columns
+     * (BUG-UX4P9T2).
+     */
+    test('keeps the full table on a laptop screen', async ({ appPage }) => {
+      const listPage = new ListPage(appPage);
+      await listPage.useLaptopWidth();
+
+      await listPage.navigateToList('features');
+
+      await listPage.expectColumnHeadersVisible(['title', 'status', 'priority']);
+    });
+
     test('shows create button', async ({ appPage }) => {
       const listPage = new ListPage(appPage);
 

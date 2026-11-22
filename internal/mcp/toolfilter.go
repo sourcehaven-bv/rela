@@ -15,24 +15,20 @@ import (
 // off or a tenant has no actions. TestKnownToolNames_MatchesRegistrations pins it
 // to the newTool calls.
 var knownToolNames = map[string]bool{
-	"accept_comment_suggestion": true, "add_comment": true, "add_to_pile": true,
-	"analyze": true, "attach_file": true, "claim_entity": true,
-	"complete_flow_step": true, "convert_entity": true, "create_channel": true,
-	"create_entity": true, "create_relation": true, "delete_attachment": true,
-	"delete_comment": true, "delete_entity": true, "delete_relation": true,
-	"edit_message": true, "find_path": true, "list_actions": true,
-	"list_attachments": true, "list_channels": true, "list_comments": true,
-	"list_conversions": true, "list_entities": true, "list_flow_tasks": true,
-	"list_inbox": true, "list_leases": true, "list_piles": true,
-	"list_relations": true, "list_worlds": true, "lua_eval": true,
-	"lua_run": true, "mark_read": true, "post_message": true,
-	"post_messages": true, "read_attachment": true, "read_channel": true,
-	"read_message_file": true, "read_session": true, "release_lease": true,
-	"remove_from_pile": true, "remove_message": true, "rename_entity": true,
-	"renew_lease": true, "run_action": true, "schema": true,
-	"search_entities": true, "show_entity": true, "show_flow_run": true,
-	"show_pile": true, "trace": true, "update_comment": true,
-	"update_entity": true, "watch": true,
+	"accept_comment_suggestion": true, "add_comment": true, "add_to_pile": true, "aggregate_records": true,
+	"analyze": true, "append_records": true, "attach_file": true, "claim_entity": true,
+	"complete_flow_step": true, "convert_entity": true, "create_channel": true, "create_entity": true,
+	"create_relation": true, "delete_attachment": true, "delete_comment": true, "delete_entity": true,
+	"delete_relation": true, "edit_message": true, "find_path": true, "list_actions": true,
+	"list_attachments": true, "list_channels": true, "list_comments": true, "list_conversions": true,
+	"list_entities": true, "list_flow_tasks": true, "list_inbox": true, "list_leases": true, "list_piles": true,
+	"list_record_types": true, "list_records": true, "list_relations": true, "list_worlds": true,
+	"lua_eval": true, "lua_run": true, "mark_read": true, "post_message": true, "post_messages": true,
+	"read_attachment": true, "read_channel": true, "read_message_file": true, "read_session": true,
+	"release_lease": true, "remove_from_pile": true, "remove_message": true, "rename_entity": true,
+	"renew_lease": true, "run_action": true, "schema": true, "search_entities": true, "show_entity": true,
+	"show_flow_run": true, "show_pile": true, "trace": true, "update_comment": true, "update_entity": true,
+	"watch": true,
 }
 
 // toolFilter decides which tools a server registers. The remote endpoint

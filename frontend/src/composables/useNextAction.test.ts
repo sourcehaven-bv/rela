@@ -4,6 +4,7 @@ import { useNextAction, __resetNextActionForTest } from './useNextAction'
 import { useSchemaStore } from '@/stores/schema'
 import { getNextAction, sendNextActionFeedback } from '@/api'
 import type { NextActionSuggestion } from '@/types'
+import { refusedRequestError, resetAccessForTest, trackAccess } from '@/api/workspaceAccess'
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -76,6 +77,21 @@ describe('useNextAction', () => {
       await na.loadOnce()
 
       expect(na.suggestion.value).toBeNull()
+    })
+  })
+
+  // The session screen already says what happened (BUG-JT865RH).
+  describe('under an ended session', () => {
+    it('logs no error for the refused request or a later one', async () => {
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+      trackAccess(401, null)
+      mockGet.mockRejectedValue(refusedRequestError())
+
+      await useNextAction().loadOnce()
+
+      expect(logged).not.toHaveBeenCalled()
+      logged.mockRestore()
+      resetAccessForTest()
     })
   })
 

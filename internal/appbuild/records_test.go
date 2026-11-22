@@ -433,3 +433,40 @@ entities:
 func TestRecords_LuaRowLimitIsServiceBatch(t *testing.T) {
 	require.Equal(t, records.MaxBatch, lua.MaxAppendRecordRows)
 }
+
+// TestRecords_LuaReadsUseOwnerGate runs rela.list_records and
+// rela.aggregate_records on the scheduled script runtime against a real
+// acl.yaml. They read through the record service, so a script sees what a
+// GET to /api/v1/_records sees: carol reads the meter, bob gets the same
+// not-found as for a missing one and folds nothing.
+func TestRecords_LuaReadsUseOwnerGate(t *testing.T) {
+	svc := recordsServices(t)
+	m := createMeter(t, svc)
+	_, err := appbuild.Records(svc).Append(asAlice(t, svc), "reading", []records.Input{
+		{Owner: m, TS: time.Date(2026, 1, 5, 10, 0, 0, 0, time.UTC), Fields: map[string]any{"kwh": "1.5"}},
+		{Owner: m, TS: time.Date(2026, 1, 6, 10, 0, 0, 0, time.UTC), Fields: map[string]any{"kwh": "2"}},
+	})
+	require.NoError(t, err)
+	run := func(ctx context.Context) string {
+		t.Helper()
+		var out bytes.Buffer
+		rt := lua.NewReader(svc.ScheduledLuaWriteDeps().ReadDeps, &out, lua.WithContext(ctx),
+			lua.WithPrincipal(principal.From(ctx)))
+		defer rt.Close()
+		//nolint:contextcheck // the runtime carries ctx via lua.WithContext
+		require.NoError(t, rt.RunString(`
+local page, err = rela.list_records("reading", {owner = "`+m+`"})
+if err then rela.output("list err: " .. err) else rela.output("rows " .. #page.records) end
+local pts, err2 = rela.aggregate_records("reading", {field = "kwh"})
+if err2 then rela.output("agg err: " .. err2) else rela.output("points " .. #pts) end`))
+		return out.String()
+	}
+	carol := boundAs(t, svc, principal.Principal{User: "carol", Tool: principal.ToolScheduler})
+	got := run(carol)
+	require.Contains(t, got, "rows 2")
+	require.Contains(t, got, "points 1")
+	bob := boundAs(t, svc, principal.Principal{User: "bob", Tool: principal.ToolScheduler})
+	got = run(bob)
+	require.Contains(t, got, "list err: not found")
+	require.Contains(t, got, "points 0")
+}

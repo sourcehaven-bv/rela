@@ -9,4 +9,4 @@ status: active
 ---
 
 TestFlowJob_RunListShowsFailedJob in internal/appbuild/flow_jobs_test.go;
-TestWaitsOnFailedJob in internal/flowengine/failedjob_test.go.
+TestFailedJobs_AgreesWithExplain in internal/flowengine/failedjob_test.go.

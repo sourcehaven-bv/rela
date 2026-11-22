@@ -110,7 +110,7 @@ func (d Direction) IsIncoming() bool {
 // (TKT-91BK6F), `header_buttons` (TKT-31822PN) and `list_buttons`
 // (TKT-UP0AYVN) are the most recent.
 //
-//plimsoll:max-fields=32
+//plimsoll:max-fields=33
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -124,6 +124,7 @@ type Config struct {
 	Kanbans     map[string]Kanban            `yaml:"kanbans"`
 	Calendars   map[string]Calendar          `yaml:"calendars,omitempty" json:"calendars,omitempty"`
 	Gantts      map[string]Gantt             `yaml:"gantts,omitempty" json:"gantts,omitempty"`
+	Sankeys     map[string]Sankey            `yaml:"sankeys,omitempty" json:"sankeys,omitempty"`
 	Documents   map[string]DocumentConfig    `yaml:"documents,omitempty"`
 	Feeds       map[string]Feed              `yaml:"feeds,omitempty" json:"feeds,omitempty"`
 	CalDAV      CalDAVConfig                 `yaml:"caldav,omitempty" json:"caldav,omitzero"`
@@ -1802,7 +1803,7 @@ func (f KanbanCardField) DisplayLabel() string {
 // [Config]: each exported field is one key of a navigation entry in
 // data-entry.yaml, so a new entry kind raises the pin by one.
 //
-//plimsoll:max-fields=23
+//plimsoll:max-fields=24
 type NavigationEntry struct {
 	// Direct item fields
 	Label     string       `yaml:"label,omitempty" json:"label,omitempty"`
@@ -1811,6 +1812,7 @@ type NavigationEntry struct {
 	Kanban    string       `yaml:"kanban,omitempty" json:"kanban,omitempty"`
 	Calendar  string       `yaml:"calendar,omitempty" json:"calendar,omitempty"`
 	Gantt     string       `yaml:"gantt,omitempty" json:"gantt,omitempty"`
+	Sankey    string       `yaml:"sankey,omitempty" json:"sankey,omitempty"`
 	Search    bool         `yaml:"search,omitempty" json:"search,omitempty"`
 	Settings  bool         `yaml:"settings,omitempty" json:"settings,omitempty"`
 	Action    string       `yaml:"action,omitempty" json:"action,omitempty"`

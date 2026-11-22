@@ -93,12 +93,13 @@ func runCLI(t *testing.T, svc *appbuild.Services, stdin string, args ...string) 
 	b, err := newCLIBundles(svc)
 	require.NoError(t, err)
 	buf := new(bytes.Buffer)
-	prevOut, prevStdin := out, leaseStdin
+	prevOut, prevStdin, prevRecs := out, leaseStdin, recordsStdin
 	out = output.NewWithWriter(buf, output.Format(cli.Output))
 	leaseStdin = strings.NewReader(stdin)
-	t.Cleanup(func() { out, leaseStdin = prevOut, prevStdin })
+	recordsStdin = strings.NewReader(stdin)
+	t.Cleanup(func() { out, leaseStdin, recordsStdin = prevOut, prevStdin, prevRecs })
 	ktx.BindTo(leaseCtx(), (*context.Context)(nil))
-	ktx.Bind(out, b.read, b.write, b.leases)
+	ktx.Bind(out, b.read, b.write, b.leases, b.records)
 	err = ktx.Run()
 	return buf.String(), err
 }

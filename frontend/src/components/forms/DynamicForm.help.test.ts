@@ -21,6 +21,7 @@ vi.mock('vue-router', () => ({
   useRoute: () => mockRoute,
   onBeforeRouteLeave: vi.fn(),
   onBeforeRouteUpdate: vi.fn(),
+  RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' },
 }))
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('@/api')
@@ -146,5 +147,21 @@ describe('DynamicForm help texts', () => {
     const w = await mountForm()
     expect(w.find('[data-testid="step-details"]').exists()).toBe(false)
     expect(w.find('[data-testid="step-description"]').exists()).toBe(false)
+  })
+})
+
+describe('DynamicForm for a form the configuration does not have', () => {
+  it('shows the not-found page, not the form id', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useSchemaStore().loaded = true
+    const wrapper = mount(DynamicForm, {
+      props: { formId: 'nope' },
+      global: { plugins: [pinia], stubs: { SidePanel: true } },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="not-found-state"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('nope')
   })
 })

@@ -101,6 +101,7 @@ const currentValue = computed(() => (props.value == null ? '' : String(props.val
         :is="widgetComponent"
         v-else
         :id="fieldId"
+        :label="label"
         :described-by="control.describedBy"
         :invalid="control.invalid"
         :model-value="value"

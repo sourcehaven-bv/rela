@@ -1,6 +1,14 @@
 import { type Page, type Locator, expect } from "@playwright/test";
 import { BasePage } from "./base.page";
 
+/** An element's box in viewport pixels. */
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 /**
  * Geometry of the mobile app shell.
  *
@@ -258,6 +266,55 @@ export class MobileLayoutPage extends BasePage {
           .map((cell) => Math.round(cell.getBoundingClientRect().left)),
       ),
     );
+  }
+
+  /**
+   * The boxes of the first list row's title cell and of its kept (primary)
+   * cells, in pixels.
+   */
+  async firstRowBoxes(): Promise<{
+    row: Box;
+    title: Box;
+    cells: Box[];
+  }> {
+    return this.page
+      .locator(".entity-list .rl-table-row")
+      .first()
+      .evaluate((row) => {
+        const box = (el: Element) => {
+          const r = el.getBoundingClientRect();
+          return { x: r.x, y: r.y, width: r.width, height: r.height };
+        };
+        // The title's cell, which holds the select box and the link.
+        const title = row.querySelector(".rl-table-row__name");
+        if (!title) throw new Error("row has no title cell");
+        return {
+          row: box(row),
+          title: box(title),
+          cells: Array.from(row.querySelectorAll(".rl-table-row__cell"))
+            .filter((cell) => getComputedStyle(cell).display !== "none")
+            .map(box),
+        };
+      });
+  }
+
+  /** Whether the first row's title is cut off with an ellipsis. */
+  async firstRowTitleTruncated(): Promise<boolean> {
+    return this.page
+      .locator(".entity-list .rl-table-row .rl-table-row__primary > *")
+      .first()
+      .evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+  }
+
+  /** The page title in the shell's header band. */
+  pageHeaderTitle(): Locator {
+    return this.page.locator(".rl-page-header__title");
+  }
+
+  /** Open the default dashboard and wait for its cards. */
+  async openDashboard() {
+    await this.navigateTo("/dashboard");
+    await expect(this.page.locator(".dashboard-card").first()).toBeVisible();
   }
 
   /** Open an entity page and wait for its `display: table` section. */

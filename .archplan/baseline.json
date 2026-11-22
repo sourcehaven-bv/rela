@@ -2577,6 +2577,18 @@
       "at": "2026-11-19T12:00:00Z",
       "title": "The fields actions, app, builtins, calendars, channels, … and views appear together in 2 types across 2 components."
     },
+    "concepts.data_clump-20d34b0c29c1": {
+      "state": "accepted",
+      "reason": "Design: the wire Config mirrors data-entry.yaml on purpose. TKT-2MDJRGW added sankeys to both, which grew the shared fields.",
+      "at": "2026-11-22T12:00:00Z",
+      "title": "The fields actions, app, builtins, calendars, channels, … and views appear together in 2 types across 2 components."
+    },
+    "types.fields-85ca4a9b646f": {
+      "state": "accepted",
+      "reason": "Design: the SPA Config type mirrors data-entry.yaml, one key per view kind. TKT-2MDJRGW added sankeys.",
+      "at": "2026-11-22T12:00:00Z",
+      "title": "types/config.Config has 25 fields."
+    },
     "concepts.data_clump-aa284ee842d3": {
       "state": "accepted",
       "reason": "Design: config shapes mirror data-entry.yaml on purpose. Accepted before under other ids; the id moved when TKT-14FBF1R embedded SectionVisibility in ViewSection.",
@@ -2873,7 +2885,7 @@
       "weight.structure": 859,
       "weight.layers": 0,
       "weight.vocabulary": 872,
-      "weight.types": 3975,
+      "weight.types": 4020,
       "weight.concepts": 7206,
       "weight.boundaries": 1435,
       "weight.data": 1298,
@@ -3286,6 +3298,17 @@
           "weight.boundaries": [
             1429,
             1435
+          ]
+        }
+      },
+      {
+        "at": "2026-11-22T12:00:00Z",
+        "change": "loosen",
+        "reason": "TKT-2MDJRGW: the sankeys key makes the SPA Config type 25 fields; it mirrors data-entry.yaml on purpose",
+        "metrics": {
+          "weight.types": [
+            3975,
+            4020
           ]
         }
       }

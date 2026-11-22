@@ -171,6 +171,14 @@ type ReadDeps struct {
 	// Nil: accepted. mail.render then uses rela's default look.
 	MailBranding MailBranding
 
+	// RecordReads backs rela.list_records and rela.aggregate_records
+	// (TKT-EV8U8T4). It reads as the ctx principal through the record
+	// service, which gates every row on its owner.
+	//
+	// Nil: accepted, and the bindings are then absent. A project whose
+	// schema declares no record types has no record service.
+	RecordReads RecordReader
+
 	// Seams replaces the clock, outbound HTTP, the AI provider, the mail
 	// transport and the write_file directory for every runtime built from
 	// these deps. The zero value replaces nothing; see [Seams].

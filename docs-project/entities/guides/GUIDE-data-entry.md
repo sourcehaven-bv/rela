@@ -2217,7 +2217,14 @@ A list narrower than its columns, as on a phone, keeps only some of them.
 The first column, the row title, always stays. By default an enum column
 (such as a status), a face column and a busy column stay as well, and the
 other columns are dropped. A kept column has the same width in every row,
-also where its value is empty, so the columns line up down the list.
+also where its value is empty, so the columns line up down the list. The
+title keeps a readable width: when it and the kept columns do not fit on one
+line, the kept columns move to a line of their own under the title.
+
+A list switches to this layout below 640 pixels. Wider, it shows every
+column with its header. Each column has a preferred width that suits its
+property type, and the columns and the title shrink together to fit the
+page before the list scrolls sideways.
 
 Set `primary:` on a list column to choose for yourself. `primary: true`
 keeps the column; `primary: false` drops it, also when it is an enum. A
@@ -6113,7 +6120,7 @@ inherits the surrounding text colour, so icons follow the light / dark theme
 instead of fighting it the way an emoji does.
 
 <!-- BEGIN generated: icons -->
-The 218 names below are the complete set. This table is **generated** from the
+The 219 names below are the complete set. This table is **generated** from the
 same definition the server validates against and the app renders from, so it
 cannot fall out of step with either — an earlier hand-written copy went stale
 within a single release, which is why it is machine-written now.
@@ -6130,6 +6137,7 @@ draws nothing.
 | `kanban` | Kanban | Board view; the default kanban glyph |
 | `calendar` | CalendarDays | Calendar view |
 | `gantt` | ChartGantt | Gantt view |
+| `sankey` | Waypoints | Sankey flow diagram |
 | `search` | Search | Search |
 | `settings` | Settings | Settings or configuration |
 | `apps` | Blocks | Custom apps section |
@@ -9033,6 +9041,123 @@ Loading fails when:
 - Dependency arrows are not drawn — dependencies are a separate graph from
   containment and deserve their own view.
 - Dates render at day granularity; `datetime` values are treated as their date.
+
+## Sankeys
+
+A sankey draws **how entities of several types connect**, in columns from left
+to right. Each entity is a node, and each relation between two nodes is a
+ribbon. The width of a node follows the number of ribbons it carries. Use it to
+see where work, cost or responsibility flows, for example labels to tickets to
+categories.
+
+```yaml
+sankeys:
+  flow:
+    title: "Ticket flow"
+    columns: [[label], [ticket], [category]]
+    edges: [tagged, belongs-to]
+    types:
+      ticket:
+        where: ["status != 'closed'"]
+        color_by: priority
+      label: { order: id }
+```
+
+Reach it from the sidebar with a `sankey:` navigation entry:
+
+```yaml
+navigation:
+  - label: "Ticket flow"
+    sankey: flow
+```
+
+### How it is drawn
+
+- `columns` lists the entity types of each column. Types that share a column
+  stack in the listed order, each under its own heading.
+- A relation in `edges` is drawn when both ends are in the diagram, whichever
+  way it points. The ribbon always runs from the lower column to the higher
+  one. A relation between two entities in the same column is not drawn.
+- Node order comes from a crossing minimiser, so ribbons cross as little as
+  possible. Set `order:` on a type to pin its nodes instead.
+- Hovering a node or ribbon dims everything it is not connected to.
+- Clicking a node opens the entity in a detail panel over the diagram, and
+  puts its id in `?selected=` so a reload or a shared link reopens it. The
+  panel's expand control goes to the entity's own page, and its close control
+  drops the selection.
+
+### Pips
+
+`pips:` on a type draws the entities related to each node as small dots on the
+node's label line, for example the evidence of a control. A dot is not a
+diagram node: it has no ribbon and does not count against `max_nodes`.
+Clicking a dot opens that entity in the same detail panel.
+
+```yaml
+sankeys:
+  coverage:
+    columns: [[control], [clause]]
+    edges: [covers]
+    types:
+      control:
+        pips: { relation: evidenced-by, type: evidence, color_by: status, max: 6 }
+```
+
+The relation may point either way between the node and the pip type. Dots are
+ordered by id. When a node has more than `max` of them, the rest show as `+n`.
+The server reads all pips of a type in two batched reads, one of the pip type
+and one of the relation, so the cost does not grow with the number of nodes.
+
+Pips follow the same access rules as nodes. The pip type is row-gated and
+redacted before a title or tone is read, and the `+n` count only includes
+entities the principal may read. A principal who may not read the pip type
+sees no dots and no count.
+
+### Access control
+
+The server reads the nodes through the same row gate and field redaction as a
+list. It then applies `where:` to the redacted entities and applies the
+`max_nodes` cap. A ribbon is kept only when both ends are visible. The answer
+differs per principal, so it is never shared between users.
+
+### Sankey fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `title` | string | Heading above the diagram (default: the config key) |
+| `header` / `footer` | string | Markdown rendered above / below the diagram |
+| `columns` | list of lists | Entity types per column, left to right; at least two columns, each type once |
+| `edges` | list | Relation types drawn as ribbons; at least one |
+| `max_nodes` | int | Nodes per response (default 2000); exceeding it flags the response as truncated |
+| `types` | map | Per-type options, keyed by an entity type in `columns` |
+
+Per-type options:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `where` | list | Filter clauses, ANDed, evaluated on the redacted entity |
+| `label` | string | Property used as the node label (default: the display property) |
+| `order` | string | Property that pins the node order, compared as text then by id; `id` orders by id |
+| `color` | string | Palette token: `blue`, `green`, `amber`, `red`, `violet` or `slate` |
+| `color_by` | string | Property whose value picks the tone; equal values share a tone |
+| `pips` | object | Related entities drawn as dots beside each node, see below |
+
+Pip options:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `relation` | string | Relation type linking a node to its pips, in either direction. Required |
+| `type` | string | Entity type of the pips. Required; must differ from the node's type |
+| `label` | string | Property shown on hover (default: the display property) |
+| `color_by` | string | Property of the pip type whose value picks the dot's tone |
+| `max` | int | Dots per node (default 8, at most 50) |
+
+### Limits
+
+- The diagram is read-only.
+- Node height follows the ribbon count; a weight from a property is not
+  supported yet.
+- The page does not refresh by itself when the data changes; reload it.
 
 ## Commands
 

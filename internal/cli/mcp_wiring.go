@@ -454,6 +454,10 @@ func (s *mcpServices) deps(svc *appbuild.Services) relamcp.Deps {
 	if leases := appbuild.Leases(svc); leases != nil {
 		deps.Leases = leases
 	}
+	// Assigned only when set, like Leases above.
+	if recs := appbuild.Records(svc); recs != nil {
+		deps.Records = recs
+	}
 	deps.Channels = channelDeps(svc)
 	// NewConverter only refuses a nil manager.
 	if conv, err := entitymanager.NewConverter(svc.EntityManager()); err == nil {

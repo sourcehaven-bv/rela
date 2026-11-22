@@ -291,7 +291,8 @@ func buildRouteWords(s *Schema) routeWords {
 	if c := s.Cfg; c != nil {
 		for _, names := range []iter.Seq[string]{
 			maps.Keys(c.Forms), maps.Keys(c.Lists), maps.Keys(c.Views), maps.Keys(c.EntityViews),
-			maps.Keys(c.Kanbans), maps.Keys(c.Calendars), maps.Keys(c.Gantts), maps.Keys(c.Documents),
+			maps.Keys(c.Kanbans), maps.Keys(c.Calendars), maps.Keys(c.Gantts), maps.Keys(c.Sankeys),
+			maps.Keys(c.Documents),
 			maps.Keys(c.Feeds), maps.Keys(c.Commands), maps.Keys(c.Actions), maps.Keys(c.Webhooks),
 			maps.Keys(c.Pages), maps.Keys(c.NextActions), maps.Keys(c.Dashboards),
 		} {
@@ -315,12 +316,12 @@ var fixedRouteWords = map[string]bool{
 	"logo": true, "accept": true, "principal": true, "calendars": true, ".well-known": true,
 	"caldav": true, "card": true,
 	// SPA client routes.
-	"list": true, "kanban": true, "calendar": true, "gantt": true, "document": true, "form": true,
+	"list": true, "kanban": true, "calendar": true, "gantt": true, "sankey": true, "document": true, "form": true,
 	"p": true, "search": true, "settings": true, "dashboard": true, "remotes": true,
 	"_action": true, "_actions": true, "_analyze": true, "_apps": true, "_attachments": true, "_batch": true,
 	"_caldav": true, "_commands": true, "_comments": true, "_config": true, "_conflicts": true,
 	"_copies": true, "_conversions": true, "_custom": true, "_dashboard": true, "_documents": true, "_events": true,
-	"_export": true, "_feeds": true, "_gantts": true, "_git": true, "_history": true, "_changes": true, "_audit": true,
+	"_export": true, "_feeds": true, "_gantts": true, "_sankeys": true, "_git": true, "_history": true, "_changes": true, "_audit": true,
 	"_lifetimes": true, "_mcp": true, "_me": true, "_nav_items": true, "_nav_status": true,
 	"_next_action": true, "_openapi.json": true, "_page_status": true, "_palette": true, "_piles": true,
 	"_position": true, "_reconcile": true, "_relation_history": true, "_remotes": true, "conflicts": true,

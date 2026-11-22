@@ -369,3 +369,44 @@ func (a recordAppender) AppendRecords(
 	}
 	return out, nil
 }
+
+// luaRecordReads adapts svc to [lua.RecordReader]. A nil svc is a nil
+// interface, not a typed nil, so the bindings are absent rather than broken.
+func luaRecordReads(svc *records.Service) lua.RecordReader {
+	if svc == nil {
+		return nil
+	}
+	return recordReader{svc: svc}
+}
+
+// recordReader is [lua.RecordReader] over the record service. The service
+// runs the owner gate of GET /api/v1/_records/{type}.
+type recordReader struct{ svc *records.Service }
+
+// List lists one owner's rows as the principal on ctx.
+func (r recordReader) List(ctx context.Context, typ, owner string, q records.ListQuery) (records.Page, error) {
+	page, err := r.svc.List(ctx, typ, owner, q)
+	if err != nil {
+		return records.Page{}, scriptRecordError(err)
+	}
+	return page, nil
+}
+
+// Aggregate folds rows as the principal on ctx.
+func (r recordReader) Aggregate(ctx context.Context, q records.AggregateQuery) ([]records.Point, error) {
+	pts, err := r.svc.Aggregate(ctx, q)
+	if err != nil {
+		return nil, scriptRecordError(err)
+	}
+	return pts, nil
+}
+
+// scriptRecordError words a failed read for the script author. A failure the
+// caller did not cause (a backend error) keeps its text out of the script.
+func scriptRecordError(err error) error {
+	if text, ok := records.UserText(err); ok {
+		return errors.New(text)
+	}
+	slog.Warn("records: script read failed", "err", err)
+	return errors.New("records request failed; check the server log")
+}

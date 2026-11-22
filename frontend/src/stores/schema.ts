@@ -18,6 +18,7 @@ import type {
   EntityViewConfig,
   CalendarConfig,
   GanttConfig,
+  SankeyConfig,
   KanbanConfig,
   DashboardResponse,
   NextActionBand,
@@ -76,6 +77,7 @@ export const useSchemaStore = defineStore('schema', () => {
   const kanbans = ref<Map<string, KanbanConfig>>(new Map())
   const calendars = ref<Map<string, CalendarConfig>>(new Map())
   const gantts = ref<Map<string, GanttConfig>>(new Map())
+  const sankeys = ref<Map<string, SankeyConfig>>(new Map())
   const documents = ref<Map<string, DocumentConfig>>(new Map())
   const apps = ref<Map<string, AppEntry>>(new Map())
   const actions = ref<Map<string, ActionConfig>>(new Map())
@@ -268,6 +270,7 @@ export const useSchemaStore = defineStore('schema', () => {
   const getKanban = computed(() => (id: string) => kanbans.value.get(id))
   const getCalendar = computed(() => (id: string) => calendars.value.get(id))
   const getGantt = computed(() => (id: string) => gantts.value.get(id))
+  const getSankey = computed(() => (id: string) => sankeys.value.get(id))
   const getAction = computed(() => (id: string) => actions.value.get(id))
 
   const entityTypeList = computed(() => Array.from(entityTypes.value.entries()))
@@ -525,6 +528,7 @@ export const useSchemaStore = defineStore('schema', () => {
       kanbans.value = new Map(Object.entries(configData.kanbans || {}))
       calendars.value = new Map(Object.entries(configData.calendars || {}))
       gantts.value = new Map(Object.entries(configData.gantts || {}))
+      sankeys.value = new Map(Object.entries(configData.sankeys || {}))
       documents.value = new Map(Object.entries(configData.documents || {}))
       apps.value = new Map(Object.entries(configData.apps || {}))
       actions.value = new Map(Object.entries(configData.actions || {}))
@@ -639,6 +643,7 @@ export const useSchemaStore = defineStore('schema', () => {
     kanbans,
     calendars,
     gantts,
+    sankeys,
     documents,
     apps,
     actions,
@@ -685,6 +690,7 @@ export const useSchemaStore = defineStore('schema', () => {
     getKanban,
     getCalendar,
     getGantt,
+    getSankey,
     getAction,
     getEnumLabel,
     displayDefForProperty,

@@ -2283,6 +2283,33 @@ or edit the lease files directly.
 
 ---
 
+### rela records
+
+Append, list and aggregate the rows of a record type (see
+[Records](records.md)), and expire rows past retention.
+
+```bash
+rela records append TYPE --owner ID [--ts TIME] [-F key=value ...]
+rela records append TYPE --file rows.json     # or --file - for stdin
+rela records list TYPE OWNER [--from T] [--to T] [--after CURSOR] [--limit N]
+rela records aggregate TYPE [--owner ID ...] [--field F] [--bucket day] [--per-owner]
+rela records expire
+```
+
+`append` takes one row from `--owner`, `--ts` and `-F`, or many from a JSON
+file: `[{"owner": "MTR-1", "ts": "...", "fields": {"kwh": "1.25"}}]` or
+`{"rows": [...]}`. The rows are stored together or not at all. `list` and
+`aggregate` print a table, or JSON with `-o json`. Times are RFC 3339.
+
+The commands use the same service as the HTTP API. `append` needs update access
+on the owner. `list` and `aggregate` read what the caller may read; `aggregate`
+folds readable owners only.
+
+`expire` drops the rows older than each type's `retention`, the same work the
+hourly retention job does, and prints how many. It is an operator command. It
+exists only on the command line: no MCP tool, script function or HTTP route runs
+it, and it reads no owner, so it needs no entity access.
+
 ### rela channel
 
 Read and write the realtime channels on an entity (see the realtime guide).

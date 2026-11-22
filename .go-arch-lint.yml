@@ -916,6 +916,8 @@ deps:
   # as a plain string rather than a *project.Context.
   mcp:
     mayDependOn:
+      # The record tools (TKT-EV8U8T4) take and return the record types.
+      - records
       - actionproposal
       - rootfs
       # affordances: convert_entity names a field-gate refusal
@@ -2324,6 +2326,10 @@ deps:
   lua:
     mayDependOn:
       - rootfs
+      # rela.list_records and rela.aggregate_records take and return the
+      # record service's own value types (TKT-EV8U8T4); records imports no
+      # lua, so no cycle.
+      - records
       - ai
       - filter
       # mail.render builds a mailrender.Message from a script table so a Lua

@@ -597,6 +597,7 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 		World:         s.worlds.DefaultWorld(),
 	}
 	deps.Piles = pileReaderFor(s.piles)
+	deps.RecordReads = luaRecordReads(s.records)
 	deps.RoleHolders = roleHoldersFor(s)
 	if s.base != nil {
 		deps.Seams = s.base.luaSeams()
