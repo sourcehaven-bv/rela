@@ -160,7 +160,7 @@ table { border-collapse:collapse; }
 .pad a.btn { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:16px; font-weight:600; line-height:1.2; color:{{.C.card}}; text-decoration:none; }
 .empty { color:{{.C.muted}}; font-style:italic; padding:8px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:14px; }
 @media (prefers-color-scheme: dark) {
-.wrap { background-color:{{.C.darkBg}} !important; }
+body, .wrap { background-color:{{.C.darkBg}} !important; }
 .outer { background-color:{{.C.darkBg}} !important; }
 .card { background-color:{{.C.darkCard}} !important; border-color:{{.C.darkBorder}} !important; }
 .bar { background-color:{{.C.darkAccent}} !important; }

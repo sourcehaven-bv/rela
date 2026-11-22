@@ -37,6 +37,10 @@ func TestValidateConfig_Account(t *testing.T) {
   admin: { url: "https://auth.example.com/admin?x=1" }`, ""},
 		{"root path", "account: {sign_out: /}", ""},
 		{"string avatar property", "account: {avatar_property: assignee}", ""},
+		{"contact", "account: {contact: 'Email support@example.com'}", ""},
+		{"contact too long", "account: {contact: " + strings.Repeat("x", 201) + "}", "account.contact: longer than 200"},
+		{"app logo", "app: {logo: https://cdn.example.com/logo.svg}", ""},
+		{"app logo javascript", "app: {logo: 'javascript:alert(1)'}", `app.logo: "javascript:alert(1)"`},
 
 		{"javascript scheme", "account: {sign_out: 'javascript:alert(1)'}", `account.sign_out: "javascript:alert(1)"`},
 		{"data scheme", "account: {account: 'data:text/html,x'}", "account.account:"},

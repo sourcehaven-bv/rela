@@ -70,4 +70,44 @@ describe('WorkspaceAccessScreen', () => {
     await wrapper.get('button').trigger('click')
     expect(location.reload).toHaveBeenCalled()
   })
+
+  const exits = {
+    signOutUrl: '/auth/logout',
+    accountUrl: 'https://account.example.com/',
+  }
+
+  it.each(['suspended', 'archived', 'unknown_workspace'] as const)(
+    'offers the account portal and sign out on a %s workspace',
+    (refusal) => {
+      const { wrapper } = render(refusal, exits)
+      const links = wrapper.findAll('a')
+      expect(links.map((a) => [a.text(), a.attributes('href')])).toEqual([
+        ['Go to your account', exits.accountUrl],
+        ['Sign out', exits.signOutUrl],
+      ])
+    }
+  )
+
+  it('offers no account links when the server cannot identify anyone', () => {
+    const { wrapper } = render('no_identity', { ...exits, detail: 'set auth.header' })
+    expect(wrapper.findAll('a')).toHaveLength(0)
+  })
+
+  it('shows the configured contact text instead of the default', () => {
+    const contact = 'Email support@example.com'
+    const { wrapper } = render('suspended', { contact })
+    expect(wrapper.text()).toContain(contact)
+    expect(wrapper.text()).not.toContain('manages your organisation')
+  })
+
+  it('shows the logo, or else the app name', () => {
+    const named = render('archived', { appName: 'Workspace' }).wrapper
+    expect(named.find('img').exists()).toBe(false)
+    expect(named.get('.access-brand').text()).toBe('Workspace')
+
+    const logo = '/brand/logo.svg'
+    const img = render('archived', { appName: 'Workspace', logo }).wrapper.get('img')
+    expect(img.attributes('src')).toBe(logo)
+    expect(img.attributes('alt')).toBe('Workspace')
+  })
 })

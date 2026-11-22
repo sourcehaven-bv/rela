@@ -4,7 +4,9 @@ import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 
 /**
  * Says that the workspace is read-only, while it is (rela#2511). The create
- * buttons are hidden then, so without this a user would not know why.
+ * buttons are hidden then, so without this a user would not know why. The app
+ * puts it in the shell's full-width `banner` slot, so it is a strip with a
+ * rule below rather than a card.
  */
 const { t } = useI18n()
 </script>
@@ -22,12 +24,10 @@ const { t } = useI18n()
 
 <style scoped>
 .read-only-banner {
-  margin-bottom: var(--space-md);
   padding: var(--space-sm) var(--space-md);
   font-size: var(--font-size-sm);
   color: var(--rl-color-text);
-  background: color-mix(in srgb, var(--rl-color-status-amber) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--rl-color-status-amber) 60%, transparent);
-  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--rl-color-status-amber) 12%, var(--rl-color-bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--rl-color-status-amber) 60%, transparent);
 }
 </style>

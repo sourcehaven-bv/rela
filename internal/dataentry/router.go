@@ -255,8 +255,8 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	root := headlessRoot()
 	if serveUI {
 		root = spaHandlerWithCustom(spaFS, custom, func() ShellBoot {
-			app := a.State().Cfg.App
-			return shellBootOf(app.Name, app.Language)
+			cfg := a.State().Cfg
+			return shellBootOf(cfg.App, cfg.Account)
 		})
 	}
 	spa := withSpecLink(root)

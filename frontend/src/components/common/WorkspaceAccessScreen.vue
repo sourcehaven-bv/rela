@@ -16,15 +16,29 @@ import { REFUSAL, type AccessRefusal } from '@/api/workspaceAccess'
  * sign-in.
  *
  * Every other refusal replaces the app. A suspended or archived workspace
- * offers nothing to click, because no retry helps until someone changes its
- * state; it says who to ask. An unknown workspace and a server that cannot
- * identify anyone offer a reload: a workspace that is being created, or a
- * server whose operator fixes its settings, can work a moment later.
+ * offers no retry, because none helps until someone changes its state; it
+ * says who to ask. An unknown workspace and a server that cannot identify
+ * anyone offer a reload: a workspace that is being created, or a server whose
+ * operator fixes its settings, can work a moment later.
+ *
+ * The pages that replace the app show the app's logo or name, and offer the
+ * account pages and sign out when the operator configured them, so the user
+ * is not stuck on a page with no way out. The values come from the shell
+ * (`bootMeta`), because the workspace refuses its config.
  */
 const props = defineProps<{
   refusal: AccessRefusal
   loginUrl?: string | null
   detail?: string | null
+  appName?: string | null
+  /** `app.logo`: an image URL, shown instead of the name. */
+  logo?: string | null
+  /** `account.sign_out`. */
+  signOutUrl?: string | null
+  /** `account.account`: the account portal. */
+  accountUrl?: string | null
+  /** `account.contact`: replaces the default "who to ask" text. */
+  contact?: string | null
   /** Replaces `window.location`, for tests. */
   location?: Pick<Location, 'assign' | 'reload'>
 }>()
@@ -55,6 +69,8 @@ const CONTACT_REFUSALS: readonly AccessRefusal[] = [
   REFUSAL.unknownWorkspace,
 ]
 const showContact = computed(() => CONTACT_REFUSALS.includes(props.refusal))
+const contactText = computed(() => props.contact || t('shell.access.contact'))
+const offersExit = computed(() => props.refusal !== REFUSAL.noIdentity)
 const offersReload = computed(
   () => props.refusal === REFUSAL.unknownWorkspace || props.refusal === REFUSAL.noIdentity
 )
@@ -99,12 +115,24 @@ onMounted(() => {
   </div>
 
   <div v-else class="boot-screen" data-testid="workspace-access-screen" :data-refusal="refusal">
+    <header v-if="logo || appName" class="access-brand">
+      <img v-if="logo" :src="logo" :alt="appName ?? ''" class="access-logo" />
+      <span v-else class="access-app-name">{{ appName }}</span>
+    </header>
     <RlStatusRegion tone="error">
       <h1 class="access-title">{{ text.title }}</h1>
       <p class="access-body">{{ text.body }}</p>
-      <p v-if="showContact" class="access-contact">{{ t('shell.access.contact') }}</p>
-      <template v-if="offersReload" #actions>
-        <RlButton variant="secondary" @click="reload">{{ t('shell.access.tryAgain') }}</RlButton>
+      <p v-if="showContact" class="access-contact">{{ contactText }}</p>
+      <template v-if="offersReload || (offersExit && (accountUrl || signOutUrl))" #actions>
+        <RlButton v-if="offersReload" variant="secondary" @click="reload">
+          {{ t('shell.access.tryAgain') }}
+        </RlButton>
+        <RlButton v-if="offersExit && accountUrl" as="a" :href="accountUrl" variant="secondary">
+          {{ t('shell.access.openAccount') }}
+        </RlButton>
+        <RlButton v-if="offersExit && signOutUrl" as="a" :href="signOutUrl" variant="ghost">
+          {{ t('account.signOut') }}
+        </RlButton>
       </template>
     </RlStatusRegion>
   </div>
@@ -113,7 +141,26 @@ onMounted(() => {
 <style scoped>
 .boot-screen {
   display: flex;
+  flex-direction: column;
   min-height: 100vh;
+}
+
+.access-brand {
+  display: flex;
+  align-items: center;
+  padding: var(--space-md) var(--space-lg);
+}
+
+.access-logo {
+  display: block;
+  max-height: 2rem;
+  max-width: 12rem;
+}
+
+.access-app-name {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--rl-color-text);
 }
 
 .access-overlay {

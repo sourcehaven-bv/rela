@@ -6,6 +6,7 @@ import EntityDetail from './EntityDetail.vue'
 import EntityActionsMenu from './EntityActionsMenu.vue'
 import type { EntityAction } from './entityActions'
 import { useSchemaStore } from '@/stores/schema'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 import { defineComponent } from 'vue'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import type { Entity } from '@/types'
@@ -83,6 +84,7 @@ describe('EntityDetail header actions', () => {
   })
 
   afterEach(() => {
+    workspaceReadOnly.value = false
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     document.body.innerHTML = ''
@@ -132,6 +134,22 @@ describe('EntityDetail header actions', () => {
     expect(ids).toContain('delete')
     expect(ids).toContain('convert:topic-naar-opdracht')
     expect(ids).not.toContain('edit')
+  })
+
+  it('offers no edit, duplicate, delete or conversion in a read-only workspace', async () => {
+    useSchemaStore().setInlineCreate({ topic: 'create_topic' })
+    const ids = async () => {
+      const w = await mountDetail()
+      const events = w.emitted('actions') as EntityAction[][][]
+      return events[events.length - 1][0].map((a) => a.id)
+    }
+    expect(await ids()).toEqual(
+      expect.arrayContaining(['duplicate', 'delete', 'convert:topic-naar-opdracht'])
+    )
+
+    workspaceReadOnly.value = true
+    const readOnly = await ids()
+    expect(readOnly.filter((id) => /^(edit|duplicate|delete|convert:)/.test(id))).toEqual([])
   })
 
   // Only the entity route names the tab; a panel or preview must not.

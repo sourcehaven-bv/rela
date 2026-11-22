@@ -65,13 +65,13 @@ describe('create affordances on a read-only workspace', () => {
     workspaceReadOnly.value = false
   })
 
-  it('hides create and create@face whatever the verdict, and nothing else', () => {
-    const carrier = { _actions: { create: true, 'create@draft': true, update: true } }
+  it('hides every write verb whatever the verdict', () => {
+    const verbs = ['create', 'create@draft', 'update', 'delete', 'rename']
+    const carrier = { _actions: Object.fromEntries(verbs.map((v) => [v, true])) }
     workspaceReadOnly.value = true
-    expect(actionAllowed(carrier, 'create')).toBe(false)
-    expect(actionAllowed(carrier, 'create@draft')).toBe(false)
-    expect(actionAllowed(carrier, 'update')).toBe(true)
+    for (const verb of verbs) expect(actionAllowed(carrier, verb)).toBe(false)
+    expect(actionAllowed(undefined, 'update')).toBe(false)
     workspaceReadOnly.value = false
-    expect(actionAllowed(carrier, 'create')).toBe(true)
+    for (const verb of verbs) expect(actionAllowed(carrier, verb)).toBe(true)
   })
 })

@@ -4,7 +4,9 @@
  *
  * The `header` slot spans the full width above both the content and the
  * panel, so the panel reads as a sibling of the view rather than as part of
- * it. `panelMode` decides how the panel sits against the content:
+ * it. The `banner` slot sits below the header, as wide: a notice about the
+ * whole app, such as a read-only workspace, belongs to neither pane, and in
+ * the content pane a sticky table header would cover it. `panelMode` decides how the panel sits against the content:
  *
  * - `inline`  — beside the content, sharing the row.
  * - `overlay` — above the content, anchored right, with a shadow.
@@ -162,6 +164,10 @@ onBeforeUnmount(() => {
         <slot name="header" />
       </div>
 
+      <div v-if="$slots.banner" class="rl-app-shell__banner">
+        <slot name="banner" />
+      </div>
+
       <div class="rl-app-shell__row">
         <main class="rl-app-shell__main">
           <slot />
@@ -230,6 +236,8 @@ onBeforeUnmount(() => {
 .rl-app-shell__frame:not(:has(> .rl-app-shell__header)) {
   padding-top: var(--rl-safe-inset-top);
 }
+
+.rl-app-shell__banner { flex: none; }
 
 .rl-app-shell__row {
   position: relative;

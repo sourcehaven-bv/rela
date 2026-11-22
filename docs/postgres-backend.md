@@ -909,11 +909,19 @@ input:
 
 | Answer | Page |
 | --- | --- |
-| 403 `tenant_suspended` | "This workspace is suspended", and who to contact. No button. |
-| 403 `tenant_archived` | "This workspace is archived", and who to contact. No button. |
+| 403 `tenant_suspended` | "This workspace is suspended", and who to contact. No Try again. |
+| 403 `tenant_archived` | "This workspace is archived", and who to contact. No Try again. |
 | 403 `unknown_tenant` | "This workspace is not available", and who to contact, with Try again. |
 | 401 | "Your session has ended", with Sign in again, over the page. |
 | 401 with a problem `detail` and no `login_url` | "This server cannot identify you", the detail, and Try again. A server with no identity source answers so. |
+
+The three workspace pages also show the app logo (`app.logo`) or else the
+app name, a link to the account pages (`account.account`) and Sign out
+(`account.sign_out`), each when configured. `account.contact` replaces the
+default "who to contact" text, so the page can say what the account pages
+say. The server writes these values into the page, because the workspace
+refuses its config; a multi-tenant server reads them from the shared
+`data-entry.yaml`.
 
 Sign in again is a full page navigation to the `login_url` of the 401 body,
 when it is a local path on the same site, and otherwise a reload of the page, which
@@ -1061,10 +1069,13 @@ piles, leases, presence, settings and collaborative-editing saves. The
 message reads "This workspace is read-only". The web app reads the state
 from `GET /api/v1/_tenant` when it starts, when the tab is shown again, and
 from any refused write. While
-the workspace is read-only it shows a banner above every page and hides the
+the workspace is read-only it shows a banner across the full width, below
+the page header and above the page and its side panel, and hides the
 New and Add buttons: the space Create menu, New on lists, boards and
 calendars, the section and sidebar add buttons, the table Add button, Add on relation pickers and relation
-cards, and inline create. A create form says so and shows no Create
+cards, and inline create. It also hides what changes a record: Edit,
+Duplicate, Delete, Rename, copy and convert on a record, inline editing, and
+Delete on list rows. A create form says so and shows no Create
 button; edit forms are unchanged. Two
 writes pass because they change no tenant data: the `PUT` of a live-update
 stream's subscriptions, and the IdP webhook. Background work the server

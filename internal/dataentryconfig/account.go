@@ -34,6 +34,12 @@ type AccountConfig struct {
 	// SwitchOrg is the proxy's org picker.
 	SwitchOrg string `yaml:"switch_org,omitempty" json:"switch_org,omitempty"`
 
+	// Contact is plain text that tells a user who to ask when the workspace
+	// is suspended, archived or missing, e.g. "Email support@example.com".
+	// Empty shows the app's own text. It is shown on the pages that replace
+	// the app, so it should match what the account pages say.
+	Contact string `yaml:"contact,omitempty" json:"contact,omitempty"`
+
 	// Admin is the proxy's administration page. Nil: accepted, means no admin
 	// link.
 	Admin *AccountAdminLink `yaml:"admin,omitempty" json:"admin,omitempty"`
@@ -63,11 +69,14 @@ type AccountAdminLink struct {
 	Role string `yaml:"role,omitempty" json:"role,omitempty"`
 }
 
+// MaxAccountContactRunes caps account.contact: it is one line on a page.
+const MaxAccountContactRunes = 200
+
 // accountKeys and accountAdminKeys are the keys the account block accepts.
 // Nested unknown keys are otherwise ignored by the decoder, so a typo such as
 // `signout:` would silently drop a sign-out link; the block checks its own.
 var (
-	accountKeys      = []string{"account", "admin", "avatar_property", "sign_out", "switch_org"}
+	accountKeys      = []string{"account", "admin", "avatar_property", "contact", "sign_out", "switch_org"}
 	accountAdminKeys = []string{"role", "url"}
 )
 
@@ -98,6 +107,9 @@ func validateAccount(data []byte, cfg *Config, meta *metamodel.Metamodel) []stri
 		if err := validAccountLink(l.value); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %q %v", l.key, l.value, err))
 		}
+	}
+	if len([]rune(acc.Contact)) > MaxAccountContactRunes {
+		errs = append(errs, fmt.Sprintf("account.contact: longer than %d characters", MaxAccountContactRunes))
 	}
 	if acc.AvatarProperty != "" {
 		errs = append(errs, validateAvatarProperty(acc.AvatarProperty, meta)...)

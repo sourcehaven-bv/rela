@@ -384,6 +384,7 @@ app:
 | ------------- | -------------------------------- |
 | `name`        | Application title in the header  |
 | `description` | Subtitle shown below the title   |
+| `logo`        | An image of the app for the pages shown before a workspace loads, such as a suspended or archived workspace. A path starting with `/` or an `https://` URL. Without it those pages show `name`. The sidebar logo is the one uploaded on the Settings page. |
 | `default_world` | Deprecated alias for the schema's `default_world:`; must name the same world. See [Worlds in the web app and API](#worlds-in-the-web-app-and-api) |
 
 The browser tab title reads `<page> · <name>`, for example
@@ -7289,6 +7290,7 @@ account:
 | `admin.url` | The proxy's administration page. Required when `admin` is set. |
 | `admin.role` | Show the admin link only to users whose asserted `roles` claim contains this role. Leave it out to show the link to everyone. |
 | `avatar_property` | The property on the user's entity that holds a photo. |
+| `contact` | Who to ask when the workspace is suspended, archived or missing, such as `Email support@example.com`. Plain text of at most 200 characters, shown instead of the default text. |
 
 Every key is optional. A link you leave out is not shown. An unknown key is a
 load error, so a typo such as `signout:` cannot silently drop a link.

@@ -47,6 +47,21 @@ func TestShellBootFrom(t *testing.T) {
 		{"region", "app:\n  language: nl-BE\n", ShellBoot{Language: "nl-BE"}},
 		{"no app block", "lists: {}\n", ShellBoot{}},
 		{"bad language", "app:\n  name: X\n  language: '\"><script>'\n", ShellBoot{AppName: "X"}},
+		{
+			"workspace pages",
+			"app:\n  logo: https://cdn.example.com/logo.svg\naccount:\n  sign_out: /auth/logout\n" +
+				"  account: https://account.example.com/\n  contact: ' Email support@example.com '\n",
+			ShellBoot{
+				Logo: "https://cdn.example.com/logo.svg", SignOut: "/auth/logout",
+				Account: "https://account.example.com/", Contact: "Email support@example.com",
+			},
+		},
+		{
+			"bad links dropped",
+			"app:\n  logo: 'javascript:alert(1)'\naccount:\n  sign_out: //evil.example\n  account: http://account.example.com/\n",
+			ShellBoot{},
+		},
+		{"contact too long", "account:\n  contact: " + strings.Repeat("x", 201) + "\n", ShellBoot{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -75,18 +90,25 @@ const bootTestShell = `<!DOCTYPE html>
 // TestBootShell pins the title, lang and meta rewrite, and that the app name
 // is escaped.
 func TestBootShell(t *testing.T) {
-	got := string(bootShell([]byte(bootTestShell), ShellBoot{AppName: `A & <b>"B"</b>`, Language: "nl"}))
+	got := string(bootShell([]byte(bootTestShell), ShellBoot{
+		AppName: `A & <b>"B"</b>`, Language: "nl", Logo: "/logo.svg?a=1&b=2", SignOut: "/auth/logout",
+		Account: "https://account.example.com/", Contact: "Email <support@example.com>",
+	}))
 	for _, want := range []string{
 		`<html lang="nl">`,
 		`<title>A &amp; &lt;b&gt;&#34;B&#34;&lt;/b&gt;</title>`,
 		`<meta name="rela-app-name" content="A &amp; &lt;b&gt;&#34;B&#34;&lt;/b&gt;" />`,
 		`<meta name="rela-language" content="nl" />`,
+		`<meta name="rela-app-logo" content="/logo.svg?a=1&amp;b=2" />`,
+		`<meta name="rela-sign-out" content="/auth/logout" />`,
+		`<meta name="rela-account-url" content="https://account.example.com/" />`,
+		`<meta name="rela-contact" content="Email &lt;support@example.com&gt;" />`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("shell lacks %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "<b>") {
+	if strings.Contains(got, "<b>") || strings.Contains(got, "<support") {
 		t.Errorf("app name not escaped:\n%s", got)
 	}
 	if plain := string(bootShell([]byte(bootTestShell), ShellBoot{})); plain != bootTestShell {
