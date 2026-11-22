@@ -356,3 +356,43 @@ func TestFlowControl_RunList(t *testing.T) {
 		})
 	}
 }
+
+// TestFlowControl_CompleteStepFieldGate pins that a step form does not widen
+// a role's field grants: a field of the form the caller may not write is
+// refused on Complete and the run does not move.
+func TestFlowControl_CompleteStepFieldGate(t *testing.T) {
+	root := writeFlowProject(t)
+	schema, err := os.ReadFile(filepath.Join("..", "flowcfg", "testdata", "schema.yaml"))
+	require.NoError(t, err)
+	writeMetamodelBody(t, root, string(schema))
+	policy, err := os.ReadFile(filepath.Join(root, "acl.yaml"))
+	require.NoError(t, err)
+	hr := "  hr:\n    read: [person, task]\n    update: [person]\n"
+	require.Contains(t, string(policy), hr)
+	p := strings.Replace(string(policy), hr,
+		hr+"    fields:\n      person:\n        - field: name\n          when: \"true\"\n", 1)
+	p = strings.Replace(p, "assignments:\n", "assignments:\n  alice: hr\n", 1)
+	writePolicy(t, root, p)
+	svc, err := appbuildOnDisk(t, root)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+	ctl := appbuild.FlowControlFor(svc)
+	require.NotNil(t, ctl)
+
+	addFlowPerson(t, svc, "PER-1", map[string]any{"name": "Ada", "status": "hired"})
+	alice := flowUser(t, svc, "alice")
+	id, err := ctl.Start(alice, "onboarding", "PER-1")
+	require.NoError(t, err)
+	run, err := ctl.Run(alice, id)
+	require.NoError(t, err)
+	require.Equal(t, []string{"documents"}, run.Waiting.Fields)
+
+	_, err = ctl.Complete(alice, id, run.Generation, map[string]any{"documents": true})
+	require.ErrorIs(t, err, flowview.ErrForbidden)
+	subj, err := svc.Store().GetEntity(context.Background(), entity.Ref{ID: "PER-1"})
+	require.NoError(t, err)
+	require.Nil(t, subj.Properties["documents"], "a refused field writes nothing")
+	after, err := ctl.Run(alice, id)
+	require.NoError(t, err)
+	require.Equal(t, "collect", after.State)
+}

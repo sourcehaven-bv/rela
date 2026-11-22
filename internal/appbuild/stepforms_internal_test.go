@@ -2,6 +2,7 @@ package appbuild
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -159,4 +160,24 @@ func TestCheckFlowsData_StepForms(t *testing.T) {
 
 	require.NoError(t, CheckFlowsData(flows, []byte("forms: [\n"), meta, policy),
 		"data-entry.yaml's own check reports a parse error")
+}
+
+// failingLoader fails every read with an error that names a server path.
+type failingLoader struct{}
+
+func (failingLoader) Load(context.Context, string) ([]byte, error) {
+	return nil, errors.New("open /srv/secret/project/data-entry.yaml: permission denied")
+}
+
+func (failingLoader) List(context.Context, string) ([]string, error) { return nil, nil }
+
+// TestStepFormSource_ReadErrorNamesNoPath pins that a run reader sees a
+// fixed message when data-entry.yaml cannot be read, not the raw cause.
+func TestStepFormSource_ReadErrorNamesNoPath(t *testing.T) {
+	_, meta := stepFormSample(t)
+	_, err := stepFormSource{cfg: failingLoader{}, meta: meta}.load(context.Background()).
+		fields("collect_documents", "person")
+	require.ErrorIs(t, err, errStepForm)
+	require.NotContains(t, err.Error(), "/srv/secret")
+	require.Contains(t, err.Error(), "cannot be read")
 }

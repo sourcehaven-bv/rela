@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"slices"
 
 	"gopkg.in/yaml.v3"
@@ -58,8 +59,25 @@ func (s stepFormSource) load(ctx context.Context) stepFormSet {
 		return stepFormSet{meta: s.meta}
 	}
 	forms, err := loadForms(ctx, s.cfg)
+	var rerr *formReadError
+	if errors.As(err, &rerr) {
+		// Every reader of the run sees this error, so it names the file
+		// only; the cause, which may hold a server path, goes to the log.
+		slog.Warn("flows: read step forms", "file", dataentryconfig.ConfigFile, "err", rerr.cause)
+		err = fmt.Errorf("flows: %s cannot be read", dataentryconfig.ConfigFile)
+	}
 	return stepFormSet{forms: forms, meta: s.meta, err: err}
 }
+
+// formReadError is a failure to read data-entry.yaml, as opposed to a
+// failure to parse it.
+type formReadError struct{ cause error }
+
+func (e *formReadError) Error() string {
+	return fmt.Sprintf("flows: read %s: %v", dataentryconfig.ConfigFile, e.cause)
+}
+
+func (e *formReadError) Unwrap() error { return e.cause }
 
 // stepFormSet is data-entry.yaml's forms as one operation read them.
 type stepFormSet struct {
@@ -111,7 +129,7 @@ func loadForms(ctx context.Context, cfg config.Loader) (map[string]dataentryconf
 		return map[string]dataentryconfig.Form{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("flows: read %s: %w", dataentryconfig.ConfigFile, err)
+		return nil, &formReadError{cause: err}
 	}
 	return parseForms(data)
 }
