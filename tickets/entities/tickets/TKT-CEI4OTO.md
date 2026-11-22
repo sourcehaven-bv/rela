@@ -5,7 +5,8 @@ title: Remaining data-entry UI gaps in New button and column Add and create form
 kind: chore
 priority: medium
 effort: s
-status: ready
+started: "2026-11-21"
+status: backlog
 ---
 
 ## Description
