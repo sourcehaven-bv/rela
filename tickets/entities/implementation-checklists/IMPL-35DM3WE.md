@@ -13,7 +13,7 @@ status: done
 - [x] Unit tests written for new code (workspaceReadOnly, EntityDetail.header, WorkspaceAccessScreen, ReadOnlyBanner.placement, me tests; staticshell, account, mailrender compat tests)
 - [x] Integration tests written (TestProvision_MePost drives GET and POST _me through the router with a verified JWT)
 - [x] Happy path implemented
-- [x] Edge cases from planning handled (invalid links and an over-long contact are dropped from the shell; a refused POST keeps the GET answer; a second POST creates no second person)
+- [x] Edge cases from planning handled (invalid links, an over-long contact or page text and a contact address that is not bare are dropped from the shell; the SPA links only a bare address; a refused POST keeps the GET answer; a second POST creates no second person)
 - [x] Error handling in place (a failed provision keeps the unmatched principal, as on the write path)
 
 ## Test Quality

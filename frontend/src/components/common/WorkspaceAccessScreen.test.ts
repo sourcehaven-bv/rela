@@ -100,6 +100,33 @@ describe('WorkspaceAccessScreen', () => {
     expect(wrapper.text()).not.toContain('manages your organisation')
   })
 
+  it('links the configured contact address', () => {
+    const { wrapper } = render('archived', { contactEmail: 'support@sourcehaven.test' })
+    const link = wrapper.get('.access-contact a')
+    expect(link.attributes('href')).toBe('mailto:support@sourcehaven.test')
+    expect(link.text()).toBe('support@sourcehaven.test')
+  })
+
+  it.each(['a@example.com?cc=b@example.com', 'Support <s@example.com>', 'a@localhost'])(
+    'shows no link for a contact address that is not bare: %s',
+    (contactEmail) => {
+      const { wrapper } = render('suspended', { contactEmail })
+      expect(wrapper.find('.access-contact a').exists()).toBe(false)
+    }
+  )
+
+  it.each([
+    ['suspended', 'suspendedText', 'Paused for billing.', 'Nobody can open it'],
+    ['archived', 'archivedText', 'Closed at your request.', 'It can no longer be opened'],
+  ] as const)(
+    'shows the configured %s text instead of the default',
+    (refusal, prop, body, gone) => {
+      const { wrapper } = render(refusal, { [prop]: body })
+      expect(wrapper.get('.access-body').text()).toBe(body)
+      expect(wrapper.text()).not.toContain(gone)
+    }
+  )
+
   it('shows the logo, or else the app name', () => {
     const named = render('archived', { appName: 'Workspace' }).wrapper
     expect(named.find('img').exists()).toBe(false)

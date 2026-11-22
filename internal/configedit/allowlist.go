@@ -441,6 +441,9 @@ var locked = map[File][]string{
 		"git.**", "palette.**",
 		"documents.**", "feeds.**", "caldav.**", "commands.**", "actions.**", "webhooks.**",
 		"pages.**", "next_action_bands.**", "next_actions.**", "account.**", "lists.*.create_world",
+		// The logo the server writes into the shell for the workspace pages,
+		// like the account links: operator config, not in the Configure space.
+		"app.logo",
 		// Built-in sidebar rows (TKT-JEAR2UA): not in the Configure space yet.
 		"builtins.**", "spaces.[].builtins.**",
 		// Where suggestions appear (TKT-6EEXXE), locked like next_actions.

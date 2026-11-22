@@ -10,7 +10,7 @@ why2: BUG-9DR9867 and BUG-RO4WSP1 treated read-only as "no create" and the works
 why3: Each state was checked for its wording, not walked through as a user who wants to leave the page or keep working.
 why4: No test pinned the record menu in a read-only workspace, the exits of the workspace pages, or where the banner sits; the mail compat test checked that the dark block exists, not what it paints.
 why5: Customer-facing states are added one screen at a time, with no checklist of what a user can still do and how they leave.
-prevention: Vitest tests pin that every write verb is hidden in a read-only workspace, the record menu without edit, duplicate, delete and convert, the account and sign-out links and contact text of the workspace pages, the banner slot of the shell, and the provisioning POST. Go tests pin the shell values, the config keys, POST _me provisioning and the dark body rule.
+prevention: Vitest tests pin that every write verb is hidden in a read-only workspace, the record menu without edit, duplicate, delete and convert, the account and sign-out links, contact text, contact address and page texts of the workspace pages, the banner slot of the shell, and the provisioning POST. Go tests pin the shell values, the config keys, POST _me provisioning and the dark body rule.
 started: "2026-11-22"
 completed: "2026-11-22"
 status: done
@@ -23,8 +23,8 @@ Findings 4, 5, 7, 8 and 13 of a browser test of a SaaS setup built on rela.
 - In a read-only workspace, a record's "..." menu still offered Edit,
   Duplicate and Delete.
 - A suspended or archived workspace page had no sign out, no link to the
-  account portal and no logo, and its contact text could not match the
-  portal.
+  account portal and no logo. Its explanation, contact text and contact
+  address could not be configured to match the portal.
 - The read-only banner sat in the list column: the sticky table header cut it
   off, and an open side panel squeezed it.
 - The people list said "No people yet" while the owner was signed in, until
@@ -41,7 +41,8 @@ Findings 4, 5, 7, 8 and 13 of a browser test of a SaaS setup built on rela.
 
 - [x] A read-only workspace hides Edit, Duplicate, Delete, Rename, copy and convert on a record, inline editing and row Delete.
 - [x] The suspended, archived and unknown workspace pages show the logo (`app.logo`) or the app name, a link to `account.account` and Sign out (`account.sign_out`) when configured.
-- [x] `account.contact` replaces the default contact text on those pages.
+- [x] `account.contact` replaces the default contact text on those pages, and `account.contact_email` adds a mail link to a contact address.
+- [x] `account.suspended_text` and `account.archived_text` replace the explanation on the suspended and the archived page.
 - [x] The read-only banner spans the full width below the page header, above the content and the side panel.
 - [x] Opening the app provisions a provisionable member, so the people list shows them; a GET never provisions, and a read-only workspace refuses the POST.
 - [x] A dark-mode mail paints the body with the dark background.

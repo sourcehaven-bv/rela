@@ -62,8 +62,8 @@ func StaticShell(boot ShellBoot) http.Handler {
 // multi-tenant server shows its "setting up" screen from this shell, so
 // without the name and language that screen reads "rela" and follows the
 // browser's language (BUG-21N3J4N). The pages for a suspended or archived
-// workspace come from the same shell, so the logo, the account links and the
-// contact text they show come from here too. The zero value leaves the shell
+// workspace come from the same shell, so the logo, the account links, the
+// contact text and address, and the page texts they show come from here too. The zero value leaves the shell
 // as built.
 //
 // Every value is operator configuration, which is not a secret (see the
@@ -76,8 +76,13 @@ type ShellBoot struct {
 	// SignOut and Account are `account.sign_out` and `account.account`.
 	SignOut string
 	Account string
-	// Contact is `account.contact`.
-	Contact string
+	// Contact is `account.contact`; ContactEmail is `account.contact_email`.
+	Contact      string
+	ContactEmail string
+	// SuspendedText and ArchivedText are `account.suspended_text` and
+	// `account.archived_text`.
+	SuspendedText string
+	ArchivedText  string
 }
 
 // ShellBootFrom reads a [ShellBoot] from the bytes of data-entry.yaml. Only
@@ -109,8 +114,22 @@ func shellBootOf(app dataentryconfig.AppConfig, acc *dataentryconfig.AccountConf
 		if c := strings.TrimSpace(acc.Contact); len([]rune(c)) <= dataentryconfig.MaxAccountContactRunes {
 			b.Contact = c
 		}
+		if e := strings.TrimSpace(acc.ContactEmail); dataentryconfig.ValidContactEmail(e) {
+			b.ContactEmail = e
+		}
+		b.SuspendedText = shellText(acc.SuspendedText)
+		b.ArchivedText = shellText(acc.ArchivedText)
 	}
 	return b
+}
+
+// shellText is s trimmed, or empty when it is longer than a page text may be.
+func shellText(s string) string {
+	s = strings.TrimSpace(s)
+	if len([]rune(s)) > dataentryconfig.MaxAccountPageTextRunes {
+		return ""
+	}
+	return s
 }
 
 // shellLink is s when it is a valid account link, else empty.
@@ -148,6 +167,9 @@ const (
 	metaSignOut  = "rela-sign-out"
 	metaAccount  = "rela-account-url"
 	metaContact  = "rela-contact"
+	metaEmail    = "rela-contact-email"
+	metaSusp     = "rela-suspended-text"
+	metaArch     = "rela-archived-text"
 )
 
 // bootShell writes boot into an index.html: the title, the html lang
@@ -174,6 +196,9 @@ func bootShell(shell []byte, boot ShellBoot) []byte {
 		{metaSignOut, boot.SignOut},
 		{metaAccount, boot.Account},
 		{metaContact, boot.Contact},
+		{metaEmail, boot.ContactEmail},
+		{metaSusp, boot.SuspendedText},
+		{metaArch, boot.ArchivedText},
 	} {
 		if m.value != "" {
 			s = insertBefore(s, "</head>", metaTag(m.name, html.EscapeString(m.value)))

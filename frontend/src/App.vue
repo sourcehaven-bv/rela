@@ -271,6 +271,9 @@ watch(
     :sign-out-url="bootMeta('rela-sign-out')"
     :account-url="bootMeta('rela-account-url')"
     :contact="bootMeta('rela-contact')"
+    :contact-email="bootMeta('rela-contact-email')"
+    :suspended-text="bootMeta('rela-suspended-text')"
+    :archived-text="bootMeta('rela-archived-text')"
   />
 
   <!-- A multi-tenant server is still creating this organization's tenant. -->

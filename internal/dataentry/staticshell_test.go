@@ -50,10 +50,12 @@ func TestShellBootFrom(t *testing.T) {
 		{
 			"workspace pages",
 			"app:\n  logo: https://cdn.example.com/logo.svg\naccount:\n  sign_out: /auth/logout\n" +
-				"  account: https://account.example.com/\n  contact: ' Email support@example.com '\n",
+				"  account: https://account.example.com/\n  contact: ' Email support@example.com '\n" +
+				"  contact_email: support@sourcehaven.test\n  suspended_text: ' Paused. '\n  archived_text: Closed.\n",
 			ShellBoot{
 				Logo: "https://cdn.example.com/logo.svg", SignOut: "/auth/logout",
 				Account: "https://account.example.com/", Contact: "Email support@example.com",
+				ContactEmail: "support@sourcehaven.test", SuspendedText: "Paused.", ArchivedText: "Closed.",
 			},
 		},
 		{
@@ -62,6 +64,8 @@ func TestShellBootFrom(t *testing.T) {
 			ShellBoot{},
 		},
 		{"contact too long", "account:\n  contact: " + strings.Repeat("x", 201) + "\n", ShellBoot{}},
+		{"bad contact email", "account:\n  contact_email: 'a@example.com?cc=b@example.com'\n", ShellBoot{}},
+		{"page text too long", "account:\n  archived_text: " + strings.Repeat("x", 501) + "\n", ShellBoot{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -93,6 +97,7 @@ func TestBootShell(t *testing.T) {
 	got := string(bootShell([]byte(bootTestShell), ShellBoot{
 		AppName: `A & <b>"B"</b>`, Language: "nl", Logo: "/logo.svg?a=1&b=2", SignOut: "/auth/logout",
 		Account: "https://account.example.com/", Contact: "Email <support@example.com>",
+		ContactEmail: "support@sourcehaven.test", SuspendedText: "Paused <now>.", ArchivedText: "Closed.",
 	}))
 	for _, want := range []string{
 		`<html lang="nl">`,
@@ -103,6 +108,9 @@ func TestBootShell(t *testing.T) {
 		`<meta name="rela-sign-out" content="/auth/logout" />`,
 		`<meta name="rela-account-url" content="https://account.example.com/" />`,
 		`<meta name="rela-contact" content="Email &lt;support@example.com&gt;" />`,
+		`<meta name="rela-contact-email" content="support@sourcehaven.test" />`,
+		`<meta name="rela-suspended-text" content="Paused &lt;now&gt;." />`,
+		`<meta name="rela-archived-text" content="Closed." />`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("shell lacks %q:\n%s", want, got)

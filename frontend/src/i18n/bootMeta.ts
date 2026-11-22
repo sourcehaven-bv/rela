@@ -6,7 +6,7 @@
  * app and its default language in `<meta>` tags instead (BUG-21N3J4N; see
  * `bootShell` in internal/dataentry/staticshell.go). The pages for a
  * suspended or archived workspace come from the same shell, so their logo,
- * account links and contact text are there too. A shell without them reads
+ * account links, contact text and address, and page texts are there too. A shell without them reads
  * null.
  */
 export type BootMetaName =
@@ -16,6 +16,9 @@ export type BootMetaName =
   | 'rela-sign-out'
   | 'rela-account-url'
   | 'rela-contact'
+  | 'rela-contact-email'
+  | 'rela-suspended-text'
+  | 'rela-archived-text'
 
 /** The content of the boot meta `name`, or null when absent or empty. */
 export function bootMeta(name: BootMetaName): string | null {

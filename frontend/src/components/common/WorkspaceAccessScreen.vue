@@ -23,7 +23,9 @@ import { REFUSAL, type AccessRefusal } from '@/api/workspaceAccess'
  *
  * The pages that replace the app show the app's logo or name, and offer the
  * account pages and sign out when the operator configured them, so the user
- * is not stuck on a page with no way out. The values come from the shell
+ * is not stuck on a page with no way out. The operator can also replace the
+ * suspended and archived explanations and the contact text, and add a
+ * contact address. The values come from the shell
  * (`bootMeta`), because the workspace refuses its config.
  */
 const props = defineProps<{
@@ -39,6 +41,12 @@ const props = defineProps<{
   accountUrl?: string | null
   /** `account.contact`: replaces the default "who to ask" text. */
   contact?: string | null
+  /** `account.contact_email`: shown after the contact text as a mail link. */
+  contactEmail?: string | null
+  /** `account.suspended_text`: replaces the suspended page's explanation. */
+  suspendedText?: string | null
+  /** `account.archived_text`: replaces the archived page's explanation. */
+  archivedText?: string | null
   /** Replaces `window.location`, for tests. */
   location?: Pick<Location, 'assign' | 'reload'>
 }>()
@@ -55,9 +63,15 @@ const text = computed(() => {
     case REFUSAL.noIdentity:
       return { title: t('shell.access.noIdentityTitle'), body: props.detail ?? '' }
     case REFUSAL.suspended:
-      return { title: t('shell.access.suspendedTitle'), body: t('shell.access.suspendedBody') }
+      return {
+        title: t('shell.access.suspendedTitle'),
+        body: props.suspendedText || t('shell.access.suspendedBody'),
+      }
     case REFUSAL.archived:
-      return { title: t('shell.access.archivedTitle'), body: t('shell.access.archivedBody') }
+      return {
+        title: t('shell.access.archivedTitle'),
+        body: props.archivedText || t('shell.access.archivedBody'),
+      }
     default:
       return { title: t('shell.access.unknownTitle'), body: t('shell.access.unknownBody') }
   }
@@ -70,6 +84,14 @@ const CONTACT_REFUSALS: readonly AccessRefusal[] = [
 ]
 const showContact = computed(() => CONTACT_REFUSALS.includes(props.refusal))
 const contactText = computed(() => props.contact || t('shell.access.contact'))
+
+// The server only writes a bare address (dataentryconfig.ValidContactEmail);
+// the same shape is checked here so a hand-edited shell cannot add mailto
+// headers or a second recipient.
+const BARE_EMAIL = /^[^\s@?&,;<>"\\]+@[^\s@?&,;<>"\\]+\.[^\s@?&,;<>"\\]+$/
+const contactEmail = computed(() =>
+  props.contactEmail && BARE_EMAIL.test(props.contactEmail) ? props.contactEmail : null
+)
 const offersExit = computed(() => props.refusal !== REFUSAL.noIdentity)
 const offersReload = computed(
   () => props.refusal === REFUSAL.unknownWorkspace || props.refusal === REFUSAL.noIdentity
@@ -122,7 +144,12 @@ onMounted(() => {
     <RlStatusRegion tone="error">
       <h1 class="access-title">{{ text.title }}</h1>
       <p class="access-body">{{ text.body }}</p>
-      <p v-if="showContact" class="access-contact">{{ contactText }}</p>
+      <p v-if="showContact" class="access-contact">
+        {{ contactText }}
+        <a v-if="contactEmail" :href="`mailto:${contactEmail}`" class="access-contact-email">{{
+          contactEmail
+        }}</a>
+      </p>
       <template v-if="offersReload || (offersExit && (accountUrl || signOutUrl))" #actions>
         <RlButton v-if="offersReload" variant="secondary" @click="reload">
           {{ t('shell.access.tryAgain') }}

@@ -3,6 +3,7 @@ package dataentryconfig
 import (
 	"errors"
 	"fmt"
+	"net/mail"
 	"net/url"
 	"slices"
 	"sort"
@@ -39,6 +40,15 @@ type AccountConfig struct {
 	// Empty shows the app's own text. It is shown on the pages that replace
 	// the app, so it should match what the account pages say.
 	Contact string `yaml:"contact,omitempty" json:"contact,omitempty"`
+	// ContactEmail is an email address shown after the contact text as a
+	// mail link, e.g. "support@example.com". It must be a bare address,
+	// without a display name.
+	ContactEmail string `yaml:"contact_email,omitempty" json:"contact_email,omitempty"`
+	// SuspendedText and ArchivedText replace the app's own explanation on
+	// the page for a suspended or an archived workspace. Plain text; empty
+	// shows the app's own text.
+	SuspendedText string `yaml:"suspended_text,omitempty" json:"suspended_text,omitempty"`
+	ArchivedText  string `yaml:"archived_text,omitempty" json:"archived_text,omitempty"`
 
 	// Admin is the proxy's administration page. Nil: accepted, means no admin
 	// link.
@@ -72,11 +82,16 @@ type AccountAdminLink struct {
 // MaxAccountContactRunes caps account.contact: it is one line on a page.
 const MaxAccountContactRunes = 200
 
+// MaxAccountPageTextRunes caps account.suspended_text and
+// account.archived_text: they are a short paragraph on a page.
+const MaxAccountPageTextRunes = 500
+
 // accountKeys and accountAdminKeys are the keys the account block accepts.
 // Nested unknown keys are otherwise ignored by the decoder, so a typo such as
 // `signout:` would silently drop a sign-out link; the block checks its own.
 var (
-	accountKeys      = []string{"account", "admin", "avatar_property", "contact", "sign_out", "switch_org"}
+	accountKeys = []string{"account", "admin", "archived_text", "avatar_property", "contact", "contact_email",
+		"sign_out", "suspended_text", "switch_org"}
 	accountAdminKeys = []string{"role", "url"}
 )
 
@@ -110,6 +125,17 @@ func validateAccount(data []byte, cfg *Config, meta *metamodel.Metamodel) []stri
 	}
 	if len([]rune(acc.Contact)) > MaxAccountContactRunes {
 		errs = append(errs, fmt.Sprintf("account.contact: longer than %d characters", MaxAccountContactRunes))
+	}
+	if acc.ContactEmail != "" && !ValidContactEmail(acc.ContactEmail) {
+		errs = append(errs, fmt.Sprintf("account.contact_email: %q is not a bare email address", acc.ContactEmail))
+	}
+	for _, f := range []struct{ key, value string }{
+		{"account.suspended_text", acc.SuspendedText},
+		{"account.archived_text", acc.ArchivedText},
+	} {
+		if len([]rune(f.value)) > MaxAccountPageTextRunes {
+			errs = append(errs, fmt.Sprintf("%s: longer than %d characters", f.key, MaxAccountPageTextRunes))
+		}
 	}
 	if acc.AvatarProperty != "" {
 		errs = append(errs, validateAvatarProperty(acc.AvatarProperty, meta)...)
@@ -173,6 +199,27 @@ func validAccountLink(s string) error {
 		return errors.New("must be a path starting with / or an https:// URL")
 	}
 	return nil
+}
+
+// ValidContactEmail reports whether s is a bare email address such as
+// `support@example.com`: no display name, no angle brackets, no whitespace,
+// and one `@` with a dotted domain. The SPA builds a `mailto:` link from it,
+// so anything that could add headers or a second recipient is refused.
+func ValidContactEmail(s string) bool {
+	if len(s) > 254 || strings.ContainsAny(s, "?&,;<>\"\\") {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return false
+		}
+	}
+	addr, err := mail.ParseAddress(s)
+	if err != nil || addr.Name != "" || addr.Address != s {
+		return false
+	}
+	_, domain, _ := strings.Cut(s, "@")
+	return strings.Contains(domain, ".") && !strings.HasPrefix(domain, ".") && !strings.HasSuffix(domain, ".")
 }
 
 // validateAvatarProperty checks that name is a `file` or `string` property on
