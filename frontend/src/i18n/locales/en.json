@@ -235,7 +235,8 @@
     "historyUnsupported": "This installation does not keep version history",
     "tenantReadOnly": "This workspace is read-only",
     "originNotAllowed": "This page was opened at an address this server does not accept. Open it at its usual address.",
-    "originMissing": "The browser did not say which page sent this request, so the server refused it. Reload the page and try again."
+    "originMissing": "The browser did not say which page sent this request, so the server refused it. Reload the page and try again.",
+    "unexpectedResponse": "The server sent a page instead of data. Your session may have ended. Reload the page."
   },
   "dashboard": {
     "openList": "Open the list",

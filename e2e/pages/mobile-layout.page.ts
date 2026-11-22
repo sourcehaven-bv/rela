@@ -264,6 +264,51 @@ export class MobileLayoutPage extends BasePage {
     });
   }
 
+  /** Open an entity page and wait for the properties section with this heading. */
+  async openEntitySection(type: string, id: string, heading: string) {
+    await this.navigateTo(`/entity/${type}/${id}`);
+    await expect(this.section(heading)).toBeVisible();
+  }
+
+  /** The view section with this heading. */
+  section(heading: string): Locator {
+    return this.page.locator(".view-section", {
+      has: this.page.getByRole("heading", { name: heading, exact: true }),
+    });
+  }
+
+  /** Whether the main pane is wider than the screen (scrolls sideways). */
+  async paneScrollsSideways(): Promise<boolean> {
+    return this.mainPane.evaluate((pane) => pane.scrollWidth > pane.clientWidth + 1);
+  }
+
+  /** The value in the section that shows exactly this text. */
+  sectionValue(heading: string, text: string): Locator {
+    return this.section(heading).locator(".display-value", { hasText: text });
+  }
+
+  /**
+   * Whether any value in the section reaches past the section's right edge.
+   * Throws when the section shows no value, so a selector that matches
+   * nothing cannot pass as "no overflow".
+   */
+  async sectionValueOverflows(heading: string): Promise<boolean> {
+    return this.section(heading).evaluate((section) => {
+      const values = [...section.querySelectorAll(".display-value")];
+      if (values.length === 0) throw new Error("section shows no .display-value");
+      const right = section.getBoundingClientRect().right;
+      return values.some((el) => el.getBoundingClientRect().right > right + 1);
+    });
+  }
+
+  /** The number of lines the element's text takes. */
+  async lineCount(locator: Locator): Promise<number> {
+    return locator.evaluate((el) => {
+      const lineHeight = parseFloat(getComputedStyle(el).lineHeight);
+      return Math.round(el.getBoundingClientRect().height / lineHeight);
+    });
+  }
+
   /** The column-name labels a stacked section row shows beside its values. */
   sectionCellLabels(heading: string): Locator {
     return this.sectionTable(heading).locator("tbody td .section-cell__label");

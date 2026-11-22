@@ -929,7 +929,10 @@ edge that redirects such a request to sign-in instead gives the browser a
 cross-origin redirect it will not follow; the web app then asks the status
 route with `redirect: "manual"`, and a redirect answer also shows the
 "session ended" dialog. It asks at most once per 30 seconds, after a request
-that got no response or a dropped live-update stream. The text follows the interface language.
+that got no response, a dropped live-update stream, or an HTML page in place
+of data, such as a sign-in page on the same site that the browser followed.
+The request that got the page fails with a "reload the page" error and never
+hands the page on as data. The text follows the interface language.
 
 Concurrent requests and webhooks for one org share one create. The create
 runs on its own context with a 5 minute timeout, so a client that hangs up
