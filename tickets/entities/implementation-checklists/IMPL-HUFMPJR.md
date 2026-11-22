@@ -31,7 +31,7 @@ status: done
 - [x] Edge cases manually verified
 
 **Verification Evidence:**
-Full vitest (472 files), vue-tsc, eslint, and go test for internal/tenant, internal/tenanthost and internal/dataentry pass. The states were reproduced in saas-dev before the fix; the fixed screens are covered by component tests, not re-checked in saas-dev. CI's god-object lint and Archplan flagged one method too many on App and two repeated string sets; the boot helper became a function, the refusal values are named once in REFUSAL, and App.vue uses isPageHidden.
+Full vitest (472 files), vue-tsc, eslint, and go test for internal/tenant, internal/tenanthost and internal/dataentry pass. The states were reproduced in saas-dev before the fix; the fixed screens are covered by component tests, not re-checked in saas-dev. CI's god-object lint and Archplan flagged one method too many on App and two repeated string sets; the boot helper became a function, the refusal values are named once in REFUSAL, and App.vue uses isPageHidden. E2E's rapid-navigation test never reached network idle because the read-only load left a 404 body unread, which keeps the request open in Chrome; both status fetches now always read the body, and the test passes locally.
 
 ## Quality
 

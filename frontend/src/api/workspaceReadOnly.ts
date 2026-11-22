@@ -59,8 +59,13 @@ export async function loadWorkspaceReadOnly(
       credentials: 'same-origin',
       cache: 'no-store',
     })
-    if (!res.ok) return
-    const body = (await res.json()) as { status?: unknown; read_only?: unknown }
+    // Read the body even when it is not used: an unread body keeps the
+    // request open in the browser.
+    const body = (await res.json().catch(() => null)) as {
+      status?: unknown
+      read_only?: unknown
+    } | null
+    if (!res.ok || !body) return
     if (body.status === 'active') workspaceReadOnly.value = body.read_only === true
   } catch {
     // No status to read: keep what the responses said.

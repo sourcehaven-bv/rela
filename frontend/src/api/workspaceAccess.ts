@@ -132,9 +132,12 @@ export function probeSessionEnded(
     })
     if (res.type === 'opaqueredirect') {
       trackAccess(401, null)
-    } else if (res.status === 401) {
-      trackAccess(401, await res.json().catch(() => null))
+      return
     }
+    // Read the body whatever the status: an unread body keeps the request
+    // open in the browser.
+    const body: unknown = await res.json().catch(() => null)
+    if (res.status === 401) trackAccess(401, body)
   })()
   probing = run
     .catch(() => {
