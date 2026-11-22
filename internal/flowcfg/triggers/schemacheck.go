@@ -172,7 +172,7 @@ func externalRefErrors(meta *metamodel.Metamodel, r Rule) []string {
 		if a.CreateEntity == nil {
 			continue
 		}
-		for _, name := range sortedKeys(a.CreateEntity.Properties) {
+		for _, name := range slices.Sorted(maps.Keys(a.CreateEntity.Properties)) {
 			if _, ok := metamodel.ExternalRefSystem(meta, a.CreateEntity.Type, name); ok {
 				errs = append(errs, fmt.Sprintf("%s: `create` property %q is an external ref on %q; "+
 					"only a script may write a ref", ruleWhere(r), name, a.CreateEntity.Type))
@@ -181,5 +181,3 @@ func externalRefErrors(meta *metamodel.Metamodel, r Rule) []string {
 	}
 	return errs
 }
-
-func sortedKeys[V any](m map[string]V) []string { return slices.Sorted(maps.Keys(m)) }

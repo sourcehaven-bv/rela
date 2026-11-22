@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"log/slog"
+	"maps"
 	"slices"
 	"strconv"
 
@@ -97,7 +98,7 @@ func rulesFor(snap Snapshot, meta *metamodel.Metamodel) []rule {
 			if op == nil || op.Auto == nil {
 				continue
 			}
-			for _, typ := range sortedKeys(op.Auto.When) {
+			for _, typ := range slices.Sorted(maps.Keys(op.Auto.When)) {
 				when := op.Auto.When[typ]
 				def, ok := meta.GetEntityDef(typ)
 				if !ok || when.Program == nil {

@@ -2,6 +2,7 @@ package classification
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -453,9 +454,9 @@ func (p *parser) resolveReferences() {
 		name string
 		m    map[string]TypeAssignments
 	}{{"assign", f.Assign}, {"assign_relations", f.AssignRelations}} {
-		for _, typeName := range sortedKeys(section.m) {
+		for _, typeName := range slices.Sorted(maps.Keys(section.m)) {
 			ta := section.m[typeName]
-			for _, field := range sortedKeys(ta.Fields) {
+			for _, field := range slices.Sorted(maps.Keys(ta.Fields)) {
 				for _, ref := range ta.Fields[field].Labels {
 					l, ok := f.Labels[ref]
 					switch {
@@ -470,13 +471,4 @@ func (p *parser) resolveReferences() {
 			}
 		}
 	}
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	return keys
 }

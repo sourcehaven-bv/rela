@@ -2,7 +2,6 @@ package fsimport
 
 import (
 	"fmt"
-	"maps"
 	"slices"
 )
 
@@ -84,8 +83,4 @@ func (r *Report) summary() string {
 		"%d state keys, %d flow runs, %d record rows, %d files; %d values normalized, %d files not copied",
 		r.Source, r.Entities, r.Relations, r.Attachments, r.Comments,
 		r.StateKeys, r.FlowRuns, r.Records, r.Files, r.Normalized, len(r.Skipped))
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	return slices.Sorted(maps.Keys(m))
 }

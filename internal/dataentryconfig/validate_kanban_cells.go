@@ -2,6 +2,7 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -32,13 +33,13 @@ func validateKanbanCellColors(
 	columns := shownKanbanValues(entDef, meta, kanban.ColumnProperty, kanbanColumnValues(kanban.Columns))
 	lanes := shownKanbanValues(entDef, meta, kanban.SwimlaneProperty, kanbanLaneValues(kanban.Swimlanes))
 	var errs []string
-	for _, column := range sortedMapKeys(kanban.CellColors) {
+	for _, column := range slices.Sorted(maps.Keys(kanban.CellColors)) {
 		if columns != nil && !slices.Contains(columns, column) {
 			errs = append(errs, fmt.Sprintf("%s: %q is not a column of the board (columns: %s)",
 				at, column, strings.Join(columns, ", ")))
 		}
 		cells := kanban.CellColors[column]
-		for _, lane := range sortedMapKeys(cells) {
+		for _, lane := range slices.Sorted(maps.Keys(cells)) {
 			cellAt := fmt.Sprintf("%s.%s.%s", at, column, lane)
 			if lanes != nil && !slices.Contains(lanes, lane) {
 				errs = append(errs, fmt.Sprintf("%s: %q is not a swimlane of the board (swimlanes: %s)",

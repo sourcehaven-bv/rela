@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"regexp"
 	"slices"
@@ -202,7 +203,7 @@ func flowLocks(flows []byte, meta *metamodel.Metamodel, policy *acl.Policy) (map
 	for _, f := range compiled.Flows() {
 		for _, typ := range metamodel.ExpandTypeNames(meta, []string{f.Subject()}) {
 			if def, ok := meta.GetEntityDef(typ); ok {
-				for _, prop := range flowLockedProperties(f, sortedKeys(def.Properties)) {
+				for _, prop := range flowLockedProperties(f, slices.Sorted(maps.Keys(def.Properties))) {
 					if out[typ] == nil {
 						out[typ] = map[string]string{}
 					}
@@ -327,7 +328,7 @@ func (j *triggerJudge) actionReads(a triggers.Action) (reads, problems []string)
 			"may read it.", a.CreateRelation.To))
 	}
 	if c := a.CreateEntity; c != nil {
-		for _, k := range sortedKeys(c.Properties) {
+		for _, k := range slices.Sorted(maps.Keys(c.Properties)) {
 			reads = append(reads, placeholderReads(c.Properties[k])...)
 		}
 	}
@@ -423,7 +424,7 @@ func (j *triggerJudge) createViolations(r triggers.Rule, c *triggers.CreateEntit
 	if typ == j.policy.UserEntityType {
 		out = append(out, fmt.Sprintf("creates %s records, which acl.yaml uses as principals.", typ))
 	}
-	for _, k := range sortedKeys(c.Properties) {
+	for _, k := range slices.Sorted(maps.Keys(c.Properties)) {
 		out = append(out, j.propertyViolations(typ, k, "creates %s records with %s, which you may not do yourself.",
 			withEditor && !j.editorMay(acl.VerbCreate, typ, j.typeFaces(typ), k))...)
 	}
@@ -591,7 +592,7 @@ func (j *triggerJudge) typeFaces(typ string) []entity.Face {
 	if !ok || len(def.Faces) == 0 {
 		return []entity.Face{""}
 	}
-	for _, f := range sortedKeys(def.Faces) {
+	for _, f := range slices.Sorted(maps.Keys(def.Faces)) {
 		out = append(out, entity.Face(f))
 	}
 	return out
@@ -863,15 +864,6 @@ func ruleShape(r triggers.Rule) ruleShapeT {
 
 func sortedTypes(meta *metamodel.Metamodel) []string {
 	out := metamodel.ExpandTypeNames(meta, meta.EntityTypes())
-	slices.Sort(out)
-	return out
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
 	slices.Sort(out)
 	return out
 }

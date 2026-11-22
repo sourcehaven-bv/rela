@@ -54,7 +54,7 @@ func AbstractTypes(m *Metamodel) []AbstractType {
 		return nil
 	}
 	out := make([]AbstractType, 0, len(m.abstracts))
-	for _, name := range sortedKeys(m.abstracts) {
+	for _, name := range slices.Sorted(maps.Keys(m.abstracts)) {
 		a := m.abstracts[name]
 		a.Variants = slices.Clone(a.Variants)
 		out = append(out, a)
@@ -212,12 +212,12 @@ func checkDeclaredNames(
 	// A leading dot is left to the directory-name checks, whose message
 	// (hidden directory, parent escape) is the more useful one.
 	dotted := func(s string) bool { return strings.Index(s, NamespaceSeparator) > 0 }
-	for _, name := range sortedKeys(types) {
+	for _, name := range slices.Sorted(maps.Keys(types)) {
 		if dotted(name) {
 			bad("type", name)
 		}
 	}
-	for _, name := range sortedKeys(entities) {
+	for _, name := range slices.Sorted(maps.Keys(entities)) {
 		def := entities[name]
 		if dotted(name) {
 			bad("entity", name)
@@ -231,7 +231,7 @@ func checkDeclaredNames(
 			}
 		}
 	}
-	for _, name := range sortedKeys(relations) {
+	for _, name := range slices.Sorted(maps.Keys(relations)) {
 		def := relations[name]
 		if dotted(name) {
 			bad("relation", name)
@@ -333,7 +333,7 @@ func (q qualifier) checkExpr(where, expr string) {
 		return
 	}
 	for _, local := range []map[string]bool{q.localEntities, q.localRelations} {
-		for _, name := range sortedKeys(local) {
+		for _, name := range slices.Sorted(maps.Keys(local)) {
 			if strings.Contains(expr, "'"+name+"'") || strings.Contains(expr, `"`+name+`"`) {
 				*q.errs = append(*q.errs, fmt.Sprintf(
 					"%s: %s names %q, which this file declares; an expression is not qualified "+
@@ -377,7 +377,7 @@ func (q qualifier) entities(in map[string]EntityDef) map[string]EntityDef {
 		}
 		def.Aliases = mapNames(def.Aliases, q.name)
 		def.Properties = q.props(def.Properties)
-		for _, scope := range sortedKeys(def.QueryScopes) {
+		for _, scope := range slices.Sorted(maps.Keys(def.QueryScopes)) {
 			q.checkExpr(fmt.Sprintf("entity %q query_scopes.%s", name, scope), def.QueryScopes[scope])
 		}
 		out[q.name(name)] = def
@@ -471,7 +471,7 @@ func expandSchema(m *Metamodel) error {
 func expandVariants(m *Metamodel) []string {
 	var errs []string
 	abstracts := map[string]AbstractType{}
-	for _, name := range sortedKeys(m.Entities) {
+	for _, name := range slices.Sorted(maps.Keys(m.Entities)) {
 		def := m.Entities[name]
 		if !def.Abstract.Set {
 			continue
@@ -488,7 +488,7 @@ func expandVariants(m *Metamodel) []string {
 	}
 	// A concrete type's alias or plural equal to an abstract name would make
 	// the name mean the variants in one place and that type in another.
-	for _, name := range sortedKeys(m.Entities) {
+	for _, name := range slices.Sorted(maps.Keys(m.Entities)) {
 		def := m.Entities[name]
 		for _, alias := range append(slices.Clone(def.Aliases), def.Plural) {
 			if _, clash := abstracts[alias]; clash && alias != "" && !def.Abstract.Set {
@@ -497,7 +497,7 @@ func expandVariants(m *Metamodel) []string {
 			}
 		}
 	}
-	for _, name := range sortedKeys(m.Entities) {
+	for _, name := range slices.Sorted(maps.Keys(m.Entities)) {
 		def := m.Entities[name]
 		if def.Abstract.Set || def.Extends == "" {
 			continue
@@ -518,7 +518,7 @@ func expandVariants(m *Metamodel) []string {
 		parent.Variants = append(parent.Variants, name)
 		abstracts[def.Extends] = parent
 	}
-	for _, name := range sortedKeys(abstracts) {
+	for _, name := range slices.Sorted(maps.Keys(abstracts)) {
 		a := abstracts[name]
 		if len(a.Variants) == 0 {
 			errs = append(errs, fmt.Sprintf(
@@ -699,7 +699,7 @@ func expandNames(m *Metamodel, names []string) []string {
 // Where a surface takes a set of types, an abstract name becomes its
 // variants. Where it takes exactly one, an abstract name is an error.
 func expandAbstractReferences(m *Metamodel) []string {
-	for _, name := range sortedKeys(m.Relations) {
+	for _, name := range slices.Sorted(maps.Keys(m.Relations)) {
 		def := m.Relations[name]
 		def.From = expandNames(m, def.From)
 		def.To = expandNames(m, def.To)
@@ -714,7 +714,7 @@ func expandAbstractReferences(m *Metamodel) []string {
 	if m.Comments != nil {
 		m.Comments.On = expandNames(m, m.Comments.On)
 	}
-	for _, wname := range sortedKeys(m.Worlds) {
+	for _, wname := range slices.Sorted(maps.Keys(m.Worlds)) {
 		w := m.Worlds[wname]
 		w.Overrides = expandWorldOverrides(m, w.Overrides)
 		m.Worlds[wname] = w
@@ -734,7 +734,7 @@ func expandWorldOverrides(m *Metamodel, in map[string][]string) map[string][]str
 			out[typ] = chain
 		}
 	}
-	for _, typ := range sortedKeys(in) {
+	for _, typ := range slices.Sorted(maps.Keys(in)) {
 		a, ok := m.abstracts[typ]
 		if !ok {
 			continue
@@ -759,12 +759,12 @@ func singleTypeErrors(m *Metamodel) []string {
 				where, name, strings.Join(a.Variants, ", ")))
 		}
 	}
-	for _, name := range sortedKeys(m.Conversions) {
+	for _, name := range slices.Sorted(maps.Keys(m.Conversions)) {
 		d := m.Conversions[name]
 		single(fmt.Sprintf("conversion %q: from", name), d.From)
 		single(fmt.Sprintf("conversion %q: to", name), d.To)
 	}
-	for _, name := range sortedKeys(m.Copies) {
+	for _, name := range slices.Sorted(maps.Keys(m.Copies)) {
 		d := m.Copies[name]
 		for side, addr := range map[string]string{"from": d.From, "to": d.To} {
 			if t, err := ParseCopyTarget(addr); err == nil {
@@ -772,13 +772,13 @@ func singleTypeErrors(m *Metamodel) []string {
 			}
 		}
 	}
-	for _, name := range sortedKeys(m.TaskItemConversions) {
+	for _, name := range slices.Sorted(maps.Keys(m.TaskItemConversions)) {
 		d := m.TaskItemConversions[name]
 		single(fmt.Sprintf("task_item_conversion %q: from", name), d.From)
 		single(fmt.Sprintf("task_item_conversion %q: to", name), d.To)
 	}
-	for _, typ := range sortedKeys(m.Entities) {
-		for _, prop := range sortedKeys(m.Entities[typ].Properties) {
+	for _, typ := range slices.Sorted(maps.Keys(m.Entities)) {
+		for _, prop := range slices.Sorted(maps.Keys(m.Entities[typ].Properties)) {
 			if r := m.Entities[typ].Properties[prop].Rollup; r != nil && r.Type != "" {
 				single(fmt.Sprintf("entity %q: property %q: rollup.type", typ, prop), r.Type)
 			}
@@ -810,7 +810,7 @@ func generateVariantConversions(m *Metamodel) []string {
 	for _, d := range m.Conversions {
 		declared[[2]string{d.From, d.To}] = true
 	}
-	for _, aname := range sortedKeys(m.abstracts) {
+	for _, aname := range slices.Sorted(maps.Keys(m.abstracts)) {
 		a := m.abstracts[aname]
 		if !a.Def.Abstract.Conversions {
 			continue
@@ -851,7 +851,7 @@ func variantConversion(m *Metamodel, from, to string) (def ConversionDef, proble
 		Content:   "{{source.content}}",
 		Relations: map[string]string{},
 	}
-	for _, name := range sortedKeys(dst.Properties) {
+	for _, name := range slices.Sorted(maps.Keys(dst.Properties)) {
 		tp := dst.Properties[name]
 		if tp.Computed != "" || tp.Rollup != nil || tp.Type == PropertyTypeExternalRef {
 			continue
@@ -862,7 +862,7 @@ func variantConversion(m *Metamodel, from, to string) (def ConversionDef, proble
 		}
 		d.Fields[name] = "{{source." + name + "}}"
 	}
-	for _, rname := range sortedKeys(m.Relations) {
+	for _, rname := range slices.Sorted(maps.Keys(m.Relations)) {
 		rel := m.Relations[rname]
 		fromEnd := containsTypeOrAny(rel.From, from)
 		toEnd := containsTypeOrAny(rel.To, from)

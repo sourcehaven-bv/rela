@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -33,7 +35,7 @@ func reconcileFiles(src *source, imported importedSet, rep *Report) error {
 	if err != nil {
 		rep.fail("read .rela/pending-deletes.json: %v", err)
 	}
-	rep.PendingDeletes = sortedKeys(pending)
+	rep.PendingDeletes = slices.Sorted(maps.Keys(pending))
 
 	w := &fileWalk{src: src, root: root, imported: imported, pending: pending, rep: rep}
 	for _, step := range []func() error{w.entities, w.relations, w.attachments, w.records} {

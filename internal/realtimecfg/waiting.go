@@ -2,6 +2,7 @@ package realtimecfg
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -175,7 +176,7 @@ func isAnswer(st *SessionState, t Transition, role string, ct *ChannelType) bool
 // then in file order. Unlike [SessionState.Transitions] it does not copy.
 func (st SessionState) entries() []Transition {
 	var out []Transition
-	for _, mn := range sortedKeys(st.on) {
+	for _, mn := range slices.Sorted(maps.Keys(st.on)) {
 		out = append(out, st.on[mn]...)
 	}
 	return out
@@ -327,7 +328,7 @@ func (w waitChecker) handoffs(s *Session, ct *ChannelType) {
 		return
 	}
 	roles := map[string]string{}
-	for _, name := range sortedKeys(ct.Roles) {
+	for _, name := range slices.Sorted(maps.Keys(ct.Roles)) {
 		if r := ct.Roles[name]; r.Source.Kind == SourceEntityProperty {
 			if _, seen := roles[r.Source.Property]; !seen {
 				roles[r.Source.Property] = name

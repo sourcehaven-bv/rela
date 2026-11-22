@@ -2,6 +2,7 @@ package realtimecfg
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -20,7 +21,7 @@ type messageInCheck struct {
 // withoutSession refuses `in:` on every message type of a channel type
 // without a session: the key names session states.
 func (m messageInCheck) withoutSession() {
-	for _, mn := range sortedKeys(m.raw.MessageTypes) {
+	for _, mn := range slices.Sorted(maps.Keys(m.raw.MessageTypes)) {
 		if present, _ := keyPresence(m.v.root, "in", "channel_types", m.ct.Name, "message_types", mn); present {
 			m.v.add(m.ct.messageTypeKey(mn)+".in", "in names session states; this channel type has no session")
 		}
@@ -65,7 +66,7 @@ func (m messageInCheck) withSession(s *Session, rawStates map[string]rawSessionS
 	key := "channel_types." + m.ct.Name + ".session.default_in"
 	defaultIn := checkDefaultIn(m.v.add, key, rawDefaultIn)
 	keyedTypes, derived := 0, 0
-	for _, mn := range sortedKeys(m.raw.MessageTypes) {
+	for _, mn := range slices.Sorted(maps.Keys(m.raw.MessageTypes)) {
 		mt := m.ct.MessageTypes[mn]
 		if mt == nil {
 			continue

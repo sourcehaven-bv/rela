@@ -271,7 +271,7 @@ func validateSectionFieldWidget(
 		if _, known := sectionFieldWidgetTypes[f.Widget]; !known {
 			errs = append(errs, fmt.Sprintf(
 				"view %q: section[%d] field[%d] has invalid widget %q (valid: %s)",
-				viewID, i, j, f.Widget, strings.Join(sortedMapKeys(sectionFieldWidgetTypes), ", ")))
+				viewID, i, j, f.Widget, strings.Join(slices.Sorted(maps.Keys(sectionFieldWidgetTypes)), ", ")))
 			continue
 		}
 		// Property compatibility BEFORE the display-mode rule: a field can
@@ -588,7 +588,7 @@ func checkUnknownKeys(data []byte) []string {
 		if suggestion, ok := knownTypos[key]; ok {
 			errs = append(errs, fmt.Sprintf("unknown key %q (did you mean %q?)", key, suggestion))
 		} else {
-			keys := sortedMapKeys(validTopLevelKeys)
+			keys := slices.Sorted(maps.Keys(validTopLevelKeys))
 			errs = append(errs, fmt.Sprintf("unknown key %q (valid keys: %s)", key, strings.Join(keys, ", ")))
 		}
 	}
@@ -955,7 +955,7 @@ func validateFormField(
 		errs = append(errs, fmt.Sprintf(
 			"form %q: %sfield[%d] property %q has invalid clear_when_hidden %q (valid: %s)",
 			formID, ctx, i, f.Property, f.ClearWhenHidden,
-			strings.Join(sortedMapKeys(ValidClearWhenHidden), ", ")))
+			strings.Join(slices.Sorted(maps.Keys(ValidClearWhenHidden)), ", ")))
 	}
 	// A field can be hidden by its own `visible_when` OR by its enclosing
 	// wizard step's. With neither, `clear_when_hidden` could never fire — that
@@ -1793,7 +1793,7 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			// Validate from
 			if t.From != "*" {
 				if _, ok := collections[t.From]; !ok {
-					validCollections := sortedMapKeys(collections)
+					validCollections := slices.Sorted(maps.Keys(collections))
 					validCollections = append(validCollections, "*")
 					errs = append(errs, fmt.Sprintf(
 						"view %q: traverse[%d] references unknown collection %q in from (valid: %s)",
@@ -1873,7 +1873,7 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 				if entityType, ok := collections[s.Source]; ok {
 					sourceType = entityType
 				} else {
-					validSources := sortedMapKeys(collections)
+					validSources := slices.Sorted(maps.Keys(collections))
 					errs = append(errs, fmt.Sprintf(
 						"view %q: section[%d] references unknown collection %q in source (valid: %s)",
 						viewID, i, s.Source, strings.Join(validSources, ", ")))
@@ -2111,7 +2111,7 @@ func validateLevelColumns(
 	for _, t := range allowed {
 		allowedSet[t] = true
 	}
-	for _, entityType := range sortedMapKeys(byType) {
+	for _, entityType := range slices.Sorted(maps.Keys(byType)) {
 		if len(allowed) > 0 && !allowedSet[entityType] {
 			errs = append(errs, fmt.Sprintf(
 				"view %q: section[%d] %s declares columns for %q, which this level never holds (valid: %s)",
@@ -2220,7 +2220,7 @@ func validateNestedSection(
 	if _, ok := collections[s.Children]; !ok {
 		return []string{fmt.Sprintf(
 			"view %q: section[%d] references unknown collection %q in children (valid: %s)",
-			viewID, i, s.Children, strings.Join(sortedMapKeys(collections), ", "))}
+			viewID, i, s.Children, strings.Join(slices.Sorted(maps.Keys(collections)), ", "))}
 	}
 
 	// Find the rule that collected the children and check it nests under the
@@ -3533,8 +3533,8 @@ func validateDocuments(cfg *Config) []string {
 func validateStyles(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
 
-	for _, typeName := range sortedMapKeys(cfg.Styles) {
-		for _, val := range sortedMapKeys(cfg.Styles[typeName]) {
+	for _, typeName := range slices.Sorted(maps.Keys(cfg.Styles)) {
+		for _, val := range slices.Sorted(maps.Keys(cfg.Styles[typeName])) {
 			if _, err := ParseColor(cfg.Styles[typeName][val], cfg.OperatorColors()); err != nil {
 				errs = append(errs, fmt.Sprintf("styles.%s.%s: %v", typeName, val, err))
 			}
@@ -3654,15 +3654,6 @@ func suggestView(name string, cfg *Config) string {
 
 // Helper functions
 
-func sortedMapKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	natsort.Strings(keys)
-	return keys
-}
-
 func joinMapKeys(m map[string]bool) string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -3735,11 +3726,11 @@ func validateQueryScopes(cfg *Config, meta *metamodel.Metamodel) []string {
 		return nil
 	}
 	var errs []string
-	for _, id := range sortedMapKeys(cfg.Lists) {
+	for _, id := range slices.Sorted(maps.Keys(cfg.Lists)) {
 		list := cfg.Lists[id]
 		errs = append(errs, checkQueryScopeRef(meta, "list", id, list.EntityType, list.QueryScope)...)
 	}
-	for _, id := range sortedMapKeys(cfg.Kanbans) {
+	for _, id := range slices.Sorted(maps.Keys(cfg.Kanbans)) {
 		kanban := cfg.Kanbans[id]
 		errs = append(errs, checkQueryScopeRef(meta, "kanban", id, kanban.EntityType, kanban.QueryScope)...)
 	}
@@ -3766,7 +3757,7 @@ func checkQueryScopeRef(
 	if _, ok := def.QueryScopes[scope]; ok {
 		return nil
 	}
-	declared := sortedMapKeys(def.QueryScopes)
+	declared := slices.Sorted(maps.Keys(def.QueryScopes))
 	if len(declared) == 0 {
 		return []string{fmt.Sprintf(
 			"%s %q: query_scope %q is not declared — entity type %q declares no query_scopes:",

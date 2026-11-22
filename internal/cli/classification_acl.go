@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -48,8 +49,8 @@ func (v classificationView) String() string {
 // also holds `everyone`, as every principal does), and every role through
 // every client baseline with no scopes, each single scope, and all scopes.
 func classificationViews(policy *acl.Policy) []classificationView {
-	roles := sortedKeys(policy.Roles)
-	scopes := sortedKeys(policy.ScopeGrants)
+	roles := slices.Sorted(maps.Keys(policy.Roles))
+	scopes := slices.Sorted(maps.Keys(policy.ScopeGrants))
 	var scopeSets [][]string
 	scopeSets = append(scopeSets, nil)
 	for _, s := range scopes {
@@ -62,7 +63,7 @@ func classificationViews(policy *acl.Policy) []classificationView {
 	var views []classificationView
 	for _, role := range roles {
 		views = append(views, classificationView{role: role})
-		for _, name := range sortedKeys(policy.ClientBaselines) {
+		for _, name := range slices.Sorted(maps.Keys(policy.ClientBaselines)) {
 			b := policy.ClientBaselines[name]
 			if len(b.AppliesTo) == 0 {
 				continue // matches no principal; aclaudit reports it
@@ -113,7 +114,7 @@ func classificationViewFor(
 	view := classification.View{
 		Entities: map[string][]string{}, Relations: map[string][]string{}, Ends: map[string][]classification.Ends{},
 	}
-	for _, t := range sortedKeys(shape.Entities) {
+	for _, t := range slices.Sorted(maps.Keys(shape.Entities)) {
 		if !req.ReadQuery(ctx, t).AllowAll {
 			continue
 		}
@@ -128,11 +129,11 @@ func classificationViewFor(
 		}
 		view.Entities[t] = inOrder(shape.Entities[t].Fields, readable)
 	}
-	for _, r := range sortedKeys(shape.Relations) {
+	for _, r := range slices.Sorted(maps.Keys(shape.Relations)) {
 		rs := shape.Relations[r]
 		// Only properties are relation meta; the body is served with the
 		// edge whatever `visible:` says, so it never enters the deny set.
-		props := sortedKeys(meta.Relations[r].Properties)
+		props := slices.Sorted(maps.Keys(meta.Relations[r].Properties))
 		visible := map[string]bool{}
 		for _, e := range rs.Ends {
 			_, fromOK := view.Entities[e.From]

@@ -1,6 +1,7 @@
 package classification
 
 import (
+	"maps"
 	"slices"
 	"strings"
 )
@@ -69,14 +70,14 @@ type Exposure struct {
 // knowingly.
 func (f *File) Exposures(shape Shape, v View) (out []Exposure, truncated bool) {
 	var reads, records []Exposure
-	for _, t := range sortedKeys(v.Entities) {
+	for _, t := range slices.Sorted(maps.Keys(v.Entities)) {
 		fields := f.labeledFields(t, f.Assign[t], v.Entities[t])
 		reads = append(reads, f.labelExposures(t, fields)...)
 		records = append(records, f.recordExposures(t, fields, func(exclude []string) []Field {
 			return withoutRefs(fields, exclude)
 		})...)
 	}
-	for _, r := range sortedKeys(v.Relations) {
+	for _, r := range slices.Sorted(maps.Keys(v.Relations)) {
 		fields := f.labeledFields("~"+r, f.AssignRelations[r], v.Relations[r])
 		reads = append(reads, f.labelExposures("~"+r, fields)...)
 		records = append(records, f.recordExposures("~"+r, fields, func(exclude []string) []Field {
@@ -110,7 +111,7 @@ func (f *File) labelExposures(subject string, fields []Field) []Exposure {
 			byLabel[l] = append(byLabel[l], field.Ref)
 		}
 	}
-	labels := f.inDeclarationOrder(sortedKeys(byLabel))
+	labels := f.inDeclarationOrder(slices.Sorted(maps.Keys(byLabel)))
 	out := make([]Exposure, 0, len(labels))
 	for _, l := range labels {
 		out = append(out, Exposure{Rule: RuleReadsLabel, Subject: subject, Label: l, Fields: byLabel[l]})
@@ -152,10 +153,10 @@ func (f *File) subjectExposures(shape Shape, v View) []Exposure {
 			links[name] = r
 		}
 	}
-	w := &walker{f: f, subjects: subjects, links: links, linkNames: sortedKeys(links)}
+	w := &walker{f: f, subjects: subjects, links: links, linkNames: slices.Sorted(maps.Keys(links))}
 
 	var out []Exposure
-	for _, s := range sortedKeys(subjects) {
+	for _, s := range slices.Sorted(maps.Keys(subjects)) {
 		if _, readable := visibleShape.Entities[s]; !readable {
 			continue
 		}

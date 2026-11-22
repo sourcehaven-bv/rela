@@ -5,7 +5,8 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -255,7 +256,7 @@ func loadWebhookMapping(ctx context.Context, svc *readServices, hookID string) (
 	}
 	hook, ok := loaded.cfg.Webhooks[hookID]
 	if !ok {
-		known := sortedKeys(loaded.cfg.Webhooks)
+		known := slices.Sorted(maps.Keys(loaded.cfg.Webhooks))
 		if len(known) == 0 {
 			return nil, fmt.Errorf("unknown webhook %q: %s declares no webhooks", hookID, dataentryconfig.ConfigFile)
 		}
@@ -376,7 +377,7 @@ func writeExtrasText(r *aclmap.MapPrincipalResult) {
 	out.WriteMessage("  relation writes:")
 	for _, ra := range r.Relations {
 		parts := make([]string, 0, len(ra.Verbs))
-		for _, verb := range sortedKeys(ra.Verbs) {
+		for _, verb := range slices.Sorted(maps.Keys(ra.Verbs)) {
 			parts = append(parts, verb+" from "+strings.Join(ra.Verbs[verb], ", "))
 		}
 		out.WriteMessage("      %s: %s", ra.Relation, strings.Join(parts, "; "))
@@ -420,15 +421,15 @@ func writeWebhookCheckText(c *aclmap.WebhookCheck) {
 func writeTypeAccess(types []aclmap.TypeAccess) {
 	for _, ta := range types {
 		out.WriteMessage("      %s", ta.Type)
-		for _, verb := range sortedKeys(ta.Baseline) {
+		for _, verb := range slices.Sorted(maps.Keys(ta.Baseline)) {
 			out.WriteMessage("          %s (all %s): %s", verb, ta.Type, joinRoutes(ta.Baseline[verb]))
 		}
-		for _, face := range sortedKeys(ta.Faces) {
+		for _, face := range slices.Sorted(maps.Keys(ta.Faces)) {
 			out.WriteMessage("          %s (face %s only)", joinVerbs(ta.Faces[face]), face)
 		}
 		for _, ex := range ta.Exceptions {
 			out.WriteMessage("          exception %s:", ex.Entity)
-			for _, verb := range sortedKeys(ex.Extra) {
+			for _, verb := range slices.Sorted(maps.Keys(ex.Extra)) {
 				out.WriteMessage("              + %s: %s", verb, joinRoutes(ex.Extra[verb]))
 			}
 		}
@@ -439,13 +440,3 @@ func writeTypeAccess(types []aclmap.TypeAccess) {
 func joinRoutes(routes []aclmap.Route) string { return aclmap.JoinRoutes(routes) }
 
 func joinVerbs(verbs []string) string { return strings.Join(verbs, ", ") }
-
-// sortedKeys returns a verb-map's keys in stable order.
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}

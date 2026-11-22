@@ -2,6 +2,8 @@ package realtimecfg
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -79,7 +81,7 @@ func (g grantChecker) check() {
 	if g.v.policy == nil {
 		return
 	}
-	for _, name := range sortedKeys(g.c.channelTypes) {
+	for _, name := range slices.Sorted(maps.Keys(g.c.channelTypes)) {
 		ct := g.c.channelTypes[name]
 		s := ct.session
 		if s == nil || s.runAs == "" {
@@ -106,7 +108,7 @@ func (g grantChecker) triggerProps(ct, msgType string) []map[string]string {
 		return nil
 	}
 	var out []map[string]string
-	for _, name := range sortedKeys(g.c.triggers) {
+	for _, name := range slices.Sorted(maps.Keys(g.c.triggers)) {
 		t := g.c.triggers[name]
 		if t.Channel == ct && t.PostType == msgType {
 			out = append(out, t.Props)
