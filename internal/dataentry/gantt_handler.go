@@ -55,6 +55,10 @@ type ganttHandler struct {
 	// request. Injected rather than called directly so the handler keeps its
 	// narrow collaborator set.
 	scopedHeaders func(ctx context.Context, typeName string) ([]store.EntityHeader, bool, error)
+	// scopedHeadersByIDs is scopedHeaders narrowed to the named ids, so a
+	// caller that already knows its candidates (sankey pips) pays for those
+	// and not for the whole type. Every verdict still applies to each id.
+	scopedHeadersByIDs func(ctx context.Context, typeName string, ids []string) ([]store.EntityHeader, bool, error)
 	// redactor is the field-redaction seam (appRedactor); a closure so test
 	// builders that rebind app.affordances keep it live.
 	redactor func() visibility.FieldRedactor
@@ -381,6 +385,13 @@ func newGanttHandler(app *App, st store.Store) *ganttHandler {
 			rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 			return scopedHeaders(ctx, app.Services(), rqr, scopeRequest{Type: typeName, Faces: rqr.Faces})
 		},
+		scopedHeadersByIDs: func(
+			ctx context.Context, typeName string, ids []string,
+		) ([]store.EntityHeader, bool, error) {
+			rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+			return scopedHeaders(ctx, app.Services(), rqr,
+				scopeRequest{Type: typeName, Faces: rqr.Faces, ByIDs: true, IDs: ids})
+		},
 		redactor: func() visibility.FieldRedactor { return appRedactor(app) },
 		fields:   func() fieldVisibility { return app.fieldResolver },
 	}
@@ -453,6 +464,32 @@ func (h *ganttHandler) loadGanttType(
 		}
 		return out, nil
 	}
+}
+
+// loadGanttTypeByIDs is loadGanttType for the named ids only: the same verdict,
+// world and face narrowing, redacted once, at a cost that follows len(ids)
+// and not the size of the type. An id the principal may not read is simply
+// absent from the result.
+func (h *ganttHandler) loadGanttTypeByIDs(
+	ctx context.Context, typeName string, ids []string,
+) ([]*entity.Entity, *ganttError) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if _, gerr := ganttReadVerdict(ctx, typeName); gerr != nil {
+		return nil, gerr
+	}
+	hdrs, _, err := h.scopedHeadersByIDs(ctx, typeName, ids)
+	if err != nil {
+		slog.Error("gantt: header list by ids failed", "type", typeName, "error", err)
+		return nil, &ganttError{http.StatusInternalServerError, "internal", "Failed to list entities", ""}
+	}
+	out := make([]*entity.Entity, 0, len(hdrs))
+	for _, hdr := range hdrs {
+		red := visibility.RedactHeader(ctx, h.redactor(), hdr)
+		out = append(out, &entity.Entity{ID: red.ID, Type: red.Type, Face: red.Face, Properties: red.Properties})
+	}
+	return out, nil
 }
 
 // addGanttNodes filters ALREADY-REDACTED entities through the source's

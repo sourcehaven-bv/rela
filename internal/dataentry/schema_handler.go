@@ -443,6 +443,7 @@ func (h *schemaHandler) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Kanbans:          resolveKanbanDirections(s, s.Cfg.Kanbans),
 		Calendars:        resolveCalendarDirections(s, s.Cfg.Calendars),
 		Gantts:           s.Cfg.Gantts,
+		Sankeys:          s.Cfg.Sankeys,
 		Dashboard:        s.Cfg.Dashboard,
 		Dashboards:       s.Cfg.Dashboards,
 		Actions:          s.Cfg.Actions,
