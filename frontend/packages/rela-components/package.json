@@ -54,7 +54,7 @@
     "@milkdown/kit": "^7.22.2",
     "@storybook/addon-a11y": "^10.6.6",
     "@storybook/addon-docs": "^10.6.6",
-    "@storybook/addon-onboarding": "^10.6.6",
+    "@storybook/addon-onboarding": "^10.6.7",
     "@storybook/addon-vitest": "^10.6.6",
     "@storybook/vue3-vite": "^10.6.6",
     "@types/node": "^24.13.3",
