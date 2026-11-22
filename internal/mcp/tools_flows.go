@@ -68,8 +68,10 @@ func toolListFlowTasks() *mcpgo.Tool {
 func toolShowFlowRun() *mcpgo.Tool {
 	return newTool("show_flow_run",
 		withDescription("Show a flow run and why it waits: the roles it waits for and whether you hold one, "+
-			"the properties a step writes, its timers and due times, the change branches and whether "+
-			"their guards hold now, a failing output step, and the timeline. `_actions.complete` says "+
+			"the data-entry.yaml form of a step and the properties it accepts (`waiting.form`, "+
+			"`waiting.fields`, or `waiting.form_problem` when the form cannot be used), its timers and "+
+			"due times, the change branches and whether their guards "+
+			"hold now, a failing output step, and the timeline. `_actions.complete` says "+
 			"whether complete_flow_step would be accepted. A run in parallel branches waits at its join and "+
 			"lists each branch under `parallel`, with its own state, generation, waiting and "+
 			"`_actions`-style complete flag"),
@@ -81,8 +83,11 @@ func toolCompleteFlowStep() *mcpgo.Tool {
 	return newTool("complete_flow_step",
 		withDescription("Complete the step a flow run waits for: write the given properties on its subject "+
 			"as you, then move the run along the first change branch whose guard holds. You need a role "+
-			"the state waits for, and every property must be one the state writes. Pass the generation "+
-			"show_flow_run returned: a run that moved on since is refused. "+
+			"the state waits for, and every property must be in `waiting.fields`, the fields of the state's "+
+			"form. rela validates the values as it does any entity edit. It does not "+
+			"check the form's own `required:` or `required_when:`, so read the form in data-entry.yaml "+
+			"and send what it asks for. "+
+			"Pass the generation show_flow_run returned: a run that moved on since is refused. "+
 			"Result: {written,moved,state,finished,problem}. problem is set when the properties were "+
 			"written but the run did not follow cleanly: guard (a branch guard could not be evaluated, "+
 			"so the run stays), moved (the run had already moved on) or settling (an output step "+
@@ -90,7 +95,7 @@ func toolCompleteFlowStep() *mcpgo.Tool {
 		withString("run", required(), description("Run id")),
 		withNumber("generation", required(), description("The run's generation from show_flow_run, or "+
 			"the branch's generation from its `parallel` entry")),
-		withObject("properties", description("Property values to write; only names the state writes")),
+		withObject("properties", description("Property values to write; only names in waiting.fields")),
 	)
 }
 

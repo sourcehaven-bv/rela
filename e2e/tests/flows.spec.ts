@@ -28,7 +28,7 @@ test.describe("flows", () => {
     appPage,
   }) => {
     const flows = new FlowsPage(appPage);
-    const { person, flow, states, role, writes } = FLOW_SEED;
+    const { person, flow, states, role, stepField } = FLOW_SEED;
 
     await flows.openEntity("person", person.id);
     await flows.expectStartOffered(flow.name, flow.label);
@@ -38,7 +38,7 @@ test.describe("flows", () => {
     await flows.expectStatus("Waiting for input");
     await flows.expectWaitingFor(role, true);
 
-    await flows.completeStepWithCheckbox(writes);
+    await flows.completeStepWithCheckbox(stepField);
 
     await flows.expectStatus("Completed");
     await flows.expectOneRunIn(states.finished);

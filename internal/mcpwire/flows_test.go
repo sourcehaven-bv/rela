@@ -29,6 +29,7 @@ func flowServices(t *testing.T, withFlows bool) *appbuild.Services {
 	files := map[string]string{"schema.yaml": "metamodel.yaml", "acl.yaml": "acl.yaml"}
 	if withFlows {
 		files["flows.yaml"] = "flows.yaml"
+		files["data-entry.yaml"] = "data-entry.yaml" // the step forms the flows name
 	}
 	for src, dst := range files {
 		data, err := os.ReadFile(filepath.Join("..", "flowcfg", "testdata", src))

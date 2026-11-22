@@ -71,6 +71,7 @@
       "loadFailed": "De waarden van deze stap konden niet worden geladen.",
       "moved": "De run ging verder voordat uw stap was opgeslagen. Hij is opnieuw geladen.",
       "failed": "De stap kon niet worden afgerond.",
+      "formUnusable": "Deze stap kan niet worden afgerond: het formulier {form} is niet bruikbaar. Vraag een beheerder data-entry.yaml te herstellen.",
       "complete": "Stap afronden",
       "completing": "Bezig met afronden…",
       "done": "Stap afgerond.",

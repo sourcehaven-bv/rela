@@ -51,7 +51,7 @@ function run(over: Partial<FlowRun> = {}): FlowRun {
     status: 'input_required',
     generation: 1,
     active: true,
-    waiting: { roles: ['hr'], you_hold: true, writes: [] },
+    waiting: { roles: ['hr'], you_hold: true },
     log: [{ at: '2026-01-01T10:00:00Z', state: 'collect', via: 'start' }],
     _actions: { complete: false, cancel: false, retry: false },
     ...over,

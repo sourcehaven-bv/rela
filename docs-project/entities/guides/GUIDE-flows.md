@@ -123,7 +123,7 @@ every matching subject.
 | `final` | `true` ends the run in this state. A final state has no `on:`, `after:` or `waiting_for:`. |
 | `status` | `working` or `input_required` for a state that is not final; `completed`, `cancelled` or `failed` for a final one. The defaults are `working`, `input_required` when `waiting_for:` is set, and `completed`. |
 | `waiting_for` | The acl.yaml roles the run waits on in this state. Each role must be able to move the run on through an `on: change` branch. |
-| `writes` | The subject properties the step form of this state edits, at most 32. Only a state with `waiting_for:` takes it. Each must be a property the subject type declares, and not a computed or rollup property. |
+| `form` | The `data-entry.yaml` form a person fills in to do the step of this state. Only a state with `waiting_for:` takes it. See [Step forms](#step-forms). |
 | `outputs` | What rela writes when a run enters the state. See below. |
 | `on` | The events that move the run on. See below. |
 | `after` | Timers, by name, that move the run on. See below. |
@@ -132,6 +132,76 @@ every matching subject.
 
 Every state is reachable from `initial`, and every state that is not final
 has a way out. rela refuses a file where either is not so.
+
+### Step forms
+
+`form:` names a form from `data-entry.yaml`. The person who does the step
+fills it in on the run card, and the values are saved on the subject when
+they complete the step.
+
+```yaml
+# flows.yaml
+collect:
+  waiting_for: [hr]
+  form: collect_documents
+  on:
+    change: { to: review, roles: [hr], when: "entity.documents == true" }
+```
+
+```yaml
+# data-entry.yaml
+forms:
+  collect_documents:
+    entity_type: person
+    title: Collect documents
+    fields:
+      - property: documents
+        label: Documents received
+        help: Tick once every document is in.
+      - property: missing
+        widget: textarea
+        visible_when: "form.documents != true"
+        required_when: "form.documents != true"
+```
+
+The step form uses the form's labels, help, widgets, `readonly`,
+`visible_when`, `required` and `required_when`, as an entity form does.
+An editable field that the subject holds no value for starts at the
+field's `default:`, else the schema property's default. Complete sends
+it, along with every value the user changed. rela does not check the
+form's own `required` and `required_when` on the server, so an MCP
+client or API caller must send what the form asks for.
+
+rela refuses to load the flows when a step form:
+
+- is not declared in `data-entry.yaml`;
+- edits another entity type than the flow's subject (an alias of the
+  subject type counts as the same type);
+- has `steps:` (a wizard), `relations:` or `body: true`, since a step
+  writes subject properties only;
+- has a field for a property the subject type does not declare, a
+  reserved property, or a computed or rollup property.
+
+A step may send only the form's fields that are not `hidden:`. rela
+answers 422 to any other property. `rela flow validate` makes the same
+checks, and so does Configure when you preview or save a change to
+`schema.yaml` or `data-entry.yaml`.
+
+rela reads the step form from `data-entry.yaml` each time a step is
+shown or completed. An edit of the form applies to the next step without
+a restart, and a run that follows an older flow version uses the form
+its state names. When the form can no longer be used, for example
+because it was removed, the run shows why and rela refuses the step
+with 409 instead of completing it with nothing written.
+
+The [Configure space](data-entry.md#configure-space) refuses an
+automation that sets a property a step form edits, as it refuses one
+that sets a property `outside_edits:` locks. It also refuses a
+`data-entry.yaml` edit that adds such a property to a step form. It
+refuses a `data-entry.yaml` edit that adds to a step form a property the
+flow's `outside_edits:` locks in that step's state, because a step's own
+write is not bound by its run's lock. An edit that leaves every step
+form's fields as they were is not checked against the automations.
 
 ### Events
 
@@ -212,7 +282,7 @@ start:
     done: { to: [it, legal] }
 it:
   waiting_for: [it_desk]
-  writes: [laptop]
+  form: it_setup
   on:
     change: { to: joined, roles: [it_desk] }
 legal:
@@ -309,7 +379,7 @@ in `.rela/secrets.yaml`. Check the signature and refuse an old timestamp.
 rela does not follow a redirect.
 
 A job state has `on: { done: ... }` and nothing else: no `waiting_for`,
-`writes`, `after`, other events, and it may not be final. Its last `done`
+`form`, `after`, other events, and it may not be final. Its last `done`
 branch has no `when`, so the run always has a way out.
 
 **Retries.** rela tries the work again after an error that another
@@ -496,9 +566,10 @@ step form:
 - the flow as a diagram with the current state marked, and the timeline:
   the start and the latest moves, with who made each.
 
-The step form edits only the properties in the state's `writes:`, and
-sends only the ones you changed. When you complete the step, rela writes
-those values on the subject as you, with your own update rights and field
+The step form is the form the state names in `form:` (see
+[Step forms](#step-forms)). It sends only the fields you changed, and
+leaves out a field its `visible_when` hides. When you complete the step,
+rela writes those values on the subject as you, with your own update rights and field
 rules, and then takes the first `change` branch whose `roles` you hold and
 whose `when` holds. When no branch applies, the values are saved and the
 run stays where it is.
@@ -555,8 +626,9 @@ be accepted for you, by the same checks the POST routes make. In a forked
 run, `complete` is false and each entry of `parallel` has its own
 `complete`; send that entry's `generation` to complete its step. A run you
 cannot read answers 404, like a missing entity. A missing role or
-permission answers 403, a run that moved on or is claimed 409, and a
-property outside `writes:` 422. Without flows, every route answers 404.
+permission answers 403, a run that moved on or is claimed 409, a step
+whose form cannot be used 409 (`waiting.form_problem` says why), and a
+property outside the step form 422. Without flows, every route answers 404.
 
 **Over MCP.** `list_flow_tasks`, `show_flow_run` and
 `complete_flow_step` do the same for an agent. See

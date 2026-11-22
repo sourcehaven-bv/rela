@@ -135,10 +135,10 @@ func (h configureHost) Validate(schema, dataEntry, flows []byte) (*metamodel.Met
 	if tErr := appbuild.CheckTriggerData(flows, meta, svc.Store()); tErr != nil {
 		problems = append(problems, tErr.Error())
 	}
-	// Flows name types, properties, roles and permissions. The editor cannot
-	// change them, but a schema change can break them. The error text starts
-	// with the file name.
-	if fErr := appbuild.CheckFlowsData(flows, meta, policy); fErr != nil {
+	// Flows name types, properties, roles, permissions and step forms. The
+	// editor cannot change flows, but a schema or data-entry.yaml change can
+	// break them. The error text starts with the file name.
+	if fErr := appbuild.CheckFlowsData(flows, dataEntry, meta, policy); fErr != nil {
 		problems = append(problems, fErr.Error())
 	}
 	// realtime.yaml names schema types, properties and enums, so a schema

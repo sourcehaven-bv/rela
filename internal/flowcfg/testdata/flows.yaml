@@ -22,7 +22,7 @@ flows:
       collect:
         label: Collect documents
         waiting_for: [hr]
-        writes: [documents]
+        form: collect_documents
         outputs:
           - set: { properties: { stage: collecting } }
           - create:

@@ -141,7 +141,10 @@ func buildJobProject(t *testing.T, hook *hookServer, dataEntry string) (*appbuil
 	require.NoError(t, os.WriteFile(filepath.Join(root, "actions", "mark.lua"), []byte(jobMarkScript), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rela"), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".rela", "secrets.yaml"), []byte("hook_key: s3cret\n"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "data-entry.yaml"), []byte(dataEntry), 0o600))
+	// Keep the sample's step forms beside the actions under test.
+	forms, err := os.ReadFile(filepath.Join(root, "data-entry.yaml"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "data-entry.yaml"), append(forms, dataEntry...), 0o600))
 	svc, err := appbuildOnDiskWithOpts(t, root, appbuild.WithBackgroundAutomationJobs(),
 		appbuild.WithHTTPClient(srv.Client()))
 	if err == nil {

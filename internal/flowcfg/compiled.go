@@ -272,7 +272,7 @@ type State struct {
 	// `status:`, or the default (see [flow.Status]).
 	Status     flow.Status
 	waitingFor []string
-	writes     []string
+	form       string
 	outputs    []Output
 	on         map[Event][]Branch
 	timers     []Timer
@@ -301,7 +301,6 @@ func (st State) Join() (Join, bool) {
 
 func (st State) clone() State {
 	st.waitingFor = slices.Clone(st.waitingFor)
-	st.writes = slices.Clone(st.writes)
 	st.outputs = slices.Clone(st.outputs)
 	st.timers = slices.Clone(st.timers)
 	if st.job != nil {
@@ -326,9 +325,10 @@ func (st State) clone() State {
 // WaitingFor returns the acl.yaml roles the state waits on, in file order.
 func (st State) WaitingFor() []string { return slices.Clone(st.waitingFor) }
 
-// Writes returns the subject properties a person who does the state's step
-// fills in (`writes:`), in file order. Empty: the step has no form.
-func (st State) Writes() []string { return slices.Clone(st.writes) }
+// Form returns the data-entry.yaml form a person who does the state's step
+// fills in (`form:`). Empty: the step has no form. Which properties the form
+// edits is data-entry.yaml's to say; flowcfg only holds the name.
+func (st State) Form() string { return st.form }
 
 // Outputs returns what a run writes when it enters the state, in file
 // order.

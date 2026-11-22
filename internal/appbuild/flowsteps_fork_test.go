@@ -30,7 +30,7 @@ const forkFlows = `flows:
       it:
         label: IT
         waiting_for: [hr]
-        writes: [documents]
+        form: collect_documents
         on:
           change: { to: joined, roles: [hr], when: "entity.documents == true" }
       legal:
@@ -102,7 +102,8 @@ func TestFlowControl_ForkedRun(t *testing.T) {
 	require.Equal(t, "it", it.Branch)
 	require.Equal(t, "IT", it.StateLabel)
 	require.True(t, it.Complete)
-	require.Equal(t, []string{"documents"}, it.Waiting.Writes)
+	require.Equal(t, "collect_documents", it.Waiting.Form)
+	require.Equal(t, []string{"documents"}, it.Waiting.Fields)
 	require.Len(t, it.Waiting.Branches, 1)
 	require.False(t, legal.Complete, "legal waits for manager")
 	require.Contains(t, run.Diagram, "class s1,s2 current")
@@ -134,7 +135,7 @@ func TestFlowControl_ForkedTasksAndSteps(t *testing.T) {
 	require.ErrorIs(t, err, flowview.ErrForbidden)
 	_, err = fx.ctl.Complete(fx.as(t, "alice"), fx.id, run.Parallel[1].Generation, nil)
 	require.ErrorIs(t, err, flowview.ErrForbidden)
-	// A property outside the branch's writes is refused.
+	// A property outside the branch's form is refused.
 	_, err = fx.ctl.Complete(fx.as(t, "bob"), fx.id, run.Parallel[1].Generation, map[string]any{"documents": true})
 	require.ErrorIs(t, err, flowview.ErrInvalid)
 	// The run's own generation is no step.

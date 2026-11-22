@@ -1,0 +1,14 @@
+# The step forms the flows.yaml sample and the appbuild flow tests name.
+forms:
+  collect_documents:
+    entity_type: person
+    title: Collect documents
+    fields:
+      - property: documents
+        label: Documents received
+        help: Tick once every document is in.
+  hold_salary:
+    entity_type: person
+    title: Hold
+    fields:
+      - property: salary

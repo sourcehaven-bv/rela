@@ -37,12 +37,13 @@ func LoadFlows(ctx context.Context, r configReader, meta *metamodel.Metamodel,
 
 // CheckFlowsData compiles the `flows:` section of flows.yaml content against
 // meta and policy, as a server build does, and returns the compile error.
-// The error text starts with the file name.
-// data need not be on disk yet, such as a Configure draft; nil, or a file
+// It also checks each state's step form against the forms of dataEntry,
+// data-entry.yaml's content. The error text starts with the file name.
+// Both need not be on disk yet, such as a Configure draft; nil, or a file
 // without `flows:`, passes.
 //
 // Nil: meta is rejected; policy is accepted (no acl.yaml).
-func CheckFlowsData(data []byte, meta *metamodel.Metamodel, policy *acl.Policy) error {
+func CheckFlowsData(data, dataEntry []byte, meta *metamodel.Metamodel, policy *acl.Policy) error {
 	if meta == nil {
 		return errors.New("flows: CheckFlowsData requires a metamodel")
 	}
@@ -50,6 +51,16 @@ func CheckFlowsData(data []byte, meta *metamodel.Metamodel, policy *acl.Policy) 
 	if err != nil {
 		return fmt.Errorf("%s: %w", flowcfg.FileName, err)
 	}
-	_, err = compileFlows(data, m, policy)
-	return err
+	compiled, err := compileFlows(data, m, policy)
+	if err != nil || !namesForm(compiled) {
+		return err
+	}
+	forms, err := parseForms(dataEntry)
+	if err != nil {
+		return nil //nolint:nilerr // data-entry.yaml's own check reports a parse error
+	}
+	if _, err := resolveStepForms(compiled, forms, m); err != nil {
+		return fmt.Errorf("%s: %w", flowcfg.FileName, err)
+	}
+	return nil
 }

@@ -545,7 +545,7 @@ the project has `flows.yaml`. Both servers offer them. See
 | Tool | Description | Parameters |
 |------|-------------|------------|
 | `list_flow_tasks` | The runs that wait for a role you hold on their subject, oldest first | `flow?`, `page?`, `per_page?` (at most 200) |
-| `show_flow_run` | One run: its state, why it waits, what a step writes, timers, branches and timeline | `run` |
+| `show_flow_run` | One run: its state, why it waits, the step's form and the fields it may send, timers, branches and timeline | `run` |
 | `complete_flow_step` | Write the step's properties on the subject as you, then move the run on | `run`, `generation`, `properties?` |
 
 `show_flow_run` answers the same reason the web app shows: the roles the

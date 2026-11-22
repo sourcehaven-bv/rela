@@ -43,14 +43,15 @@ type rawStart struct {
 
 // rawState is one entry of `states:`.
 type rawState struct {
-	Label      string               `yaml:"label"`
-	Final      bool                 `yaml:"final"`
-	Status     string               `yaml:"status"`
-	WaitingFor []string             `yaml:"waiting_for"`
-	Writes     []string             `yaml:"writes"`
-	Outputs    []rawOutput          `yaml:"outputs"`
-	On         map[string]yaml.Node `yaml:"on"`
-	After      yaml.Node            `yaml:"after"`
+	Label      string   `yaml:"label"`
+	Final      bool     `yaml:"final"`
+	Status     string   `yaml:"status"`
+	WaitingFor []string `yaml:"waiting_for"`
+	// Form names the data-entry.yaml form of the state's step.
+	Form    string               `yaml:"form"`
+	Outputs []rawOutput          `yaml:"outputs"`
+	On      map[string]yaml.Node `yaml:"on"`
+	After   yaml.Node            `yaml:"after"`
 	// Join is `join:`: all, any, or a mapping with `when:`.
 	Join yaml.Node `yaml:"join"`
 	// Job is `job:`, compiled by [loader.job].

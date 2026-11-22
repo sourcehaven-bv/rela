@@ -5,7 +5,7 @@ import FlowRunCard from './FlowRunCard.vue'
 import { ApiError } from '@/api/errors'
 import type { FlowRun } from '@/api/flows'
 import { useSchemaStore } from '@/stores'
-import type { EntityType } from '@/types'
+import type { EntityType, FormConfig } from '@/types'
 
 const getFlowRunMock = vi.fn()
 const completeFlowStepMock = vi.fn()
@@ -42,7 +42,8 @@ function run(over: Partial<FlowRun> = {}): FlowRun {
     waiting: {
       roles: ['hr'],
       you_hold: true,
-      writes: ['documents'],
+      form: 'collect_documents',
+      fields: ['documents'],
       timers: [{ name: 'stalled', label: 'Stalled', to: 'escalated', due: '2026-02-01T10:00:00Z' }],
       branches: [{ to: 'review', guard: 'entity.documents == true', holds: false }],
     },
@@ -77,6 +78,8 @@ describe('FlowRunCard', () => {
         name: { type: 'string' },
       },
     } as unknown as EntityType)
+    const form: FormConfig = { entity: 'person', fields: [{ property: 'documents' }] }
+    useSchemaStore().forms.set('collect_documents', form)
   })
 
   it('says why the run waits: roles, branches with their verdict and timers', async () => {
@@ -102,7 +105,7 @@ describe('FlowRunCard', () => {
     expect(wrapper.find('[data-testid="flow-waiting-pending"]').exists()).toBe(false)
 
     wrapper = mountCard(
-      run({ waiting: waiting({ phase: 'failed', failed: 1, attempts: 3, fail_kind: 'permanent' }) }),
+      run({ waiting: waiting({ phase: 'failed', failed: 1, attempts: 3, fail_kind: 'permanent' }) })
     )
     await flushPromises()
     line = wrapper.find('[data-testid="flow-waiting-job"]')
@@ -118,7 +121,7 @@ describe('FlowRunCard', () => {
     expect(wrapper.find('[data-testid="flow-retry"]').exists()).toBe(false)
   })
 
-  it('completes the step with the generation and only the written properties', async () => {
+  it('completes the step with the generation and only the changed properties', async () => {
     completeFlowStepMock.mockResolvedValue({
       written: ['documents'],
       moved: true,
@@ -212,7 +215,12 @@ describe('FlowRunCard', () => {
           state_label: 'IT',
           status: 'input_required',
           generation: 2,
-          waiting: { roles: ['hr'], you_hold: true, writes: ['documents'] },
+          waiting: {
+            roles: ['hr'],
+            you_hold: true,
+            form: 'collect_documents',
+            fields: ['documents'],
+          },
           complete: true,
         },
         {

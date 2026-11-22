@@ -43,7 +43,7 @@ const holdFlow = `  hold:
     states:
       held:
         waiting_for: [hr]
-        writes: [salary]
+        form: hold_salary
         on:
           change:
             to: released

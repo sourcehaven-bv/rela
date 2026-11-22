@@ -149,6 +149,11 @@ func buildFlowEngine(s *Services, runs flowrun.Store) (*flowengine.Engine, error
 		if err := checkFlowActions(context.Background(), flows, s.cfgLoader); err != nil {
 			return nil, err
 		}
+		if err := checkFlowForms(context.Background(), flows, s.cfgLoader, meta); err != nil {
+			return nil, err
+		}
+	} else if namesForm(flows) {
+		return nil, errors.New("flows: a state names a form:, and there is no data-entry.yaml to read it from")
 	}
 	// Only a long-running process queues attempts: a one-shot one would
 	// exit before its queue ran them.

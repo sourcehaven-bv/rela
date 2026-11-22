@@ -27,8 +27,11 @@ export const FLOW_SEED = {
   /** The state labels the run card shows. */
   states: { collect: "Collect documents", finished: "Finished" },
   role: "hr",
-  /** The label of the property the collect step writes. */
-  writes: "Documents",
+  /**
+   * The label the collect step's form gives its one field. It differs from
+   * the schema label, so the spec proves the step renders the form.
+   */
+  stepField: "Documents received",
 } as const;
 
 export const FLOW_SCHEMA_YAML = `
@@ -46,7 +49,7 @@ entities:
         type: enum
         values: [new, hired, active, left]
       documents:
-        label: ${FLOW_SEED.writes}
+        label: Documents
         type: boolean
 `;
 
@@ -71,6 +74,11 @@ forms:
       - { property: name }
       - { property: status }
       - { property: documents }
+  collect_documents:
+    entity_type: person
+    title: "Collect documents"
+    fields:
+      - { property: documents, label: "${FLOW_SEED.stepField}" }
 navigation:
   - { label: "Persons", list: persons }
 `;
@@ -105,7 +113,7 @@ flows:
       collect:
         label: ${FLOW_SEED.states.collect}
         waiting_for: [${FLOW_SEED.role}]
-        writes: [documents]
+        form: collect_documents
         on:
           change:
             - to: finished

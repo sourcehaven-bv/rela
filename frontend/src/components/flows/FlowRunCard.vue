@@ -105,7 +105,7 @@ const showStep = computed(
 
 /**
  * Each branch as the run the step form completes: the branch's generation
- * names its step, and its waiting says what the step writes.
+ * names its step, and its waiting names the step's form.
  */
 const branches = computed(() =>
   places.value.map((place) => ({

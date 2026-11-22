@@ -78,10 +78,16 @@ type Waiting struct {
 	Roles []string `json:"roles,omitempty"`
 	// YouHold reports whether the caller holds one of Roles on the subject.
 	YouHold bool `json:"you_hold"`
-	// Writes are the subject properties the step form edits.
-	Writes   []string `json:"writes,omitempty"`
-	Timers   []Timer  `json:"timers,omitempty"`
-	Branches []Branch `json:"branches,omitempty"`
+	// Form names the data-entry.yaml form of the step.
+	Form string `json:"form,omitempty"`
+	// Fields are the subject properties a step may send: the form's fields
+	// that are not hidden.
+	Fields []string `json:"fields,omitempty"`
+	// FormProblem says why the step's form cannot be used, such as a form
+	// data-entry.yaml no longer declares. The step is then refused.
+	FormProblem string   `json:"form_problem,omitempty"`
+	Timers      []Timer  `json:"timers,omitempty"`
+	Branches    []Branch `json:"branches,omitempty"`
 	// Pending is set while the run writes the outputs of its state.
 	Pending *Pending `json:"pending,omitempty"`
 	// ClaimedBy names who is completing the step right now.

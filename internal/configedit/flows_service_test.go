@@ -180,48 +180,54 @@ func TestSave_FlowsRefusals(t *testing.T) {
 }
 
 // TestPreview_TriggerCheckInput pins what the ACL check is asked about: a
-// flows-only edit and a schema-only edit are judged, with the files as read
-// and as saved; an edit of neither is not.
+// flows-only, a schema-only and a data-entry-only edit are judged, with the
+// files as read and as saved. A data-entry edit is not judged when there is no
+// flows.yaml, since no step form can name it.
 func TestPreview_TriggerCheckInput(t *testing.T) {
 	relabel := func(s *Map) {
 		e, _ := s.Get("entities")
 		task, _ := e.(*Map).Get("task")
 		task.(*Map).Set("label", "Job")
 	}
+	dataEntryOnly := func(t *testing.T, h *harness) *Draft {
+		t.Helper()
+		snap, err := h.svc.Snapshot()
+		if err != nil {
+			t.Fatal(err)
+		}
+		de := snap.DataEntry.(*Map)
+		app, _ := de.Get("app")
+		app.(*Map).Set("name", "Other")
+		raw, err := json.Marshal(de)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &Draft{BaseVersion: snap.Version, DataEntry: raw}
+	}
 	tests := []struct {
 		name      string
 		draft     func(*testing.T, *harness) *Draft
+		noFlows   bool
 		wantCheck bool
 		flowsSame bool
 	}{
 		{"flows only", func(t *testing.T, h *harness) *Draft {
 			t.Helper()
 			return h.flowsDraft(t, func(f *Map) { stampOn(f).Set("updated", true) })
-		}, true, false},
+		}, false, true, false},
 		{"schema only", func(t *testing.T, h *harness) *Draft {
 			t.Helper()
 			return h.draft(t, relabel)
-		}, true, true},
-		{"data-entry only", func(t *testing.T, h *harness) *Draft {
-			t.Helper()
-			snap, err := h.svc.Snapshot()
-			if err != nil {
-				t.Fatal(err)
-			}
-			de := snap.DataEntry.(*Map)
-			app, _ := de.Get("app")
-			app.(*Map).Set("name", "Other")
-			raw, err := json.Marshal(de)
-			if err != nil {
-				t.Fatal(err)
-			}
-			return &Draft{BaseVersion: snap.Version, DataEntry: raw}
-		}, false, true},
+		}, false, true, true},
+		{name: "data-entry only", draft: dataEntryOnly, wantCheck: true, flowsSame: true},
+		{name: "data-entry without flows", draft: dataEntryOnly, noFlows: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, counts{}, nil)
-			h.files["flows.yaml"] = []byte(testFlows)
+			if !tc.noFlows {
+				h.files["flows.yaml"] = []byte(testFlows)
+			}
 			h.files["acl.yaml"] = []byte("roles: {}\n")
 			res, err := h.svc.Preview(context.Background(), tc.draft(t, h))
 			if err != nil {
@@ -238,7 +244,8 @@ func TestPreview_TriggerCheckInput(t *testing.T) {
 			}
 			e := h.triggers.edits[0]
 			if string(e.ACL) != "roles: {}\n" || string(e.FlowsBefore) != testFlows ||
-				string(e.SchemaBefore) != testSchema || len(e.SchemaAfter) == 0 {
+				string(e.SchemaBefore) != testSchema || len(e.SchemaAfter) == 0 ||
+				len(e.DataEntryBefore) == 0 || len(e.DataEntryAfter) == 0 {
 
 				t.Fatalf("edit = %+v", e)
 			}

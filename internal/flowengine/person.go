@@ -324,8 +324,8 @@ type Explanation struct {
 	EnteredAt  time.Time
 	// WaitingFor are the roles the state waits on.
 	WaitingFor []string
-	// Writes are the subject properties the step form edits.
-	Writes []string
+	// Form names the data-entry.yaml form of the step, or is empty.
+	Form string
 	// Timers are the state's timers with their due times.
 	Timers []TimerDue
 	// Branches are the state's change branches with their guard verdicts.
@@ -491,7 +491,7 @@ func (ex *explainer) explain(ctx context.Context, run flowrun.Run) (Explanation,
 		bx.Branch, bx.Arrived = b.Name, b.Arrived
 		if b.Arrived {
 			// It waits for the others, not for anyone in the join.
-			bx.WaitingFor, bx.Writes, bx.Timers, bx.Branches = nil, nil, nil, nil
+			bx.WaitingFor, bx.Form, bx.Timers, bx.Branches = nil, "", nil, nil
 		}
 		if bx.Pending != nil {
 			x.Pending = bx.Pending
@@ -516,7 +516,7 @@ func (ex *explainer) place(ctx context.Context, f *flowcfg.Flow, run flowrun.Run
 		return x, nil
 	}
 	st, _ := f.State(cur.State)
-	x.Label, x.Status, x.WaitingFor, x.Writes = st.Label, st.Status, st.WaitingFor(), st.Writes()
+	x.Label, x.Status, x.WaitingFor, x.Form = st.Label, st.Status, st.WaitingFor(), st.Form()
 	def := f.Definition()
 	for _, t := range st.Timers() {
 		td := TimerDue{Name: t.Name, Label: t.Label, To: t.To}

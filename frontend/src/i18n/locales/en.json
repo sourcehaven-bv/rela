@@ -71,6 +71,7 @@
       "loadFailed": "The values of this step could not be loaded.",
       "moved": "The run moved on before your step was saved. It has been reloaded.",
       "failed": "The step could not be completed.",
+      "formUnusable": "This step cannot be completed: its form {form} cannot be used. Ask an administrator to fix data-entry.yaml.",
       "complete": "Complete step",
       "completing": "Completing…",
       "done": "Step completed.",

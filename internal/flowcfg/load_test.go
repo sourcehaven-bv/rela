@@ -364,32 +364,26 @@ func TestTemplate_Eval(t *testing.T) {
 	}
 }
 
-func TestParse_Writes(t *testing.T) {
-	const at = "writes: [documents]"
+func TestParse_Form(t *testing.T) {
+	const at = "form: collect_documents"
 	tests := []struct {
-		name  string
-		edit  [2]string
-		key   string
-		want  string
-		write []string
+		name string
+		edit [2]string
+		key  string
+		want string
+		form string
 	}{
-		{name: "sample", edit: [2]string{at, at}, write: []string{"documents"}},
-		{name: "two properties", edit: [2]string{at, "writes: [documents, started]"},
-			write: []string{"documents", "started"}},
-		{name: "unknown property", edit: [2]string{at, "writes: [documentz]"},
-			key: "flows.onboarding.states.collect.writes[0]", want: "no property"},
-		{name: "twice", edit: [2]string{at, "writes: [documents, documents]"},
-			key: "flows.onboarding.states.collect.writes[1]", want: "twice"},
-		{name: "roll-up", edit: [2]string{at, "writes: [task_count]"},
-			key: "flows.onboarding.states.collect.writes[0]", want: "derived"},
-		{name: "reserved", edit: [2]string{at, "writes: [_x]"},
-			key: "flows.onboarding.states.collect.writes[0]", want: "no property"},
-		{name: "state without waiting_for", edit: [2]string{"      review:\n", "      review:\n        writes: [documents]\n"},
-			key: "flows.onboarding.states.review.writes", want: "waiting_for"},
-		{name: "final state", edit: [2]string{"      finished:\n        final: true", "      finished:\n        final: true\n        writes: [documents]"},
-			key: "flows.onboarding.states.finished.writes", want: "waiting_for"},
-		{name: "too many", edit: [2]string{at, "writes: [" + strings.Repeat("documents, ", MaxWrites) + "documents]"},
-			key: "flows.onboarding.states.collect.writes", want: "at most"},
+		{name: "sample", edit: [2]string{at, at}, form: "collect_documents"},
+		{name: "no form", edit: [2]string{"        " + at + "\n", ""}},
+		{name: "surrounding spaces", edit: [2]string{at, `form: " collect "`},
+			key: "flows.onboarding.states.collect.form", want: "spaces"},
+		{name: "state without waiting_for", edit: [2]string{"      review:\n", "      review:\n        form: x\n"},
+			key: "flows.onboarding.states.review.form", want: "waiting_for"},
+		{name: "final state", edit: [2]string{"      finished:\n        final: true",
+			"      finished:\n        final: true\n        form: x"},
+			key: "flows.onboarding.states.finished.form", want: "waiting_for"},
+		{name: "writes is gone", edit: [2]string{at, "writes: [documents]"},
+			key: "writes", want: "not found"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -400,14 +394,13 @@ func TestParse_Writes(t *testing.T) {
 				}
 				f, _ := c.Flow("onboarding")
 				st, _ := f.State("collect")
-				if got := st.Writes(); !slices.Equal(got, tc.write) {
-					t.Errorf("writes = %v, want %v", got, tc.write)
+				if got := st.Form(); got != tc.form {
+					t.Errorf("form = %q, want %q", got, tc.form)
 				}
 				return
 			}
-			var pe *Error
-			if !errors.As(err, &pe) {
-				t.Fatalf("err = %v, want a load error", err)
+			if err == nil {
+				t.Fatal("Parse succeeded, want an error")
 			}
 			if !strings.Contains(err.Error(), tc.key) || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("err = %v, want %q at %s", err, tc.want, tc.key)
