@@ -13,6 +13,7 @@ import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView, getCommands, getErrorMessage } from '@/api'
 import { liveViewPath } from '@/api/live'
+import { accessRefusal } from '@/api/workspaceAccess'
 import { useLiveSubscription } from '@/composables/useLiveSubscription'
 import { runAction, type ActionProposal } from '@/api/actions'
 import { useActionFeedback } from '@/composables/useActionFeedback'
@@ -1161,6 +1162,7 @@ async function runDetailAction(action: DetailAction, ev?: Event) {
           ? config.confirm
           : t('entity.action.confirmRun', { label }),
       confirmLabel: label,
+      danger: config.style === 'danger',
     })
     if (!ok) return
   }
@@ -2526,6 +2528,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
     <RlStatusRegion v-if="showBlockLoader">{{ t('common.loading') }}</RlStatusRegion>
     <div v-else-if="loading && !entry" class="entity-detail-placeholder" />
 
+    <!-- The session or workspace screen says why; see EntityList. -->
+    <div v-else-if="error && accessRefusal" class="entity-detail-placeholder" />
     <RlStatusRegion v-else-if="error" tone="error">
       {{ error }}
       <template #actions>

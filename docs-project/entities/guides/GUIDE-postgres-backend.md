@@ -898,6 +898,8 @@ is `active`, `suspended` or `archived`, or the route answers 401 or 403. The rou
 or `{"status":"archived"}` for the caller's own verified org, and nothing
 about any other org. An org that has no tenant gets 403 `unknown_tenant`,
 unless `lazy` is on, which starts its create and answers `provisioning`.
+A single-tenant server answers the same route with `{"status":"active"}`,
+so the web app's start-up read gets no 404 there.
 
 The "setting up" screen loads before any tenant exists, so it cannot read
 the tenant's config. The server reads `app.name` and `app.language` from

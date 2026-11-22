@@ -171,6 +171,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc(ConfigurePath, configure)
 	mux.HandleFunc(ConfigurePath+"/", configure)
 	mux.HandleFunc("/api/v1/_me", func(w http.ResponseWriter, r *http.Request) { handleV1Me(a, w, r) })
+	mux.HandleFunc(TenantStatusPath, handleV1TenantStatus)
 	mux.HandleFunc("/api/v1/_feeds/", a.handleV1Feed)
 	if routes := newCalDAVRoutes(a); routes != nil {
 		routes.register(mux)

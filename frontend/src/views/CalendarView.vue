@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { workspaceReadOnly } from '@/api/workspaceReadOnly'
+import { accessRefusal } from '@/api/workspaceAccess'
 import { intlLocale } from '@/i18n/locale'
 /**
  * Month/week calendar over date-bearing entities.
@@ -732,7 +733,9 @@ function onDragEnd() {
         t('calendar.sourceError', { source: sourceName(failure.index), message: failure.message })
       }}
     </RlStatusRegion>
-    <RlStatusRegion v-if="loadError" tone="error">{{ loadError }}</RlStatusRegion>
+    <!-- The session or workspace screen says why (BUG-ZL4K7QW). -->
+    <div v-if="loadError && accessRefusal" />
+    <RlStatusRegion v-else-if="loadError" tone="error">{{ loadError }}</RlStatusRegion>
     <RlStatusRegion v-else-if="initialLoad">{{ t('common.loading') }}</RlStatusRegion>
 
     <CalendarGrid

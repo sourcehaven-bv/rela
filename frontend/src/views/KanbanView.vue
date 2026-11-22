@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, type Component } from 'vue'
+import { accessRefusal } from '@/api/workspaceAccess'
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
 import { useEntitiesStore, useSchemaStore, useUIStore } from '@/stores'
@@ -1429,6 +1430,8 @@ async function quickAdd(
 
     <RlStatusRegion v-if="loading">{{ t('kanban.loading') }}</RlStatusRegion>
 
+    <!-- The session or workspace screen says why (BUG-ZL4K7QW). -->
+    <div v-else-if="loadError && accessRefusal" />
     <RlStatusRegion v-else-if="loadError" tone="error">{{ loadError }}</RlStatusRegion>
 
     <!-- The card is a real link, so cmd/middle-click opens a tab. The board

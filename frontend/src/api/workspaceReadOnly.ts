@@ -10,8 +10,8 @@
  *
  * The flag is also read once at start from the tenant status endpoint, so the
  * read-only banner shows and create buttons are hidden before anyone tries a
- * write. A server that is not multi-tenant has no such endpoint; its 404
- * leaves the flag alone.
+ * write. A single-tenant server answers the endpoint with `active` and no
+ * `read_only`, so the flag stays false; any failure leaves it alone.
  */
 import { ref } from 'vue'
 import { apiUrl } from './base'

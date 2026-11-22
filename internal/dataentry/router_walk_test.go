@@ -111,6 +111,7 @@ var routerWalkProbes = []routerWalkProbe{
 	{http.MethodGet, "/api/v1/_schema/channels", "/api/v1/_schema/channels", http.StatusOK, ""},
 	{http.MethodGet, "/api/v1/_config", "/api/v1/_config", http.StatusOK, ""},
 	{http.MethodGet, "/api/v1/_me", "/api/v1/_me", http.StatusOK, ""},
+	{http.MethodGet, "/api/v1/_tenant", "/api/v1/_tenant", http.StatusOK, ""},
 	{http.MethodGet, "/api/v1/_configure", "/api/v1/_configure", http.StatusNotFound, ""},
 	{http.MethodGet, "/api/v1/_configure/{key}", "/api/v1/_configure/x", http.StatusNotFound, ""},
 	// registered; unknown feed → 404

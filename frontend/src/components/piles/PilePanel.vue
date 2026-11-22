@@ -170,6 +170,7 @@ async function runAction(id: string, config: ActionConfig, event?: MouseEvent) {
               runOn.length
             ),
       confirmLabel: t('piles.panel.run'),
+      danger: config.style === 'danger',
     })
     if (!ok) return
   }

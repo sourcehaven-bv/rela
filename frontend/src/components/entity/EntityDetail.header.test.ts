@@ -10,6 +10,8 @@ import { defineComponent } from 'vue'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import type { Entity } from '@/types'
 import type { ViewResponse } from '@/api'
+import { ApiError } from '@/api/errors'
+import { REFUSAL, accessRefusal, resetAccessForTest } from '@/api/workspaceAccess'
 
 // The desktop header row: conversions share one menu, and a row that does not
 // fit beside the title moves its secondary actions into the "⋯" menu.
@@ -101,6 +103,30 @@ describe('EntityDetail header actions', () => {
   function desktopLabels(w: Awaited<ReturnType<typeof mountDetail>>) {
     return w.findAll('.desktop-actions button, .desktop-actions a').map((b) => b.text().trim())
   }
+
+  // BUG-ZL4K7QW: once the session has ended, the session screen says why the
+  // read failed, so no error and no Retry show under it.
+  it('shows no load error under the session screen', async () => {
+    fetchViewMock.mockReset().mockRejectedValue(
+      new ApiError('Request failed (401)', { kind: 'http', status: 401, original: null })
+    )
+    accessRefusal.value = REFUSAL.sessionEnded
+    try {
+      const w = await mountDetail()
+      expect(fetchViewMock).toHaveBeenCalled()
+      expect(w.text()).not.toContain('401')
+    } finally {
+      resetAccessForTest()
+    }
+  })
+
+  it('shows the load error without a session screen', async () => {
+    fetchViewMock.mockReset().mockRejectedValue(
+      new ApiError('Request failed (500)', { kind: 'http', status: 500, original: null })
+    )
+    const w = await mountDetail()
+    expect(w.text()).toContain('500')
+  })
 
   it('offers all conversions in one Convert menu', async () => {
     const w = await mountDetail()

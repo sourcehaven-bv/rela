@@ -4,6 +4,7 @@ import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-rout
 import { useI18n } from 'vue-i18n'
 import { useQuery, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
+import { accessRefusal } from '@/api/workspaceAccess'
 import { useListKeyboard } from '@/composables/useListKeyboard'
 import { useListSelection } from '@/composables/useListSelection'
 import { useListActions } from '@/composables/useListActions'
@@ -356,6 +357,7 @@ async function requestActionConfirm(
         ? action.confirm
         : t('list.actionConfirm', { label: action.label, n: selectedIds.value.size }),
     confirmLabel: action.label,
+    danger: action.style === 'danger',
   })
   if (!ok) return
   void executeAction(actionId, action, triggerEl)
@@ -1525,6 +1527,9 @@ watch(searchQuery, () => {
       </RlBanner>
       <RlStatusRegion v-if="loading">{{ t('list.loading') }}</RlStatusRegion>
 
+      <!-- The session or workspace screen says why the read failed; a
+           "Retry" here cannot succeed until it is resolved (BUG-ZL4K7QW). -->
+      <div v-else-if="loadError && accessRefusal" class="empty-state" data-testid="load-refused" />
       <div v-else-if="loadError" class="empty-state load-error">
         <p>{{ loadError }}</p>
         <RlButton variant="secondary" @click="listQuery.refetch()">{{ t('list.retry') }}</RlButton>

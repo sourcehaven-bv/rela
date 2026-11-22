@@ -131,7 +131,9 @@ export interface ActionConfig {
   llm?: { batch?: { max: number } }
   /**
    * How an entity page draws the action: `danger` for a destructive button.
-   * Absent is the normal button. Other surfaces ignore it.
+   * Absent is the normal button. The action's confirm dialog takes the same
+   * style wherever the action runs; other surfaces draw their buttons as
+   * before.
    */
   style?: 'danger'
   /**
