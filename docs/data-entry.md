@@ -2211,7 +2211,14 @@ A list narrower than its columns, as on a phone, keeps only some of them.
 The first column, the row title, always stays. By default an enum column
 (such as a status), a face column and a busy column stay as well, and the
 other columns are dropped. A kept column has the same width in every row,
-also where its value is empty, so the columns line up down the list.
+also where its value is empty, so the columns line up down the list. The
+title keeps a readable width: when it and the kept columns do not fit on one
+line, the kept columns move to a line of their own under the title.
+
+A list switches to this layout below 640 pixels. Wider, it shows every
+column with its header. Each column has a preferred width that suits its
+property type, and the columns and the title shrink together to fit the
+page before the list scrolls sideways.
 
 Set `primary:` on a list column to choose for yourself. `primary: true`
 keeps the column; `primary: false` drops it, also when it is an enum. A

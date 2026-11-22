@@ -17,6 +17,14 @@ import RlEmptyState from '../feedback/RlEmptyState.vue'
 import RlDisclosure from '../common/RlDisclosure.vue'
 import RlSectionHeading from '../layout/RlSectionHeading.vue'
 import RlTableRow from './RlTableRow.vue'
+import {
+  cellSizeStyle,
+  keptWidth,
+  NAME_BASIS,
+  NAME_COMPACT_MIN_WIDTH,
+  NAME_MIN_WIDTH,
+  tableMinWidth,
+} from './columnSizing'
 import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
@@ -150,16 +158,18 @@ const visibleColumns = computed(() =>
 )
 
 /*
- * The narrowest the name column may get before the table scrolls sideways.
- * The name cell is the flexible one, so without a floor enough fixed columns
- * squeeze it to nothing and its header overlaps the next one.
+ * The sizes the header and the rows share, set once on the section so the
+ * two cannot be given different ones. The table scrolls sideways below the
+ * name's floor plus every column's floor; `--rl-kept-width` is what the
+ * compressed rows weigh the title against. See `columnSizing.ts`.
  */
-const NAME_MIN_WIDTH = 240
-
-/* The row's full width: the name's floor plus every fixed column. */
-const minWidth = computed(
-  () => NAME_MIN_WIDTH + visibleColumns.value.reduce((sum, column) => sum + (column.width ?? 150), 0),
-)
+const sizeStyle = computed(() => ({
+  '--rl-table-min-width': `${tableMinWidth(visibleColumns.value)}px`,
+  '--rl-name-basis': `${NAME_BASIS}px`,
+  '--rl-name-min-width': `${NAME_MIN_WIDTH}px`,
+  '--rl-name-compact-min-width': `${NAME_COMPACT_MIN_WIDTH}px`,
+  '--rl-kept-width': keptWidth(visibleColumns.value),
+}))
 
 /*
  * Collapsing is the header's control, so a section without one is always
@@ -296,7 +306,7 @@ function sortHint(column: TableColumn) {
   <section
     class="rl-table-section"
     :class="{ 'rl-table-section--headerless': !showSectionHeader }"
-    :style="{ '--rl-table-min-width': `${minWidth}px` }"
+    :style="sizeStyle"
   >
     <header v-if="showSectionHeader" class="rl-table-section__header">
       <RlDisclosure :open="open" :label="section.title" @toggle="toggleOpen" />
@@ -426,7 +436,7 @@ function sortHint(column: TableColumn) {
                     ? 'none'
                     : undefined
               "
-              :style="{ width: `${column.width ?? 150}px` }"
+              :style="cellSizeStyle(column)"
             >
               <button
                 v-if="column.sortable"
@@ -595,8 +605,9 @@ function sortHint(column: TableColumn) {
   display: flex;
   align-items: center;
   gap: var(--rl-space-2);
-  flex: 1;
-  min-width: 0;
+  /* The rows' name sizing, so the column labels stay over their columns. */
+  flex: 1 1 var(--rl-name-basis);
+  min-width: var(--rl-name-min-width);
   padding: var(--rl-space-1) var(--rl-space-4);
 }
 
@@ -679,7 +690,9 @@ function sortHint(column: TableColumn) {
 
 .rl-table-section__columns-cell {
   position: relative;
-  flex: none;
+  /* The rows' cell sizing, so each label stays over its column. */
+  flex: 0 1 var(--rl-cell-width);
+  min-width: var(--rl-cell-min-width);
   align-self: stretch;
   display: flex;
   align-items: center;
@@ -736,7 +749,7 @@ function sortHint(column: TableColumn) {
  * the header was aligned to. The gutter is about the table being narrow
  * rather than about what the rows chose to do with it.
  */
-@container rl-table (max-width: 767px) {
+@container rl-table (max-width: 639px) {
   /*
    * The compact gutter, matching the rows. Set on the section so the header
    * and the add button below it both inherit one value: the three line up
