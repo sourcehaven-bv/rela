@@ -5,7 +5,9 @@ title: 'Record types: MCP tools, Lua list and aggregate, and CLI'
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-22"
+completed: "2026-11-22"
+status: done
 ---
 
 ## Description

@@ -52,6 +52,10 @@ import (
 // `internal/appbuild` (enforced by arch-lint). The wiring site
 // (`internal/cli`) constructs a Deps from focused services and supplies
 // it to [NewServer]; tests build a Deps literal directly.
+//
+// 20 → 21 for Records (TKT-EV8U8T4): one optional capability, like Leases.
+//
+//plimsoll:max-fields=21
 type Deps struct {
 	// Store is the READ handle for every MCP read surface — tools,
 	// resources, prompts and analyze alike. It is deliberately
@@ -121,6 +125,17 @@ type Deps struct {
 	// hub leaves an already-waiting watch subscribed to the old hub until
 	// its timeout.
 	Leases LeaseService
+
+	// Records backs the record tools (TKT-EV8U8T4). The service gates every
+	// read on the owner, so a hidden owner's rows are neither listed nor
+	// folded.
+	//
+	// Nil: accepted. No record tool is registered. Wiring assigns it only
+	// when the service exists, so a typed nil never reaches the interface.
+	// The tools are registered once, by [NewServer]; a reload that takes
+	// Records to nil leaves them answering that the project has no record
+	// types.
+	Records RecordService
 
 	// BindIdentity is the request-edge step the server runs after it stamps
 	// its fallback principal (see [WithPrincipal]): it resolves that
@@ -558,6 +573,7 @@ type handlerSet struct {
 	actions   actionHandler
 	convs     conversionHandler
 	leases    leaseHandler
+	records   recordHandler
 	channels  channelHandler
 }
 
@@ -577,6 +593,7 @@ func (d Deps) handlers() handlerSet {
 		actions:   actionHandler{runner: d.Commands.Actions},
 		convs:     conversionHandler{conv: d.Commands.Conversions, store: d.Store, watcher: d.Watcher},
 		leases:    leaseHandler{svc: d.Leases},
+		records:   recordHandler{svc: d.Records},
 		channels: channelHandler{
 			reader: d.Channels.Reader, sessions: d.Channels.Sessions, writer: d.Channels.Writer,
 			creator: d.Channels.Creator, inbox: d.Channels.Inbox, marker: d.Channels.Marker, files: d.Channels.Files,

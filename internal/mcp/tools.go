@@ -67,6 +67,9 @@ func (s *Server) registerTools() {
 	// Lease tools: only when the wiring supplies a lease service.
 	registerLeaseTools(s)
 
+	// Record tools: only when the wiring supplies a record service.
+	registerRecordTools(s)
+
 	// Flow tools: only when the project declares flows (see WithFlows).
 	registerFlowTools(s)
 
