@@ -46,11 +46,18 @@ describe('refusalOf', () => {
 
 describe('loginUrlOf', () => {
   it('accepts a local path and nothing else', () => {
-    expect(loginUrlOf({ login_url: '/auth/login?rd=%2Ftickets' })).toBe('/auth/login?rd=%2Ftickets')
+    expect(loginUrlOf({ login_url: '/auth/login?rd=%2Ftickets' })).toBe(
+      `${window.location.origin}/auth/login?rd=%2Ftickets`
+    )
     // Another site, however it is written.
     expect(loginUrlOf({ login_url: 'https://account.example/login' })).toBeNull()
     expect(loginUrlOf({ login_url: `${window.location.origin}/auth/login` })).toBeNull()
     expect(loginUrlOf({ login_url: '//evil.example/login' })).toBeNull()
+    expect(loginUrlOf({ login_url: '//evil' })).toBeNull()
+    expect(loginUrlOf({ login_url: '/\\evil' })).toBeNull()
+    // Path normalisation turns these into `//evil.example`.
+    expect(loginUrlOf({ login_url: '/.//evil.example' })).toBeNull()
+    expect(loginUrlOf({ login_url: '/a/..//evil.example' })).toBeNull()
     expect(loginUrlOf({ login_url: '/\\evil.example/login' })).toBeNull()
     expect(loginUrlOf({ login_url: '/\t/evil.example/login' })).toBeNull()
     expect(loginUrlOf({ login_url: 'javascript:alert(1)' })).toBeNull()
@@ -67,7 +74,7 @@ describe('trackAccess', () => {
     trackAccess(401, { error: 'session_expired', login_url: '/auth/login?rd=%2Ftickets' })
     trackAccess(403, problem('tenant_suspended'))
     expect(accessRefusal.value).toBe('session_ended')
-    expect(loginUrl.value).toBe('/auth/login?rd=%2Ftickets')
+    expect(loginUrl.value).toBe(`${window.location.origin}/auth/login?rd=%2Ftickets`)
   })
 
   it('keeps the explanation of a 401 that names no sign-in page', () => {
@@ -109,7 +116,7 @@ describe('probeSessionEnded', () => {
     })
     await probeSessionEnded(fetchFn)
     expect(accessRefusal.value).toBe('session_ended')
-    expect(loginUrl.value).toBe('/auth/login?rd=%2Ftickets')
+    expect(loginUrl.value).toBe(`${window.location.origin}/auth/login?rd=%2Ftickets`)
   })
 
   it('leaves a server that answers, or does not answer at all, alone', async () => {
@@ -185,7 +192,7 @@ describe('API client', () => {
     })
     await expect(api.get('/tickets')).rejects.toThrow()
     expect(accessRefusal.value).toBe('session_ended')
-    expect(loginUrl.value).toBe('/auth/login?rd=%2Ftickets')
+    expect(loginUrl.value).toBe(`${window.location.origin}/auth/login?rd=%2Ftickets`)
   })
 
   it('asks whether a request that got no response met a sign-in redirect', async () => {

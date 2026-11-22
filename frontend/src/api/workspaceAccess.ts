@@ -70,7 +70,11 @@ export function loginUrlOf(data: unknown): string | null {
   if (typeof raw !== 'string' || !raw.startsWith('/') || /^\/[/\\]/.test(raw)) return null
   try {
     const url = new URL(raw, window.location.origin)
-    return url.origin === window.location.origin ? url.pathname + url.search + url.hash : null
+    // Check what is returned, not only the input: path normalisation turns
+    // `/.//host` into the path `//host`. The absolute URL keeps it on this
+    // site even so.
+    if (url.origin !== window.location.origin || /^\/[/\\]/.test(url.pathname)) return null
+    return url.href
   } catch {
     return null
   }
