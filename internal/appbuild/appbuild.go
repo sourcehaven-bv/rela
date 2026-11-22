@@ -979,7 +979,7 @@ type GatedReadBundle struct {
 
 	// Conditions lowers a query condition to a page filter for Reader,
 	// which gates its traversals with the same gate as Traversals
-	// (TKT-Z099FGY).
+	// (TKT-Z099FGY). MCP list_entities answers its filters this way only.
 	Conditions QueryConditions
 
 	// Searcher gates hits by the principal's read scope, drops hits that

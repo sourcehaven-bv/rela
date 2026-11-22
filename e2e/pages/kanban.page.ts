@@ -180,8 +180,9 @@ export class KanbanPage extends BasePage {
     return this.page.getByRole('dialog');
   }
 
+  /** Opens the create dialog from the first column's Add. */
   async clickCreate() {
-    await this.createButton.click();
+    await this.columnAddButtons.first().click();
     await expect(this.createDialog).toBeVisible();
   }
 

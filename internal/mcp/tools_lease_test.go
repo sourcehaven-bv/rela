@@ -193,7 +193,7 @@ func newLeaseEnv(t *testing.T) *leaseEnv {
 	leases := newTestLeases(t, reads.Reader, svc.ACL(), clock)
 	deps := Deps{
 		Store:         reads.Reader,
-		Related:       RelatedReads{Traversals: reads.Traversals},
+		Related:       RelatedReads{Conditions: reads.Conditions},
 		Meta:          meta,
 		Tracer:        reads.Tracer,
 		Searcher:      reads.Searcher,

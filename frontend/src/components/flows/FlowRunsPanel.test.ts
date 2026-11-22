@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, RouterLinkStub, enableAutoUnmount } from '@vue/test-utils'
 
+import { routeLocationKey } from 'vue-router'
 import FlowRunsPanel from './FlowRunsPanel.vue'
 import { ApiError } from '@/api/errors'
 import type { Flow, FlowRun } from '@/api/flows'
@@ -8,15 +9,16 @@ import { resetFlowList } from '@/composables/useFlowList'
 import { useSchemaStore } from '@/stores/schema'
 
 const listFlowsMock = vi.fn<() => Promise<Flow[]>>()
-const listSubjectRunsMock = vi.fn<(subject: string, signal?: AbortSignal) => Promise<FlowRun[]>>()
+const listSubjectRunsMock =
+  vi.fn<(subject: string, signal?: AbortSignal, space?: string) => Promise<FlowRun[]>>()
 // The flows the server says the reader may start; the mock adds them to the runs.
 let mayStart: string[] = ['onboarding']
 const startFlowRunMock = vi.fn<(flow: string, subject: string) => Promise<string>>()
 const getFlowRunMock = vi.fn()
 vi.mock('@/api/flows', () => ({
   listFlows: () => listFlowsMock(),
-  listSubjectRuns: async (s: string, sig?: AbortSignal) => ({
-    runs: await listSubjectRunsMock(s, sig),
+  listSubjectRuns: async (s: string, sig?: AbortSignal, space?: string) => ({
+    runs: await listSubjectRunsMock(s, sig, space),
     startable: mayStart,
   }),
   startFlowRun: (f: string, s: string) => startFlowRunMock(f, s),
@@ -114,13 +116,27 @@ describe('FlowRunsPanel', () => {
     expect(wrapper.find('[data-testid="flow-runs-panel"]').exists()).toBe(false)
   })
 
+  it('names the space the page is open in, so the server can hide the panel there', async () => {
+    listFlowsMock.mockResolvedValue([onboarding])
+    listSubjectRunsMock.mockResolvedValue([])
+    mount(FlowRunsPanel, {
+      props: { entityType: 'person', entityId: 'PER-1' },
+      global: {
+        stubs: { RouterLink: RouterLinkStub },
+        provide: { [routeLocationKey as symbol]: { path: '/s/portal/entity/person/PER-1', query: {} } },
+      },
+    })
+    await flushPromises()
+    expect(listSubjectRunsMock).toHaveBeenCalledWith('PER-1', expect.anything(), 'portal')
+  })
+
   it('shows each run on the entity with why it waits', async () => {
     listFlowsMock.mockResolvedValue([onboarding])
     listSubjectRunsMock.mockResolvedValue([run()])
     const wrapper = mountPanel()
     await flushPromises()
 
-    expect(listSubjectRunsMock).toHaveBeenCalledWith('PER-1', expect.any(AbortSignal))
+    expect(listSubjectRunsMock).toHaveBeenCalledWith('PER-1', expect.any(AbortSignal), undefined)
     const cards = wrapper.findAll('[data-testid="flow-run"]')
     expect(cards).toHaveLength(1)
     expect(wrapper.find('[data-testid="flow-run-state"]').text()).toBe('Collect documents')

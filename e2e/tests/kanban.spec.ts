@@ -42,12 +42,12 @@ test.describe('Kanban Board', () => {
       await kanbanPage.expectColumnCountVisible('Approved');
     });
 
-    test('shows create button', async ({ appPage }) => {
+    test('shows column Add instead of a header New button', async ({ appPage }) => {
       const kanbanPage = new KanbanPage(appPage);
 
       await kanbanPage.navigateToKanban('feature-board');
 
-      await expect(kanbanPage.createButton).toBeVisible();
+      await kanbanPage.expectColumnAddWithoutHeaderNew();
     });
   });
 

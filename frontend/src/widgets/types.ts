@@ -39,6 +39,12 @@ export interface WidgetProps<T = unknown> {
   required?: boolean
   error?: string
   id?: string
+  // The field's label, for a control no `<label for>` names: a display-mode
+  // checkbox, or one in a label/value row whose label is not a `<label>`.
+  // A checkbox carries no text of its own, so without it a screen reader
+  // reads it by its value, "on". Text widgets ignore it: their value is
+  // their content.
+  label?: string
   placeholder?: string
   help?: string
   // Accessibility wiring handed down by FieldShell through its slot. The shell

@@ -410,6 +410,7 @@ var locked = map[File][]string{
 		// Page chrome toggles (TKT-31822PN): true, false or {permission}.
 		// Not in the Configure space yet; locked with the other permissions.
 		"dashboard.validation.**", "dashboards.*.validation.**", "header_buttons.**", "list_buttons.**",
+		"entity_panels.**", "spaces.[].entity_panels.**",
 		// Not in the Configure space yet: list-sourced, matrix and ratio cards
 		// (TKT-2SGPJZ). The Configure dashboard page edits query cards only.
 		"dashboard.cards.[].list", "dashboard.cards.[].rows", "dashboard.cards.[].tone_by",
@@ -488,6 +489,7 @@ var protective = map[File][]string{
 		"nav.permission", "spaces.[].permission", "dashboard.cards.[].permission",
 		"dashboards.*.cards.[].permission",
 		"dashboard.validation.**", "dashboards.*.validation.**", "header_buttons.**", "list_buttons.**",
+		"entity_panels.**", "spaces.[].entity_panels.**",
 	},
 	// A script may stamp what acl.yaml decides access by; removing it
 	// would drop that stamp from every record written afterwards.

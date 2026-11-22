@@ -75,6 +75,8 @@ function moveSummary(e: FlowEvent, t: Translate): string {
       return t('flows.log.join', { state: labelOf(e.label, e.state) })
     case 'cancel':
       return t('flows.log.cancel', { state: labelOf(e.label, e.state) })
+    case 'failed':
+      return t('flows.log.failed', { state: labelOf(e.label, e.state) })
     default:
       return t('flows.log.moved', { state: labelOf(e.label, e.state) })
   }
@@ -97,10 +99,15 @@ export function timelineEntries(run: FlowRun, t: Translate): TimelineEntry[] {
       actor: e.by_title || (e.by ? actorLabel(e.by) : undefined),
       timestamp: formatInstant(e.at),
       datetime: e.at,
-      tone: (e.via === 'timer' ? 'amber' : 'grey') as StatusColor,
+      tone: entryTone(e.via),
       current: current.has(i),
     }))
     .reverse()
+}
+
+function entryTone(via: FlowEvent['via']): StatusColor {
+  if (via === 'failed') return 'red'
+  return via === 'timer' ? 'amber' : 'grey'
 }
 
 /** The indexes of the log entries for the states the run is in now. */

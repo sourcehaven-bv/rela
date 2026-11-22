@@ -95,6 +95,17 @@ const showHamburger = computed(
 )
 
 const schemaStore = useSchemaStore()
+
+/*
+ * The title in the hamburger bar on a phone. A list or a dashboard puts its
+ * own title beside the toggle; an entity page has its heading below the bar,
+ * so the bar names the kind of page instead: the entity type.
+ */
+const menuBarTitle = computed(() => {
+  if (route.name !== 'entity') return ''
+  const type = String(route.params.type ?? '')
+  return type ? schemaStore.entityTypes.get(type)?.label || type : ''
+})
 // Also feeds app.language to the language resolution.
 const { appName } = useShellAppConfig(schemaStore)
 useDocumentTitle(appName)
@@ -396,6 +407,13 @@ watch(
           aria-controls="main-sidebar"
           @click="navOpen = !navOpen"
         />
+        <span
+          v-if="menuBarTitle"
+          class="mobile-menu-bar__title"
+          data-testid="mobile-menu-bar-title"
+        >
+          {{ menuBarTitle }}
+        </span>
       </div>
       <!-- One suggestion slot for every page, above the routed view. The
            server applies the operator's placement for the page, so the card
@@ -565,6 +583,22 @@ body {
   background: var(--rl-color-bg);
 }
 
+.app-layout .mobile-menu-bar {
+  align-items: center;
+  gap: var(--rl-space-2, 8px);
+}
+
+/* Like a list's title in its header band. */
+.app-layout .mobile-menu-bar__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--rl-font-size-lg);
+  font-weight: 600;
+  color: var(--rl-color-text);
+}
+
 /* A 44px touch target. Two classes so the size outranks RlIconButton's own
    scoped rule on specificity alone.
 
@@ -639,6 +673,14 @@ body {
     pointer-events: auto;
   }
 
+  /* The topbar under the see-through bar has its own title. */
+  .app-layout
+    .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky)
+    > .mobile-menu-bar
+    .mobile-menu-bar__title {
+    display: none;
+  }
+
   /* Except when a next-action card or the as-of banner comes first: they
      sit above the topbar, so the bar keeps its row and they start below
      the button rather than under it. */
@@ -670,8 +712,6 @@ body {
     padding-bottom: 24px;
   }
 }
-
-
 
 /* `.page-header` and `.header-actions` are gone — RlPageHeader owns the page
    header now and the app shell renders it. */

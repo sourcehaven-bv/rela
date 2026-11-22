@@ -3,6 +3,7 @@ package appbuild
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -111,21 +112,31 @@ type conditionTerms struct {
 func lowerConditionTerms(
 	ctx context.Context, meta *metamodel.Metamodel, prog *predicate.Program, entityType string,
 ) (out conditionTerms, ok bool) {
+	out, err := lowerConditionTermsExplained(ctx, meta, prog, entityType)
+	return out, err == nil
+}
+
+// lowerConditionTermsExplained is [lowerConditionTerms] that says why a
+// condition does not lower.
+func lowerConditionTermsExplained(
+	ctx context.Context, meta *metamodel.Metamodel, prog *predicate.Program, entityType string,
+) (conditionTerms, error) {
 	if prog == nil || meta == nil {
-		return conditionTerms{}, false
+		return conditionTerms{}, errors.New("no condition to lower")
 	}
 	var identity string
 	if id, bound := predicatefns.QueryIdentityFrom(ctx); bound {
 		identity = id.ID()
 	}
-	lowered, ok := queryplan.LowerCondition(prog, meta, entityType, identity)
-	if !ok {
-		return conditionTerms{}, false
+	lowered, err := queryplan.LowerConditionExplained(prog, meta, entityType, identity)
+	if err != nil {
+		return conditionTerms{}, err
 	}
+	var out conditionTerms
 	if lowered.Where != nil {
-		w, ok := pageCond(meta, entityType, *lowered.Where)
-		if !ok {
-			return conditionTerms{}, false
+		w, err := pageCond(meta, entityType, *lowered.Where)
+		if err != nil {
+			return conditionTerms{}, err
 		}
 		out.where = &w
 	}
@@ -145,46 +156,44 @@ func lowerConditionTerms(
 		seen[key] = true
 		hop, err := relresolve.Hop(meta, entityType, term.Spec)
 		if err != nil {
-			return conditionTerms{}, false
+			return conditionTerms{}, fmt.Errorf("related(...): %w", err)
 		}
 		out.terms = append(out.terms, visibility.PageTraversal{Hop: hop, Negate: term.Negated})
 	}
 	out.props = lowered.Props
-	return out, true
+	return out, nil
 }
 
 // pageCond resolves the traversals of c to the hops they walk.
-func pageCond(meta *metamodel.Metamodel, entityType string, c queryplan.LoweredCond) (visibility.PageCond, bool) {
+func pageCond(meta *metamodel.Metamodel, entityType string, c queryplan.LoweredCond) (visibility.PageCond, error) {
 	out := visibility.PageCond{Op: c.Op, Prop: c.Prop}
 	if c.Op == store.CondRelated {
 		hop, err := relresolve.Hop(meta, entityType, c.Traversal)
 		if err != nil {
-			return visibility.PageCond{}, false
+			return visibility.PageCond{}, fmt.Errorf("related(...): %w", err)
 		}
 		out.Hop = hop
-		return out, true
+		return out, nil
 	}
 	for _, a := range c.Args {
-		pa, ok := pageCond(meta, entityType, a)
-		if !ok {
-			return visibility.PageCond{}, false
+		pa, err := pageCond(meta, entityType, a)
+		if err != nil {
+			return visibility.PageCond{}, err
 		}
 		out.Args = append(out.Args, pa)
 	}
-	return out, true
+	return out, nil
 }
 
 // QueryConditions lowers a caller's query condition for a page read, for an
 // identity-bearing consumer outside the data-entry API: MCP list_entities
 // (TKT-Z099FGY). It holds only the metamodel. It gates nothing: the
 // traversals it returns are hops, which the page reader gates itself with
-// the caller's traversal gate ([visibility.PageTraversal]), the same gate
-// the [GatedReadBundle]'s Traversals binder answers the condition with in
-// Go. One value serves every request.
+// the caller's traversal gate ([visibility.PageTraversal]). One value
+// serves every request.
 //
 // It also stamps the query identity, because `current_user` must bind to
-// the same caller in the store and in Go; a consumer that lowers a
-// condition is the one that needs it.
+// the caller; a consumer that lowers a condition is the one that needs it.
 type QueryConditions struct {
 	meta *metamodel.Metamodel
 }
@@ -199,34 +208,36 @@ func (q QueryConditions) StampQueryIdentity(ctx context.Context) (context.Contex
 // Lower rewrites prog, compiled against entityType, as a page filter: props
 // on the STORED row, the traversals for the reader to gate, and a Where tree
 // for the rest. The filter is the AND of all three; a caller that drops one
-// widens it. ok=false: prog does not lower exactly, and the caller answers
-// it in Go.
+// widens it. An error means prog does not lower exactly and names the part
+// that does not ([queryplan.UnsupportedConditionError] for most).
 //
 // Every entity field prog reads is the property of a predicate in props or
 // in where: a condition that reads a field none names, or uses the entity
 // record whole other than as a traversal subject, does not lower. So a
-// caller whose Go path judges REDACTED rows decides whether the store may
-// answer by checking the visibility of those properties alone, which
-// [visibility.ScriptReader.ListEntityPage] does. The zero value lowers
-// nothing.
+// reader whose callers expect the REDACTED row judged can guard exactly
+// those properties, which [visibility.ScriptReader.ListEntityPage] does.
+// The zero value lowers nothing.
 func (q QueryConditions) Lower(
 	ctx context.Context, prog *predicate.Program, entityType string,
-) (filter visibility.PageQuery, ok bool) {
-	lowered, ok := lowerConditionTerms(ctx, q.meta, prog, entityType)
-	if !ok {
-		return visibility.PageQuery{}, false
+) (visibility.PageQuery, error) {
+	lowered, err := lowerConditionTermsExplained(ctx, q.meta, prog, entityType)
+	if err != nil {
+		return visibility.PageQuery{}, err
 	}
-	filter = visibility.PageQuery{Props: lowered.props, Traversals: lowered.terms, Where: lowered.where}
+	filter := visibility.PageQuery{Props: lowered.props, Traversals: lowered.terms, Where: lowered.where}
 	named := map[string]bool{}
 	for _, p := range visibilityProps(filter) {
 		named[p.Property] = true
 	}
 	for _, attr := range prog.Attributes("entity") {
 		if !named[attr] {
-			return visibility.PageQuery{}, false
+			return visibility.PageQuery{}, &queryplan.UnsupportedConditionError{
+				Construct: "entity." + attr,
+				Reason:    "read in a way the store cannot compare",
+			}
 		}
 	}
-	return filter, true
+	return filter, nil
 }
 
 // visibilityProps returns every property predicate of a page filter.

@@ -208,6 +208,82 @@ type ListButtonsConfig struct {
 	AddToPile ChromeToggle `yaml:"add_to_pile,omitempty" json:"add_to_pile,omitzero"`
 }
 
+// PageChrome is the part of [Config] that hides built-in buttons and panels
+// of the SPA. Its zero value shows them all.
+type PageChrome struct {
+	// HeaderButtons hides built-in buttons of the entity page header. See
+	// [HeaderButtonsConfig].
+	HeaderButtons HeaderButtonsConfig `yaml:"header_buttons,omitempty" json:"header_buttons,omitzero"`
+
+	// ListButtons hides built-in buttons of lists and search results. See
+	// [ListButtonsConfig].
+	ListButtons ListButtonsConfig `yaml:"list_buttons,omitempty" json:"list_buttons,omitzero"`
+
+	// EntityPanels hides built-in panels of the entity page, for every
+	// space. See [EntityPanelsConfig].
+	EntityPanels EntityPanelsConfig `yaml:"entity_panels,omitempty" json:"entity_panels,omitzero"`
+}
+
+// EntityPanelsConfig is the `entity_panels:` block of data-entry.yaml, at
+// the top level and on a space: which built-in panels an entity page shows.
+// Every key is optional, and so is the block; an absent key shows its panel
+// as before.
+//
+// Unlike the buttons, a hidden panel is also withheld by the server: the
+// route that feeds it answers as if there were nothing to show. The data
+// behind it keeps its own ACL and stays reachable by its other routes.
+type EntityPanelsConfig struct {
+	// FlowRuns is the panel that lists the flow runs on the entity and
+	// offers the flows the reader may start on it. Hidden, the subject runs
+	// route (`GET /api/v1/_flows/runs?subject=`) answers no runs and no
+	// startable flows.
+	FlowRuns ChromeToggle `yaml:"flow_runs,omitempty" json:"flow_runs,omitzero"`
+}
+
+// entityPanelsKeys are the keys the entity_panels block accepts.
+var entityPanelsKeys = []string{"flow_runs"}
+
+// entityPanelsUnknownKeys is [headerButtonsUnknownKeys] for `entity_panels:`,
+// at the top level and on each space.
+func entityPanelsUnknownKeys(data []byte) []string {
+	var raw struct {
+		EntityPanels map[string]any `yaml:"entity_panels"`
+		Spaces       []struct {
+			ID           string         `yaml:"id"`
+			EntityPanels map[string]any `yaml:"entity_panels"`
+		} `yaml:"spaces"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil // the struct unmarshal reports malformed YAML
+	}
+	errs := unknownKeysIn("entity_panels", raw.EntityPanels, entityPanelsKeys)
+	for _, sp := range raw.Spaces {
+		errs = append(errs, unknownKeysIn(fmt.Sprintf("spaces[%s].entity_panels", sp.ID), sp.EntityPanels,
+			entityPanelsKeys)...)
+	}
+	return errs
+}
+
+// FlowRunsPanelShown reports whether an entity page in space shows the flow
+// runs panel: neither the top-level `entity_panels.flow_runs` nor that of
+// space hides it. An empty or unknown space applies the top-level toggle
+// alone. permits answers whether the principal holds a permission, as for
+// [ChromeToggle.Shown].
+func (c *Config) FlowRunsPanelShown(space string, permits func(permission string) bool) bool {
+	if c == nil {
+		return true
+	}
+	if !c.EntityPanels.FlowRuns.Shown(permits) {
+		return false
+	}
+	for _, sp := range c.Spaces {
+		if sp.ID == space {
+			return sp.EntityPanels.FlowRuns.Shown(permits)
+		}
+	}
+	return true
+}
+
 // listButtonsKeys are the keys the list_buttons block accepts.
 var listButtonsKeys = []string{"add_to_pile"}
 

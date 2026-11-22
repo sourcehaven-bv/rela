@@ -26,6 +26,7 @@ import { isCancelledFetch } from '@/composables/usePageData'
 import { useEvents } from '@/composables/useEvents'
 import { useFlowList } from '@/composables/useFlowList'
 import { useUIStore } from '@/stores'
+import { spaceOf } from '@/utils/spacePath'
 import FlowRunCard from './FlowRunCard.vue'
 import { focusRunCard, requestedRun } from './focusRun'
 
@@ -57,6 +58,9 @@ const error = ref('')
 const starting = ref('')
 let controller: AbortController | null = null
 
+// Before load(), which an immediate watcher calls during setup.
+const route = useRoute()
+
 /** The flows that run on this type. */
 const typeFlows = computed<Flow[]>(() => flows.value.filter((f) => f.subject === props.entityType))
 const startButtons = computed(() =>
@@ -80,7 +84,7 @@ async function load() {
   const ctl = new AbortController()
   controller = ctl
   try {
-    const res = await listSubjectRuns(props.entityId, ctl.signal)
+    const res = await listSubjectRuns(props.entityId, ctl.signal, spaceOf(route?.path ?? ''))
     runs.value = res.runs
     mayStart.value = new Set(res.startable)
     error.value = ''
@@ -116,7 +120,6 @@ watch(
 
 // `?run=<id>` (a flow task hint links here with it) brings that run's card
 // into view once per entity and run, as soon as the card is on screen.
-const route = useRoute()
 const panel = ref<HTMLElement | null>(null)
 /** The entity and run `?run=` already focused, so a reload does not steal focus. */
 let focusedRun = ''

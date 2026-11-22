@@ -712,6 +712,10 @@ flow's `manage` permission, or the start's permission when the flow sets
 no `manage`. Retry tries the failed outputs of a step again now, instead
 of waiting for the next attempt.
 
+`entity_panels.flow_runs` in data-entry.yaml hides the panel, for a role
+or in a space, such as a customer portal (see "Entity page panels" in the
+[data entry guide](data-entry.md)).
+
 The sidebar has two pages when the project has flows. **Flow tasks**
 lists the runs that wait for a role you hold, oldest first. Above them it
 lists the runs whose job step failed, when you manage them, with a Retry
@@ -730,12 +734,15 @@ its page shows the flow, the final state, when the run started and ended,
 and a link to the subject. The header also keeps the timeline, so someone
 who manages the flow still sees it, with the diagram at the final state.
 The timeline of a cancelled run ends with the cancel and who cancelled it.
+When the job of a step fails for good, the timeline gets an entry at that
+state, so it shows where the run stopped.
 A run that ended before rela kept the timeline has none.
 
 A next-action source can put your oldest task in a banner on every
 page, with a button to its step: see `source: flow_tasks` in
 [Next actions](data-entry.md#waiting-flow-steps-source-flow_tasks). An
 entity page link with `?run=<id>` scrolls to that run and focuses it.
+On that page the banner is not shown, because the step form is below it.
 
 **Parallel branches.** A forked run shows each branch with its own state,
 reason and step form. The Flow tasks page lists one task per branch that

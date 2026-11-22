@@ -325,6 +325,9 @@ header_buttons:            # Optional: hide built-in entity page buttons
   history: true
   add_to_pile: false
 
+entity_panels:             # Optional: hide built-in entity page panels
+  flow_runs: {permission: staff}
+
 list_buttons:              # Optional: hide built-in list and search buttons
   add_to_pile: false
 
@@ -737,7 +740,7 @@ forms:
 | `title`          | string | Form heading                                              |
 | `description`    | string | Help text shown below the heading (Markdown)              |
 | `mode`           | string | `"edit"` for edit forms (omit for create forms)           |
-| `body`           | bool   | Show a markdown body editor                               |
+| `body`           | bool   | Show a markdown body editor. A create form shows it only with `true`; the type's template body is still applied on save |
 | `fields`         | list   | Property fields                                           |
 | `relations`      | list   | Relation picker fields                                    |
 
@@ -953,10 +956,14 @@ lists:
   companies:
     entity_type: company
     columns:
-      - property: logo
       - property: title
         link: detail
+      - property: logo
 ```
+
+The first column is the row title and link, so it cannot be an image. When
+a later column sets `link`, that column is the title and a first column such
+as `logo` shows as an ordinary column after it.
 
 Attachments inherit the owning entity's permissions: if you may not update the
 entity, you may not attach to it. A `fields:` rule that makes the file field
@@ -2203,7 +2210,8 @@ indicator section of the realtime guide for when it updates.
 A list narrower than its columns, as on a phone, keeps only some of them.
 The first column, the row title, always stays. By default an enum column
 (such as a status), a face column and a busy column stay as well, and the
-other columns are dropped.
+other columns are dropped. A kept column has the same width in every row,
+also where its value is empty, so the columns line up down the list.
 
 Set `primary:` on a list column to choose for yourself. `primary: true`
 keeps the column; `primary: false` drops it, also when it is an enum. A
@@ -2737,6 +2745,9 @@ lists:
 | `buckets`  | string | `relative` groups a date by how far away it is. See [Date buckets](#date-buckets). |
 | `labels`   | map    | Section titles for the date buckets. Only with `buckets`. |
 | `max_rows` | int    | How many rows the list loads, from 1 to 2000. Default 500. |
+
+A grouped list that has a `create_form` shows **Add** in each section, so the
+header **New** button is hidden.
 
 The sections depend on the property:
 
@@ -3949,6 +3960,43 @@ endpoints keep their own ACL. `/api/v1/_config` serves the block to every
 principal, and `/api/v1/_sidebar` serves the result for the current principal
 as `list_buttons: {add_to_pile}`. With no `acl.yaml`, and under `--read-only`,
 a gated button shows.
+
+### Entity page panels (`entity_panels`)
+
+An entity page shows a **Flows** panel with the flow runs on the entity and
+the flows the reader may start there. The `entity_panels:` block hides it:
+
+| Key         | Panel                                                    |
+| ----------- | -------------------------------------------------------- |
+| `flow_runs` | **Flows**: the runs on the entity and the Start buttons. |
+
+The key takes the same values as [`header_buttons`](#entity-header-buttons-header_buttons):
+`true` (the default), `false`, or `{permission: <name>}`. Grant the
+permission to a role in `acl.yaml` to show the panel to that role only.
+
+The block can also sit on a space. It then applies to entity pages opened in
+that space, on top of the top-level block. A panel shows only when neither
+block hides it.
+
+```yaml
+entity_panels:
+  flow_runs:
+    permission: staff          # only staff see the Flows panel
+
+spaces:
+  - id: portal
+    label: Portal
+    entity_panels:
+      flow_runs: false         # nobody sees it in the portal
+```
+
+Unlike the buttons, the server also withholds a hidden panel. Where the panel
+is hidden, `GET /api/v1/_flows/runs?subject=` answers no runs and no flows to
+start; the SPA sends the space of the page as `space=`. A space is not a
+security boundary, so use the permission form to keep the panel from a role.
+The runs themselves keep their own access rules (see "Who can read a run"
+in the [flows guide](flows.md)): the run list, a run page and the Flow tasks
+page are not affected.
 
 ### How navigation resolves
 
@@ -5354,6 +5402,10 @@ target. Because every column already offers **Add**, the header **New** button
 is hidden on such a board. **Create & add another** is not offered from a column, for the same
 reason as from a list section.
 
+A board whose columns come from an enum `column_property` offers **Add** in
+each column too. The card starts with that column's value, and the header
+**New** button is hidden. A board with swimlanes keeps **New**.
+
 A list can group on a relation the same way: `group_by` takes `relation`,
 `offered_by`, `order_by` and `style_from` with the same meaning, one section
 per target.
@@ -6457,7 +6509,7 @@ navigation:
 | `page`      | An [entity page](#entity-pages) for the list's entity type. An entry opens that page for its entity. Without `page`, an entry opens the entity's detail view. |
 | `limit`     | The most entries to show, from 1 to 50. The default is 20. |
 | `initial`   | A letter badge in front of each entry. Set `property` for the first letter of one of the row's properties, or `relation` for the first letter of a related entity's title, such as the owner. `direction` picks the side of the relation, and is needed only when the relation connects the type to itself. |
-| `create`    | Show a "+" on the group heading that creates a row of the list. It opens the list's `create_form:`, or else the type's create form, and then the new entity's page. It is shown only to a user who may create the type. A group that offers it stays in the sidebar when it has no entries, so the first one can be made. |
+| `create`    | Show a "+" on the group heading that creates a row of the list. It opens the list's `create_form:`, or else the type's create form, and then the new entity's page. It is shown only to a user who may create the type. A group that offers it stays in the sidebar when it has no entries, so the first one can be made. In a read-only workspace there is no "+", so an empty group is left out. |
 
 A group with `items_from` cannot also have `items`, and cannot have `status:`.
 `items_from` is only allowed on a group.

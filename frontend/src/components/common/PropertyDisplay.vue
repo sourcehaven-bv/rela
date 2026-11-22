@@ -132,6 +132,7 @@ function isLong(prop: PropertyItem): boolean {
           v-else
           :model-value="row.prop.value"
           :mode="'display'"
+          :label="row.prop.label"
           :property-def="row.propertyDef"
           :property-name="row.propertyName"
           :entity-type="entityType"

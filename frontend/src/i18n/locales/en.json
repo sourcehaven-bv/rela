@@ -35,6 +35,7 @@
       "moved": "moved to {state}",
       "join": "joined in {state}",
       "cancel": "cancelled in {state}",
+      "failed": "the job of {state} failed",
       "inBranch": "{summary} (branch {branch})"
     },
     "waiting": {

@@ -657,4 +657,17 @@ describe('KanbanView $user filter', () => {
     )
     expect(getMeMock).not.toHaveBeenCalled()
   })
+
+  describe('column Add on a property-backed board', () => {
+    it('prefills the column value and hides the header New button', async () => {
+      const wrapper = await mountBoard([], [makeTicket('T-1')], {}, { create_form: 'ticket-form' })
+      expect(wrapper.findAll('button').find((b) => b.text() === 'New')).toBeUndefined()
+      const board = wrapper.findComponent({ name: 'RlBoard' })
+      expect(board.props('showAdd')).toBe(true)
+      board.vm.$emit('add', { id: 'todo', title: 'Todo', items: [] })
+      await flushPromises()
+      const modal = wrapper.findComponent({ name: 'InlineCreateFormModal' })
+      expect(modal.props('prefill')).toEqual({ properties: { status: 'todo' } })
+    })
+  })
 })

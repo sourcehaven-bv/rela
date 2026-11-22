@@ -366,6 +366,7 @@ func (d *dataEntryPermissions) UsedPermissions() []string {
 	add(d.cfg.HeaderButtons.History.Permission)
 	add(d.cfg.HeaderButtons.AddToPile.Permission)
 	add(d.cfg.ListButtons.AddToPile.Permission)
+	add(d.cfg.EntityPanels.FlowRuns.Permission)
 	for _, tree := range dataentryconfig.NavigationTrees(d.cfg) {
 		perms = append(perms, navigationPermissions(tree.Entries)...)
 	}
@@ -374,6 +375,7 @@ func (d *dataEntryPermissions) UsedPermissions() []string {
 	}
 	for _, sp := range d.cfg.Spaces {
 		add(sp.Permission)
+		add(sp.EntityPanels.FlowRuns.Permission)
 		for _, c := range sp.Builtins {
 			add(c.Permission)
 		}

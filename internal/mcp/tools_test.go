@@ -234,25 +234,27 @@ func TestHandleListEntities_RelatedFilter(t *testing.T) {
 	}
 }
 
-// TestHandleListEntities_RelatedRefusedWithoutBinder pins the fallback: with
-// no traversal binder wired, a related(...) filter is an error, never an
-// ungated answer.
-func TestHandleListEntities_RelatedRefusedWithoutBinder(t *testing.T) {
+// TestHandleListEntities_FilterRefusedWithoutLowerer pins the fallback:
+// with no condition lowerer wired, a filter is an error, never an answer
+// read from the whole type.
+func TestHandleListEntities_FilterRefusedWithoutLowerer(t *testing.T) {
 	t.Parallel()
 	meta, st := makeTestFixture(t)
 	deps := newTestDeps(t, meta, st)
-	deps.Related.Traversals = nil
+	deps.Related.Conditions = nil
 	s := &Server{logger: slog.New(slog.DiscardHandler)}
 	setDeps(s, deps)
 
-	result, err := s.handleListEntities(context.Background(), makeToolRequest(map[string]any{
-		"type": "decision", "filter": "related(entity, 'addresses')",
-	}))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if text := getResultText(t, result); !isErrorResult(result) || !strings.Contains(text, "related(...) is not supported") {
-		t.Errorf("want a refusal, got %s", text)
+	for _, filter := range []string{"related(entity, 'addresses')", "entity.status == 'accepted'"} {
+		result, err := s.handleListEntities(context.Background(), makeToolRequest(map[string]any{
+			"type": "decision", "filter": filter,
+		}))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if text := getResultText(t, result); !isErrorResult(result) || !strings.Contains(text, "unsupported filter") {
+			t.Errorf("%s: want a refusal, got %s", filter, text)
+		}
 	}
 }
 

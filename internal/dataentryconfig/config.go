@@ -167,13 +167,10 @@ type Config struct {
 	// offer no actions and every registered transform. See [PilesConfig].
 	Piles *PilesConfig `yaml:"piles,omitempty" json:"piles,omitempty"`
 
-	// HeaderButtons hides built-in buttons of the entity page header. Its
-	// zero value shows them all. See [HeaderButtonsConfig].
-	HeaderButtons HeaderButtonsConfig `yaml:"header_buttons,omitempty" json:"header_buttons,omitzero"`
-
-	// ListButtons hides built-in buttons of lists and search results. Its
-	// zero value shows them all. See [ListButtonsConfig].
-	ListButtons ListButtonsConfig `yaml:"list_buttons,omitempty" json:"list_buttons,omitzero"`
+	// PageChrome holds `header_buttons:`, `list_buttons:` and
+	// `entity_panels:`, which hide built-in buttons and panels. Inline: the
+	// keys sit at the top level of the file.
+	PageChrome `yaml:",inline"`
 
 	// Channels presents the message types of realtime.yaml, keyed by
 	// channel type. Nil: accepted, means every message type is presented

@@ -1,7 +1,10 @@
 package queryplan
 
 import (
+	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
@@ -125,19 +128,54 @@ func (c LoweredCond) PropCond() (store.Cond, bool) {
 func LowerCondition(
 	prog *predicate.Program, meta *metamodel.Metamodel, entityType, identity string,
 ) (ConditionLowering, bool) {
+	out, err := LowerConditionExplained(prog, meta, entityType, identity)
+	return out, err == nil
+}
+
+// LowerConditionExplained is [LowerCondition] for a caller that reports
+// why a condition does not lower: the error is an
+// [*UnsupportedConditionError] naming the refused part. A caller with no
+// Go path to fall back on (MCP list_entities) returns it to its user.
+func LowerConditionExplained(
+	prog *predicate.Program, meta *metamodel.Metamodel, entityType, identity string,
+) (ConditionLowering, error) {
 	if prog == nil || meta == nil || entityType == "" {
-		return ConditionLowering{}, false
+		return ConditionLowering{}, &UnsupportedConditionError{Construct: "condition", Reason: "nothing to lower"}
 	}
-	tree, ok := prog.ConditionTree(predicatefns.CurrentUserPrefilterSpec())
-	if !ok {
-		return ConditionLowering{}, false
+	tree, unsupported := prog.ConditionTreeExplained(predicatefns.CurrentUserPrefilterSpec())
+	if unsupported != "" {
+		return ConditionLowering{}, &UnsupportedConditionError{
+			Construct: unsupported,
+			Reason: "the store cannot answer this; it answers a comparison of a property with a " +
+				"string or integer literal, related(...), and and/or/not over those",
+		}
 	}
 	l := lowerer{meta: meta, types: []string{entityType}, identity: identity}
-	root, ok := l.lower(tree)
-	if !ok || !withinCondLimits(root) {
-		return ConditionLowering{}, false
+	root, err := l.lower(tree)
+	if err != nil {
+		return ConditionLowering{}, err
 	}
-	return splitConjuncts(root), true
+	if !withinCondLimits(root) {
+		return ConditionLowering{}, &UnsupportedConditionError{
+			Construct: "condition",
+			Reason: fmt.Sprintf("too large: at most %d levels, %d comparisons and %d related(...) terms",
+				store.MaxCondDepth, store.MaxCondLeaves, store.MaxCondRelations),
+		}
+	}
+	return splitConjuncts(root), nil
+}
+
+// UnsupportedConditionError reports the part of a query condition the store
+// cannot answer. Construct is the source text of that part (an expression,
+// or a comparison as the lowering read it); Reason says why. Both name
+// schema and filter syntax only, never a stored value.
+type UnsupportedConditionError struct {
+	Construct string
+	Reason    string
+}
+
+func (e *UnsupportedConditionError) Error() string {
+	return fmt.Sprintf("%s: %s", e.Construct, e.Reason)
 }
 
 // ConditionSuperset returns a store filter that keeps every entity of
@@ -173,8 +211,8 @@ func ConditionSuperset(
 	l := lowerer{meta: meta, types: []string{entityType}, identity: identity}
 	root := LoweredCond{Op: store.CondAnd}
 	for _, t := range prog.ConditionConjuncts(predicatefns.CurrentUserPrefilterSpec()) {
-		c, ok := l.lower(t)
-		if !ok {
+		c, err := l.lower(t)
+		if err != nil {
 			continue
 		}
 		if _, plain := c.PropCond(); !plain {
@@ -256,19 +294,22 @@ type lowerer struct {
 	identity string
 }
 
-func (l lowerer) lower(t predicate.CondTree) (LoweredCond, bool) {
+func (l lowerer) lower(t predicate.CondTree) (LoweredCond, error) {
 	switch t.Op {
 	case predicate.CondTreeConst:
 		if t.Const {
-			return LoweredCond{Op: store.CondAnd}, true
+			return LoweredCond{Op: store.CondAnd}, nil
 		}
-		return LoweredCond{Op: store.CondOr}, true
+		return LoweredCond{Op: store.CondOr}, nil
 	case predicate.CondTreeTraversal:
 		spec, err := predicatefns.BindTraversal(t.Traversal, l.identity)
 		if err != nil {
-			return LoweredCond{}, false
+			return LoweredCond{}, &UnsupportedConditionError{
+				Construct: "related(entity, " + strings.Join(t.Traversal.Path, ", ") + ", ...)",
+				Reason:    err.Error(),
+			}
 		}
-		return LoweredCond{Op: store.CondRelated, Traversal: spec}, true
+		return LoweredCond{Op: store.CondRelated, Traversal: spec}, nil
 	case predicate.CondTreeCompare:
 		return l.lowerCompare(t.Cmp)
 	case predicate.CondTreeAnd, predicate.CondTreeOr, predicate.CondTreeNot:
@@ -279,26 +320,29 @@ func (l lowerer) lower(t predicate.CondTree) (LoweredCond, bool) {
 		}[t.Op]
 		out := LoweredCond{Op: op, Args: make([]LoweredCond, 0, len(t.Args))}
 		for _, a := range t.Args {
-			la, ok := l.lower(a)
-			if !ok {
-				return LoweredCond{}, false
+			la, err := l.lower(a)
+			if err != nil {
+				return LoweredCond{}, err
 			}
 			out.Args = append(out.Args, la)
 		}
-		return out, true
+		return out, nil
 	}
-	return LoweredCond{}, false
+	return LoweredCond{}, &UnsupportedConditionError{Construct: "condition", Reason: "unknown node"}
 }
 
 // lowerCompare lowers one comparison leaf.
-func (l lowerer) lowerCompare(c predicate.Comparison) (LoweredCond, bool) {
+func (l lowerer) lowerCompare(c predicate.Comparison) (LoweredCond, error) {
+	refuse := func(reason string) (LoweredCond, error) {
+		return LoweredCond{}, &UnsupportedConditionError{Construct: describeComparison(c), Reason: reason}
+	}
 	if rollupOnAnyType(l.meta, l.types, c.Attribute) {
-		return LoweredCond{}, false
+		return refuse("a rollup property is not stored, so the store cannot compare it")
 	}
 	switch {
 	case c.Int:
 		if !integerOnEveryType(l.meta, l.types, c.Attribute) {
-			return LoweredCond{}, false
+			return refuse("not a declared integer property")
 		}
 		at := func(op store.PropOp) LoweredCond {
 			return LoweredCond{Op: store.CondProp, Prop: store.PropPredicate{
@@ -306,26 +350,50 @@ func (l lowerer) lowerCompare(c predicate.Comparison) (LoweredCond, bool) {
 			}}
 		}
 		if c.Order != "" {
-			return at(orderedOps[c.Order]), true
+			return at(orderedOps[c.Order]), nil
 		}
 		eq := LoweredCond{Op: store.CondAnd, Args: []LoweredCond{at(store.PropGreaterEqual), at(store.PropLessEqual)}}
 		if c.NotEqual {
-			return LoweredCond{Op: store.CondNot, Args: []LoweredCond{eq}}, true
+			return LoweredCond{Op: store.CondNot, Args: []LoweredCond{eq}}, nil
 		}
-		return eq, true
+		return eq, nil
 	case c.Order != "":
 		if !stringOrderableOnEveryType(l.meta, l.types, c.Attribute) {
-			return LoweredCond{}, false
+			return refuse("an ordered comparison needs a string, enum or integer property " +
+				"(dates, decimals and booleans are not supported)")
 		}
 		return LoweredCond{Op: store.CondProp, Prop: store.PropPredicate{
 			Property: c.Attribute, Op: orderedOps[c.Order], Value: c.Value, Kind: store.OrderString,
-		}}, true
+		}}, nil
 	}
-	p, ok := lowerComparison(l.meta, l.types, c, l.identity)
-	if !ok {
-		return LoweredCond{}, false
+	p, reason := lowerComparison(l.meta, l.types, c, l.identity)
+	if reason != "" {
+		return refuse(reason)
 	}
-	return LoweredCond{Op: store.CondProp, Prop: p}, true
+	return LoweredCond{Op: store.CondProp, Prop: p}, nil
+}
+
+// describeComparison writes c back as the condition text it was read from,
+// with the attribute on the left.
+func describeComparison(c predicate.Comparison) string {
+	attr := predicatefns.CurrentUserPrefilterSpec().RecordVar + "." + c.Attribute
+	rhs := strconv.Quote(c.Value)
+	switch {
+	case c.FromVar != "":
+		rhs = predicatefns.CurrentUserPrefilterSpec().ConstVar + "." + c.FromVar
+	case c.Int:
+		rhs = c.Value
+	}
+	switch {
+	case c.List:
+		return "membership of " + rhs + " in " + attr
+	case c.Order != "":
+		return attr + " " + c.Order + " " + rhs
+	case c.NotEqual:
+		return attr + " ~= " + rhs
+	default:
+		return attr + " == " + rhs
+	}
 }
 
 // orderedOps maps a comparison's ordered operator to its store operator.
@@ -379,37 +447,39 @@ func everyTypeProp(meta *metamodel.Metamodel, types []string, prop string, ok fu
 	return true
 }
 
-// lowerComparison lowers one comparison leaf, or reports ok=false.
+// lowerComparison lowers one comparison leaf. reason is empty when it
+// lowers, and otherwise says why not.
 func lowerComparison(
 	meta *metamodel.Metamodel, types []string, c predicate.Comparison, identity string,
-) (store.PropPredicate, bool) {
+) (pred store.PropPredicate, reason string) {
 	value := c.Value
 	switch c.FromVar {
 	case "":
 	case predicatefns.FieldCurrentUserID:
 		if identity == "" {
-			return store.PropPredicate{}, false
+			return store.PropPredicate{}, "no caller identity to compare with"
 		}
 		value = identity
 	default:
-		return store.PropPredicate{}, false
+		return store.PropPredicate{}, "only current_user.id can be compared in the store"
 	}
 	switch {
 	case c.List:
 		if c.NotEqual || !stringListOnEveryType(meta, types, c.Attribute) {
-			return store.PropPredicate{}, false
+			return store.PropPredicate{}, "membership needs a declared list of strings"
 		}
-		return store.PropPredicate{Property: c.Attribute, Op: store.PropEqual, Value: value}, true
+		return store.PropPredicate{Property: c.Attribute, Op: store.PropEqual, Value: value}, ""
 	case !stringComparableOnEveryType(meta, types, c.Attribute):
-		return store.PropPredicate{}, false
+		return store.PropPredicate{}, "equality needs a declared string, enum or integer property " +
+			"(not a boolean, decimal, date, list or id)"
 	case c.NotEqual:
 		// Scalar: Go binds a non-string value under a string declaration
 		// to nil, and `nil ~= v` is true, so only a stored string equal to
 		// v is excluded.
 		return store.PropPredicate{
 			Property: c.Attribute, Op: store.PropNotEqualOrEmpty, Value: value, Scalar: true,
-		}, true
+		}, ""
 	default:
-		return store.PropPredicate{Property: c.Attribute, Op: store.PropEqual, Value: value, Scalar: true}, true
+		return store.PropPredicate{Property: c.Attribute, Op: store.PropEqual, Value: value, Scalar: true}, ""
 	}
 }

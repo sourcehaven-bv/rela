@@ -18,7 +18,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
-	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -54,19 +53,20 @@ func (s *Server) handleListEntities(
 		if entityType == "" {
 			return errorResult("filter requires type"), nil
 		}
-		compiled, err := compileListFilter(d.Meta, d.Related, entityType, filterExpr)
+		if d.Related.Conditions == nil {
+			return errorResult(fmt.Sprintf("%v: this server cannot answer filters", errUnsupportedFilter)), nil
+		}
+		compiled, err := compileListFilter(d.Meta, entityType, filterExpr)
 		if err != nil {
 			return errorResult(err.Error()), nil
 		}
 		prog = compiled
-		if c := d.Related.Conditions; c != nil {
-			// current_user binds to the caller, in the store and in Go.
-			stamped, err := c.StampQueryIdentity(ctx)
-			if err != nil {
-				return errorResult(err.Error()), nil
-			}
-			ctx = stamped
+		// current_user binds to the caller.
+		stamped, err := d.Related.Conditions.StampQueryIdentity(ctx)
+		if err != nil {
+			return errorResult(err.Error()), nil
 		}
+		ctx = stamped
 	}
 
 	page := listPage{faces: store.InWorld(world), offset: offset, limit: limit}
@@ -106,39 +106,50 @@ type listPage struct {
 }
 
 // ofType reads the page of entityType and its gated total (TKT-D9UO9Y4).
-// Without a filter, the store pages and counts. A filter that lowers
-// exactly ([ConditionLowerer]) joins the store read when every property it
-// reads is visible to the caller on every row: its comparisons as Props, its
-// traversals as Traversals, which the reader gates (TKT-Z099FGY), and an
-// `or`, a `not` or a nested condition as Where (TKT-8HY05WB). A filter
-// that requires a denied traversal matches nothing and reads nothing. Any
-// other filter is answered in Go over the whole type (listPage.filterInGo).
+// The store pages and counts, with or without a filter. A filter lowers
+// exactly ([ConditionLowerer]): its comparisons as Props, its traversals as
+// Traversals, which the reader gates (TKT-Z099FGY), and an `or`, a `not` or
+// a nested condition as Where (TKT-8HY05WB). The reader answers a comparison
+// on a property the caller cannot see on every row as Go would on the
+// redacted row (TKT-9BKVQ9I). A filter that does not lower is refused with
+// [errUnsupportedFilter], and one the reader cannot answer for the caller
+// with [errFilterNotAnswerable]; nothing reads the whole type to answer it.
 func (p listPage) ofType(
 	ctx context.Context, d Deps, entityType string, prog *predicate.Program,
 ) ([]*entity.Entity, int, error) {
 	q := visibility.PageQuery{Type: entityType, Faces: p.faces, Limit: p.limit, Offset: p.offset}
 	if prog != nil {
-		if d.Related.Conditions == nil {
-			return p.filterInGo(ctx, d, entityType, prog)
+		if d.Related.Conditions == nil { // handleListEntities refuses first; this guards a direct caller
+			return nil, 0, fmt.Errorf("%w: this server cannot answer filters", errUnsupportedFilter)
 		}
-		filter, ok := d.Related.Conditions.Lower(ctx, prog, entityType)
-		if !ok {
-			return p.filterInGo(ctx, d, entityType, prog)
+		filter, err := d.Related.Conditions.Lower(ctx, prog, entityType)
+		if err != nil {
+			return nil, 0, fmt.Errorf("%w: %w", errUnsupportedFilter, err)
 		}
 		q.Props, q.Traversals, q.Where = filter.Props, filter.Traversals, filter.Where
 	}
 	page, err := d.Store.ListEntityPage(ctx, q)
 	if errors.Is(err, visibility.ErrPropsNotPushable) {
-		// A property the filter reads is hidden on some row, or the gate
-		// refuses a traversal: the Go path judges the redacted row, where
-		// the hidden value is nil, and reports the refusal.
-		return p.filterInGo(ctx, d, entityType, prog)
+		return nil, 0, fmt.Errorf("%w: %w", errFilterNotAnswerable, err)
 	}
 	if err != nil {
 		return nil, 0, err
 	}
 	return page.Rows, page.Total, nil
 }
+
+// errUnsupportedFilter reports a list_entities filter the store cannot
+// answer. Its text names the shapes it can, so the caller can rewrite the
+// filter; the reason after it names the part that does not lower.
+var errUnsupportedFilter = errors.New("unsupported filter (supported: ==, ~=, <, <=, >, >= between " +
+	"a string, enum or integer property and a value; a value in a list of strings; related(...); " +
+	"current_user comparisons; and, or, not)")
+
+// errFilterNotAnswerable reports a filter of a supported shape that the
+// store cannot answer for this caller: most often a comparison on a field
+// the caller's `visible:` grants show on some rows only, under a condition
+// the store cannot apply. The reason after it says which.
+var errFilterNotAnswerable = errors.New("filter cannot be answered for you")
 
 // everyType reads the page over every type of the schema. Each type
 // contributes its first offset+limit rows and its gated total, so the cost
@@ -162,30 +173,6 @@ func (p listPage) everyType(ctx context.Context, d Deps) ([]*entity.Entity, int,
 	return applyPagination(rows, p.offset, p.limit), total, nil
 }
 
-// filterInGo answers a filter the store cannot: it reads every readable row
-// of entityType, evaluates prog on the redacted rows, and cuts the page. Its
-// cost grows with the type. It serves a filter queryplan.LowerCondition
-// declines (a date or decimal comparison, a function call), a filter over a
-// property hidden on some row, and a traversal the gate refuses. Reading it in pages would not
-// help: the response carries the exact total, so every row is judged.
-func (p listPage) filterInGo(
-	ctx context.Context, d Deps, entityType string, prog *predicate.Program,
-) ([]*entity.Entity, int, error) {
-	var entities []*entity.Entity
-	for e, err := range d.Store.ListEntities(ctx, store.EntityQuery{Type: entityType, Faces: p.faces}) {
-		if err != nil {
-			return nil, 0, err
-		}
-		entities = append(entities, e)
-	}
-	filtered, err := filterEntities(ctx, d, prog, entityType, entities)
-	if err != nil {
-		return nil, 0, fmt.Errorf("filter error: %w", err)
-	}
-	slices.SortFunc(filtered, compareEntityKey)
-	return applyPagination(filtered, p.offset, p.limit), len(filtered), nil
-}
-
 // compareEntityKey orders rows by id, then face, byte-wise: the order the
 // store pages in.
 func compareEntityKey(a, b *entity.Entity) int {
@@ -193,27 +180,12 @@ func compareEntityKey(a, b *entity.Entity) int {
 }
 
 // compileListFilter compiles a list_entities filter expression against
-// entityType. A related(...) traversal is refused when the wiring supplied no
-// [TraversalBinder]: answering it ungated would reveal hidden edges.
-// current_user compiles only when the wiring supplied a [ConditionLowerer],
-// which stamps the caller's query identity; without an identity on ctx such
-// a filter fails at evaluation rather than matching for nobody.
-func compileListFilter(
-	meta *metamodel.Metamodel, related RelatedReads, entityType, expr string,
-) (*predicate.Program, error) {
-	ev := predicatefns.NewEvaluator(meta)
-	compile := ev.Compile
-	if related.Conditions != nil {
-		compile = ev.CompileWithCurrentUser
-	}
-	prog, err := compile(entityType, expr)
+// entityType, with current_user bound to the identity the
+// [ConditionLowerer] stamps.
+func compileListFilter(meta *metamodel.Metamodel, entityType, expr string) (*predicate.Program, error) {
+	prog, err := predicatefns.NewEvaluator(meta).CompileWithCurrentUser(entityType, expr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid filter: %w", err)
-	}
-	canTraverse := related.Traversals != nil
-	if !canTraverse && len(relresolve.Specs(prog)) > 0 {
-		return nil, errors.New("invalid filter: related(...) is not supported here; " +
-			"use trace or list_relations instead")
 	}
 	// Compile accepts any constraint name; without this check a constraint on
 	// a property the far type lacks matches nothing instead of failing.
@@ -221,38 +193,6 @@ func compileListFilter(
 		return nil, fmt.Errorf("invalid filter: %w", err)
 	}
 	return prog, nil
-}
-
-// filterEntities keeps the entities that match prog. Traversals are answered
-// once for the whole candidate set, not per row.
-func filterEntities(
-	ctx context.Context, d Deps, prog *predicate.Program, entityType string, entities []*entity.Entity,
-) ([]*entity.Entity, error) {
-	traversalFor := func(string) predicate.TraversalFunc { return nil }
-	if d.Related.Traversals != nil {
-		ids := make([]string, len(entities))
-		for i, e := range entities {
-			ids[i] = e.ID
-		}
-		bound, err := d.Related.Traversals.Bind(ctx, entityType, ids, prog)
-		if err != nil {
-			return nil, err
-		}
-		traversalFor = bound
-	}
-
-	ev := predicatefns.NewEvaluator(d.Meta).LoweringSemantics()
-	out := make([]*entity.Entity, 0, len(entities))
-	for _, e := range entities {
-		ok, err := ev.MatchesWithTraversals(ctx, prog, e.Type, e.ID, e.Properties, traversalFor(e.ID))
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", e.ID, err)
-		}
-		if ok {
-			out = append(out, e)
-		}
-	}
-	return out, nil
 }
 
 func (s *Server) handleShowEntity(

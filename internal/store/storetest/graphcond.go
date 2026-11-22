@@ -163,6 +163,69 @@ func RunGraphCondTests(t *testing.T, f Factory) {
 		require.Empty(t, runGraphQuery(t, s, store.GraphQuery{EntityType: "item", Where: &c, Faces: trivial}))
 	})
 
+	// RowCond turns a query's row predicate into a Where (TKT-9BKVQ9I): a
+	// reader ANDs a field grant's condition onto a page filter this way, so
+	// the Where must match exactly the rows the query does. The relation
+	// predicates carry the shapes a role grant uses: group expansion,
+	// containment inheritance, edge properties, an endpoint match and
+	// negation.
+	t.Run("RowCond_matches_the_query", func(t *testing.T) {
+		s := f(t)
+		seedEntityWithProps(t, s, "doc", "D-1", map[string]any{"status": "open"})
+		seedEntityWithProps(t, s, "doc", "D-2", map[string]any{"status": "done"})
+		seedEntityWithProps(t, s, "doc", "D-3", map[string]any{"status": "open"})
+		seedEntityWithProps(t, s, "doc", "D-4", nil)
+		seedGraphQueryEntities(t, s, "folder", "F-1")
+		seedGraphQueryEntities(t, s, "user", "U-1", "U-2")
+		seedGraphQueryEntities(t, s, "group", "G-1")
+		mustRel(t, s, "U-1", "member-of", "G-1")
+		mustRelProps(t, s, "G-1", "owns", "D-1", map[string]any{"active": "yes"})
+		mustRelProps(t, s, "U-2", "owns", "D-2", map[string]any{"active": "no"})
+		mustRel(t, s, "D-3", "belongs-to", "F-1")
+		mustRel(t, s, "U-1", "owns", "F-1")
+		owns := store.RelationPredicate{
+			Endpoints: []string{"U-1"}, OfTypes: []string{"owns"},
+			InheritThrough: []string{"member-of"}, Depth: 3,
+			EntityInheritThrough: []string{"belongs-to"}, EntityDepth: 3,
+		}
+		active := owns
+		active.EdgeProps = []store.PropPredicate{{Property: "active", Op: store.PropEqual, Value: "yes", Scalar: true}}
+		notOwned := owns
+		notOwned.Negate = true
+		byGroup := store.RelationPredicate{
+			OfTypes: []string{"owns"}, EndpointMatch: &store.EndpointPredicate{EntityType: "group", Faces: store.AllFaces()},
+		}
+		open := store.PropPredicate{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}
+		notDone := store.NotCond(store.PropLeaf(
+			store.PropPredicate{Property: "status", Op: store.PropEqual, Value: "done", Scalar: true}))
+		for _, tc := range []struct {
+			name string
+			q    store.GraphQuery
+		}{
+			{"props", store.GraphQuery{Props: []store.PropPredicate{open}}},
+			{"related with expansions", store.GraphQuery{Related: []store.DirectedRelation{{Incoming: true, Pred: owns}}}},
+			{"edge props", store.GraphQuery{Related: []store.DirectedRelation{{Incoming: true, Pred: active}}}},
+			{"negated related", store.GraphQuery{Related: []store.DirectedRelation{{Incoming: true, Pred: notOwned}}}},
+			{"endpoint match", store.GraphQuery{Related: []store.DirectedRelation{{Incoming: true, Pred: byGroup}}}},
+			{"props, related and where", store.GraphQuery{
+				Props:   []store.PropPredicate{open},
+				Related: []store.DirectedRelation{{Incoming: true, Pred: owns}},
+				Where:   &notDone,
+			}},
+			{"empty", store.GraphQuery{}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				q := tc.q
+				q.EntityType, q.Faces = "doc", trivial
+				c, err := q.RowCond()
+				require.NoError(t, err)
+				want := runGraphQuery(t, s, q)
+				require.NotEmpty(t, want, "a case that matches nothing proves nothing")
+				require.Equal(t, want, where(t, s, "doc", c))
+			})
+		}
+	})
+
 	t.Run("Where_invalid_is_refused", func(t *testing.T) {
 		s := f(t)
 		seedTasks(t, s)

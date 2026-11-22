@@ -34,6 +34,7 @@ const CreateStub = defineComponent({
 })
 
 import Sidebar from './Sidebar.vue'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 
 /**
  * The "+" on a generated group's heading opens the create dialog for the
@@ -53,6 +54,7 @@ describe('Sidebar group add', () => {
   })
 
   afterEach(() => {
+    workspaceReadOnly.value = false
     wrapper?.unmount()
     wrapper = null
     document.body.innerHTML = ''
@@ -75,5 +77,16 @@ describe('Sidebar group add', () => {
     await flushPromises()
     expect(push).toHaveBeenCalledWith('/p/topic/TOP-7')
     expect(wrapper.findComponent(CreateStub).exists()).toBe(false)
+  })
+
+  // The empty group stays only for its "+"; a read-only workspace offers none.
+  it('leaves an empty group out in a read-only workspace', async () => {
+    workspaceReadOnly.value = true
+    wrapper = mount(Sidebar, {
+      global: { plugins: [router], stubs: { InlineCreateFormModal: CreateStub } },
+    })
+    await flushPromises()
+    expect(wrapper.find('button[aria-label="New Topic"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Topics')
   })
 })

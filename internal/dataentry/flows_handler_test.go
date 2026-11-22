@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/flowview"
@@ -241,4 +242,83 @@ func TestFlowsAPI_BodyLimit(t *testing.T) {
 	w := flowRequest(t, app, http.MethodPost, "/api/v1/_flows/runs/RUN-1/_complete", body)
 	require.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
 	require.Empty(t, fake.calls)
+}
+
+// TestFlowsAPI_SubjectRunsHiddenPanel pins that `entity_panels.flow_runs`
+// withholds the runs and startable flows on the server, per space and per
+// permission, and leaves the run list alone.
+func TestFlowsAPI_SubjectRunsHiddenPanel(t *testing.T) {
+	cases := []struct {
+		name, path string
+		wantCalls  string
+	}{
+		{"hidden in the space", "/api/v1/_flows/runs?subject=PER-1&space=portal", ""},
+		{"shown in another space", "/api/v1/_flows/runs?subject=PER-1&space=office", "subject PER-1; startable PER-1"},
+		{"run list unaffected", "/api/v1/_flows/runs?space=portal", "list   1 25"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newHandlerTestApp(t)
+			cur := app.State()
+			next := *cur
+			cfg := *cur.Cfg
+			cfg.Spaces = []dataentryconfig.Space{
+				{ID: "portal", Label: "Portal",
+					EntityPanels: dataentryconfig.EntityPanelsConfig{FlowRuns: dataentryconfig.ChromeToggle{Off: true}}},
+				{ID: "office", Label: "Office"},
+			}
+			next.Cfg = &cfg
+			app.schema.Publish(&next)
+			fake := &fakeFlows{}
+			require.NoError(t, SetFlows(app, fake))
+			w := flowRequest(t, app, http.MethodGet, tc.path, "")
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			require.Equal(t, tc.wantCalls, strings.Join(fake.calls, "; "))
+			if tc.wantCalls == "" {
+				require.JSONEq(t, `{"runs":[],"total":0,"truncated":false,"startable":[]}`, w.Body.String())
+			}
+		})
+	}
+}
+
+// TestFlowsAPI_SubjectRunsPanelPermission pins the permission form against a
+// real policy: the holder gets the runs, a principal without the permission
+// gets none, and with no acl.yaml the gated panel shows.
+func TestFlowsAPI_SubjectRunsPanelPermission(t *testing.T) {
+	cases := []struct {
+		name      string
+		policy    bool
+		principal string // with policy: alice holds admin:read, bob does not
+		wantCalls string
+	}{
+		{"holder", true, "alice", "subject PER-1; startable PER-1"},
+		{"non-holder", true, "bob", ""},
+		{"no acl.yaml", false, "", "subject PER-1; startable PER-1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newTestAppV1(t)
+			cur := app.State()
+			next := *cur
+			cfg := *cur.Cfg
+			cfg.EntityPanels.FlowRuns = dataentryconfig.ChromeToggle{Permission: "admin:read"}
+			next.Cfg = &cfg
+			app.schema.Publish(&next)
+			ctx := t.Context()
+			if tc.policy {
+				d := mustNewACL(t, gatedNavPolicy(), app.store)
+				setTestACL(t, app, d)
+				ctx = gateCtxFor(principalCtx(tc.principal), t, d)
+			} else {
+				setTestACL(t, app, acl.NopACL{})
+			}
+			fake := &fakeFlows{}
+			require.NoError(t, SetFlows(app, fake))
+			r := httptest.NewRequest(http.MethodGet, "/api/v1/_flows/runs?subject=PER-1", http.NoBody).WithContext(ctx)
+			w := httptest.NewRecorder()
+			app.flows.handleV1Flows(w, r)
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			require.Equal(t, tc.wantCalls, strings.Join(fake.calls, "; "))
+		})
+	}
 }

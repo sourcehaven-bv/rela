@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -21,10 +22,11 @@ type PageQuery struct {
 	Type string
 	// Faces is the caller's face selection, as on [store.EntityQuery].
 	Faces store.FaceSelection
-	// Props narrows the rows by the type's own properties. Each property
-	// must be visible to the caller on every row it reads (see
-	// [ErrPropsNotPushable]); the store compares raw values, so a property
-	// hidden on some row would answer for a value the caller cannot see.
+	// Props narrows the rows by the type's own properties, judged as on the
+	// row the caller is served: where a property is hidden from the caller,
+	// a comparison on it answers as for an unset value (TKT-9BKVQ9I). Only
+	// the comparisons queryplan.LowerCondition emits are accepted on such a
+	// property.
 	Props []store.PropPredicate
 	// Traversals narrow the rows by their edges (TKT-Z099FGY). The reader
 	// gates each one itself with the caller's traversal gate, so the row
@@ -180,11 +182,12 @@ type EntityPage struct {
 }
 
 // ErrPropsNotPushable reports a [PageQuery] narrowing the reader cannot
-// push: Props naming a property the caller does not see on every row, a
-// traversal the gate refuses, or, on a reader without pushdown, any Props
-// or Traversals. The caller answers such a filter over redacted rows
-// instead.
-var ErrPropsNotPushable = errors.New("visibility: the page filter cannot be pushed to the store")
+// answer in the store: a traversal the gate refuses, a filter on a property
+// the caller sees on some rows only whose `visible:` grant has no store
+// form (or which grows past the [store.Cond] limits once guarded), or, on a
+// reader without pushdown, any filter. The error wraps the reason. A
+// caller reports it; reading the whole type instead would cost a scan.
+var ErrPropsNotPushable = errors.New("visibility: the page filter cannot be answered in the store")
 
 // errPageLimit reports a [PageQuery] without a positive Limit.
 var errPageLimit = errors.New("visibility: a page query needs a positive limit")
@@ -206,28 +209,43 @@ func (p PolicyRedactor) FieldVisibleOnEveryRow(ctx context.Context, entityType, 
 // FieldVisibleOnEveryRow implements [fieldVisibility]: nothing is hidden.
 func (NopRedactor) FieldVisibleOnEveryRow(context.Context, string, string) bool { return true }
 
-// propsFilterable reports whether every property of props is visible to the
-// caller on every row of entityType, so the store may filter on it.
-func (r *PolicyReader) propsFilterable(ctx context.Context, entityType string, props []store.PropPredicate) bool {
+// hiddenFilterProps returns the properties of props that the caller does
+// not see on every row of entityType, each once. ok is false when the
+// redactor cannot say, which refuses the filter.
+func (r *PolicyReader) hiddenFilterProps(
+	ctx context.Context, entityType string, props []store.PropPredicate,
+) (hidden []string, ok bool) {
 	if len(props) == 0 {
-		return true
+		return nil, true
 	}
 	fv, ok := r.redact.(fieldVisibility)
 	if !ok {
-		return false
+		return nil, false
 	}
 	for _, p := range props {
-		if !fv.FieldVisibleOnEveryRow(ctx, entityType, p.Property) {
-			return false
+		if !slices.Contains(hidden, p.Property) && !fv.FieldVisibleOnEveryRow(ctx, entityType, p.Property) {
+			hidden = append(hidden, p.Property)
 		}
 	}
-	return true
+	return hidden, true
+}
+
+// filterFieldScope returns the caller's compiled field scope for
+// entityType, the one the redactor applies. A redactor without one cannot
+// guard a filter on a hidden property, which refuses it.
+func (r *PolicyReader) filterFieldScope(ctx context.Context, entityType string) (*search.FieldScope, error) {
+	fs, ok := r.redact.(FieldScoper)
+	if !ok {
+		return nil, fmt.Errorf("%w: the redactor has no field scope", ErrPropsNotPushable)
+	}
+	return fs.SearchFieldScope(ctx, entityType)
 }
 
 // propsFilterer is the [PolicyReader] half of a filtered page read, taken by
 // type assertion like [pushdownRedactor].
 type propsFilterer interface {
-	propsFilterable(ctx context.Context, entityType string, props []store.PropPredicate) bool
+	hiddenFilterProps(ctx context.Context, entityType string, props []store.PropPredicate) ([]string, bool)
+	filterFieldScope(ctx context.Context, entityType string) (*search.FieldScope, error)
 }
 
 // checkPageQuery rejects the query shapes every implementation refuses.
@@ -249,8 +267,10 @@ func checkPageQuery(q PageQuery) error {
 // read scope, so the cost follows the page, not the type. The field gate
 // runs on the page, primed once for it (PolicyReader.redactPage).
 //
-// Props are pushed only when the caller sees each property on every row it
-// reads; otherwise the read returns [ErrPropsNotPushable]. Traversals are
+// A comparison on a property the caller sees on some rows only is guarded
+// with the caller's field grants (guardHiddenProps), so the store answers
+// it as the redacted row would; a grant with no store form returns
+// [ErrPropsNotPushable]. Traversals are
 // gated with the binder's traversal gate before anything is read (see
 // [PageTraversal]); a binder without one refuses them. Without pushdown (a
 // reader that cannot redact without gating, or no read-scope provider) a
@@ -262,9 +282,14 @@ func (s *ScriptReader) ListEntityPage(ctx context.Context, q PageQuery) (EntityP
 		return EntityPage{}, err
 	}
 	bound := s.bind(ctx)
+	var hidden []string
 	if props := pageProps(q); len(props) > 0 {
-		if pf, ok := s.reader.(propsFilterer); !ok || !pf.propsFilterable(bound, q.Type, props) {
-			return EntityPage{}, ErrPropsNotPushable
+		pf, ok := s.reader.(propsFilterer)
+		if !ok {
+			return EntityPage{}, fmt.Errorf("%w: the reader cannot filter", ErrPropsNotPushable)
+		}
+		if hidden, ok = pf.hiddenFilterProps(bound, q.Type, props); !ok {
+			return EntityPage{}, fmt.Errorf("%w: the redactor cannot judge field visibility", ErrPropsNotPushable)
 		}
 	}
 	var (
@@ -312,7 +337,95 @@ func (s *ScriptReader) ListEntityPage(ctx context.Context, q PageQuery) (EntityP
 	if !ok { // coverage-ignore: composeReadScope returned ok, so raw is a GraphQueryer
 		return EntityPage{}, errEmptyScope
 	}
+	if len(hidden) > 0 {
+		var empty bool
+		faces := returnableFaces(gq.FaceIn, q.Faces, q.Type)
+		q.Props, where, empty, err = s.guardPage(bound, q.Type, q.Props, where, hidden, faces)
+		switch {
+		case err != nil:
+			return EntityPage{}, err
+		case empty:
+			return EntityPage{}, nil
+		}
+	}
 	return readPage(bound, raw, gq, q, related, where, red.redactPage)
+}
+
+// guardPage applies [guardHiddenProps] to a gated page filter for the
+// properties in hidden, with the caller's field scope. scopeFaces is the
+// set of faces a returned row can have (returnableFaces). empty reports a
+// filter that matches no row.
+//
+// A grant's own condition (V) reaches the store ungated, as the redactor
+// evaluates it: gating its relation leaves would widen the negated ones and
+// compare a hidden value on rows the redactor hides.
+func (s *ScriptReader) guardPage(
+	ctx context.Context, entityType string, props []store.PropPredicate, where *store.Cond,
+	hidden []string, scopeFaces []entity.Face,
+) ([]store.PropPredicate, *store.Cond, bool, error) {
+	pf, ok := s.reader.(propsFilterer)
+	if !ok { // coverage-ignore: ListEntityPage checked the capability before gating
+		return nil, nil, false, fmt.Errorf("%w: the reader cannot filter", ErrPropsNotPushable)
+	}
+	fs, err := pf.filterFieldScope(ctx, entityType)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	conds, err := hiddenPropConds(fs, entityType, hidden, scopeFaces)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("%w: %w", ErrPropsNotPushable, err)
+	}
+	props, where, err = guardHiddenProps(props, where, conds)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("%w: %w", ErrPropsNotPushable, err)
+	}
+	if where == nil {
+		return props, nil, false, nil
+	}
+	if v, known := where.Constant(); known {
+		if !v {
+			return nil, nil, true, nil
+		}
+		return props, nil, false, nil
+	}
+	if err := store.ValidateCond(*where); err != nil {
+		return nil, nil, false, fmt.Errorf("%w: the filter is too large once field visibility is applied: %w",
+			ErrPropsNotPushable, err)
+	}
+	return props, where, false, nil
+}
+
+// returnableFaces is the set of faces a row of entityType returned under
+// the read scope's face set scopeFaces and the selection sel can have; nil
+// means it is not known, so any face. Under a world the candidates are the
+// type's chain, and the implicit face when the type is not scoped. A
+// fallback to the default state adds a face this cannot name, so the set is
+// not known then.
+func returnableFaces(scopeFaces []entity.Face, sel store.FaceSelection, entityType string) []entity.Face {
+	var selected []entity.Face
+	if faces, ok := sel.Faces(); ok {
+		selected = faces
+	} else if w, ok := sel.World(); ok {
+		switch res, scoped := w.For(entityType); {
+		case !scoped:
+			selected = []entity.Face{entity.ImplicitFace}
+		case res.Fallback == store.FallbackExclude:
+			selected = res.Chain
+		}
+	}
+	switch {
+	case selected == nil:
+		return scopeFaces
+	case scopeFaces == nil:
+		return selected
+	}
+	out := []entity.Face{}
+	for _, f := range selected {
+		if slices.Contains(scopeFaces, f) {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // pageProps returns every property predicate of q, Where's included.

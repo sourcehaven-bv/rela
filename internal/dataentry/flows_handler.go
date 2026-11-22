@@ -58,6 +58,9 @@ type FlowService interface {
 // configuration, not a secret.
 type flowsHandler struct {
 	svc FlowService
+	// panelShown reports whether the caller gets the flow runs panel of an
+	// entity page in space (`entity_panels.flow_runs`). Nil shows it.
+	panelShown func(ctx context.Context, space string) bool
 }
 
 // SetFlows installs the flow service. Call it before [App.NewRouter]. It
@@ -69,7 +72,9 @@ func SetFlows(a *App, svc FlowService) error {
 	if svc == nil {
 		return errors.New("dataentry: SetFlows requires a flow service")
 	}
-	a.flows = &flowsHandler{svc: svc}
+	a.flows = &flowsHandler{svc: svc, panelShown: func(ctx context.Context, space string) bool {
+		return flowRunsPanelShown(ctx, a.acl, a.State().Cfg, space)
+	}}
 	return nil
 }
 
@@ -155,10 +160,18 @@ func (h *flowsHandler) tasks(w http.ResponseWriter, r *http.Request) {
 }
 
 // runs answers the run list, or with ?subject= every run on that entity
-// the caller can see and the flows the caller may start on it.
+// the caller can see and the flows the caller may start on it. The subject
+// form feeds the flow runs panel, so where `entity_panels.flow_runs` hides
+// the panel from the caller in ?space= it answers no runs and no flows.
 func (h *flowsHandler) runs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	if addr := q.Get("subject"); addr != "" {
+		if h.panelShown != nil && !h.panelShown(r.Context(), q.Get("space")) {
+			writeV1JSON(w, http.StatusOK, flowview.SubjectRuns{
+				Runs: flowview.Runs{Runs: []flowview.Run{}}, Startable: []string{},
+			})
+			return
+		}
 		runs, err := h.svc.SubjectRuns(r.Context(), addr)
 		if err != nil {
 			writeFlowError(w, r, err)

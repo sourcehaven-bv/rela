@@ -141,6 +141,7 @@ import OrderedSectionRow from '@/components/entity/OrderedSectionRow.vue'
 import { sectionColumnLabel } from '@/utils/sectionTable'
 import { sectionRowLabel, useSectionReorder } from '@/composables/useSectionReorder'
 import { useQueryCache } from '@pinia/colada'
+import { useNextAction } from '@/composables/useNextAction'
 import { entityKeys } from '@/queries/entities'
 
 const props = withDefaults(
@@ -1146,11 +1147,14 @@ const llmProposal = ref<{ proposal: ActionProposal; label: string; entityType: s
 )
 const { reportResult, reportError } = useActionFeedback()
 
+const nextAction = useNextAction()
+
 // After an action or an applied proposal wrote to this entity. The view
 // brings the sections and relations; the panels below it read their own
-// lists, so they are told to read again (BUG-UZGMHIK).
+// lists, so they are told to read again (BUG-UZGMHIK). The page's notices
+// are read again with the view, so one the write settled goes with it.
 async function reloadAfterWrite() {
-  await loadView()
+  await Promise.all([loadView(), nextAction.refreshNow()])
   panelRevision.value++
 }
 
@@ -3203,6 +3207,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                       v-else
                       :model-value="rowDisplayValue(ent, row.field)"
                       :mode="'display'"
+                      :label="row.field.label"
                       :property-name="row.hint.propertyName"
                       :entity-type="ent.type"
                       class="field-value"
@@ -3265,6 +3270,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                       v-else
                       :model-value="rowDisplayValue(ent, row.field)"
                       :mode="'display'"
+                      :label="row.field.label"
                       :property-name="row.hint.propertyName"
                       :entity-type="ent.type"
                     />

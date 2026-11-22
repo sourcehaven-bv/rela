@@ -267,6 +267,19 @@ func TestJob_PermanentErrorFailsAtOnce(t *testing.T) {
 	require.Equal(t, flowrun.JobFailed, j.Phase)
 	require.Equal(t, flowrun.JobFailedPermanent, j.FailKind)
 	require.Equal(t, 1, h.r.callCount())
+
+	// The timeline says where the run stopped, once.
+	ctx := context.Background()
+	run, err := h.eng.Run(ctx, id)
+	require.NoError(t, err)
+	last := run.Log[len(run.Log)-1]
+	require.Equal(t, flowrun.ViaFailed, last.Via)
+	require.Equal(t, "send", last.State)
+	n := len(run.Log)
+	h.advance(t, time.Hour)
+	run, err = h.eng.Run(ctx, id)
+	require.NoError(t, err)
+	require.Len(t, run.Log, n, "a failed job that waits adds no entry")
 }
 
 func TestJob_RetryFalseFailsOnTheFirstError(t *testing.T) {
@@ -414,6 +427,8 @@ func TestJob_ForkOtherBranchesGoOnWhileTheJobFails(t *testing.T) {
 	require.NoError(t, err)
 	send := run.Branches[branchAt(run, "send")]
 	require.Equal(t, flowrun.JobFailed, send.Pending.Job.Phase)
+	last := run.Log[len(run.Log)-1]
+	require.Equal(t, flowrun.Step{At: last.At, State: "send", Via: flowrun.ViaFailed, Branch: "send"}, last)
 
 	// The review branch's timer still fires; the join waits for the job.
 	h.advance(t, time.Hour)

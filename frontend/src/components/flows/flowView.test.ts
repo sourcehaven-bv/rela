@@ -56,6 +56,21 @@ describe('flowView', () => {
     expect(entries[1].current).toBe(false)
   })
 
+  it('names a failed job in red at its state', () => {
+    const entries = timelineEntries(
+      run({
+        log: [
+          { at: '2026-01-01T10:00:00Z', state: 'collect', via: 'start' },
+          { at: '2026-01-01T10:01:00Z', state: 'collect', via: 'failed' },
+        ],
+      }),
+      t
+    )
+    expect(entries[0].summary).toBe('flows.log.failed {"state":"collect"}')
+    expect(entries[0].tone).toBe('red')
+    expect(entries[0].current).toBe(true)
+  })
+
   it('marks the newest entry of each live branch current in a forked run', () => {
     const entries = timelineEntries(
       run({

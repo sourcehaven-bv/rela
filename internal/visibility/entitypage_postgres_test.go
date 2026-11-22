@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
 
@@ -20,6 +21,20 @@ import (
 // own schema pinned through the DSN.
 func TestScriptReader_ListEntityPage_Postgres(t *testing.T) {
 	t.Parallel()
+	assertEntityPages(t, newPageFixtureOn(t, openPageStore(t, "relaentitypage"), 40))
+}
+
+// The postgres twin of TestScriptReader_ListEntityPage_HiddenFields: the
+// guarded filter renders as postgres SQL.
+func TestScriptReader_ListEntityPage_HiddenFields_Postgres(t *testing.T) {
+	t.Parallel()
+	assertHiddenFieldPages(t, newHiddenFieldFixture(t, openPageStore(t, "relahiddenfields")))
+}
+
+// openPageStore opens an empty pgstore in its own schema, named prefix and
+// the process id, pinned through the DSN. It skips without a test database.
+func openPageStore(t *testing.T, prefix string) store.Store {
+	t.Helper()
 	base := os.Getenv("RELA_TEST_DATABASE_URL")
 	if base == "" {
 		if os.Getenv("RELA_TEST_DATABASE_REQUIRED") != "" {
@@ -28,7 +43,7 @@ func TestScriptReader_ListEntityPage_Postgres(t *testing.T) {
 		t.Skip("RELA_TEST_DATABASE_URL not set")
 	}
 	ctx := context.Background()
-	schema := fmt.Sprintf("relaentitypage_%d", os.Getpid())
+	schema := fmt.Sprintf("%s_%d", prefix, os.Getpid())
 	cfg, err := pgx.ParseConfig(base)
 	if err != nil {
 		t.Fatal(err)
@@ -70,5 +85,5 @@ func TestScriptReader_ListEntityPage_Postgres(t *testing.T) {
 		_ = st.Close()
 		_ = closer.Close()
 	})
-	assertEntityPages(t, newPageFixtureOn(t, st, 40))
+	return st
 }
