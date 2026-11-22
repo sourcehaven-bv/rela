@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { navigationPending } from '@/router'
@@ -9,6 +9,8 @@ import { localeMessages } from 'rela-components/composables/localeMessages'
 import { resolvedLanguage } from '@/i18n'
 import { getErrorMessage } from '@/api'
 import { tenantProvisioning } from '@/api/tenantProvisioning'
+import { accessRefusal, loginUrl, refusalDetail } from '@/api/workspaceAccess'
+import { loadWorkspaceReadOnly } from '@/api/workspaceReadOnly'
 import {
   useKeyboardShortcuts,
   useShellCommands,
@@ -26,6 +28,8 @@ import { usePresentationOutlet } from '@/composables/usePresentation'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { unknownWorldQuery } from '@/composables/useWorld'
 import AsOfBanner from '@/components/common/AsOfBanner.vue'
+import ReadOnlyBanner from '@/components/common/ReadOnlyBanner.vue'
+import WorkspaceAccessScreen from '@/components/common/WorkspaceAccessScreen.vue'
 import ActivityBar from '@/components/common/ActivityBar.vue'
 import RlAppShell from 'rela-components/components/layout/RlAppShell.vue'
 import NextActionCard from '@/components/NextActionCard.vue'
@@ -167,6 +171,22 @@ onMounted(async () => {
   }
 })
 
+// Whether the workspace is read-only, once the app is up (also after the boot
+// screen's Retry) and again whenever the tab comes back into view, so a state
+// an operator changed meanwhile shows without a reload.
+watch(
+  () => schemaStore.loaded,
+  (loaded) => {
+    if (loaded) void loadWorkspaceReadOnly()
+  },
+  { immediate: true }
+)
+function refreshReadOnlyOnReturn() {
+  if (document.visibilityState === 'visible' && schemaStore.loaded) void loadWorkspaceReadOnly()
+}
+onMounted(() => document.addEventListener('visibilitychange', refreshReadOnlyOnReturn))
+onBeforeUnmount(() => document.removeEventListener('visibilitychange', refreshReadOnlyOnReturn))
+
 // A `?world=` naming no served world is a 400 on every API route, so drop
 // it and land in the default world. See unknownWorldQuery.
 const router = useRouter()
@@ -235,8 +255,19 @@ watch(
     full-viewport wrapper: RlStatusRegion grows to fill its parent, and at boot
     there is no parent pane for it to fill.
   -->
+  <!--
+    The workspace is suspended, archived or unknown, or the server cannot tell
+    who the user is: nothing below can work, so this replaces the app. An
+    ended session is a dialog over the app instead; see the end of the file.
+  -->
+  <WorkspaceAccessScreen
+    v-if="accessRefusal && accessRefusal !== 'session_ended'"
+    :refusal="accessRefusal"
+    :detail="refusalDetail"
+  />
+
   <!-- A multi-tenant server is still creating this organization's tenant. -->
-  <div v-if="tenantProvisioning !== 'idle'" class="boot-screen">
+  <div v-else-if="tenantProvisioning !== 'idle'" class="boot-screen">
     <RlStatusRegion :tone="tenantProvisioning === 'failed' ? 'error' : undefined">
       {{ tenantProvisioning === 'failed' ? t('shell.provisioningFailed') : t('shell.provisioning') }}
     </RlStatusRegion>
@@ -354,6 +385,7 @@ watch(
            is always mounted and simply renders nothing where none is owed. -->
       <NextActionCard v-if="!presentation.presenting.value" />
       <AsOfBanner v-if="!presentation.presenting.value" />
+      <ReadOnlyBanner v-if="!presentation.presenting.value" />
       <RouterView />
       <RlToastHost :toasts="toasts" @dismiss="dismissToast" />
       <ScriptErrorDialog />
@@ -386,6 +418,13 @@ watch(
     :danger="confirmState.danger"
     @confirm="handleConfirm"
     @cancel="onCancelEvent"
+  />
+
+  <!-- Over the app, so a half-filled form keeps its input until the user signs in again. -->
+  <WorkspaceAccessScreen
+    v-if="accessRefusal === 'session_ended'"
+    refusal="session_ended"
+    :login-url="loginUrl"
   />
 </template>
 

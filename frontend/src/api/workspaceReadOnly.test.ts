@@ -1,5 +1,11 @@
-import { afterEach, describe, expect, it } from 'vitest'
-import { isReadOnlyResponse, trackWorkspaceReadOnly, workspaceReadOnly } from './workspaceReadOnly'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  isReadOnlyResponse,
+  loadWorkspaceReadOnly,
+  trackWorkspaceReadOnly,
+  workspaceReadOnly,
+} from './workspaceReadOnly'
+import { actionAllowed } from '@/utils/affordancesWarning'
 
 const refused = { type: 'https://rela.dev/errors/tenant_read_only' }
 
@@ -28,5 +34,44 @@ describe('workspace read-only flag', () => {
 
     trackWorkspaceReadOnly({ method: 'post', url: '/tickets?dry_run=true' }, 200, {})
     expect(workspaceReadOnly.value).toBe(false)
+  })
+})
+
+describe('loadWorkspaceReadOnly', () => {
+  afterEach(() => {
+    workspaceReadOnly.value = false
+  })
+
+  const answer = (status: number, body: unknown) =>
+    vi.fn().mockResolvedValue({ ok: status < 300, status, json: async () => body })
+
+  it('reads the flag from the tenant status at start', async () => {
+    await loadWorkspaceReadOnly(answer(200, { status: 'active', read_only: true }))
+    expect(workspaceReadOnly.value).toBe(true)
+    await loadWorkspaceReadOnly(answer(200, { status: 'active' }))
+    expect(workspaceReadOnly.value).toBe(false)
+  })
+
+  it('leaves the flag alone on a server with no tenant status', async () => {
+    workspaceReadOnly.value = true
+    await loadWorkspaceReadOnly(answer(404, {}))
+    await loadWorkspaceReadOnly(vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+    expect(workspaceReadOnly.value).toBe(true)
+  })
+})
+
+describe('create affordances on a read-only workspace', () => {
+  afterEach(() => {
+    workspaceReadOnly.value = false
+  })
+
+  it('hides create and create@face whatever the verdict, and nothing else', () => {
+    const carrier = { _actions: { create: true, 'create@draft': true, update: true } }
+    workspaceReadOnly.value = true
+    expect(actionAllowed(carrier, 'create')).toBe(false)
+    expect(actionAllowed(carrier, 'create@draft')).toBe(false)
+    expect(actionAllowed(carrier, 'update')).toBe(true)
+    workspaceReadOnly.value = false
+    expect(actionAllowed(carrier, 'create')).toBe(true)
   })
 })

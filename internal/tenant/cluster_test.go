@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // mapControl is a control table in memory, keyed by schema.
@@ -280,6 +281,31 @@ func TestClusterResolver_Inactive(t *testing.T) {
 		}
 		if errors.Is(err, ErrTenantInactive) != inactive {
 			t.Errorf("Resolve(%s) inactive = %v, want %v", org, !inactive, inactive)
+		}
+	}
+}
+
+// TestClusterResolver_Archived pins that an archived tenant is refused as an
+// inactive one that says it is archived, and a suspended one as an inactive
+// one that says it is suspended.
+func TestClusterResolver_Archived(t *testing.T) {
+	t.Parallel()
+
+	r := newClusterResolver(clusterBase, controlWith(t,
+		Record{OrgID: "org-s", Status: StatusSuspended, SchemaExists: true},
+		Record{OrgID: "org-a", Status: StatusSuspended, SuspendedBy: SuspendedByArchive,
+			ArchivedAt: time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC), SchemaExists: true},
+	), nil)
+	for org, archived := range map[string]bool{"org-s": false, "org-a": true} {
+		_, err := r.Resolve(t.Context(), org)
+		if !errors.Is(err, ErrTenantInactive) {
+			t.Errorf("Resolve(%s) = %v, want ErrTenantInactive", org, err)
+		}
+		if errors.Is(err, ErrTenantArchived) != archived {
+			t.Errorf("Resolve(%s) archived = %v, want %v", org, !archived, archived)
+		}
+		if errors.Is(err, ErrTenantSuspended) == archived {
+			t.Errorf("Resolve(%s) suspended = %v, want %v", org, archived, !archived)
 		}
 	}
 }

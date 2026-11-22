@@ -91,6 +91,17 @@ func ShellBootFrom(data []byte) (ShellBoot, error) {
 	return b, nil
 }
 
+// shellBoot is the [ShellBoot] of the App's current config. A language that
+// is not a plain BCP 47 tag is dropped, as in [ShellBootFrom].
+func (a *App) shellBoot() ShellBoot {
+	app := a.State().Cfg.App
+	b := ShellBoot{AppName: strings.TrimSpace(app.Name)}
+	if lang := strings.TrimSpace(app.Language); languageTag.MatchString(lang) {
+		b.Language = lang
+	}
+	return b
+}
+
 // LoadShellBoot reads a [ShellBoot] from data-entry.yaml through load, a
 // project config loader's Load. A project without the file has the zero
 // value and no error.

@@ -254,7 +254,7 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	// deployment.
 	root := headlessRoot()
 	if serveUI {
-		root = spaHandlerWithCustom(spaFS, custom)
+		root = spaHandlerWithCustom(spaFS, custom, a.shellBoot)
 	}
 	spa := withSpecLink(root)
 	if a.caldavAliases != nil {
@@ -1020,13 +1020,18 @@ func headlessRoot() http.Handler {
 // shell are served a variant referencing the operator's custom.css/custom.js.
 // An unreadable shell degrades to the plain SPA handler.
 //
-// The four possible shells are precomputed once at router construction (no
-// per-request rewrite, so there is no cache-population race and no lock on the
-// hot path); which one to serve is chosen per request by a cheap existence
-// check, so adding custom.css does not require a server restart.
+// The four possible custom-asset shells are precomputed once at router
+// construction, so there is no cache-population race and no lock on the hot
+// path; which one to serve is chosen per request by a cheap existence check,
+// so adding custom.css does not require a server restart.
 //
 // Requests for real files (assets, favicon, …) are delegated untouched.
-func spaHandlerWithCustom(fsys fs.FS, custom *customAssets) http.Handler {
+//
+// boot names the app and its language in the shell. Only that rewrite runs
+// per request, and only for a request that gets the shell, because
+// data-entry.yaml is reloadable. A screen shown before `/_config` loads, such
+// as a refused request, then follows `app.language` instead of the browser.
+func spaHandlerWithCustom(fsys fs.FS, custom *customAssets, boot func() ShellBoot) http.Handler {
 	fallback := spaHandler(fsys)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1037,6 +1042,7 @@ func spaHandlerWithCustom(fsys fs.FS, custom *customAssets) http.Handler {
 			fallback.ServeHTTP(w, r)
 			return
 		}
+		body = bootShell(body, boot())
 
 		h := w.Header()
 		h.Set("Content-Type", "text/html; charset=utf-8")

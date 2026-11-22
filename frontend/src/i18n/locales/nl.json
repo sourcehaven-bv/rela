@@ -233,7 +233,9 @@
     "stateChanged": "Dit is gewijzigd terwijl je bezig was. Probeer het opnieuw.",
     "encryptedInaccessible": "Dit item is versleuteld en kan hier niet worden bewerkt",
     "historyUnsupported": "Deze installatie bewaart geen versiegeschiedenis",
-    "tenantReadOnly": "Deze werkruimte is alleen-lezen"
+    "tenantReadOnly": "Deze werkruimte is alleen-lezen",
+    "originNotAllowed": "Deze pagina is geopend via een adres dat deze server niet accepteert. Open de pagina via het gebruikelijke adres.",
+    "originMissing": "De browser gaf niet door welke pagina dit verzoek stuurde, dus de server weigerde het. Laad de pagina opnieuw en probeer het nog eens."
   },
   "dashboard": {
     "openList": "Open de lijst",
@@ -500,7 +502,6 @@
     "copyTo": "Kopiëren naar",
     "export": "Exporteren",
     "moreActions": "Meer acties",
-    "exportAs": "Exporteren als {format}",
     "convertMenu": "Omzetten",
     "convert": {
       "defaultFaceLower": "standaardvariant",
@@ -1140,7 +1141,22 @@
       "selected": "{number} geselecteerd"
     },
     "provisioning": "Je werkruimte wordt ingericht. Dit duurt even.",
-    "provisioningFailed": "Het inrichten van je werkruimte is niet gelukt. Probeer het later opnieuw, of neem contact op met je beheerder als het blijft mislukken."
+    "provisioningFailed": "Het inrichten van je werkruimte is niet gelukt. Probeer het later opnieuw, of neem contact op met je beheerder als het blijft mislukken.",
+    "access": {
+      "sessionEndedTitle": "Je sessie is afgelopen",
+      "sessionEndedBody": "Meld je opnieuw aan om verder te gaan.",
+      "signInAgain": "Opnieuw aanmelden",
+      "suspendedTitle": "Deze werkruimte is opgeschort",
+      "suspendedBody": "Niemand kan de werkruimte openen tot ze weer actief is. De gegevens blijven bewaard.",
+      "archivedTitle": "Deze werkruimte is gearchiveerd",
+      "archivedBody": "De werkruimte kan niet meer worden geopend. De gegevens blijven bewaard tot ze worden verwijderd.",
+      "noIdentityTitle": "Deze server kan je niet identificeren",
+      "unknownTitle": "Deze werkruimte is niet beschikbaar",
+      "unknownBody": "Er is hier geen werkruimte voor je organisatie.",
+      "contact": "Neem bij vragen contact op met degene die het abonnement van je organisatie beheert.",
+      "tryAgain": "Opnieuw proberen",
+      "readOnlyBanner": "Deze werkruimte is alleen-lezen. Aanmaken en bewerken staan uit."
+    }
   },
   "switcher": {
     "projects": "Projecten",
