@@ -1,6 +1,8 @@
 package lua
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -8,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/mailrender"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // baseURLSender is a sender that also declares a base URL, so the optional
@@ -385,4 +388,58 @@ func TestMailRender_ButtonErrors(t *testing.T) {
 			require.Contains(t, err.Error(), "mail.render")
 		})
 	}
+}
+
+// fakeBranding is a MailBranding that records the base URL it was handed.
+type fakeBranding struct {
+	opts    mailrender.Options
+	err     error
+	gotBase *string
+}
+
+func (f fakeBranding) RenderOptions(_ context.Context, baseURL string) (mailrender.Options, error) {
+	*f.gotBase = baseURL
+	o := f.opts
+	o.BaseURL = baseURL
+	return o, f.err
+}
+
+// TestMailRender_UsesAppBranding pins that mail.render takes its colors and
+// logo from ReadDeps.MailBranding, and still renders with what came back when
+// the branding read failed.
+func TestMailRender_UsesAppBranding(t *testing.T) {
+	t.Parallel()
+
+	for _, readErr := range []error{nil, errors.New("palette.yaml: unreadable")} {
+		var gotBase string
+		branding := fakeBranding{
+			opts: mailrender.Options{
+				Palette: map[string]string{"--accent-color": "#e11d48"},
+				LogoURL: "/_custom/logo.png", LogoAlt: "Acme",
+			},
+			err: readErr, gotBase: &gotBase,
+		}
+		rt := NewReader(ReadDeps{World: store.TrivialScope(), MailBranding: branding}, &strings.Builder{},
+			WithMailSender(allowAnySender{baseURLSender{&recordingMailSender{}, "https://app.example"}}))
+		t.Cleanup(rt.Close)
+
+		html, _ := runRender(t, rt, `h, t = mail.render{subject = "S", button = {label = "Go", url = "/x"}}`)
+
+		assert.Equal(t, "https://app.example", gotBase)
+		assert.Contains(t, html, "#e11d48")
+		assert.NotContains(t, html, "#4772fb")
+		assert.Contains(t, html, `src="https://app.example/_custom/logo.png"`)
+		assert.Contains(t, html, `alt="Acme"`)
+	}
+}
+
+// TestMailRender_NoBrandingUsesDefaults pins the fallback: without a
+// MailBranding the mail has rela's accent and no logo.
+func TestMailRender_NoBrandingUsesDefaults(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := newMailRuntime(t, nil)
+	html, _ := runRender(t, rt, `h, t = mail.render{subject = "S"}`)
+	assert.Contains(t, html, "#4772fb")
+	assert.NotContains(t, html, "<img")
 }

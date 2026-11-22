@@ -160,6 +160,10 @@ type Runtime struct {
 	// from the ai/http capability gate.
 	mailSender MailSender
 
+	// mailBranding backs mail.render's colors and logo. Nil: rela's
+	// default look. Set from [ReadDeps.MailBranding].
+	mailBranding MailBranding
+
 	// out backs the output/filesystem bindings (rela.output, rela.write_file,
 	// the print override). Built in newRuntime AFTER options apply, so it
 	// snapshots stdout/outputDir/mode flags once they are final.
@@ -557,6 +561,7 @@ func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Opti
 		caps: deps.Capabilities,
 	}
 	r.modules = installRequire(L, deps.moduleFiles())
+	r.mailBranding = deps.MailBranding
 
 	// Apply options
 	for _, opt := range opts {

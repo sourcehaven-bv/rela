@@ -11,6 +11,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
+	"github.com/Sourcehaven-BV/rela/internal/mailbrand"
 	"github.com/Sourcehaven-BV/rela/internal/mailrender"
 	"github.com/Sourcehaven-BV/rela/internal/mailtemplate"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -70,7 +71,8 @@ func (s *Services) RunScheduledTemplate(ctx context.Context, name, recipientID s
 	if tmpl.RequireVisibleContent && contributed == 0 {
 		return skipEmptyContent(ctx, name, recipientID)
 	}
-	renderer, err := mailrender.New(&mailrender.Options{BaseURL: s.mail.config.BaseURL})
+	opts := scheduledMailOptions(ctx, s)
+	renderer, err := mailrender.New(&opts)
 	if err != nil {
 		return err
 	}
@@ -82,6 +84,19 @@ func (s *Services) RunScheduledTemplate(ctx context.Context, name, recipientID s
 		To:      []mail.Address{{Email: parsed.Address, Name: parsed.Name}},
 		Subject: model.Subject, HTML: html, Text: text, RenderedFor: recipientID,
 	})
+}
+
+// scheduledMailOptions returns the renderer options for a scheduled mail: the
+// mail.yaml base URL with the app's accent color and logo. A branding read
+// error is logged and the defaults fill in, so a bad palette file does not stop
+// the mail. A function rather than a method: Services is at its plimsoll
+// method line.
+func scheduledMailOptions(ctx context.Context, s *Services) mailrender.Options {
+	opts, err := mailbrand.Source{Config: s.cfgLoader, KV: s.stateKV}.RenderOptions(ctx, s.mail.config.BaseURL)
+	if err != nil {
+		slog.WarnContext(ctx, "scheduled mail: app branding not fully read; using defaults for the rest", "error", err)
+	}
+	return opts
 }
 
 // servicesNow reads the clock of the base s was assembled from ([WithClock]),

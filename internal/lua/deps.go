@@ -165,6 +165,12 @@ type ReadDeps struct {
 	// in this context".
 	RoleHolders RoleHolders
 
+	// MailBranding gives mail.render the app's accent color and logo, so a
+	// script's mail matches the app. Wiring supplies mailbrand.Source.
+	//
+	// Nil: accepted. mail.render then uses rela's default look.
+	MailBranding MailBranding
+
 	// Seams replaces the clock, outbound HTTP, the AI provider, the mail
 	// transport and the write_file directory for every runtime built from
 	// these deps. The zero value replaces nothing; see [Seams].
