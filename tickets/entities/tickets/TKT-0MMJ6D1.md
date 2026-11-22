@@ -5,7 +5,7 @@ title: Give the entity write handlers one shared provision-and-read gate
 kind: chore
 priority: low
 effort: s
-status: ready
+status: backlog
 ---
 
 ## Description
