@@ -20,8 +20,7 @@ const schedulesFile = "schedules.yaml"
 // card as it stands. So the card is a data-flow definition with the trust of
 // schedules.yaml, and a Configure save may not change it: not the cards with
 // that title on that dashboard, not the list they read, and not the parts of
-// the schema the card reads (the property it folds and the query scopes it
-// names). Without this, an editor could point a captured card at data only
+// the schema the card reads (see capturedCard). Without this, an editor could point a captured card at data only
 // run_as reads and read the stored figure. The operator changes a captured
 // card in the files directly.
 

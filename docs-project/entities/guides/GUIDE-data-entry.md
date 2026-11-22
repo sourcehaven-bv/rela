@@ -10564,8 +10564,10 @@ in `schedules.yaml` stores cannot be changed in the app either. The task
 computes the card as its own `run_as` identity and stores the figure for
 everyone who reads the owner entity, so the card has the trust of
 `schedules.yaml`. A save is refused when it changes any card with that title
-on that dashboard, the list such a card reads, or in `schema.yaml` the
-property it folds or a query scope it names. A save is also refused while
+on that dashboard, the list such a card reads, or in `schema.yaml` anything
+the card reads: the property it folds, the query scopes and faces of the
+list's type and of each type it extends, the worlds and default world, and
+every property or relation definition named in any of these. A save is also refused while
 `schedules.yaml` does not parse.
 
 An automation that holds a locked setting is shown read-only. An automation

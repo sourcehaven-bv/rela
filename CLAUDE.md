@@ -214,7 +214,10 @@ your session id or `"$(hostname)-$$"`:
   flag is an existence oracle (`TestGantt_ACLRollupExcludesHiddenChild`,
   `TestGantt_TruncatedIsPostFilter`). Any new derived-over-subtree value (sums,
   progress %, counts) follows the same order, and the result is per-principal —
-  never cache it across principals. `visibility.Redact` is non-composable (raw
+  never cache it across principals. The one exception is a scheduler
+  `capture:` task (TKT-6OYQO79): it stores a figure computed for its `run_as`
+  where every reader of the owner reads it, by the operator's choice in
+  `schedules.yaml` (`docs/acl-security.md` § Records). `visibility.Redact` is non-composable (raw
   store entities in, exactly once), so the redaction point stays single.
 - **Partial writes go through `entitymanager.Manager.PatchEntity`, never
   read-modify-write.** Name the properties you are changing in an `entity.Patch`

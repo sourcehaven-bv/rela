@@ -2024,6 +2024,17 @@ that rolls back (SQLite, PostgreSQL); other stores answer 501.
   revision is compared only after both checks, so a 409 never confirms a
   hidden row. A change refused on a readable owner writes a `denied-write`
   audit line; a request on a hidden owner writes nothing.
+- **A captured figure is read by the owner's readers, not computed for
+  them.** A scheduler `capture:` task (TKT-6OYQO79) computes a dashboard
+  card as its `run_as` and appends the figure to the owner. Every reader of
+  the owner then reads a figure folded over rows that `run_as` can read, and
+  that they may not. This is the operator's choice in `schedules.yaml`, the
+  same flow a script's `rela.append_records` allows. `run_as` is required
+  and may not be `system:scheduler`, a sum/avg/min/max is refused when the
+  property is hidden on any row, and Configure cannot change a captured
+  card. Nothing checks that the owner's readers read no more than `run_as`:
+  give the owner a read rule no wider than that. Listed under "What still
+  leaks".
 - **Aggregates gate before they fold.** An aggregate or a ledger
   transaction counts only rows whose owners the caller can read. A
   transaction with a hidden leg answers 404.
@@ -2574,6 +2585,12 @@ the key; this section covers what it means for `acl.yaml`.
   user and the session's `triggered_by`.
 
 ## What still leaks (deferred)
+
+- **A captured figure crosses principals.** A `capture:` task stores a
+  figure computed for its `run_as` on an owner whose readers may read fewer
+  rows (see "Records"). A count over rows a reader cannot see becomes
+  readable to them. The operator bounds this with the owner's read rule;
+  rela does not compare the two.
 
 - **The records owner gate shows that a hidden face exists.** A caller who
   can read some faces of an owner, but not all, gets 404 on the owner's

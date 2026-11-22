@@ -164,7 +164,7 @@ func fieldValue(figure *big.Rat, field metamodel.PropertyDef) (any, error) {
 	if field.Type == metamodel.PropertyTypeInteger {
 		n, err := strconv.ParseInt(figure.FloatString(0), 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("capture: figure %s does not fit an integer field", figure.FloatString(0))
+			return nil, errors.New("capture: the figure does not fit an integer field")
 		}
 		return n, nil
 	}
