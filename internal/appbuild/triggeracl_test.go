@@ -158,6 +158,16 @@ func TestCheckTriggerACL(t *testing.T) {
 		{name: "a relation target that is the acting user passes",
 			after: trigger("    on: {entity: task, created: true}\n" +
 				"    outputs:\n      - relate: {type: about, to: \"{{current_user.id}}\"}\n")},
+		{name: "the acting user on the membership relation",
+			after: trigger("    on: {entity: person, created: true}\n" +
+				"    outputs:\n      - relate: {type: member-of, to: \"{{current_user.id}}\"}\n"),
+			want: []string{"creates member-of relations, which acl.yaml decides access by",
+				"links person records, which you may not change yourself"}},
+		{name: "the acting user on a record the editor may not change",
+			after: trigger("    on: {entity: task, created: true}\n" +
+				"    outputs:\n      - relate: {type: about, to: \"{{current_user.id}}\"}\n"),
+			editor: fakeEditor{deny: []string{"task"}},
+			want:   []string{"links task records, which you may not change yourself"}},
 		{name: "the acting user inside a longer target",
 			after: trigger("    on: {entity: task, created: true}\n" +
 				"    outputs:\n      - relate: {type: about, to: \"x-{{current_user.id}}\"}\n"),
