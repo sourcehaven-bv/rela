@@ -49,6 +49,20 @@ describe('normalizeApiError', () => {
     expect(err.validationErrors).toEqual([{ field: 'status', message: 'unknown value' }])
   })
 
+  it('explains a same-origin refusal instead of "Request failed (403)"', () => {
+    const err = normalizeApiError(
+      axiosErrorWith({ error: 'forbidden', reason: 'origin_not_allowed' }, 403)
+    )
+    expect(err.status).toBe(403)
+    expect(err.code).toBe('origin_not_allowed')
+    expect(err.message).toBe(
+      'This page was opened at an address this server does not accept. Open it at its usual address.'
+    )
+    expect(
+      normalizeApiError(axiosErrorWith({ error: 'forbidden', reason: 'origin_missing' }, 403)).code
+    ).toBe('origin_missing')
+  })
+
   it('falls back to title when detail is absent', () => {
     const err = normalizeApiError(axiosErrorWith({ ...problem, detail: undefined }))
     expect(err.message).toBe('Validation failed')
@@ -250,6 +264,16 @@ describe('getErrorMessage in the interface language (TKT-ZL1QAO)', () => {
   it('translates a known code under Dutch', () => {
     resetLanguageState({ user: 'nl' })
     expect(getErrorMessage(notFound())).toBe('Niet gevonden')
+  })
+
+  it('translates a same-origin refusal under Dutch', () => {
+    resetLanguageState({ user: 'nl' })
+    const err = normalizeApiError(
+      axiosErrorWith({ error: 'forbidden', reason: 'origin_not_allowed' }, 403)
+    )
+    expect(getErrorMessage(err)).toBe(
+      'Deze pagina is geopend via een adres dat deze server niet accepteert. Open de pagina via het gebruikelijke adres.'
+    )
   })
 
   it('falls back to the server message for an unknown code', () => {

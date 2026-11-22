@@ -84,11 +84,17 @@ func ShellBootFrom(data []byte) (ShellBoot, error) {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return ShellBoot{}, err
 	}
-	b := ShellBoot{AppName: strings.TrimSpace(doc.App.Name)}
-	if lang := strings.TrimSpace(doc.App.Language); languageTag.MatchString(lang) {
+	return shellBootOf(doc.App.Name, doc.App.Language), nil
+}
+
+// shellBootOf is the [ShellBoot] for an app name and language. A language
+// that is not a plain BCP 47 tag is dropped.
+func shellBootOf(name, language string) ShellBoot {
+	b := ShellBoot{AppName: strings.TrimSpace(name)}
+	if lang := strings.TrimSpace(language); languageTag.MatchString(lang) {
 		b.Language = lang
 	}
-	return b, nil
+	return b
 }
 
 // LoadShellBoot reads a [ShellBoot] from data-entry.yaml through load, a

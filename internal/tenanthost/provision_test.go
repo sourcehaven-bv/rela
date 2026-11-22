@@ -31,6 +31,10 @@ type controlTable struct {
 	calls  atomic.Int64
 }
 
+// archivedForTest stands for a suspended tenant that was archived, which the
+// control table records as a suspension with an archive time.
+const archivedForTest tenant.Status = "archived"
+
 func newControl(statuses map[string]tenant.Status) *controlTable {
 	if statuses == nil {
 		statuses = map[string]tenant.Status{}
@@ -56,7 +60,11 @@ func (c *controlTable) acquire(_ context.Context, orgID string) (http.Handler, f
 		return nil, nil, fmt.Errorf("%w: %w: %w", tenant.ErrUnknownTenant, tenant.ErrTenantInactive,
 			tenant.ErrTenantProvisioning)
 	case s == tenant.StatusSuspended:
-		return nil, nil, fmt.Errorf("%w: %w", tenant.ErrUnknownTenant, tenant.ErrTenantInactive)
+		return nil, nil, fmt.Errorf("%w: %w: %w", tenant.ErrUnknownTenant, tenant.ErrTenantInactive,
+			tenant.ErrTenantSuspended)
+	case s == archivedForTest:
+		return nil, nil, fmt.Errorf("%w: %w: %w", tenant.ErrUnknownTenant, tenant.ErrTenantInactive,
+			tenant.ErrTenantArchived)
 	case s == tenant.StatusErased:
 		return nil, nil, fmt.Errorf("%w: %w: %q", tenant.ErrUnknownTenant, tenant.ErrTenantErased, orgID)
 	case s != tenant.StatusActive:
@@ -634,6 +642,7 @@ func TestProvision_StatusRoute(t *testing.T) {
 	statuses := map[string]tenant.Status{
 		"org-a": tenant.StatusActive, "org-p": tenant.StatusProvisioning,
 		"org-s": tenant.StatusSuspended, "org-e": tenant.StatusErasing,
+		"org-ar": archivedForTest,
 	}
 	tests := []struct {
 		mode   tenanthost.ProvisionMode
@@ -644,6 +653,7 @@ func TestProvision_StatusRoute(t *testing.T) {
 		{mode: tenanthost.ProvisionOff, token: "tok-org-a", code: http.StatusOK, status: "active"},
 		{mode: tenanthost.ProvisionOff, token: "tok-org-p", code: http.StatusOK, status: "provisioning"},
 		{mode: tenanthost.ProvisionOff, token: "tok-org-s", code: http.StatusOK, status: "suspended"},
+		{mode: tenanthost.ProvisionOff, token: "tok-org-ar", code: http.StatusOK, status: "archived"},
 		{mode: tenanthost.ProvisionOff, token: "tok-org-e", code: http.StatusForbidden},
 		{mode: tenanthost.ProvisionOff, token: "tok-org-new", code: http.StatusForbidden},
 		{mode: tenanthost.ProvisionLazy, token: "tok-org-new", code: http.StatusOK, status: "provisioning"},

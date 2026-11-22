@@ -710,7 +710,9 @@ Every other case is refused and opens no store:
 | --- | --- |
 | No row for the org | 403 `unknown_tenant`; 202 with `-tenant-provision=lazy` |
 | Status `provisioning` | 403 `unknown_tenant`; 202 with `-tenant-provision` on |
-| Status `suspended` or `erasing` | 403 `unknown_tenant` |
+| Status `suspended` | 403 `tenant_suspended` |
+| Archived through the tenant API | 403 `tenant_archived` |
+| Status `erasing` or `erased` | 403 `unknown_tenant` |
 | The org's schema is recorded for another org | 503 |
 | Status `active`, but the schema does not exist | 503 |
 | The control table cannot be read | 503 |
@@ -891,9 +893,9 @@ A client calling the API can poll `GET /api/v1/_tenant`. The web app
 does: on a 202 provisioning answer, or a 503 `tenant_provisioning`,
 `provisioning_busy`, `provisioning_failed` or `provisioning_needs_operator`,
 it shows a "setting up" screen, polls the route and reloads once the status
-is `active` or `suspended`, or the route answers 401 or 403. The route answers 200 with
-`{"status":"active"}`, `{"status":"provisioning"}` or
-`{"status":"suspended"}` for the caller's own verified org, and nothing
+is `active`, `suspended` or `archived`, or the route answers 401 or 403. The route answers 200 with
+`{"status":"active"}`, `{"status":"provisioning"}`, `{"status":"suspended"}`
+or `{"status":"archived"}` for the caller's own verified org, and nothing
 about any other org. An org that has no tenant gets 403 `unknown_tenant`,
 unless `lazy` is on, which starts its create and answers `provisioning`.
 
@@ -902,7 +904,32 @@ the tenant's config. The server reads `app.name` and `app.language` from
 the shared `data-entry.yaml` once at startup and writes them into that
 page: the tab title is the app name, and the screen uses the app language
 unless the user chose a language on the Settings page. A project's
-`custom/` files are not served there.
+`custom/` files are not served there. A single-tenant server writes the
+same two values into its page from its own `data-entry.yaml`, so a screen
+shown before the config loads also uses the app language.
+
+The web app replaces every screen with a full page when the server refuses
+the whole workspace, instead of an error with a Retry button. An ended
+session is a dialog over the page instead, so a half-filled form keeps its
+input:
+
+| Answer | Page |
+| --- | --- |
+| 403 `tenant_suspended` | "This workspace is suspended", and who to contact. No button. |
+| 403 `tenant_archived` | "This workspace is archived", and who to contact. No button. |
+| 403 `unknown_tenant` | "This workspace is not available", and who to contact, with Try again. |
+| 401 | "Your session has ended", with Sign in again, over the page. |
+| 401 with a problem `detail` and no `login_url` | "This server cannot identify you", the detail, and Try again. A server with no identity source answers so. |
+
+Sign in again is a full page navigation to the `login_url` of the 401 body,
+when it is a local path on the same site, and otherwise a reload of the page, which
+the edge sends to sign-in. pratique's edge answers an expired session's API
+request with 401 and `{"error":"session_expired","login_url":"..."}`. An
+edge that redirects such a request to sign-in instead gives the browser a
+cross-origin redirect it will not follow; the web app then asks the status
+route with `redirect: "manual"`, and a redirect answer also shows the
+"session ended" dialog. It asks at most once per 30 seconds, after a request
+that got no response or a dropped live-update stream. The text follows the interface language.
 
 Concurrent requests and webhooks for one org share one create. The create
 runs on its own context with a 5 minute timeout, so a client that hangs up
@@ -1037,8 +1064,14 @@ provisioned, which is not done yet.
 WebDAV reads `PROPFIND` and `REPORT`. It refuses every other request with
 403 `tenant_read_only`, including remote MCP calls, actions, comments,
 piles, leases, presence, settings and collaborative-editing saves. The
-message reads "This workspace is read-only". In the web app a create form
-says so and shows no Create button; edit forms are unchanged. Two
+message reads "This workspace is read-only". The web app reads the state
+from `GET /api/v1/_tenant` when it starts, when the tab is shown again, and
+from any refused write. While
+the workspace is read-only it shows a banner above every page and hides the
+New and Add buttons: the space Create menu, New on lists, boards and
+calendars, the section and sidebar add buttons, the table Add button, Add on relation pickers and relation
+cards, and inline create. A create form says so and shows no Create
+button; edit forms are unchanged. Two
 writes pass because they change no tenant data: the `PUT` of a live-update
 stream's subscriptions, and the IdP webhook. Background work the server
 starts itself, such as scheduled flows, still runs. Export works, because

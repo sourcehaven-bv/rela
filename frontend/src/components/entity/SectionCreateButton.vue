@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 /**
  * The "create related entity" affordance (TKT-R4BMJM).
  *
@@ -36,7 +37,8 @@ const { t } = useI18n()
 const open = ref(false)
 const root = ref<HTMLElement | null>(null)
 
-const targets = computed(() => props.create?.targets ?? [])
+// A read-only workspace refuses every create, whatever the targets say.
+const targets = computed(() => (workspaceReadOnly.value ? [] : (props.create?.targets ?? [])))
 const single = computed(() => (targets.value.length === 1 ? targets.value[0] : null))
 
 function choose(target: ViewSectionCreateTarget) {

@@ -52,6 +52,7 @@ import { usePhoneScreen } from '@/composables/usePhoneScreen'
 import { useI18n } from 'vue-i18n'
 import { apiUrl } from '@/api/base'
 import { createPile } from '@/api/piles'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 
 const { t } = useI18n()
 const schemaStore = useSchemaStore()
@@ -186,7 +187,7 @@ const configNavGroupsWithPiles = computed(() =>
  * space's own pinned rows. The declared piles that no `pile:` entry places
  * come just before it, in a group of their own.
  */
-const navGroups = computed(() => {
+const allNavGroups = computed(() => {
   if (!navLoaded.value) return []
   const groups = configNavGroupsWithPiles.value
   if (!piles.available.value) return groups
@@ -205,6 +206,13 @@ const navGroups = computed(() => {
     ...groups.slice(lead),
   ]
 })
+
+// A read-only workspace refuses every create, so no group offers its "+".
+const navGroups = computed(() =>
+  workspaceReadOnly.value
+    ? allNavGroups.value.map(({ addLabel: _addLabel, ...group }) => group)
+    : allNavGroups.value
+)
 
 /*
  * The "+" on a generated group's heading: the create dialog for the group's
