@@ -157,7 +157,7 @@ func TestV1Schema_AdvertisesOrderableFlag(t *testing.T) {
 	app := newOrderableRelationsTestApp(t, metamodel.OrderableBoth)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Schema(rec, req)
+	app.schemaAPI.handleV1Schema(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}

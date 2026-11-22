@@ -213,7 +213,7 @@ func TestSchemaCapabilities_Flows(t *testing.T) {
 	flowsCapability := func(app *App) bool {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		app.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
+		app.schemaAPI.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		var got struct {
 			Capabilities struct {

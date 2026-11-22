@@ -152,7 +152,7 @@ func TestSidebarBuiltins_ConfigUnfiltered(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody).
 				WithContext(gateCtxFor(principalCtx("bob"), t, d))
 			rec := httptest.NewRecorder()
-			app.handleV1Config(rec, req)
+			app.schemaAPI.handleV1Config(rec, req)
 			require.Equal(t, http.StatusOK, rec.Code)
 			var resp v1.Config
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))

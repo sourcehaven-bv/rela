@@ -166,8 +166,12 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		panic(err.Error())
 	}
 	app.validator = val
-	app.analyze = analyzeService{reads: gatedReader, tracer: lateGatedTracer{app: app}, validator: app.validator}
-	app.templater = svc.Templater()
+	// Built here as well as in the constructors: some tests assemble an App
+	// literal and call rebindApp directly.
+	app.analyzeAPI = newAnalyzeHandler(app)
+	app.analyzeAPI.svc = analyzeService{reads: gatedReader, tracer: lateGatedTracer{app: app}, validator: app.validator}
+	app.schemaAPI = newSchemaHandler(app, svc.Templater())
+	app.conflictsAPI = newConflictsHandler(app)
 	app.cfgLoader = svc.Config()
 	app.assets = rootfs.New(paths.Root)
 	app.kv = svc.State()
@@ -413,6 +417,9 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture, opts ..
 	app.live = testLiveHub(app)
 	app.sse = newSSEHandler(app)
 	app.gitAPI = newGitHandler(app)
+	app.schemaAPI = newSchemaHandler(app, nil)
+	app.conflictsAPI = newConflictsHandler(app)
+	app.analyzeAPI = newAnalyzeHandler(app)
 	if meta != nil {
 		// Use an in-memory FS + project context so the workspace's
 		// templater has paths it can dereference. Without this,
@@ -536,6 +543,9 @@ func newHandlerTestApp(t *testing.T) *App {
 	app.live = testLiveHub(app)
 	app.sse = newSSEHandler(app)
 	app.gitAPI = newGitHandler(app)
+	app.schemaAPI = newSchemaHandler(app, nil)
+	app.conflictsAPI = newConflictsHandler(app)
+	app.analyzeAPI = newAnalyzeHandler(app)
 	rebindApp(app, fs, ctx, svc)
 	// Make sure kv hits the real filesystem through state.KV, matching production.
 	kvRoot, err := storage.NewRootedFS(fs, ctx.CacheDir)

@@ -17,7 +17,7 @@ import (
 func TestV1Schema_IntegerRange(t *testing.T) {
 	app := newTestAppV1(t)
 	rec := httptest.NewRecorder()
-	app.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
+	app.schemaAPI.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}
