@@ -152,7 +152,7 @@ func TestSpaces_PermissionIsPresentationOnly(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody).WithContext(ctx)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "TKT-1", "hiding a space must not gate the data behind it")
 }

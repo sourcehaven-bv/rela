@@ -42,7 +42,7 @@ func TestSearch_CanceledRequestStaysSilent(t *testing.T) {
 			}
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?q=alpha", http.NoBody).WithContext(ctx)
 			rec := httptest.NewRecorder()
-			app.handleV1Search(rec, req)
+			app.entities.handleV1Search(rec, req)
 
 			if rec.Body.Len() != 0 {
 				t.Errorf("a canceled search must write nothing, got %d: %s", rec.Code, rec.Body)
@@ -65,7 +65,7 @@ func TestSearch_ForeignCancelIsAnswered(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?q=alpha", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Search(rec, req)
+	app.entities.handleV1Search(rec, req)
 
 	if rec.Code < 500 || rec.Body.Len() == 0 {
 		t.Errorf("got %d with %d bytes, want an answered 5xx", rec.Code, rec.Body.Len())
@@ -82,7 +82,7 @@ func TestSearch_DeadlineIsNotACancel(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?q=alpha", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Search(rec, req)
+	app.entities.handleV1Search(rec, req)
 
 	if rec.Code < 500 {
 		t.Errorf("status = %d, want a 5xx", rec.Code)

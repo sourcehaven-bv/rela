@@ -487,7 +487,7 @@ func TestDetailAction_NotOfferedOnDryRunCandidate(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/notes"+query,
 			strings.NewReader(`{"properties":{"title":"x"}}`)).WithContext(gateCtxFor(aliceCtx(), t, d.decl))
 		rec := httptest.NewRecorder()
-		d.app.handleV1EntityCollection(rec, req, "note", "notes")
+		d.app.entities.handleV1EntityCollection(rec, req, "note", "notes")
 		if rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
 			t.Fatalf("POST%s: %d %s", query, rec.Code, rec.Body)
 		}

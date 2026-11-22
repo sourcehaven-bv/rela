@@ -248,7 +248,7 @@ func TestLLMBatch_AffordanceAndGateAgree(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody).
 				WithContext(gateCtxFor(principalCtx(tc.user), t, a.decl))
 			rec := httptest.NewRecorder()
-			a.app.handleV1ListEntities(rec, req, "ticket", "tickets")
+			a.app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 			var got struct {
 				Actions map[string]bool `json:"_actions"`
 			}

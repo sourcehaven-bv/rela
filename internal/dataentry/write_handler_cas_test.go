@@ -184,7 +184,7 @@ func TestV1Patch_CurrentIfMatchSucceeds(t *testing.T) {
 
 	current, err := app.store.GetEntity(ctx, entity.Ref{ID: "TKT-001"})
 	require.NoError(t, err)
-	etag := app.computeEntityETag(ctx, current)
+	etag := app.entities.computeEntityETag(ctx, current)
 
 	rec := patchBody(app, `{"properties":{"title":"Renamed"}}`,
 		http.Header{"If-Match": []string{etag}})

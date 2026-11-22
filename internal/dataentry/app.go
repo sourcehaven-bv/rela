@@ -241,12 +241,19 @@ type appEntityWriter interface {
 // spec, /_templates) and scanAppsOrLog moved to schemaHandler, which also
 // took the templater field; the conflict list and detail moved to
 // conflictsHandler; /_analyze moved to analyzeHandler with the analyze field;
-// and /_commands moved onto commandHandler (72 -> 62). /_search and
-// /_documents stay: search shares the list pipeline's owner and linkable
-// passes, which take *App, and the document routes dispatch to package
-// functions that take *App.
+// and /_commands moved onto commandHandler (72 -> 62).
 //
-//plimsoll:max-methods=62
+// The entity read side moved off App in two parts (62 -> 42). The list
+// pipeline (listPage, scopedSortedEntities, applyRelationFilters, and the
+// former package functions scopedSortedEntitiesScoped and scopeListCondition)
+// moved to listPipeline, which its consumers outside the entity routes (nav,
+// dashboard, export, gantt, next-action) now call directly. The entity routes,
+// their relation sub-resources, includes, the entity ETag, /_search and
+// /_position (with resolveScope and markIncomingFace) moved to
+// entityReadHandler. /_documents stays: its routes dispatch to package
+// functions that take *App, and it is not part of the entity read surface.
+//
+//plimsoll:max-methods=42
 //plimsoll:max-exported-methods=22
 type App struct {
 	// Primitives — immutable after NewApp.
@@ -386,6 +393,12 @@ type App struct {
 	// analyzeAPI owns /_analyze and the analysis service behind it.
 	// Always non-nil after NewApp.
 	analyzeAPI *analyzeHandler
+	// lists is the shared list read pipeline (list, nav, dashboard, export,
+	// gantt, next-action and /_position). Always non-nil after NewApp.
+	lists *listPipeline
+	// entities owns the v1 entity read surface, /_search and /_position.
+	// Always non-nil after NewApp.
+	entities *entityReadHandler
 	// affordances computes the _actions/field/relation affordance maps and runs
 	// write-time affordance validation. Extracted from App (TKT-N26KLB M5.2);
 	// shares the same acl.ACL as the write path (contract-test invariant).
@@ -1364,6 +1377,10 @@ func NewApp(
 	app.schemaAPI = newSchemaHandler(app, templater)
 	app.conflictsAPI = newConflictsHandler(app)
 	app.analyzeAPI = newAnalyzeHandler(app)
+	// Built before export, gantt and next-action, which take the pipeline's
+	// method values.
+	app.lists = newListPipeline(app)
+	app.entities = newEntityReadHandler(app)
 	app.faceEdges = faceEdgesOf(app)
 	// documentService needs scriptEngine (for Lua renders) and a closure
 	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).
@@ -1640,7 +1657,7 @@ func NewApp(
 		audit:       func() audit.Audit { return app.auditSink },
 		visible:     app.visibleReader,
 		denyAfford:  app.denyAffordance,
-		computeETag: app.computeEntityETag,
+		computeETag: app.entities.computeEntityETag,
 		faceEdges:   app.faceEdges,
 		readVisible: func(ctx context.Context, typeName string, ref entity.Ref) (*entity.Entity, bool, error) {
 			return app.visibleReader.addressRef(ctx, typeName, ref)

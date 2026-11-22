@@ -58,7 +58,7 @@ func goPath(
 	ctx context.Context, t *testing.T, app *App, typeName string, query map[string][]string, page, perPage int,
 ) (ids []string, total int) {
 	t.Helper()
-	all, err := app.scopedSortedEntities(ctx, typeName, query)
+	all, err := app.lists.scopedSortedEntities(ctx, typeName, query)
 	if err != nil {
 		t.Fatal(err)
 	}

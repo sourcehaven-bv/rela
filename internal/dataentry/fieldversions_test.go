@@ -106,7 +106,7 @@ func getVersions(t *testing.T, app *App, id string) v1.Entity {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/"+id, http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", id)
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", id)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET %s: %d %s", id, rec.Code, rec.Body.String())
 	}

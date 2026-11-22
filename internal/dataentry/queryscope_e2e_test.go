@@ -140,7 +140,7 @@ func scopeList(app *App, rawQuery string) *httptest.ResponseRecorder {
 	}
 	req := httptest.NewRequest(http.MethodGet, url, http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "taak", "taken")
+	app.entities.handleV1ListEntities(rec, req, "taak", "taken")
 	return rec
 }
 
@@ -226,7 +226,7 @@ func scopeListAs(app *App, user, rawQuery string) *httptest.ResponseRecorder {
 	req = req.WithContext(principal.With(req.Context(),
 		principal.Principal{User: user, Tool: principal.ToolDataEntry}))
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "taak", "taken")
+	app.entities.handleV1ListEntities(rec, req, "taak", "taken")
 	return rec
 }
 

@@ -589,7 +589,7 @@ func budgetSearch(ctx context.Context, t *testing.T, app *App, d *acl.Declarativ
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?"+params, http.NoBody)
 	req = req.WithContext(gateCtxFor(ctx, t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1Search(rec, req)
+	app.entities.handleV1Search(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("search: %d %s", rec.Code, rec.Body)
 	}

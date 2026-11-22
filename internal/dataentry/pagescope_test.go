@@ -76,7 +76,7 @@ func listUngated(t *testing.T, app *App, plural, typeName, rawQuery string) (v1.
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/"+plural+"?"+rawQuery, http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, typeName, plural)
+	app.entities.handleV1ListEntities(rec, req, typeName, plural)
 	var resp v1.ListResponse
 	if rec.Code == http.StatusOK {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
@@ -221,7 +221,7 @@ func TestPageScope_Position(t *testing.T) {
 	q := url.Values{"id": {"TKT-004"}, "scope": {string(scope)}}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_position?"+q.Encode(), http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1EntityPosition(rec, req)
+	app.entities.handleV1EntityPosition(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var pos v1.Position
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &pos))

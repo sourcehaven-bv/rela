@@ -288,7 +288,7 @@ func TestSearchPlan_HidesUnreadableRows(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet,
 			positionURL(t, "TASK-01", ScopeDescriptor{Source: "search", ListQuery: ListQuery{Q: query}}), http.NoBody).WithContext(alice)
 		rec := httptest.NewRecorder()
-		app.handleV1EntityPosition(rec, req)
+		app.entities.handleV1EntityPosition(rec, req)
 		if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "not_in_scope") {
 			t.Errorf("position of a hidden row: %d %s, want 404 not_in_scope", rec.Code, rec.Body)
 		}

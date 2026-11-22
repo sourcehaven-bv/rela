@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"hash"
 	"log/slog"
-	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -171,8 +170,8 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	if routes := newCalDAVRoutes(a); routes != nil {
 		routes.register(mux)
 	}
-	mux.HandleFunc("/api/v1/_search", a.handleV1Search)
-	mux.HandleFunc("/api/v1/_position", a.handleV1EntityPosition)
+	mux.HandleFunc("/api/v1/_search", a.entities.handleV1Search)
+	mux.HandleFunc("/api/v1/_position", a.entities.handleV1EntityPosition)
 	mux.HandleFunc("/api/v1/_analyze", a.analyzeAPI.handleV1Analyze)
 	mux.HandleFunc("/api/v1/_next_action", a.nextActions.handleV1NextAction)
 	mux.HandleFunc("/api/v1/_git/status", a.gitAPI.handleGitStatus)
@@ -287,7 +286,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 	switch len(parts) {
 	case 1:
 		// /{plural} - collection
-		a.handleV1EntityCollection(w, r, typeName, plural)
+		a.entities.handleV1EntityCollection(w, r, typeName, plural)
 	case 2:
 		// /{plural}/_export (collection export) or /{plural}/{id} (single entity).
 		// _export is a reserved segment; no entity id may collide (ids never
@@ -295,14 +294,14 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		if parts[1] == "_export" {
 			a.export.handleV1ExportList(w, r, typeName)
 		} else {
-			a.handleV1SingleEntity(w, r, typeName, plural, parts[1])
+			a.entities.handleV1SingleEntity(w, r, typeName, plural, parts[1])
 		}
 	case 3:
 		// /{plural}/{id}/relations, /{plural}/{id}/_export, /{plural}/{id}/restore,
 		// /{plural}/{id}/mentioned-by, /{plural}/{id}/_lease or /{plural}/{id}/_presence
 		switch parts[2] {
 		case "relations":
-			a.handleV1EntityRelations(w, r, typeName, parts[1])
+			a.entities.handleV1EntityRelations(w, r, typeName, parts[1])
 		case "_lease":
 			a.leases.handleClaim(w, r, typeName, parts[1])
 		case "_presence":
@@ -321,9 +320,9 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		// or /{plural}/{id}/_attachments/{property}
 		switch parts[2] {
 		case "relations":
-			a.handleV1EntityRelationType(w, r, typeName, parts[1], parts[3])
+			a.entities.handleV1EntityRelationType(w, r, typeName, parts[1], parts[3])
 		case "_actions":
-			a.handleV1EntityAction(w, r, typeName, parts[1], parts[3])
+			a.entities.handleV1EntityAction(w, r, typeName, parts[1], parts[3])
 		case "_attachments":
 			// The segment is an ADDRESS: bytes are per entity, but the files
 			// a face lists and serves are its own (BUG-CTUW2N).
@@ -336,7 +335,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		// /{plural}/{id}/_attachments/{property}/{fileName}
 		switch parts[2] {
 		case "relations":
-			a.handleV1RelationTarget(w, r, typeName, parts[1], parts[3], parts[4])
+			a.entities.handleV1RelationTarget(w, r, typeName, parts[1], parts[3], parts[4])
 		case "_attachments":
 			a.attachments.handleV1AttachmentFileRoute(w, r, typeName, parts[1], parts[3], parts[4])
 		default:
@@ -347,29 +346,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// --- Collection Handlers ---
-
-func (a *App) handleV1EntityCollection(w http.ResponseWriter, r *http.Request, typeName, plural string) {
-	switch r.Method {
-	case http.MethodGet:
-		a.handleV1ListEntities(w, r, typeName, plural)
-	case http.MethodPost:
-		// TKT-3I5U: ?dry_run=true evaluates affordances + soft validation
-		// against the candidate WITHOUT persisting, so the create form can
-		// gate fields / options / hidden as the user types. Read-shaped:
-		// dispatched before handleV1CreateEntity, and never persists.
-		if r.URL.Query().Get("dry_run") == "true" {
-			a.write.handleV1DryRunCreate(w, r, typeName, plural)
-			return
-		}
-		a.write.handleV1CreateEntity(w, r, typeName, plural)
-	case http.MethodOptions:
-		w.Header().Set("Allow", "GET, POST, OPTIONS")
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-	}
-}
+// --- List Pipeline Errors ---
 
 // errACLListQuery wraps a store.GraphQuery failure during ACL list
 // filtering so call sites can route it through writeGateError (500
@@ -394,201 +371,6 @@ var errBadFilter = errors.New("invalid filter parameter")
 // fault — and a truncated list with authoritative-looking pagination
 // is worse than an error either way.
 var errListLoad = errors.New("list load failed")
-
-// scopedSortedEntities runs the shared list pipeline — ACL read scope,
-// load, free-text intersection (?q=), structured filters (filter[...]),
-// then the configured sort — and returns the fully ordered result set
-// *before* pagination. Both handleV1ListEntities and
-// handleV1EntityPosition call this, so a list and its scope navigator
-// are guaranteed to observe identical ordering (under ACL both operate
-// on the same visible subset — hidden entities don't occupy ordinals).
-//
-// ACL ordering contract (TKT-VMD8, RR-X56H + RR-3IO2): the read-scope
-// verdict resolves FIRST. DenyAll returns before the search backend,
-// filters, or sort run — a denied principal must not be able to probe
-// backend latency through ?q=. A composed Query loads the visible
-// subset via store.GraphQuery; search/filter/sort then operate on that
-// filtered slice only (search-after-ACL). AllowAll keeps the pre-ACL
-// load path byte-identical.
-//
-// Errors: free-text search failures surface verbatim (HTTP 500
-// search_failed at the call site); ACL query failures are wrapped in
-// errACLListQuery so call sites map them via writeGateError. Everything
-// else degrades to an empty/whole set as the list endpoint always did.
-// listPage returns one page of the list plus the scoped total. A request the
-// store can page by itself (listpushdown.go) costs one count and one bounded
-// read; everything else takes the whole-type Go pipeline and slices it.
-func (a *App) listPage(
-	ctx context.Context, typeName string, query map[string][]string, page, perPage int,
-) (rows []*entityPkg.Entity, total int, ordering *relationOrdering, err error) {
-	// FIRST, before anything reads a row: the field gate's answer depends on
-	// the policy and the caller's roles only, so the refusal must not vary
-	// with what the type holds.
-	state := a.State()
-	gated, err := gateAppListQuery(ctx, a, state, typeName, query)
-	if err != nil {
-		return nil, 0, nil, err
-	}
-	ctx, n, err := resolveListNarrowing(ctx, a, state, typeName, query)
-	if err != nil {
-		return nil, 0, nil, err
-	}
-	if plan, empty, ok := n.pushdownPlan(ctx, typeName, gated, page, perPage); ok {
-		if empty {
-			return nil, 0, nil, nil
-		}
-		rows, total, err = plan.run(ctx, a.Services().Store)
-		return rows, total, nil, err
-	}
-	cond, scope := n.cond, n.scope
-	all, ordering, err := scopedSortedEntitiesScoped(ctx, a, typeName, gated, scope)
-	if err != nil {
-		return nil, 0, nil, err
-	}
-	// AFTER the ACL scope and every filter, BEFORE paging and the count: the
-	// condition narrows the population the page and total describe, so
-	// applying it later would page one set and count another.
-	// Prime only when a condition will judge every row: otherwise the page
-	// is primed below, and priming the whole population here is wasted.
-	if cond != nil {
-		ctx = primeVerdicts(ctx, a.fieldResolver, all)
-	}
-	all, err = applyViewCondition(ctx, all, cond, suggestionRedactor(a.affordances), a.Services().Store)
-	if err != nil {
-		return nil, 0, nil, err
-	}
-	total = len(all)
-	start := min((page-1)*perPage, total)
-	end := min(start+perPage, total)
-	return all[start:end], total, ordering, nil
-}
-
-func (a *App) scopedSortedEntities(
-	ctx context.Context,
-	typeName string,
-	query map[string][]string,
-) ([]*entityPkg.Entity, error) {
-	// Resolves the scope from the request's ?query_scope= (absent = the
-	// type's default), so every caller of this function is scoped too:
-	// export mirrors the list it names, and _position navigates the set the
-	// list actually showed.
-	scopeName, err := queryScopeParam(query)
-	if err != nil {
-		return nil, err
-	}
-	state := a.State()
-	scope, err := viewQueryScope(a.queryScopes, state.Cfg, state.Meta, typeName, scopeName)
-	if err != nil {
-		return nil, err
-	}
-	gated, err := gateAppListQuery(ctx, a, state, typeName, query)
-	if err != nil {
-		return nil, err
-	}
-	rows, _, err := scopedSortedEntitiesScoped(ctx, a, typeName, gated, scope)
-	return rows, err
-}
-
-// scopedSortedEntitiesScoped is App.scopedSortedEntities with the query
-// scope already resolved, for callers that resolved it to decide something
-// else first (listPage uses it to gate the pushdown). It also returns the
-// relation ordering a page-scoped request was sorted by, if any; see
-// [resolvePageScope]. The query is a [gatedListQuery], so every property it
-// filters or sorts on is one the principal sees on every row.
-//
-// A package function taking the App rather than a method, to keep App under
-// its plimsoll load line — the discipline the directive at [App] records:
-// a feature pays for its setter, not for its internals.
-func scopedSortedEntitiesScoped(
-	ctx context.Context,
-	a *App,
-	typeName string,
-	query gatedListQuery,
-	scope resolvedQueryScope,
-) ([]*entityPkg.Entity, *relationOrdering, error) {
-	params := query.params
-	// Stamp the scope's request-scoped state ONCE, before any row is
-	// evaluated — a scope reading current_user resolves it here, not per row.
-	ctx, err := scope.bind(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	// The page scope resolves BEFORE the load, so an anchor the principal
-	// cannot see answers the uniform 404 whatever the type's verdict is.
-	pageIDs, ordering, pageScoped, err := resolvePageScope(ctx, a, params, typeName)
-	if err != nil {
-		return nil, nil, err
-	}
-	if query.reach != nil {
-		pageIDs, pageScoped = narrowToReach(pageIDs, pageScoped, query.reach), true
-	}
-	// The verdict switch, the world scope, the face allowlist and the query
-	// scope all live in scopedHeaders (scopedread.go) — see its doc for why
-	// they must not be re-implemented per handler.
-	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
-	if readWithheld(ctx, rqr) {
-		// Return BEFORE the free-text search: a principal who may read
-		// nothing must not be able to probe the search backend's latency or
-		// induce load through ?q= (RR-X56H).
-		return []*entityPkg.Entity{}, nil, nil
-	}
-
-	// Free-text search: the hits narrow the read when ?q=... is present.
-	// Full-text scores are discarded — the list's configured sort wins over
-	// relevance ranking, same approach SearchView uses for filtering.
-	// Backend errors surface as HTTP 500 rather than rendering an empty list
-	// and pretending the search succeeded.
-	searchResult, err := a.queries.freeTextIDsForType(ctx, queryGet(params, "q"), typeName)
-	if err != nil {
-		return nil, nil, err
-	}
-	// The page scope and the hits each name the rows the list may hold, so
-	// the read asks for those ids only rather than scanning the type
-	// (TKT-F2EJQY8). Each id still passes the verdict, the world, the faces
-	// and the query scope in scopedHeaders, so neither can surface a row the
-	// full read would not admit.
-	ids, byIDs := narrowingIDs(pageScoped, pageIDs, searchResult)
-	entities, withheld, err := scopedEntities(ctx, a.Services(), rqr, scopeRequest{
-		Type:        typeName,
-		Faces:       rqr.Faces,
-		ByIDs:       byIDs,
-		IDs:         ids,
-		Scope:       scope.Scope,
-		ScopeProps:  scope.Props,
-		ScopeFilter: scope.Filter,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	if withheld {
-		// Unreachable after the readWithheld check above (same ctx and
-		// verdict); kept so the empty shape does not depend on that check.
-		return []*entityPkg.Entity{}, nil, nil
-	}
-
-	// Each filter[<key>] param was classified as property vs relation ONCE,
-	// by the gate, so both passes agree on routing with the gate itself.
-	entities, err = withQueriedRollups(ctx, newRollupSource(a), typeName, query, entities,
-		func(rows []*entityPkg.Entity) ([]*entityPkg.Entity, error) {
-			rows, ferr := applyV1Filters(rows, query)
-			if ferr != nil {
-				return nil, ferr
-			}
-			rows, ferr = a.applyRelationFilters(ctx, rows, params, typeName, query.isRelationKey)
-			if ferr != nil {
-				return nil, ferr
-			}
-			if ordering != nil {
-				ordering.sort(rows)
-				return rows, nil
-			}
-			return applyV1Sorting(rows, query, a.Meta()), nil
-		})
-	if err != nil {
-		return nil, nil, err
-	}
-	return entities, ordering, nil
-}
 
 // relationFilterClassifier returns a predicate that decides, for a bare filter
 // param name (the property/relation segment, no operator), whether it should be
@@ -637,88 +419,6 @@ func relationFilterClassifier(
 		}
 		return true
 	}
-}
-
-// applyRelationFilters keeps only the entities that match every relation
-// filter present in the query. isRelationKey (the config-backed classifier
-// built in scopedSortedEntities) decides which `filter[<key>]` params are
-// relation filters; property filters are handled by applyV1Filters. Matching is
-// direction-aware: the FilterControl config on a list or kanban of this
-// entity type supplies the direction (default outgoing; precedence in
-// dataentryconfig.Config.RelationFilterDirection), and an entity matches iff
-// it has an edge of that (relation, direction) to a READABLE neighbor whose
-// display title equals the requested value.
-//
-// Operators: only `eq` (the bare `filter[<rel>]` form) and `ne`
-// (`filter[<rel>][ne]`) are supported. Any other operator segment is rejected
-// with errBadFilter → HTTP 400, matching applyV1Filters. This supersedes the
-// RR-6RF60V drop-to-zero-rows behavior: both were fail-closed, but zero rows
-// reads as "no data" while a 400 names the broken operator to the caller.
-// Never fail open.
-//
-// ACL (RR-HK1XNO): neighbor titles are resolved through the read gate, so a
-// filter value matching a neighbor the caller cannot read does NOT include the
-// edged rows (no title-match inference channel). Neighbors are gated in one
-// batch per relation param via matchRelationFilter → visibleNeighborTitles.
-// NOTE: when the sibling helper App.visibleRelationIDs (TKT-ODHV2D) merges,
-// this should converge on it; today it uses the same readGate.ReadableFacesMany
-// batching pattern inline.
-//
-// Cost (RR-38K7K9): this runs over the entire type's visible set BEFORE
-// pagination, doing ListRelations + a batched GetEntity per row. It is
-// therefore O(N·edges) per request, uncached, where N is the unpaginated
-// visible row count — acceptable for the current dataset sizes but NOT a
-// store-side pushdown. A future optimization is to push the relation-title
-// predicate into the store query. Each row short-circuits: matchRelationFilter
-// stops scanning a row's edges as soon as one matches.
-//
-// This runs in scopedSortedEntities so BOTH the list handler and scope nav
-// (_position, via resolveScope) observe identical relation filtering — they
-// share this pipeline. Property filters are untouched (TKT-5U7QBR).
-func (a *App) applyRelationFilters(
-	ctx context.Context, entities []*entityPkg.Entity, query map[string][]string, typeName string,
-	isRelationKey func(string) bool,
-) ([]*entityPkg.Entity, error) {
-	cfg := a.Cfg()
-	for key, values := range query {
-		if !strings.HasPrefix(key, "filter[") || len(values) == 0 {
-			continue
-		}
-		relation, operator, ok := parseRelationFilterKey(key)
-		if !ok || !isRelationKey(relation) {
-			continue // malformed, or a property filter handled elsewhere
-		}
-		want := values[len(values)-1]
-		if want == "" {
-			continue // empty control value = no constraint
-		}
-
-		// Reject any operator we don't support for relations. Never fall
-		// through and leave the set unfiltered (that would be the fail-open
-		// bug RR-6RF60V); see the doc comment on the 400-over-zero-rows choice.
-		switch operator {
-		case "eq", "ne":
-			// supported below
-		default:
-			return nil, fmt.Errorf("%w: unknown operator %q in relation filter key %q (supported: eq, ne)",
-				errBadFilter, operator, key)
-		}
-
-		direction, _ := cfg.RelationFilterDirection(typeName, relation)
-		matched, merr := matchRelationFilterMany(
-			ctx, a.Services(), a.visibleReader, appRedactor(a), entities, relation, direction, want)
-		if merr != nil {
-			return nil, fmt.Errorf("%w: relation filter %q: %w", errListLoad, relation, merr)
-		}
-		filtered := entities[:0]
-		for _, e := range entities {
-			if (operator == "eq" && matched[e.ID]) || (operator == "ne" && !matched[e.ID]) {
-				filtered = append(filtered, e)
-			}
-		}
-		entities = filtered
-	}
-	return entities, nil
 }
 
 // matchRelationFilterMany evaluates a relation filter for every row at once
@@ -917,161 +617,7 @@ func setListHeaders(w http.ResponseWriter, r *http.Request, page, perPage, total
 	w.Header().Set("X-Per-Page", strconv.Itoa(perPage))
 }
 
-//archplan:auth=required
-func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeName, plural string) {
-	query := r.URL.Query()
-	page, perPage := parseV1Pagination(query)
-	relCtx, relErr := parseSearchRelation(a.State().Meta, query)
-	if relErr != nil {
-		writeV1Error(w, r, http.StatusBadRequest, relErr.Code, relErr.Detail, relErr.Path)
-		return
-	}
-
-	entities, total, ordering, err := a.listPage(r.Context(), typeName, query, page, perPage)
-	if err != nil {
-		writeListPipelineError(w, r, err)
-		return
-	}
-	end := (page-1)*perPage + len(entities)
-	// The served page only: rows paged out are never judged.
-	linkable, ok := servedLinkable(w, r, a.affordances, entities, relCtx)
-	if !ok {
-		return
-	}
-
-	// Bodies are opt-in for a collection (rowcontent.go): one read per
-	// distinct face on the page, never for the rows that were paged out.
-	if wantContent(query) {
-		if cErr := loadRowContent(r.Context(), a.Services().Store, entities); cErr != nil {
-			writeListPipelineError(w, r, fmt.Errorf("%w: %w", errListLoad, cErr))
-			return
-		}
-	}
-
-	// Check if includes are requested (for relation columns)
-	includes := query.Get("include")
-	wantIncludes := includes != ""
-
-	// Load each row's edges once. List rows carry BOTH outgoing edges (keyed
-	// by relation type) and incoming edges (keyed by the relation's inverse
-	// name) so that `direction: incoming` relation columns have a wire key to
-	// resolve against. The SPA computes the same inverse key and reads the
-	// source entities from the ?include=* peers. See MECHANISM.md.
-	//
-	// Each row's links come from THAT ROW'S OWN FACE, in every world
-	// including the default one — see [servedFacePageEdges].
-	outgoingByRow, incomingByRow, visibleNeighbors, werr := servedFacePageEdges(
-		r.Context(), a.reader, a.worldNeighbors, a.visibleReader, entities)
-	if werr != nil {
-		// Infrastructure failure, not an empty page. See the same arm on the
-		// single-entity GET.
-		writeGateError(w, r, werr)
-		return
-	}
-
-	// Build response - always include relations for relation column support
-	data := make([]v1.Entity, 0, len(entities))
-	var included map[string]v1.Entity // nil when none; both encoders omit it
-	pageCtx := primeVerdicts(r.Context(), a.fieldResolver, entities)
-	for i, e := range entities {
-		v1Entity := a.serializer.forWireRelated(
-			pageCtx, e,
-			outgoingByRow[i],
-			incomingByRow[i],
-			visibleNeighbors,
-			a.Meta(), plural,
-		)
-		// Face provenance per ROW (BUG-3). Under a chain a row that fell back
-		// to a later candidate is byte-identical to a first-choice hit — same
-		// id, same title — and only `_world` separates them. Without it a
-		// picker or list cannot say which face a row is, which is the whole
-		// distinction content states exist to make visible.
-		//
-		// nil under the default world, so an ordinary list response is
-		// unchanged: every row resolves to its default face there, and a block
-		// on every row would be noise that also implies a world was applied.
-		// Same choice loadViewEntities' provenanceFor makes, for the same
-		// reason (see [viewWorld.provenanceFor]).
-		if !worldScopeFrom(r.Context()).IsTrivial() {
-			v1Entity.World = worldProvenance(r.Context(), e)
-		}
-		data = append(data, v1Entity)
-	}
-
-	// Resolve includes for the whole page at once (TASK-550RD).
-	if wantIncludes {
-		included = a.resolveV1Includes(r.Context(), entities, includes)
-	}
-
-	if !serveListRowExtras(w, r, a, query, entities, data) {
-		return
-	}
-
-	resp := v1.ListResponse{
-		Data: data,
-		Meta: v1.ListMeta{
-			Total:   total,
-			Page:    page,
-			PerPage: perPage,
-			HasMore: end < total,
-			// Relation order is shown only when it was applied, so the
-			// client never has to re-derive the condition.
-			RelationOrder: ordering.wire(),
-		},
-		// A list's toolbar buttons ride on the collection map (toolbaractions.go).
-		Actions: addToolbarActions(r.Context(), a.Cfg(), typeName,
-			a.affordances.computeCollectionActions(r.Context(), typeName)),
-	}
-
-	setListHeaders(w, r, page, perPage, total, plural)
-
-	if linkable != nil {
-		writeV1JSON(w, http.StatusOK, v1.LinkListResponse{
-			Data: linkRows(resp.Data, entities, linkable), Meta: resp.Meta,
-			Included: included, Actions: resp.Actions,
-		})
-		return
-	}
-
-	// If includes were requested, add them to response
-	if len(included) > 0 {
-		// For list responses with includes, we need a different response structure
-		// Encode as JSON with additional "included" field
-		type listWithIncludes struct {
-			Data     []v1.Entity          `json:"data"`
-			Meta     v1.ListMeta          `json:"meta"`
-			Included map[string]v1.Entity `json:"included,omitempty"`
-			Actions  map[string]bool      `json:"_actions,omitempty"`
-		}
-		writeV1JSON(w, http.StatusOK, listWithIncludes{
-			Data:     resp.Data,
-			Meta:     resp.Meta,
-			Included: included,
-			Actions:  resp.Actions,
-		})
-		return
-	}
-
-	writeV1JSON(w, http.StatusOK, resp)
-}
-
-// --- Single Entity Handlers ---
-
-func (a *App) handleV1SingleEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
-	switch r.Method {
-	case http.MethodGet:
-		a.handleV1GetEntity(w, r, typeName, plural, entityID)
-	case http.MethodPatch:
-		a.write.handleV1UpdateEntity(w, r, typeName, plural, entityID)
-	case http.MethodDelete:
-		a.write.handleV1DeleteEntity(w, r, typeName, plural, entityID)
-	case http.MethodOptions:
-		w.Header().Set("Allow", "GET, PATCH, DELETE, OPTIONS")
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-	}
-}
+// --- Read Path Errors ---
 
 // entityNotFoundTitle is the title for EVERY read-path 404 — the ACL
 // deny path ([gateReadOr]), a genuinely missing entity, and a
@@ -1102,142 +648,6 @@ func gateReadOr(w http.ResponseWriter, r *http.Request, typeName, entityID strin
 		return false
 	}
 	return true
-}
-
-//archplan:auth=authz
-func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
-	ctx := r.Context()
-
-	// The path segment is an ADDRESS — `ID` or `ID@face` (TKT-SLFURL). The
-	// resolver applies PermitsRead BEFORE the store read, so a hidden id and
-	// a nonexistent id spend the same MatchingFaces roundtrip — otherwise the
-	// timing difference (in-memory lookup ~1µs vs. DB roundtrip ~1ms) is an
-	// id-enumeration side channel that defeats the indistinguishable-404-body
-	// invariant (RR-NGMI). Every miss, including a malformed address, a
-	// denied face and a stored type other than the route's, is the same 404.
-	//
-	// A miss on an id a rename or conversion retired redirects a reader of
-	// the successor there ([redirectRetired]); every other miss stays the
-	// uniform 404. Only this GET redirects: a write to an old id must not
-	// land on an entity the caller did not name.
-	meta := a.Meta()
-	entity, found := readAddressedOr(w, r, a.visibleReader, typeName, entityID, func() {
-		if id := retiredRedirectID(entityID); id != "" && redirectRetired(w, r, a.viewReader, id, pluralOf(meta)) {
-			return
-		}
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-	})
-	if !found {
-		return
-	}
-	// Serializing evaluates the grant traversals several times (strip,
-	// `_fields`, `_relations`); priming answers them once.
-	ctx = primeVerdicts(ctx, a.fieldResolver, []*entityPkg.Entity{entity})
-
-	query := r.URL.Query()
-
-	// Single per-entity serialization: strips hidden + attaches
-	// `_fields` / `_relations` per docs/data-entry/api-reference.md.
-	//
-	// The edges OF THE FACE BEING SERVED, in every world including the
-	// default one — see [servedFaceEdges]. Each link resolves through the
-	// SAME world as the entry, per neighbor, independently (RULING 12): a
-	// published view links to published faces, and a link whose head has no
-	// face in this world is ABSENT rather than pointing at a 404.
-	//
-	// There is deliberately no default-world arm reaching the bare-id
-	// reader. That arm returned the UNION of every face's content-scoped
-	// edges, so a draft carried the published face's links too — the
-	// mixed-face response that reads as correct because the entity looks
-	// right and only its links are wrong.
-	outgoing, visibleNeighbors, werr := a.faceEdges.read(ctx, entity)
-	if werr != nil {
-		// A neighbor-resolution fault is an infrastructure failure, not an
-		// empty link set. Rendering it as "this world links to nothing"
-		// would hide an outage behind a page that looks like a
-		// correctly-sparse published face (RR-4TFZNL).
-		writeGateError(w, r, werr)
-		return
-	}
-	result := a.serializer.forWireScoped(ctx, entity, outgoing, visibleNeighbors, a.Meta(), plural)
-	result.Versions = fieldVersionsOf(&result, a.Meta())
-	// Roll-ups after the field version tokens and outside the ETag: they are
-	// computed from OTHER entities under the caller's grants, which neither
-	// covers, and the response is no-store.
-	newRollupSource(a).add(ctx, entity.Type, []rollupRow{{ref: entity.Ref(), props: result.Properties}},
-		worldScopeFrom(ctx), nil)
-
-	// Face provenance (TKT-WRLDAPI item 2). Attached HERE rather than inside
-	// forWire, even though forWire is the shared per-entity serializer,
-	// because this is the only path whose Face is the STORE's answer to a
-	// world query. Its other callers would produce a label the code cannot
-	// back: the history handler serializes a snapshot built by
-	// entityPkg.New(), whose Face is always zero, so a historical version
-	// of a PUBLISHED face would report the default coordinate. An affordance
-	// map that lies is a trap for every future consumer (Ruling 11); so is a
-	// provenance block.
-	//
-	// An EXPLICIT address was not resolved by the world at all, so it is
-	// labeled by [addressedProvenance] rather than by the chain position it
-	// happens to hold — see that function for why.
-	if isExplicitAddress(entityID) {
-		result.World = addressedProvenance(ctx, entity)
-	} else {
-		result.World = worldProvenance(ctx, entity)
-	}
-
-	// Handle includes for related entities
-	if includes := query.Get("include"); includes != "" {
-		result.Included = a.resolveV1Includes(ctx, []*entityPkg.Entity{entity}, includes)
-	}
-
-	// Resolve the entity-ID code spans in the body so an edit form can render
-	// them as titled links, the way the read surface already does
-	// (`rewriteEntityRefToken`). Same call the view handler makes, so the two
-	// surfaces cannot disagree about a title.
-	//
-	// It runs on the SERVED content, after the read gate and the redactor, so
-	// a reference inside a body the caller could not read never gets scanned.
-	// collectMentions then applies the gate a second time to each REFERENCED
-	// entity, which is what keeps a title the caller may not see out of the
-	// response (BUG-R9EHKV).
-	//
-	// Not folded into the ETag: mentions turn on OTHER entities' titles and on
-	// the caller's own grants, neither of which this validator ever covered.
-	// The response is `no-store` anyway, so a stale shared copy is not
-	// reachable.
-	result.Mentions = collectMentions(ctx, a.viewReader, a.Meta(), entity.Content)
-
-	// The advisory lease, after the read gate above and after the field
-	// version tokens, so it moves neither. It is not in the ETag either: a
-	// claim would then fail every If-Match the holder's client sends.
-	result.Lease = a.leases.entityLease(ctx, entity.ID)
-
-	// ETag for caching (visible-only path; deny-path above emits no ETag).
-	//
-	// The edges computed for the BODY above are reused rather than re-read.
-	// Under a world, re-deriving them costs a second head-resolution query,
-	// two more relation queries and a second ACL pass per request — the
-	// RR-FRK1 duplication this PR is careful to avoid one function over — and
-	// it also opens a window in which the validator could describe a
-	// different edge set than the body it is validating.
-	etag := servedETag(ctx, a.affordances, entity, outgoing)
-	w.Header().Set("ETag", etag)
-
-	// Check If-None-Match. When leases are wired the GET never answers 304:
-	// the ETag does not cover `_lease`, so a copy cached before a claim or a
-	// release would carry the wrong lease. The ETag is still sent, unchanged
-	// by the lease, so If-Match keeps working. A type with roll-ups never
-	// answers 304 either, for the same reason: they change with OTHER
-	// entities, which the ETag does not cover.
-	if a.leases == nil && len(a.Meta().RollupNames(entity.Type)) == 0 &&
-		r.Header.Get("If-None-Match") == etag {
-
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
-
-	writeV1JSON(w, http.StatusOK, result)
 }
 
 // writeListPipelineError maps a scopedSortedEntities / resolveScope
@@ -1476,137 +886,7 @@ func logInternalError(r *http.Request, code string, err error) bool {
 	return true
 }
 
-// --- Relation Handlers ---
-
-//archplan:auth=authz
-func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, typeName, entityID string) {
-	// The path segment is an ADDRESS — `ID` or `ID@face` (BUG-VFHUWO); the
-	// face selects which tail's edges are served.
-	//
-	// ACL gate (TKT-VQGN CRIT-2): /relations on a hidden entity 404s
-	// indistinguishably. Without the gate the endpoint confirms
-	// existence (200 vs 404) AND leaks the full neighbor-id set —
-	// closing one channel via /include filter while leaving this open
-	// would defeat the per-entity-response invariant. The face gate matters
-	// even though the response carries no body: a content-scoped relation
-	// belongs to ONE face, so serving a withheld face's edges discloses its
-	// structure (TKT-O7R2A1).
-	entity, found := readAddressedOr404(w, r, a.visibleReader, typeName, entityID)
-	if !found {
-		return
-	}
-	ref := entity.Ref()
-	s := a.State()
-
-	// Outgoing edges at the ADDRESSED TAIL: a content-scoped edge belongs to
-	// one face of its source, so an unfiltered read returns the union of every
-	// face's edges and presents another face's links as this one's. Incoming
-	// edges point at the entity, since heads are faceless; one whose tail is a
-	// face is served with that face named, if the caller may read it.
-	outgoing := a.reader.outgoingRelationsOnFace(r.Context(), ref)
-	incoming, err := readableIncoming(r.Context(), a.reader, a.visibleReader, ref.ID)
-	if err != nil {
-		writeGateError(w, r, err)
-		return
-	}
-
-	// Gate hidden neighbors (BUG-ABXMAV / RR-HJV8CP). Without this, a hidden
-	// peer's `type` (via the ungated entityType read) and edge `meta` leak past
-	// the source-only read gate. Mirror the list path (handleV1ListEntities):
-	// compute the visible neighbor set in one type-batched pass and drop any
-	// edge whose peer is not visible BEFORE reading its type. A visible neighbor
-	// stays; a hidden one is dropped (no over-filtering).
-	// TODO(BUG-ABXMAV): the "gate a set of neighbor edges" step is now
-	// replicated here, in handleV1GetRelationType, and in the list path — a
-	// shared chokepoint (P3) would collapse the three; deferred to avoid
-	// churning the list path in a security fix.
-	// Incoming edges are already gated, by ACL alone (readableIncoming).
-	visibleNeighbors := visibleRelationIDs(r.Context(), a.visibleReader,
-		neighborIDsOf(outgoing, nil))
-
-	relations := make(map[string][]map[string]any)
-
-	// Track the sort property per group, derived from the relation type's
-	// Orderable mode. Empty string disables sorting for that group.
-	groupSortProp := make(map[string]string)
-
-	// pendingStrips defers per-edge relation-meta redaction (TKT-B1F5Q1) until
-	// AFTER sortRelationGroup runs (see relationMetaStrip). Each strip also carries
-	// the relation type so the redaction resolves the right grant block.
-	type typedStrip struct {
-		relationMetaStrip
-		relType string
-	}
-	var pendingStrips []typedStrip
-
-	for _, edge := range outgoing {
-		if !visibleNeighbors[edge.To] {
-			continue
-		}
-		rel := map[string]any{
-			"id":        edge.To,
-			"type":      a.reader.entityType(r.Context(), edge.To),
-			"direction": "outgoing",
-		}
-		if len(edge.Properties) > 0 {
-			rel["meta"] = edge.Properties
-			pendingStrips = append(pendingStrips, typedStrip{
-				relationMetaStrip: relationMetaStrip{rel: rel}, relType: edge.Type,
-			})
-		}
-		relations[edge.Type] = append(relations[edge.Type], rel)
-		if relDef, ok := s.Meta.Relations[edge.Type]; ok {
-			if p := relDef.OutgoingOrderProperty(); p != "" {
-				groupSortProp[edge.Type] = p
-			}
-		}
-	}
-
-	for _, edge := range incoming {
-		relDef, ok := s.Meta.Relations[edge.Type]
-		if !ok {
-			continue
-		}
-		inverseName := inverseRelationKey(edge.Type, relDef)
-		rel := map[string]any{
-			"id":        edge.From,
-			"type":      a.reader.entityType(r.Context(), edge.From),
-			"direction": "incoming",
-		}
-		a.markIncomingFace(r.Context(), rel, entity, edge)
-		if len(edge.Properties) > 0 {
-			rel["meta"] = edge.Properties
-			// The relation grant lives on the SOURCE entity type (edge.From for an
-			// incoming edge — the peer). Resolved fail-closed at strip time.
-			pendingStrips = append(pendingStrips, typedStrip{
-				relationMetaStrip: relationMetaStrip{
-					rel: rel, incoming: true, peer: entityPkg.Ref{ID: edge.From, Face: edge.FromFace},
-				},
-				relType: edge.Type,
-			})
-		}
-		relations[inverseName] = append(relations[inverseName], rel)
-		if p := relDef.IncomingOrderProperty(); p != "" {
-			groupSortProp[inverseName] = p
-		}
-	}
-
-	// Sort each group by its managed order property; missing values last;
-	// ties stable on insertion order.
-	for groupName, prop := range groupSortProp {
-		if prop == "" {
-			continue
-		}
-		sortRelationGroup(relations[groupName], prop)
-	}
-
-	// Redact hidden relation meta AFTER sorting, through the shared chokepoint.
-	for _, ps := range pendingStrips {
-		a.affordances.redactRelationMetaStrip(r.Context(), ps.relationMetaStrip, entity, ps.relType)
-	}
-
-	writeV1JSON(w, http.StatusOK, relations)
-}
+// --- Relation Helpers ---
 
 // relationMetaStrip is a deferred relation-meta redaction (TKT-B1F5Q1): the built
 // wire `rel` map plus what is needed to resolve the source's `visible:` grants.
@@ -1619,45 +899,6 @@ type relationMetaStrip struct {
 	rel      map[string]any
 	incoming bool
 	peer     entityPkg.Ref // incoming only: the source (from) row, at the edge's tail
-}
-
-// buildRelationTypeRows builds the single-relation-type wire rows (id/type[/meta])
-// for the visible edges of relType in the given direction, plus the deferred meta
-// strips. An incoming row is marked with its source face (App.markIncomingFace).
-// It is the shared build step for handleV1GetRelationType; the caller
-// sorts then applies App.redactRelationMetaStrip.
-func (a *App) buildRelationTypeRows(
-	ctx context.Context, pathEntity *entityPkg.Entity, edges []*entityPkg.Relation,
-	relType string, incoming bool, visibleNeighbors map[string]bool,
-) (rows []map[string]any, strips []relationMetaStrip) {
-	reader := a.reader
-	rows = make([]map[string]any, 0, len(edges))
-	for _, edge := range edges {
-		if edge.Type != relType {
-			continue
-		}
-		peerID := edge.To
-		if incoming {
-			peerID = edge.From
-		}
-		if !visibleNeighbors[peerID] {
-			continue
-		}
-		rel := map[string]any{"id": peerID, "type": reader.entityType(ctx, peerID)}
-		if incoming {
-			a.markIncomingFace(ctx, rel, pathEntity, edge)
-		}
-		if len(edge.Properties) > 0 {
-			rel["meta"] = edge.Properties
-			s := relationMetaStrip{rel: rel, incoming: incoming}
-			if incoming {
-				s.peer = entityPkg.Ref{ID: edge.From, Face: edge.FromFace}
-			}
-			strips = append(strips, s)
-		}
-		rows = append(rows, rel)
-	}
-	return rows, strips
 }
 
 // sortRelationGroup sorts a relation group in place by a numeric meta key,
@@ -1680,17 +921,6 @@ func sortRelationGroup(group []map[string]any, prop string) {
 	})
 }
 
-func (a *App) handleV1EntityRelationType(w http.ResponseWriter, r *http.Request, typeName, entityID, relType string) {
-	switch r.Method {
-	case http.MethodGet:
-		a.handleV1GetRelationType(w, r, typeName, entityID, relType)
-	case http.MethodPost:
-		a.write.handleV1CreateRelation(w, r, typeName, entityID, relType)
-	default:
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-	}
-}
-
 // resolveRelationEndpoints returns the from/to entity IDs for a relation operation,
 // swapping them when direction is incoming.
 func resolveRelationEndpoints(entityID, peerID, direction string) (from, to string) {
@@ -1700,116 +930,7 @@ func resolveRelationEndpoints(entityID, peerID, direction string) (from, to stri
 	return entityID, peerID
 }
 
-//archplan:auth=authz
-func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, typeName, entityID, relType string) {
-	// An ADDRESS, gated as in handleV1EntityRelations (BUG-VFHUWO).
-	entity, found := readAddressedOr404(w, r, a.visibleReader, typeName, entityID)
-	if !found {
-		return
-	}
-	ref := entity.Ref()
-
-	incoming := r.URL.Query().Get("direction") == string(DirectionIncoming)
-
-	// Outgoing at the addressed tail, incoming at the entity: see
-	// handleV1EntityRelations.
-	meta := a.State().Meta
-	var edges []*entityPkg.Relation
-	if incoming {
-		var err error
-		if edges, err = readableIncoming(r.Context(), a.reader, a.visibleReader, ref.ID); err != nil {
-			writeGateError(w, r, err)
-			return
-		}
-	} else {
-		edges = a.reader.outgoingRelationsOnFace(r.Context(), ref)
-	}
-
-	// Gate hidden neighbors (BUG-ABXMAV / RR-HJV8CP): same rationale as
-	// handleV1EntityRelations. Collect this relation-type's peers and compute
-	// the visible set in one batched pass, then skip any hidden peer BEFORE
-	// reading its type (so its type/meta never reach the wire). See the
-	// shared-chokepoint TODO in handleV1EntityRelations.
-	var peerIDs []string
-	for _, edge := range edges {
-		if edge.Type != relType {
-			continue
-		}
-		peerID := edge.To
-		if incoming {
-			peerID = edge.From
-		}
-		peerIDs = append(peerIDs, peerID)
-	}
-	var visibleNeighbors map[string]bool
-	if incoming {
-		// Already gated, by ACL alone (readableIncoming).
-		visibleNeighbors = make(map[string]bool, len(peerIDs))
-		for _, id := range peerIDs {
-			visibleNeighbors[id] = true
-		}
-	} else {
-		visibleNeighbors = visibleRelationIDs(r.Context(), a.visibleReader, peerIDs)
-	}
-
-	relations, pendingStrips := a.buildRelationTypeRows(r.Context(), entity, edges, relType, incoming, visibleNeighbors)
-
-	// Apply orderable sort when the type declares the relevant side.
-	if relDef, ok := meta.Relations[relType]; ok {
-		var prop string
-		if incoming {
-			prop = relDef.IncomingOrderProperty()
-		} else {
-			prop = relDef.OutgoingOrderProperty()
-		}
-		if prop != "" {
-			sortRelationGroup(relations, prop)
-		}
-	}
-
-	// Redact hidden relation meta after sorting (see relationMetaStrip).
-	for _, ps := range pendingStrips {
-		a.affordances.redactRelationMetaStrip(r.Context(), ps, entity, relType)
-	}
-
-	writeV1JSON(w, http.StatusOK, relations)
-}
-
-func (a *App) handleV1RelationTarget(
-	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
-) {
-	// The path segment is an ADDRESS (BUG-VFHUWO); every arm resolves it
-	// through the visible reader before acting on a row.
-	switch r.Method {
-	case http.MethodGet:
-		// Single-relation body read (RR-SYNCR1): meta + content +
-		// _redacted + a relation-level ETag, dual-endpoint gated.
-		handleV1GetRelationTarget(a, w, r, typeName, entityID, relType, targetID)
-	case http.MethodPatch:
-		a.write.handleV1UpdateRelation(w, r, typeName, entityID, relType, targetID)
-	case http.MethodDelete:
-		a.write.handleV1DeleteRelation(w, r, typeName, entityID, relType, targetID)
-	default:
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-	}
-}
-
-// --- Action Handlers ---
-
-//archplan:auth=authz
-func (a *App) handleV1EntityAction(w http.ResponseWriter, r *http.Request, typeName, entityID, action string) {
-	if r.Method != http.MethodPost {
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-		return
-	}
-
-	switch action {
-	case "clone":
-		a.write.handleV1CloneEntity(w, r, typeName, entityID)
-	default:
-		writeV1Error(w, r, http.StatusNotFound, "unknown_action", "Unknown action", "")
-	}
-}
+// --- Search Helpers ---
 
 // maxSearchLimit bounds the `limit` parameter of /_search. It matches the
 // list endpoint's per_page ceiling.
@@ -1833,224 +954,7 @@ func parseSearchLimit(raw string) (int, bool) {
 	return n, true
 }
 
-//archplan:auth=required
-func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-		return
-	}
-
-	limit, ok := parseSearchLimit(r.URL.Query().Get("limit"))
-	if !ok {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_limit",
-			fmt.Sprintf("limit must be an integer between 1 and %d", maxSearchLimit), "")
-		return
-	}
-	meta := a.State().Meta
-	relCtx, werr := parseSearchRelation(meta, r.URL.Query())
-	if werr != nil {
-		writeV1Error(w, r, http.StatusBadRequest, werr.Code, werr.Detail, werr.Path)
-		return
-	}
-	query := r.URL.Query().Get("q")
-	if query == "" {
-		writeV1JSON(w, http.StatusOK, v1.LinkListResponse{Data: []v1.LinkRow{}, Meta: v1.ListMeta{}})
-		return
-	}
-
-	// A `type` parameter also joins the query as a `type:` clause, so a
-	// free-text search is scoped BEFORE its relevance cap rather than
-	// filtered after it, where the cap could have spent every slot on
-	// other types. Only a declared type name is spliced in; any other value
-	// cannot match a row, which the exact filter below still ensures.
-	typeFilter := r.URL.Query().Get("type")
-	if _, declared := meta.Entities[typeFilter]; declared {
-		query = "type:" + typeFilter + " " + query
-	}
-
-	// The read is gated (TKT-BA8BSX): only entities the request principal
-	// may read come back, and gate/load/search failures surface instead of
-	// silently truncating. The limit lowers the relevance cap where that
-	// cannot change which rows survive the filters (TKT-T2I7P2, see
-	// freeTextLimit), and a structured query reads only the rows it serves
-	// (TKT-D3RAB0E, see searchPage). total counts the matches before the
-	// cut.
-	entities, total, err := a.queries.searchPage(r.Context(), query,
-		queryOptions{limit: limit, exactType: typeFilter})
-	if err != nil {
-		writeListPipelineError(w, r, err)
-		return
-	}
-
-	// Search rows are content-free (rowcontent.go); bodies are opt-in and
-	// bounded by the search result cap.
-	if wantContent(r.URL.Query()) {
-		if cErr := loadRowContent(r.Context(), a.Services().Store, entities); cErr != nil {
-			writeListPipelineError(w, r, fmt.Errorf("%w: %w", errListLoad, cErr))
-			return
-		}
-	}
-
-	linkable, ok := servedLinkable(w, r, a.affordances, entities, relCtx)
-	if !ok {
-		return
-	}
-
-	data := make([]v1.Entity, 0, len(entities))
-	pageCtx := primeVerdicts(r.Context(), a.fieldResolver, entities)
-	for _, e := range entities {
-		entityDef := meta.Entities[e.Type]
-		plural := entityDef.GetPlural(e.Type)
-		// includeRelations stays false on search results: the read gate
-		// covers root entities only, and a relation map would expose
-		// {ID, Title} of related entities this principal may not read.
-		// Flipping this requires per-target gating first (RR-QO01XY) —
-		// TestACLSearch_VisibleHitRelatedToHidden pins the invariant.
-		row := a.serializer.forWireRelated(pageCtx, e, nil, nil, nil, meta, plural)
-		// Same provenance a list row carries, and nil in the default world
-		// for the same reason (see handleV1ListEntities).
-		if !worldScopeFrom(r.Context()).IsTrivial() {
-			row.World = worldProvenance(r.Context(), e)
-		}
-		data = append(data, row)
-	}
-	if !serveOwners(w, r, a, entities, data) {
-		return
-	}
-
-	resp := v1.LinkListResponse{
-		Data: linkRows(data, entities, linkable),
-		Meta: v1.ListMeta{
-			Total:   total,
-			Page:    1,
-			PerPage: len(data),
-		},
-	}
-
-	writeV1JSON(w, http.StatusOK, resp)
-}
-
 // --- Helper Functions ---
-
-// resolveV1Includes expands `?include=` for a set of rows into the
-// `included` map. The single-entity GET passes one row; the list passes its
-// served page.
-//
-// The page is resolved in ONE batch per include level (TASK-550RD): one edge
-// read and one head resolution for all rows, one gate pass per entity type,
-// then one recursive call per nested expression. Resolving row by row made
-// the query count grow with the page — the Atlas task list with `include=*`
-// cost about 8,000 queries per poll.
-//
-// Candidate collection is world-aware (TKT-WRLDAPI item 4): under a
-// non-default world the neighbors come from the world-scoped seam, so an
-// included peer is THAT world's face of the neighbor and a neighbor with no
-// face in this world is absent. Under the default world it is the ungated
-// reader, byte-identical to before.
-//
-// Everything after collection — the batched ACL gate, nested recursion,
-// serialization — is shared by both paths deliberately. The world decides
-// WHICH entities are candidates; it does not change how they are gated or
-// rendered, and forking that would be two visibility rules to keep in step.
-func (a *App) resolveV1Includes(
-	ctx context.Context, rows []*entityPkg.Entity, includes string,
-) map[string]v1.Entity {
-	if len(rows) == 0 {
-		return nil
-	}
-	s := a.State()
-	included := make(map[string]v1.Entity)
-
-	// Collect candidate target entities first; filter via the ACL
-	// gate per-type (batched), then serialize the survivors. The
-	// two-phase shape exists to satisfy RR-M84L (the include channel
-	// must respect the per-entity visibility rule) AND RR-FRK1 (a
-	// hub entity with 50 neighbors must not cost 50 GraphCount
-	// round-trips).
-	//
-	// nested pairs a target id with the remaining nested-include expression
-	// (e.g. "implements.requires" → "requires" against the implements
-	// target). Recursion happens after the visibility filter so hidden
-	// neighbors don't trigger hidden nested probes.
-	candidates, nested, err := includeCandidates(ctx, a.reader, a.worldNeighbors, rows, includes)
-	if err != nil {
-		// The include channel is a best-effort affordance (see
-		// filterVisibleIncludes): the authoritative read is the explicit GET.
-		// A world-resolution fault drops the block and logs rather than
-		// failing the whole response — but it must not be silent, or
-		// an outage reads as "this entity has no neighbors in this world".
-		slog.Warn("dataentry: resolving world-scoped includes failed; include block omitted for every row",
-			"first_entity", rows[0].ID, "rows", len(rows), "include", includes, "err", err)
-		return nil
-	}
-
-	// One entry per id, the LAST candidate winning — the map assignment the
-	// per-row loop made. A neighbor shared by many rows is serialized once.
-	visible := a.filterVisibleIncludes(ctx, candidates)
-	byID := make(map[string]*entityPkg.Entity, len(visible))
-	order := make([]string, 0, len(visible))
-	for _, target := range visible {
-		if _, dup := byID[target.ID]; !dup {
-			order = append(order, target.ID)
-		}
-		byID[target.ID] = target
-	}
-	targets := make([]*entityPkg.Entity, 0, len(order))
-	for _, id := range order {
-		targets = append(targets, byID[id])
-	}
-
-	ctx = primeVerdicts(ctx, a.fieldResolver, targets)
-	for _, target := range targets {
-		entityDef := s.Meta.Entities[target.Type]
-		plural := entityDef.GetPlural(target.Type)
-		wired := a.serializer.forWireRelated(ctx, target, nil, nil, nil, a.Meta(), plural)
-		// Per-neighbor provenance (QA F-6b). Each included target was resolved
-		// through the world INDEPENDENTLY of its source, so one entity's
-		// neighbors can mix a chain hit with a stand-in — and a client cannot
-		// tell which without being told. The detail view badges exactly this:
-		// "the link leads somewhere English", which the payload previously had
-		// no way to say.
-		//
-		// Same helper the entity root and list rows use, so the three surfaces
-		// cannot disagree about what a face resolution was.
-		wired.World = worldProvenance(ctx, target)
-		included[target.ID] = wired
-	}
-
-	// Nested includes: one batch per distinct expression, over the visible
-	// targets that carry it.
-	var exprs []string
-	byExpr := make(map[string][]*entityPkg.Entity)
-	for _, n := range nested {
-		target, ok := byID[n.id]
-		if !ok {
-			continue
-		}
-		if _, known := byExpr[n.expr]; !known {
-			exprs = append(exprs, n.expr)
-		}
-		byExpr[n.expr] = append(byExpr[n.expr], target)
-	}
-	for _, expr := range exprs {
-		maps.Copy(included, a.resolveV1Includes(ctx, byExpr[expr], expr))
-	}
-	return included
-}
-
-// filterVisibleIncludes drops any candidate the principal cannot read,
-// batched by entity type. For each distinct type ONE gate call
-// (ReadableFacesMany over every candidate of that type) — turning a
-// worst case of O(N) per-id probes into O(distinct-types). RR-FRK1.
-//
-// On gate error: drop the whole type's candidates (fail-closed) and
-// log loud so operators see the underlying failure rather than just
-// "the include block is empty." The include channel is a "best
-// effort" affordance; the explicit GET / list endpoints are the
-// authoritative read surface.
-func (a *App) filterVisibleIncludes(ctx context.Context, candidates []*entityPkg.Entity) []*entityPkg.Entity {
-	return a.visibleReader.filterVisible(ctx, candidates)
-}
 
 // applyV1Filters applies `filter[...]` query params to the entity slice. Pure
 // data transform — a free function, not App behavior (TKT-N26KLB M5.5). It
@@ -2326,17 +1230,6 @@ func addPaginationLinks(w http.ResponseWriter, _ *http.Request, page, perPage, t
 	links = append(links, fmt.Sprintf("<%s?page=%d&per_page=%d>; rel=\"last\"", baseURL, totalPages, perPage))
 
 	w.Header().Set("Link", strings.Join(links, ", "))
-}
-
-// computeEntityETag reads the entity's edges itself. Callers that ALREADY hold
-// the edges they served should use [servedETag] instead — see the
-// duplication note at the single-entity GET's call site.
-func (a *App) computeEntityETag(ctx context.Context, e *entityPkg.Entity) string {
-	edges, err := a.faceEdges.edges(ctx, e)
-	if err != nil {
-		return etagUnresolved(ctx, a.affordances, e)
-	}
-	return servedETag(ctx, a.affordances, e, edges)
 }
 
 // etagUnresolved is the validator for an entity whose edges could not be

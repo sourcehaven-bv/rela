@@ -194,7 +194,7 @@ func TestCommentCounts_PerFace(t *testing.T) {
 			ctx := withWorld(withReadGate(principalCtx("alice"), nopReadGate{}), worldHandle{name: "w", scope: scope})
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/policies?comment_counts=1", http.NoBody)
 			rec := httptest.NewRecorder()
-			app.handleV1ListEntities(rec, req.WithContext(ctx), "policy", "policies")
+			app.entities.handleV1ListEntities(rec, req.WithContext(ctx), "policy", "policies")
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 			var resp v1.ListResponse
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))

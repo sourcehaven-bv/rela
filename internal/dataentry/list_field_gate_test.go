@@ -178,7 +178,7 @@ func TestListFieldGate_SharedPipelineGated(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = app.scopedSortedEntities(ctx, "ticket", query)
+			_, err = app.lists.scopedSortedEntities(ctx, "ticket", query)
 			if !errors.Is(err, errPropertyNotVisible) || !strings.Contains(err.Error(), `"status"`) {
 				t.Errorf("scopedSortedEntities(?%s): err = %v, want errPropertyNotVisible naming status", tc.query, err)
 			}

@@ -21,7 +21,7 @@ func runListFilterAs(t *testing.T, app *App, user, query string) []string {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?"+query, http.NoBody)
 	req = req.WithContext(principal.With(req.Context(), principal.Principal{User: user, Tool: principal.ToolDataEntry}))
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var resp v1.ListResponse
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))

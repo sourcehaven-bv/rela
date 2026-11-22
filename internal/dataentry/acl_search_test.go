@@ -24,7 +24,7 @@ func searchAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarative, q
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?q="+q, http.NoBody)
 	req = req.WithContext(gateCtxFor(ctx, t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1Search(rec, req)
+	app.entities.handleV1Search(rec, req)
 
 	var resp v1.ListResponse
 	if rec.Code == http.StatusOK {
@@ -303,7 +303,7 @@ func TestACLSearch_CanceledScopeStaysSilent(t *testing.T) {
 	cancel()
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
-	app.handleV1EntityPosition(rec, req)
+	app.entities.handleV1EntityPosition(rec, req)
 
 	if rec.Body.Len() != 0 {
 		t.Errorf("canceled scope error must stay silent, got body: %s", rec.Body)
@@ -322,7 +322,7 @@ func TestACLSearch_BackendErrorMapping(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?q=alpha", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Search(rec, req)
+	app.entities.handleV1Search(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500 on backend failure, got %d (body: %s)", rec.Code, rec.Body)
@@ -354,7 +354,7 @@ func TestACLSearchRegression_NopACL(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?q=alpha", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Search(rec, req)
+	app.entities.handleV1Search(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /_search: %d %s", rec.Code, rec.Body)

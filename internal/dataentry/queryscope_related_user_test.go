@@ -189,7 +189,7 @@ func TestQueryScope_RelatedToCurrentUserWithoutIdentityFails(t *testing.T) {
 						principal.Principal{User: user, Tool: principal.ToolDataEntry}))
 				}
 				rec := httptest.NewRecorder()
-				app.handleV1ListEntities(rec, req, "taak", "taken")
+				app.entities.handleV1ListEntities(rec, req, "taak", "taken")
 				if rec.Code == http.StatusOK {
 					t.Fatalf("an identity scope without an identity answered 200: %s", rec.Body)
 				}
@@ -207,7 +207,7 @@ func TestQueryScope_RelatedToCurrentUserWithoutIdentityFails(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/taken?query_scope=alles-van-mij", http.NoBody)
 	req = req.WithContext(principal.With(req.Context(), principal.Principal{User: "PER-2", Tool: principal.ToolDataEntry}))
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "taak", "taken")
+	app.entities.handleV1ListEntities(rec, req, "taak", "taken")
 	if got := idsFromListBody(t, rec); strings.Join(got, ",") != "TAAK-3" {
 		t.Fatalf("identified caller without ACL: %v", got)
 	}
@@ -244,7 +244,7 @@ func TestViewCondition_RelatedToCurrentUser(t *testing.T) {
 	req = req.WithContext(principal.With(req.Context(),
 		principal.Principal{User: principal.Unknown, Tool: principal.ToolDataEntry}))
 	rec = httptest.NewRecorder()
-	anon.handleV1ListEntities(rec, req, "taak", "taken")
+	anon.entities.handleV1ListEntities(rec, req, "taak", "taken")
 	if rec.Code == http.StatusOK || strings.Contains(rec.Body.String(), "TAAK-") {
 		t.Fatalf("a current_user condition without an identity answered: %d %s", rec.Code, rec.Body)
 	}

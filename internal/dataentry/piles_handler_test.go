@@ -190,7 +190,7 @@ func pilePosition(t *testing.T, app *App, c pileCall, pileID, id string) *httpte
 	target := "/api/v1/_position?id=" + url.QueryEscape(id) + "&scope=" + url.QueryEscape(string(scope))
 	req := httptest.NewRequest(http.MethodGet, target, http.NoBody).WithContext(pileContext(t, c))
 	rec := httptest.NewRecorder()
-	app.handleV1EntityPosition(rec, req)
+	app.entities.handleV1EntityPosition(rec, req)
 	return rec
 }
 

@@ -169,7 +169,7 @@ func conditionGoPath(
 	if err != nil {
 		t.Fatal(err)
 	}
-	all, err := app.scopedSortedEntities(ctx, "ticket", parseQuery(rq))
+	all, err := app.lists.scopedSortedEntities(ctx, "ticket", parseQuery(rq))
 	if err != nil {
 		t.Fatal(err)
 	}

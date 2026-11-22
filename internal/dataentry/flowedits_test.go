@@ -132,7 +132,7 @@ func TestQueryBudget_ListDoesNoFlowRunLookup(t *testing.T) {
 	}
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/tickets", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, asAlice(t, d, req), "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, asAlice(t, d, req), "ticket", "tickets")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET list = %d %s", rec.Code, rec.Body)
 	}

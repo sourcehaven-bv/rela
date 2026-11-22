@@ -47,7 +47,7 @@ func getRelations(t *testing.T, app *App, user, typeName, id string) map[string]
 	req = req.WithContext(acltest.Bind(principal.With(req.Context(),
 		principal.Principal{User: user, Tool: principal.ToolDataEntry}), t, app.acl))
 	rec := httptest.NewRecorder()
-	app.handleV1EntityRelations(rec, req, typeName, id)
+	app.entities.handleV1EntityRelations(rec, req, typeName, id)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET relations %s: got %d, want 200; body=%s", id, rec.Code, rec.Body.String())
 	}
@@ -100,7 +100,7 @@ func TestRelationRedaction_LiveIncoming_UsesSourceGrant(t *testing.T) {
 	req = req.WithContext(acltest.Bind(principal.With(req.Context(),
 		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, app.acl))
 	rec := httptest.NewRecorder()
-	app.handleV1EntityRelations(rec, req, "ticket", "TKT-002")
+	app.entities.handleV1EntityRelations(rec, req, "ticket", "TKT-002")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET relations TKT-002: got %d; body=%s", rec.Code, rec.Body.String())
 	}

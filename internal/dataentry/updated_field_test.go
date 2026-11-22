@@ -77,7 +77,7 @@ func TestUpdated_EntityOnlyWhenNothingHidden(t *testing.T) {
 		t.Run(tc.user, func(t *testing.T) {
 			req := boundAs(t, app, httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody), tc.user)
 			rec := httptest.NewRecorder()
-			app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+			app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 			if rec.Code != http.StatusOK {
 				t.Fatalf("GET = %d %s", rec.Code, rec.Body)
 			}

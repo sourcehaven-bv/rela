@@ -218,7 +218,7 @@ func TestACLGet_WriteGateErrorMapping(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 			req = req.WithContext(ctx)
 			rec := httptest.NewRecorder()
-			app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+			app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 
 			if rec.Code != tc.wantCode {
 				t.Errorf("status: got %d, want %d", rec.Code, tc.wantCode)
@@ -358,7 +358,7 @@ func getEntityAsWithHeaders(ctx context.Context, t *testing.T, app *App, d *acl.
 	}
 	req = req.WithContext(gateCtxFor(ctx, t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, typeName, plural, entityID)
+	app.entities.handleV1GetEntity(rec, req, typeName, plural, entityID)
 	return rec
 }
 

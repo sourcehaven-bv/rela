@@ -161,7 +161,7 @@ func TestV1ListEntities(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -205,7 +205,7 @@ func TestV1GetEntity(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -234,7 +234,7 @@ func TestV1GetEntityNotFound(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/NONEXISTENT", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", "NONEXISTENT")
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "NONEXISTENT")
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", rec.Code)
 	}
@@ -304,7 +304,7 @@ func TestV1Filtering(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[status]=open", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -363,7 +363,7 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 	// Test filtering with ne operator and comma-separated values (NOT IN semantics)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[status][ne]=completed,superseded", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -469,7 +469,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=", http.NoBody)
 		rec := httptest.NewRecorder()
-		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status: got %d", rec.Code)
 		}
@@ -500,7 +500,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=ticket&sort=title", http.NoBody)
 		rec := httptest.NewRecorder()
-		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status: got %d", rec.Code)
 		}
@@ -526,7 +526,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=needle", http.NoBody)
 		rec := httptest.NewRecorder()
-		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
@@ -552,7 +552,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=ticket&filter[status]=open", http.NoBody)
 		rec := httptest.NewRecorder()
-		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
@@ -573,7 +573,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=%20%20", http.NoBody)
 		rec := httptest.NewRecorder()
-		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
@@ -604,7 +604,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=type%3Afoo", http.NoBody)
 		rec := httptest.NewRecorder()
-		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
@@ -628,7 +628,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		// must overwrite the type to the list's type.
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=type%3Afeature+hit", http.NoBody)
 		rec := httptest.NewRecorder()
-		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 
 		if len(fake.gotTypes) != 1 || fake.gotTypes[0] != "ticket" {
 			t.Errorf("expected searcher to receive Types=[ticket], got %v", fake.gotTypes)
@@ -643,7 +643,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=anything", http.NoBody)
 		rec := httptest.NewRecorder()
-		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 		if rec.Code != http.StatusInternalServerError {
 			t.Fatalf("expected status 500 on searcher error, got %d (body: %s)", rec.Code, rec.Body.String())
 		}
@@ -665,7 +665,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=hit&page=2&per_page=3", http.NoBody)
 		rec := httptest.NewRecorder()
-		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
@@ -691,7 +691,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodGet, `/api/v1/tickets?q=%22exact+phrase%22`, http.NoBody)
 		rec := httptest.NewRecorder()
-		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 		// We don't assert the precise q.Text shape (parser-dependent), only
 		// that the searcher was reached with a non-empty types pin.
 		if fake.gotTypes == nil {
@@ -729,7 +729,7 @@ func TestV1Sorting(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=title", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -761,7 +761,7 @@ func TestV1Pagination(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?page=2&per_page=10", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -853,7 +853,7 @@ func TestV1SearchEmptyQuery(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_search", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Search(rec, req)
+	app.entities.handleV1Search(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -883,7 +883,7 @@ func TestV1SearchWithQuery(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?q=Search", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Search(rec, req)
+	app.entities.handleV1Search(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -909,7 +909,7 @@ func TestV1SearchWithTypeFilter(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?q=Test&type=ticket", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Search(rec, req)
+	app.entities.handleV1Search(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -1005,7 +1005,7 @@ func TestV1GetEntityWithIncludesAll(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001?include=*", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -1045,7 +1045,7 @@ func TestV1GetEntityWithIncludesSpecific(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001?include=implements", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -1075,7 +1075,7 @@ func TestV1GetEntityIfNoneMatch(t *testing.T) {
 	// First request to get ETag
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 	etag := rec.Header().Get("ETag")
 	if etag == "" {
 		t.Fatal("expected ETag header")
@@ -1085,7 +1085,7 @@ func TestV1GetEntityIfNoneMatch(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	req.Header.Set("If-None-Match", etag)
 	rec = httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusNotModified {
 		t.Errorf("expected status 304, got %d", rec.Code)
 	}
@@ -1114,7 +1114,7 @@ func TestV1GetEntityWithActions(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -1145,7 +1145,7 @@ func TestV1SingleEntityOptions(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodOptions, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1SingleEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.entities.handleV1SingleEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("expected status 204, got %d", rec.Code)
 	}
@@ -1169,7 +1169,7 @@ func TestV1SingleEntityMethodNotAllowed(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1SingleEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.entities.handleV1SingleEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected status 405, got %d", rec.Code)
 	}
@@ -1180,7 +1180,7 @@ func TestV1ListEntitiesEmpty(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -1215,7 +1215,7 @@ func TestV1ListEntitiesDescendingSort(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=-title", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -1251,7 +1251,7 @@ func TestV1FilteringContains(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[title][contains]=Bug", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -1293,7 +1293,7 @@ func TestV1FilteringIn(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[status][in]=open,in_progress", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -1396,7 +1396,7 @@ func runListFilter(t *testing.T, app *App, query string) []string {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?"+query, http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode failed: %v", err)
@@ -1563,7 +1563,7 @@ func TestV1FilteringEmptyValue(t *testing.T) {
 	// Filter for entities without status
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[status]=", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -1599,7 +1599,7 @@ func TestV1MultipleSort(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=status,title", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -1654,7 +1654,7 @@ func TestV1GetEntityWithNestedIncludes(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001?include=implements.requires", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -1699,7 +1699,7 @@ func TestV1ComputeEntityActionsWithIncomingRelations(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/features/FEA-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "feature", "features", "FEA-001")
+	app.entities.handleV1GetEntity(rec, req, "feature", "features", "FEA-001")
 	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -1749,7 +1749,7 @@ func TestV1SearchMethodNotAllowed(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_search", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Search(rec, req)
+	app.entities.handleV1Search(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected status 405, got %d", rec.Code)
 	}
@@ -1956,7 +1956,7 @@ func TestV1PaginationLinkHeaders(t *testing.T) {
 	// Get first page
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?page=1&per_page=10", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	link := rec.Header().Get("Link")
 	if !strings.Contains(link, "rel=\"first\"") {
 		t.Error("expected 'first' link in Link header")
@@ -1971,7 +1971,7 @@ func TestV1PaginationLinkHeaders(t *testing.T) {
 	// Get middle page (should have prev)
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/tickets?page=2&per_page=10", http.NoBody)
 	rec = httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	link = rec.Header().Get("Link")
 	if !strings.Contains(link, "rel=\"prev\"") {
 		t.Error("expected 'prev' link in Link header for page 2")
@@ -2125,7 +2125,7 @@ func TestV1ComputeEntityActions_VerbVocabulary(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -2147,7 +2147,7 @@ func runListFilterExpect400(t *testing.T, app *App, query string) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?"+query, http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("query %q: expected 400, got %d (body %s)", query, rec.Code, rec.Body.String())
 	}
@@ -2274,7 +2274,7 @@ func TestV1GetEntityIncludeIncoming(t *testing.T) {
 	// Get the feature entity with include=* to get incoming relations
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/features/FEA-001?include=*", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "feature", "features", "FEA-001")
+	app.entities.handleV1GetEntity(rec, req, "feature", "features", "FEA-001")
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -2327,7 +2327,7 @@ func TestV1PaginationEdgeCases(t *testing.T) {
 	// Test page beyond total (should return empty)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?page=100&per_page=10", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -2599,7 +2599,7 @@ func TestV1SortMultipleSpecsWithSameValue(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=status,title", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -2619,7 +2619,7 @@ func TestV1ResolveIncludesEmptyPart(t *testing.T) {
 	// Include with empty parts (trailing comma)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001?include=implements,,_actions", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -2673,7 +2673,7 @@ func TestV1EntityToV1WithoutRelations(t *testing.T) {
 	// Call without relations (first list endpoint)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -2867,7 +2867,7 @@ func TestV1EntityRelationsNotFound(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/NONEXISTENT/relations", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1EntityRelations(rec, req, "ticket", "NONEXISTENT")
+	app.entities.handleV1EntityRelations(rec, req, "ticket", "NONEXISTENT")
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", rec.Code)
 	}
@@ -2892,7 +2892,7 @@ func TestV1EntityRelationsWrongType(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/features/TKT-001/relations", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1EntityRelations(rec, req, "feature", "TKT-001")
+	app.entities.handleV1EntityRelations(rec, req, "feature", "TKT-001")
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", rec.Code)
 	}
@@ -2961,7 +2961,7 @@ func TestV1GetRelationType_IncomingReturnsEdgeWithMeta(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/features/"+targetID+"/relations/blocks?direction=incoming", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetRelationType(rec, req, "feature", targetID, "blocks")
+	app.entities.handleV1GetRelationType(rec, req, "feature", targetID, "blocks")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -3000,7 +3000,7 @@ func TestV1EntityRelations_GroupsIncomingUnderInverseName(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/features/"+targetID+"/relations", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1EntityRelations(rec, req, "feature", targetID)
+	app.entities.handleV1EntityRelations(rec, req, "feature", targetID)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -3038,7 +3038,7 @@ func TestV1GetRelationType_OutgoingIncludesPeerType(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/features/"+sourceID+"/relations/blocks", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetRelationType(rec, req, "feature", sourceID, "blocks")
+	app.entities.handleV1GetRelationType(rec, req, "feature", sourceID, "blocks")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -3423,7 +3423,7 @@ func TestV1UpdateEntity_Relations_OnlyPATCH_ETagChangesButEntityStable(t *testin
 	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "F"}})
 
 	entityBefore, _ := app.reader.writePrepRow(context.Background(), entity.Ref{ID: "TKT-001"})
-	etagBefore := app.computeEntityETag(context.Background(), entityBefore)
+	etagBefore := app.entities.computeEntityETag(context.Background(), entityBefore)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
 		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-001"}]}}}`))
@@ -3441,7 +3441,7 @@ func TestV1UpdateEntity_Relations_OnlyPATCH_ETagChangesButEntityStable(t *testin
 		t.Fatalf("relations-only PATCH mutated entity fields: before=%+v after=%+v", entityBefore, entityAfter)
 	}
 	// ETag must change because it now folds in relations.
-	etagAfter := app.computeEntityETag(context.Background(), entityAfter)
+	etagAfter := app.entities.computeEntityETag(context.Background(), entityAfter)
 	if etagAfter == etagBefore {
 		t.Fatalf("ETag did not change after relations-only PATCH: %s", etagAfter)
 	}
@@ -4316,7 +4316,7 @@ func TestV1Affordance_PerEntityGet_NoneProfile(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -4389,7 +4389,7 @@ func TestV1Affordance_PerEntityGet_RedactedNamesHiddenFields(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -4445,7 +4445,7 @@ func TestV1Affordance_PerEntityGet_RedactedEmptyWhenNothingHidden(t *testing.T) 
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -4496,7 +4496,7 @@ func TestV1Affordance_PerEntityGet_DemoFixture(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-002", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-002")
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-002")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -4643,7 +4643,7 @@ func TestV1Affordance_Includes_StripHidden(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001?include=*", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET returned %d: %s", rec.Code, rec.Body.String())
 	}
@@ -4677,7 +4677,7 @@ func TestV1Affordance_CollectionList_StripHidden(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1EntityCollection(rec, req, "ticket", "tickets")
+	app.entities.handleV1EntityCollection(rec, req, "ticket", "tickets")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET returned %d: %s", rec.Code, rec.Body.String())
 	}
@@ -5044,7 +5044,7 @@ func dryRunCreateRaw(t *testing.T, app *App, body string) (code int, resp *httpt
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets?dry_run=true", strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	app.handleV1EntityCollection(rec, req, "ticket", "tickets")
+	app.entities.handleV1EntityCollection(rec, req, "ticket", "tickets")
 	return rec.Code, rec
 }
 
@@ -5244,7 +5244,7 @@ func TestHandleV1DryRunCreate_UnknownType(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/nonexistents?dry_run=true",
 		strings.NewReader(`{"properties":{}}`))
 	rec := httptest.NewRecorder()
-	app.handleV1EntityCollection(rec, req, "nonexistent", "nonexistents")
+	app.entities.handleV1EntityCollection(rec, req, "nonexistent", "nonexistents")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("got %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
@@ -5520,7 +5520,7 @@ func TestV1Affordance_CollectionGet_NoFieldVerdicts(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1EntityCollection(rec, req, "ticket", "tickets")
+	app.entities.handleV1EntityCollection(rec, req, "ticket", "tickets")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}

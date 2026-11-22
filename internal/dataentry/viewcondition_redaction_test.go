@@ -107,7 +107,7 @@ func listIDsCtx(ctx context.Context, t *testing.T, app *App, url string) []strin
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, url, http.NoBody).WithContext(ctx)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	return idsFromListBody(t, rec)
 }

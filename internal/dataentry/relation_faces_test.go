@@ -48,7 +48,7 @@ func relationAs(
 	if target == "" {
 		app.write.handleV1CreateRelation(rec, req, typeName, addr, relType)
 	} else {
-		app.handleV1RelationTarget(rec, req, typeName, addr, relType, target)
+		app.entities.handleV1RelationTarget(rec, req, typeName, addr, relType, target)
 	}
 	return rec
 }
@@ -325,7 +325,7 @@ func TestRelationWrites_ContentScopeNamesAFace(t *testing.T) {
 		if target == "" {
 			app.write.handleV1CreateRelation(rec, req, "policy", addr, relType)
 		} else {
-			app.handleV1RelationTarget(rec, req, "policy", addr, relType, target)
+			app.entities.handleV1RelationTarget(rec, req, "policy", addr, relType, target)
 		}
 		return rec
 	}
@@ -553,7 +553,7 @@ func TestRelationRead_IncomingEdgeEditablePerFace(t *testing.T) {
 	req := asAlice(t, d, httptest.NewRequest(http.MethodGet,
 		"/api/v1/features/FEAT-1/relations/cites?direction=incoming", http.NoBody))
 	rec := httptest.NewRecorder()
-	app.handleV1GetRelationType(rec, req, "feature", "FEAT-1", "cites")
+	app.entities.handleV1GetRelationType(rec, req, "feature", "FEAT-1", "cites")
 	var rows []struct {
 		ID       string `json:"id"`
 		Face     string `json:"face"`

@@ -30,7 +30,7 @@ func recipeStepOrder(t *testing.T, app *App) []string {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/recipes/REC-001/relations/has-step", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetRelationType(rec, req, "recipe", "REC-001", "has-step")
+	app.entities.handleV1GetRelationType(rec, req, "recipe", "REC-001", "has-step")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET relations: %d %s", rec.Code, rec.Body)
 	}

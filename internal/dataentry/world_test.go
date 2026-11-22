@@ -235,7 +235,7 @@ func listUnderWorld(t *testing.T, app *App, h worldHandle) *httptest.ResponseRec
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	ctx := withWorld(withReadGate(aliceCtx(), nopReadGate{}), h)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req.WithContext(ctx), "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req.WithContext(ctx), "ticket", "tickets")
 	return rec
 }
 
@@ -849,7 +849,7 @@ func TestWorldListGetParity_ACLGatedPrincipal(t *testing.T) {
 		worldHandle{name: "published", scope: scope})
 
 	// LIST under the world.
-	listed, err := app.scopedSortedEntities(wctx, "ticket", nil)
+	listed, err := app.lists.scopedSortedEntities(wctx, "ticket", nil)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
