@@ -278,7 +278,14 @@ database can answer, and checks the rest in the app. In
 entities that are not done, and the app checks their dates.
 
 A comparison such as `entity.points < 3` is false for an entity that has no
-value for `points`. This is the same rule as in list conditions.
+value for `points`, or a value of another type. This is the same rule as in
+list conditions. A text comparison such as `entity.priority > 'low'` uses
+character order (capitals before lowercase letters), not the order of the
+values in the schema.
+
+A date compared with `today()` is different: an entity with no date, or a
+value that is not a date, does not match, and Rela writes the failed check to
+its debug log.
 
 ### When rules run
 

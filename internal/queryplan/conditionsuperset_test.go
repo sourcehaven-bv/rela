@@ -151,7 +151,8 @@ var supersetLeaves = []string{
 // TestConditionSuperset_KeepsEveryMatch is the differential for the
 // superset claim: on every generated condition mixing leaves that lower
 // with leaves that do not, each row the Go evaluator matches is in the
-// store's result, and the filter keeps no row ConditionPrefilters drops.
+// store's result, under LoweringSemantics and the default semantics, and
+// the filter keeps no row ConditionPrefilters drops.
 // Where the whole condition lowers, the filter also returns
 // exactly the Go matches.
 func TestConditionSuperset_KeepsEveryMatch(t *testing.T) {
@@ -178,7 +179,8 @@ func TestConditionSuperset_KeepsEveryMatch(t *testing.T) {
 		rows = append(rows, e)
 	}
 
-	ev := predicatefns.NewEvaluatorWithClock(meta, func() time.Time { return now }).LoweringSemantics()
+	defaults := predicatefns.NewEvaluatorWithClock(meta, func() time.Time { return now })
+	ev := defaults.LoweringSemantics()
 	leaves := slices.Concat(diffLeaves, supersetLeaves)
 	narrowed := 0
 	for i := range 400 {
@@ -188,14 +190,20 @@ func TestConditionSuperset_KeepsEveryMatch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("compile %q: %v", src, err)
 		}
+		got := runLowered(t, st, meta, queryplan.ConditionSuperset(prog, meta, "task", ""))
 		var want []string
 		for _, e := range rows {
 			// An error counts as no match, as on the desktop.
 			if ok, err := ev.Matches(ctx, prog, "task", e.ID, e.Properties); err == nil && ok {
 				want = append(want, e.ID)
 			}
+			// The claim does not depend on LoweringSemantics: a row the
+			// default semantics match is kept too.
+			ok, err := defaults.Matches(ctx, prog, "task", e.ID, e.Properties)
+			if err == nil && ok && !slices.Contains(got, e.ID) {
+				t.Errorf("%q: default semantics match %s, the filter drops it", src, e.ID)
+			}
 		}
-		got := runLowered(t, st, meta, queryplan.ConditionSuperset(prog, meta, "task", ""))
 		for _, id := range want {
 			if !slices.Contains(got, id) {
 				t.Errorf("%q: Go matches %s, the filter drops it", src, id)

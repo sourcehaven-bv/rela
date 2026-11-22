@@ -48,7 +48,9 @@ func (c LoweredCond) Walk(visit func(LoweredCond)) {
 
 // PropCond returns c as a [store.Cond]. ok is false when c holds a
 // traversal anywhere: a traversal must pass the principal's traversal gate
-// before it becomes a relation leaf, which this conversion cannot do.
+// before it becomes a relation leaf, which this conversion cannot do. It
+// does not check field visibility; the property leaves match the stored
+// row.
 func (c LoweredCond) PropCond() (store.Cond, bool) {
 	switch c.Op {
 	case store.CondProp:
@@ -156,6 +158,12 @@ func LowerCondition(
 // conjunct that would push the AND over the store's [store.Cond] limits is
 // left out too, so the filter is never one every backend refuses. The zero
 // value narrows nothing.
+//
+// The filter matches on the STORED row, as [LowerCondition]'s predicates
+// do. A caller whose Go path judges a redacted row must push it only when
+// every attribute the filter reads is visible to the principal on every
+// row: otherwise the store drops rows the Go check would keep, and whether
+// a row appears reveals a hidden value.
 func ConditionSuperset(
 	prog *predicate.Program, meta *metamodel.Metamodel, entityType, identity string,
 ) ConditionLowering {

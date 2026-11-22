@@ -6,7 +6,8 @@ kind: enhancement
 priority: low
 effort: m
 started: "2026-11-22"
-status: in-progress
+completed: "2026-11-22"
+status: done
 ---
 
 ## Description
@@ -39,3 +40,19 @@ data-entry lists; share the work.
 narrow it.
 - Pin with `storetest.AssertScaleFree`, padding with rows that pass the
 pushed equalities.
+
+## Outcome (partial scope)
+
+This ticket shipped a partial step:
+
+- desktop.yaml conditions lower through `queryplan.LowerCondition`, so the
+store answers `or`, `not`, `~=` and ordered comparisons on string and integer
+properties exactly. The evaluator runs with `LoweringSemantics`.
+- A condition that does not lower, mainly a date compared with `today()`,
+keeps the Go scan. Its read is narrowed by the top-level conjuncts that do lower
+(`queryplan.ConditionSuperset`), not only by equalities.
+- Unlowerable conditions are not a load error yet.
+
+Full removal of `evaluation.scan` depends on TKT-4Z2BIRG (date comparisons
+against `today()` in the store). TKT-1X1X24O tracks it and depends on both
+tickets.

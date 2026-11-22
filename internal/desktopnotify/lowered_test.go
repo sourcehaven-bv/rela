@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
 // loweredConditions are conditions queryplan.LowerCondition answers, so the
@@ -37,8 +38,20 @@ var loweredConditions = []string{
 // literals, integers, a non-integral number, an integer-shaped string and a
 // list.
 var mixedValues = []any{
-	"absent", nil, "", "open", "new", "done", "Zed", "a", "7", 0, 3, 5, -4, 2.5, []any{"open"},
+	"absent", nil, "", "open", "new", "done", "Zed", "a", "7", 0, 3, 5, -4, 2.5, 1e19, true,
+	[]any{"open"}, map[string]any{"id": "open"},
 }
+
+// narrowedConditions compare a date with today(), so they are judged in Go;
+// the conjuncts that lower narrow the store read.
+var narrowedConditions = []string{
+	"entity.status ~= 'done' and entity.vervaldatum <= today()",
+	"(entity.status == 'open' or entity.punten > 1) and entity.vervaldatum <= today()",
+	"not (entity.status < 'n') and entity.punten ~= 5 and entity.vervaldatum > today()",
+}
+
+// mixedDates are the stored vervaldatum values, around fixedNow.
+var mixedDates = []any{"absent", "2026-10-01", "2026-10-04", "2026-12-01", "", "TBD"}
 
 func seedMixed(t *testing.T, st store.Store) {
 	t.Helper()
@@ -51,15 +64,19 @@ func seedMixed(t *testing.T, st store.Store) {
 		if v := mixedValues[(i*7+3)%len(mixedValues)]; v != "absent" {
 			e.Properties["punten"] = v
 		}
+		if v := mixedDates[i%len(mixedDates)]; v != "absent" {
+			e.Properties["vervaldatum"] = v
+		}
 		if err := st.CreateEntity(ctx, e); err != nil {
 			t.Fatalf("CreateEntity %s: %v", e.ID, err)
 		}
 	}
 }
 
-// assertLoweredMatchesGo evaluates every lowered condition as a rule and as
-// the badge on st, and compares the result with the Go evaluator run on
-// every row read back from st.
+// assertLoweredMatchesGo evaluates every lowered and narrowed condition as
+// a rule and as the badge on st, and compares the result with the Go
+// evaluator run on every row read back from st. A lowered condition must
+// never fail in Go; a narrowed one may, and the row then does not match.
 func assertLoweredMatchesGo(t *testing.T, st store.Store) {
 	t.Helper()
 	ctx := context.Background()
@@ -73,16 +90,20 @@ func assertLoweredMatchesGo(t *testing.T, st store.Store) {
 	if len(rows) == 0 {
 		t.Fatal("no rows seeded")
 	}
-	for _, src := range loweredConditions {
+	for i, src := range slices.Concat(loweredConditions, narrowedConditions) {
+		lowered := i < len(loweredConditions)
 		cfg := load(t, fmt.Sprintf(
 			"notifications:\n  - id: r\n    type: taak\n    condition: %q\nbadge:\n  type: taak\n  condition: %q\n", src, src))
-		if !cfg.rules[0].exact || !cfg.badge.exact {
-			t.Fatalf("%q does not lower exactly", src)
+		if cfg.rules[0].exact != lowered || cfg.badge.exact != lowered {
+			t.Fatalf("%q: exact = %v, want %v", src, cfg.rules[0].exact, lowered)
+		}
+		if !lowered && len(cfg.rules[0].pushed) == 0 && cfg.rules[0].where == nil {
+			t.Fatalf("%q pushes nothing; the test needs a narrowed read", src)
 		}
 		var want []string
 		for _, e := range rows {
 			ok, err := cfg.eval.Matches(ctx, cfg.rules[0].prog, e.Type, e.ID, e.Properties)
-			if err != nil {
+			if err != nil && lowered {
 				t.Fatalf("%q on %s (%v): Go evaluation failed: %v", src, e.ID, e.Properties, err)
 			}
 			if ok {
@@ -173,5 +194,41 @@ notifications:
 	}
 	if len(res.EvalErrors) != 0 {
 		t.Errorf("EvalErrors = %v, want none", res.EvalErrors)
+	}
+}
+
+// Two date rules on one type whose filters differ only inside an `or` read
+// separately: the scan cache keys on the where tree, so neither rule is
+// judged over the other's rows.
+func TestEvaluate_DistinctWhereTreesDoNotShareAScan(t *testing.T) {
+	t.Parallel()
+	cfg := load(t, `
+notifications:
+  - id: a
+    type: taak
+    condition: "(entity.status == 'open' or entity.status == 'new') and entity.vervaldatum <= today()"
+  - id: b
+    type: taak
+    condition: "(entity.status == 'open' or entity.status == 'late') and entity.vervaldatum <= today()"
+`)
+	st := newStore(t,
+		taak{"TAAK-1", "t", "new", "2026-10-01"},
+		taak{"TAAK-2", "t", "late", "2026-10-01"},
+		taak{"TAAK-3", "t", "open", "2026-10-01"},
+	)
+	counting := storetest.NewCounting(st)
+	res, err := cfg.Evaluate(context.Background(), counting, store.TrivialScope())
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	var got []string
+	for _, m := range res.Matches {
+		got = append(got, m.RuleID+":"+m.EntityID)
+	}
+	if want := []string{"a:TAAK-1", "a:TAAK-3", "b:TAAK-2", "b:TAAK-3"}; !slices.Equal(got, want) {
+		t.Errorf("matches = %v, want %v", got, want)
+	}
+	if calls := counting.Cost().Calls; calls != 2 {
+		t.Errorf("calls = %d, want 2 (one read per filter)", calls)
 	}
 }

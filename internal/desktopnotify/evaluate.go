@@ -46,7 +46,9 @@ type Result struct {
 	// when desktop.yaml declares no badge; see [Config.HasBadge].
 	Badge int
 	// EvalErrors holds conditions that failed to evaluate for one entity,
-	// for example because a stored value has the wrong type. Such an entity
+	// for example because a date compared with today() is unset or not a
+	// date. An ordered comparison of a string or integer never fails: it is
+	// false on an unset or off-type value (LoweringSemantics). Such an entity
 	// counts as not matching; the error is kept so it can be logged. A
 	// condition the store answers never adds one: it is not evaluated in
 	// Go.
