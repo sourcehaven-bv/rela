@@ -93,17 +93,19 @@ func TestMe_FullAssertion(t *testing.T) {
 			"account": "/pratique/admin/account",
 			"switch_org": "/pratique/auth/select-tenant",
 			"admin": "/pratique/admin/"
-		}
+		},
+		"can_edit_settings": true
 	}`, body)
 }
 
 // A proxy that sends only `sub`, with no account config and no matching
-// entity, yields the user id and nothing else.
+// entity, yields the user id and nothing else about the user. Without
+// acl.yaml anyone may save the settings page, so can_edit_settings is set.
 func TestMe_SubjectOnly(t *testing.T) {
 	app := newTestAppV1(t)
 	p := principal.VerifiedFrom("usr_1", principal.ToolDataEntry, principal.Claims{})
 	body := meAs(principal.With(context.Background(), p), t, app)
-	assert.JSONEq(t, `{"user": "usr_1"}`, body)
+	assert.JSONEq(t, `{"user": "usr_1", "can_edit_settings": true}`, body)
 }
 
 // RELA_DATAENTRY_USER stamps a plain principal naming an entity id. It
@@ -114,7 +116,8 @@ func TestMe_EnvUserNamingAnEntity(t *testing.T) {
 	body := meAs(principalCtx("TKT-001"), t, app)
 	assert.JSONEq(t, `{
 		"user": "TKT-001",
-		"person": {"type": "ticket", "id": "TKT-001", "title": "Ada Lovelace"}
+		"person": {"type": "ticket", "id": "TKT-001", "title": "Ada Lovelace"},
+		"can_edit_settings": true
 	}`, body)
 }
 

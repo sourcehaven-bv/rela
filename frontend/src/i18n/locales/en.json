@@ -166,6 +166,7 @@
   "footer": {
     "settings": "Settings",
     "about": "About",
+    "aboutVersion": "Version {version}",
     "shortcuts": "Shortcuts",
     "keyboardShortcuts": "Keyboard shortcuts",
     "clickToSync": "Click to sync",

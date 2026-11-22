@@ -87,6 +87,7 @@ func handleV1Me(a *App, w http.ResponseWriter, r *http.Request) {
 	me.Provisionable = provisionable(ctx, d)
 	me.CanConfigure = a.configure != nil && mayConfigure(a, r)
 	me.CanRemoteSync = a.remotes != nil && permitsRemoteSync(a.acl, r)
+	me.CanEditSettings = permitsSettingsEdit(a.acl, r)
 	writeV1JSON(w, http.StatusOK, me)
 }
 

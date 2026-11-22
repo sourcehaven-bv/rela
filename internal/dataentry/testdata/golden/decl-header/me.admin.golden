@@ -12,5 +12,6 @@ body:
     "type": "person",
     "id": "PERS-admin",
     "title": "Ada Admin"
-  }
+  },
+  "can_edit_settings": true
 }

@@ -33,6 +33,11 @@ type MeResponse struct {
 	// and the principal holds remote:sync. It only decides whether the
 	// Remotes link is shown; the routes check the permission themselves.
 	CanRemoteSync bool `json:"can_remote_sync,omitempty"`
+	// CanEditSettings is true when the principal may save the settings page
+	// (settings:edit, and not a read-only instance). The page leaves out the
+	// shared defaults, palette, logo and theme controls without it; the
+	// save routes check the permission themselves.
+	CanEditSettings bool `json:"can_edit_settings,omitempty"`
 	// Provisionable is true when the principal is verified but has no user
 	// entity yet, and the server would create one on a POST to `_me`
 	// (`unmatched_principal: provision`). Absent means no.

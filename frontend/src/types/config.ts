@@ -187,6 +187,11 @@ export interface AppConfig {
   collab_enabled?: boolean
   /** Names the relay process's rooms; the SPA joins with it (TKT-CJL604). */
   collab_epoch?: string
+  /**
+   * `app.about:`: the version and links the About dialog shows below the
+   * description. Absent when neither is configured.
+   */
+  about?: { version?: string; links?: { label: string; url: string }[] }
 }
 
 export interface FormConfig {
@@ -1565,11 +1570,19 @@ export interface SidebarSpace {
 
 /**
  * A built-in sidebar row, the as-of picker in the sidebar header, or the
- * Shortcuts button in the sidebar footer, as `builtins:` in data-entry.yaml
- * names it.
+ * Shortcuts, Settings and About buttons in the sidebar footer, as `builtins:`
+ * in data-entry.yaml names it.
  */
 export type BuiltinRow =
-  'search' | 'inbox' | 'flow_tasks' | 'flow_runs' | 'analysis' | 'as_of' | 'shortcuts'
+  | 'search'
+  | 'inbox'
+  | 'flow_tasks'
+  | 'flow_runs'
+  | 'analysis'
+  | 'as_of'
+  | 'shortcuts'
+  | 'settings'
+  | 'about'
 
 /** One row of a space's Create menu. */
 export interface SidebarCreate {

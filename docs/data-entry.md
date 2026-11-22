@@ -389,6 +389,7 @@ app:
 | `description` | Subtitle shown below the title   |
 | `logo`        | An image of the app for the pages shown before a workspace loads, such as a suspended or archived workspace. A path starting with `/` or an `https://` URL. Without it those pages show `name`. The sidebar logo is the one uploaded on the Settings page. |
 | `default_world` | Deprecated alias for the schema's `default_world:`; must name the same world. See [Worlds in the web app and API](#worlds-in-the-web-app-and-api) |
+| `about`       | A version and links for the About dialog. See [The About dialog](#the-about-dialog) |
 
 The browser tab title reads `<page> · <name>`, for example
 `Orders · Support Tickets`. The page part is the title the page shows: the
@@ -396,6 +397,34 @@ list, board, dashboard, document, form or custom app title, the entity title
 on an entity page, or the name of a built-in screen such as Search. A page
 without a title shows `name` alone. When the inbox has mentions or entries
 waiting on you, their count comes first: `(3) Orders · Support Tickets`.
+
+### The About dialog
+
+The About button in the sidebar footer opens a dialog with `name` as its
+title, `description` (or, without it, the schema's `description`) as its
+text, and the version and links of `app.about:` below it:
+
+```yaml
+app:
+  name: "Support Tickets"
+  description: "Internal ticket management system"
+  about:
+    version: "2026.11"
+    links:
+      - { label: Help, url: "https://help.example.com/" }
+      - { label: Terms of use, url: /terms }
+```
+
+| Field           | Description |
+| --------------- | ----------- |
+| `version`       | Free text shown as "Version 2026.11". rela shows no version of its own. |
+| `links`         | Links shown in order, each opening in a new tab. `label` and `url` are required; `url` is a path starting with `/` or an `https://` URL. |
+
+The button shows only when the dialog has a description, a version or a
+link. `builtins: { about: { hidden: true } }` hides it, or shows it only to
+holders of a permission (see [Built-in sidebar rows](#built-in-sidebar-rows-builtins)).
+An unknown key, a link without a label, and a link that is not a path or an
+`https://` URL fail to load.
 
 ### Interface language
 
@@ -6666,6 +6695,8 @@ builtins:
 | `analysis`   | Analysis   |
 | `as_of`      | The date picker in the sidebar header |
 | `shortcuts`  | The Shortcuts button in the sidebar footer, which opens the keyboard shortcuts help |
+| `settings`   | The Settings button in the sidebar footer |
+| `about`      | The About button in the sidebar footer, which shows only when [the About dialog](#the-about-dialog) has something to show |
 
 An entry sets `hidden: true`, or `permission:`, `hidden_on_phone: true` or
 both. An unknown row name, an entry with none of them, `hidden` together with
@@ -6687,6 +6718,18 @@ builtins:
 
 Hiding the Shortcuts button does not turn off the `?` key, which still opens
 the keyboard shortcuts help.
+
+A portal whose customers have nothing to set on the Settings page can show
+the button only to staff, and leave out About:
+
+```yaml
+builtins:
+  settings: { permission: "settings:edit" }
+  about: { hidden: true }
+```
+
+The Settings page stays reachable by URL. A user without `settings:edit`
+sees only their own preferences there (see [Settings Page](#settings-page)).
 
 When the Search row is hidden, the `/` shortcut to the search page is off too,
 also where `hidden_on_phone` hides it.
@@ -8366,6 +8409,11 @@ An operator can hide these buttons with
 [`list_buttons`](#list-and-search-buttons-list_buttons) and
 [`header_buttons`](#entity-header-buttons-header_buttons).
 
+A read-only workspace refuses every change to a pile, so it shows none of
+these buttons, no pile toggles and no **Remove from pile** on an entity page.
+The piles themselves can still be opened, but the pile page offers no rename,
+delete or remove.
+
 A pile holds one face of an entity. When you add from a page or a row that
 shows a face, such as `POL-1@draft`, that face goes on the pile. An id alone
 is refused for a type with faces, and the message lists the faces you can
@@ -9451,6 +9499,15 @@ only when creating tickets, while leaving the global default as `medium`.
 
 The page also lets you choose the interface language and turn on browser
 notifications for the inbox (see [Inbox](#inbox)).
+
+The defaults, the palette, the logo and the theme package are shared by every
+user, so saving them needs the `settings:edit` permission when the project
+has an `acl.yaml`, and a read-only workspace never saves them. A user who
+cannot save them sees only their own preferences on the page: language,
+notifications, display time zone and the application info. The page leaves
+the rest out, with the file paths it is stored in. This tidies the page; it
+hides nothing secret, and every save checks the permission itself. Hide the
+Settings button with [`builtins.settings`](#built-in-sidebar-rows-builtins).
 
 ### Resolution Order
 

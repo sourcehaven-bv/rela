@@ -600,7 +600,14 @@ async function handleAction(item: SidebarItem, ev?: Event) {
       the whole band, toggle included.
     -->
     <template #footer>
-      <SidebarFooter :show-shortcuts="showsBuiltin('shortcuts')" />
+      <!-- Settings and About wait for the first answer, like the nav rows,
+           so a space that hides them does not flash them first. A failed
+           answer shows them. -->
+      <SidebarFooter
+        :show-shortcuts="showsBuiltin('shortcuts')"
+        :show-settings="navLoaded && showsBuiltin('settings')"
+        :show-about="navLoaded && showsBuiltin('about')"
+      />
       <AccountMenu />
       <RlThemeToggle v-if="!schemaStore.darkDisabled" v-model="theme" class="sidebar-theme" />
     </template>

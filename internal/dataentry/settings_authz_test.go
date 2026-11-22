@@ -103,6 +103,18 @@ func TestSavePalette_Gate(t *testing.T) {
 	}
 }
 
+// TestMe_CanEditSettings pins that `_me` reports the settings:edit gate the
+// saves enforce, in every mode, so the settings page offers a control exactly
+// when its save would be accepted.
+func TestMe_CanEditSettings(t *testing.T) {
+	for _, tc := range settingsEditModes {
+		t.Run(tc.name, func(t *testing.T) {
+			app, ctx := newSettingsEditApp(t, tc.mode, tc.holds)
+			require.Equal(t, !tc.refused, decodeMe(t, meAs(ctx, t, app)).CanEditSettings)
+		})
+	}
+}
+
 // logoUploadRequest builds a multipart logo upload carrying body.
 func logoUploadRequest(ctx context.Context, t *testing.T, method, target, field string, body []byte) *http.Request {
 	t.Helper()

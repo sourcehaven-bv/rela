@@ -6,6 +6,7 @@ import { createRouter, createMemoryHistory, type Router } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { resetPilesState } from '@/composables/usePiles'
 import { resetFlyout } from '@/composables/useFlyout'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 import type { Pile } from '@/api/piles'
 import PilePanel from './PilePanel.vue'
 
@@ -85,6 +86,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   mounted.splice(0).forEach((w) => w.unmount())
+  workspaceReadOnly.value = false
 })
 
 describe('PilePanel', () => {
@@ -104,6 +106,19 @@ describe('PilePanel', () => {
     expect(step.attributes('href')).toBe(`/entity/ticket/TKT-1?from=pile&pile=${pileId}`)
     const policy = wrapper.findAll('a').find((a) => a.text() === 'Access policy')
     expect(policy?.attributes('href')).toBe(`/entity/policy/POL-1@draft?from=pile&pile=${pileId}`)
+  })
+
+  it('offers no rename, delete or remove in a read-only workspace', async () => {
+    workspaceReadOnly.value = true
+    const wrapper = await mountPanel()
+    await wrapper.find('.pile-panel__head-actions button[aria-haspopup]').trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).toContain('Copy IDs')
+    expect(document.body.querySelector('[data-testid="pile-rename"]')).toBeNull()
+    expect(document.body.querySelector('[data-testid="pile-delete"]')).toBeNull()
+    await wrapper.findAll('input[type="checkbox"]')[0].setValue(true)
+    expect(wrapper.find('[data-testid="pile-ticked"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="pile-remove"]').exists()).toBe(false)
   })
 
   it('removes the ticked rows, then puts them back on Undo', async () => {

@@ -46,6 +46,13 @@ export interface MeResponse {
    */
   can_remote_sync?: boolean
   /**
+   * This principal may save the settings page (settings:edit, and not a
+   * read-only instance). Absent means no. The page leaves out the shared
+   * defaults, palette, logo and theme controls without it; every save
+   * checks the permission itself.
+   */
+  can_edit_settings?: boolean
+  /**
    * The principal is verified but has no person entity yet, and a POST to
    * `/_me` creates it (`unmatched_principal: provision`). Absent means no.
    */

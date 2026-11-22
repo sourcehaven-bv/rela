@@ -18,6 +18,8 @@ import { t } from '@/i18n'
  * `addOffered` is false when `header_buttons.add_to_pile` hides "Add to pile"
  * from this principal (TKT-31822PN). The add entries are then left out;
  * "Remove from pile" while stepping through a pile stays.
+ *
+ * A read-only workspace gets none of the entries: it refuses every pile write.
  */
 export function useEntityPileActions(
   address: () => string | null,
@@ -46,7 +48,7 @@ export function useEntityPileActions(
 
   const actions = computed<EntityAction[]>(() => {
     const addr = address()
-    if (!piles.available.value || addr === null) return []
+    if (!piles.writable.value || addr === null) return []
     const out: EntityAction[] = []
     if (addOffered()) {
       for (const p of piles.collected.value) {
