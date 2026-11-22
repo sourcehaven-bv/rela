@@ -41,7 +41,7 @@ require (
 	github.com/vloothuis/textanchor v0.3.1
 	github.com/wailsapp/wails/v3 v3.2.0-nightly.20261103
 	github.com/wneessen/go-mail v0.8.1
-	github.com/yuin/goldmark v1.8.6
+	github.com/yuin/goldmark v1.8.7
 	github.com/yuin/gopher-lua v1.1.2
 	github.com/zalando/go-keyring v0.2.8
 	go.uber.org/goleak v1.3.0
