@@ -22,7 +22,7 @@ type Story = StoryObj<typeof RlTableRow<Task>>
 
 export const Playground: Story = {}
 
-/** Below 768px the cells stack and each one shows its column name. */
+/** Below 640px the cells stack and each one shows its column name. */
 export const Stacked: Story = {
   globals: { viewport: { value: 'phone' } },
 }

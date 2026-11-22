@@ -16,8 +16,14 @@ export interface TableColumn {
   key: string
   /** The column's label, shown in the header and on a stacked row. */
   header: string
-  /** Fixed pixel width. The first column is flexible when this is omitted. */
+  /**
+   * Preferred pixel width, 150 when omitted. A table narrower than its
+   * columns shrinks them all by the same share, down to `minWidth`; see
+   * `columnSizing.ts`.
+   */
   width?: number
+  /** The narrowest the column gets before the table scrolls; 75% of `width` by default. */
+  minWidth?: number
   /**
    * Which property of the row this column reads, for the plain-text default.
    * Anything that is not a string or number needs the `cell` slot, which is

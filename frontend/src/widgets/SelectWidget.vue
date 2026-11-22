@@ -92,11 +92,14 @@ function onChange(event: Event) {
   />
   <span v-else-if="mode === 'display'" class="display-value" />
   <div v-else class="select-widget">
+    <!-- aria-label names the select also where no <label for> reaches it,
+         such as a second form on the page with the same field id. -->
     <select
       :id="id"
       class="rl-control"
-    :aria-describedby="describedBy"
-    :aria-invalid="invalid || undefined"
+      :aria-label="label || undefined"
+      :aria-describedby="describedBy"
+      :aria-invalid="invalid || undefined"
       :value="stringValue"
       :disabled="disabled"
       @change="onChange"

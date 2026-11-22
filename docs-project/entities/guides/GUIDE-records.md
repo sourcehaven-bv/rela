@@ -191,6 +191,21 @@ a row that does not exist.
 An aggregate folds at most 1,000,000 rows. Narrow `from`, `to` or `owner`
 when a query needs more.
 
+## MCP, scripts and the command line
+
+The same service backs every surface, so the access rules are the same.
+
+| Surface | Append | Read |
+| --- | --- | --- |
+| MCP | `append_records` | `list_record_types`, `list_records`, `aggregate_records` |
+| Lua | `rela.append_records` | `rela.list_records`, `rela.aggregate_records` |
+| CLI | `rela records append` | `rela records list`, `rela records aggregate` |
+
+`rela records expire` drops rows past retention on demand. Only the command
+line runs it, besides the hourly job. See [MCP server](mcp-server.md#record-tools),
+[Lua scripting](lua-scripting.md#read-records-relalist_records-and-relaaggregate_records)
+and [the CLI reference](cli-reference.md#rela-records).
+
 ## Trend charts
 
 A trend such as "control coverage per quarter" is a value computed over the

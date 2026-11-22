@@ -4,9 +4,12 @@
  *
  * The `header` slot spans the full width above both the content and the
  * panel, so the panel reads as a sibling of the view rather than as part of
- * it. The `banner` slot sits below the header, as wide: a notice about the
+ * it. The `banner` slot sits above the header, as wide: a notice about the
  * whole app, such as a read-only workspace, belongs to neither pane, and in
- * the content pane a sticky table header would cover it. `panelMode` decides how the panel sits against the content:
+ * the content pane a sticky table header would cover it. Above rather than
+ * below, so it is at the top of the content area on every screen: below the
+ * header it fell between a list's toolbar and its table, while a screen
+ * without a header had it at the top. `panelMode` decides how the panel sits against the content:
  *
  * - `inline`  — beside the content, sharing the row.
  * - `overlay` — above the content, anchored right, with a shadow.
@@ -160,12 +163,12 @@ onBeforeUnmount(() => {
         Header spans content and panel both. Without the slot the frame is a
         plain row, so existing two-pane screens are unaffected.
       -->
-      <div v-if="$slots.header" class="rl-app-shell__header">
-        <slot name="header" />
-      </div>
-
       <div v-if="$slots.banner" class="rl-app-shell__banner">
         <slot name="banner" />
+      </div>
+
+      <div v-if="$slots.header" class="rl-app-shell__header">
+        <slot name="header" />
       </div>
 
       <div class="rl-app-shell__row">
@@ -233,11 +236,20 @@ onBeforeUnmount(() => {
  * moves onto the frame. Padding the frame rather than `main` keeps it
  * outside the scroll container, so it cannot scroll away with the content.
  */
-.rl-app-shell__frame:not(:has(> .rl-app-shell__header)) {
+.rl-app-shell__frame:not(:has(> .rl-app-shell__header, > .rl-app-shell__banner)) {
   padding-top: var(--rl-safe-inset-top);
 }
 
-.rl-app-shell__banner { flex: none; }
+/*
+ * The banner is the top band when there is one, so it takes the status bar
+ * inset and the header after it does not.
+ */
+.rl-app-shell__banner {
+  flex: none;
+  padding-top: var(--rl-safe-inset-top);
+}
+
+.rl-app-shell__banner + .rl-app-shell__header { padding-top: 0; }
 
 .rl-app-shell__row {
   position: relative;

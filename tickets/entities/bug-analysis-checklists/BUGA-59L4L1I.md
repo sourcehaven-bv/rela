@@ -23,6 +23,6 @@ status: done
 
 ## Fix Planning
 
-- [x] Fix approach determined (RlIconButton gets a `raised` option with an opaque raised surface, border and shadow, and the hamburger uses it; pilesNavGroup returns null without piles and the sidebar leaves the group out)
-- [x] Regression test planned (mobile-layout.spec.ts background alpha test; Sidebar.piles.test.ts and sidebarNav.test.ts for the absent group)
+- [x] Fix approach determined (RlIconButton gets a `raised` option with an opaque raised surface, border and shadow, and the hamburger uses it; Sidebar.vue leaves the Piles group out until the user has a pile)
+- [x] Regression test planned (mobile-layout.spec.ts background alpha test; Sidebar.piles.test.ts for the absent group)
 - [x] Related areas checked for similar issues (RlPageHeader's own toggle sits in the header band, which has its own background; the declared piles group already returns null when empty; "Add to pile" offers a new pile on lists, search and entity pages)

@@ -4188,8 +4188,8 @@ func TestV1Views_UnknownEntityID(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.views.handleV1Views(rec, req)
 
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Errorf("status: want 422 for missing entity, got %d", rec.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status: want the uniform 404 for a missing entity, got %d", rec.Code)
 	}
 }
 

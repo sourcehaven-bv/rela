@@ -21,3 +21,21 @@ export function withDataEntryBlock(block: string) {
     },
   });
 }
+
+/**
+ * A test whose project's data-entry.yaml has `from` replaced by `to`. The
+ * fixture text must contain `from`, so a fixture change cannot silently
+ * leave the test on the default config.
+ */
+export function withDataEntryEdit(from: string, to: string) {
+  return test.extend({
+    testProject: async ({ testProject }, use) => {
+      const file = path.join(testProject, "data-entry.yaml");
+      const yaml = fs.readFileSync(file, "utf8");
+      if (!yaml.includes(from))
+        throw new Error(`fixture YAML has no ${JSON.stringify(from)}`);
+      fs.writeFileSync(file, yaml.replace(from, to));
+      await use(testProject);
+    },
+  });
+}

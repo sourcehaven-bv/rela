@@ -30,7 +30,8 @@
  * schema validation rule at the first field of the form it reads. A
  * soft finding on a written value, such as a failed pattern, shows as a
  * warning at its field. A step taken while no condition of the next step
- * holds (`blocked`) says so above the button. The first flagged field gets
+ * holds (`blocked`) says so above the button, and each empty required field
+ * says it is required. The first flagged field gets
  * focus, and the fields stay on screen while the values reload, so the
  * form does not move away from the reader.
  */
@@ -295,6 +296,23 @@ function validate(): boolean {
   return Object.keys(next).length === 0
 }
 
+/**
+ * A required message for each required field left empty, shown when the
+ * step was blocked, so the reader sees at the field what the notice means.
+ * An unticked checkbox counts as empty: a condition reads a boolean the step
+ * asks for, such as accepted terms, as true.
+ */
+function missingRequired(): Record<string, string> {
+  const next: Record<string, string> = {}
+  for (const f of fields.value) {
+    if (!required.value.has(f.name)) continue
+    const v = values.value[f.name]
+    if (empty(v) || (f.def?.type === 'boolean' && v === false))
+      next[f.name] = t('form.validation.required')
+  }
+  return next
+}
+
 async function submit() {
   if (saving.value || loading.value || formUnusable.value) return
   if (!validate()) return
@@ -322,6 +340,7 @@ async function submit() {
       }
       warnings.value = notes
       blocked.value = result.problem === 'blocked'
+      if (blocked.value) errors.value = missingRequired()
       void focusFeedback(blocked.value ? [...required.value] : [])
     }
     emit('completed', result)
@@ -390,12 +409,7 @@ async function submit() {
     >
       {{ msg }}
     </p>
-    <p
-      v-if="blocked"
-      class="flow-step-form__notice"
-      role="alert"
-      data-testid="flow-step-blocked"
-    >
+    <p v-if="blocked" class="flow-step-form__notice" role="alert" data-testid="flow-step-blocked">
       {{ required.size > 0 ? t('flows.step.blockedRequired') : t('flows.step.problem.blocked') }}
     </p>
     <div v-if="!formUnusable" class="flow-step-form__actions">

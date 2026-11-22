@@ -918,6 +918,45 @@ automation actions, `rela script` and MCP script runs. It is absent in a
 synchronous automation, in a document render and in a validation rule, and
 it raises an error when called inside a store transaction.
 
+### Read records: `rela.list_records` and `rela.aggregate_records`
+
+These two functions read rows of a record type (see [Records](records.md)).
+They exist in every runtime that has a record service, readers included,
+because they change nothing.
+
+```lua
+local page, err = rela.list_records("measurement", {
+  owner = "MET-1", from = "2026-01-01T00:00:00Z", limit = 100,
+})
+if not page then error(err) end
+for _, row in ipairs(page.records) do
+  rela.output(row.ts .. " " .. row.fields.value)
+end
+-- page.next is the cursor for the next page: pass it as `after`.
+
+local points = rela.aggregate_records("measurement", {
+  owners = { "MET-1", "MET-2" }, field = "value", bucket = "month", per_owner = true,
+})
+```
+
+`rela.list_records(type, opts)` needs `opts.owner`. The other options are
+`from`, `to` (RFC 3339 times), `after` and `limit`. It returns
+`{records = {...}, next = "..."}`, oldest first. A row has `id`, `type`,
+`owner`, `ts`, `recorded_at`, `recorded_by`, `group`, `reverses`, `revision`
+and `fields`. A decimal field is its exact text.
+
+`rela.aggregate_records(type, opts)` takes `owner` or `owners` (leave both out
+to fold every owner the script's principal may read), `field`, `bucket`
+(`hour`, `day`, `week` or `month`), `per_owner`, `from` and `to`. It returns a
+list of points with `count` and, when `field` is set, the exact decimal text
+`sum`, `min`, `max`, `avg` and `latest`.
+
+Both read as the script's principal, with the access rules of the HTTP API: an
+owner the principal cannot read gets the same `not found` message as a missing
+one, and an aggregate folds readable owners only. Refusals return `nil` and a
+message. An unknown option or a wrongly typed one raises an error, so a
+misspelled option cannot widen a read.
+
 ### Pile Functions
 
 A pile is a personal, named stack of entities. The `rela.piles` functions

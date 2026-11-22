@@ -36,7 +36,7 @@ status: done
 
 ## Quality
 
-- [x] Code follows project patterns (check similar code) (uses the --rl-space-4 token)
+- [x] Code follows project patterns (check similar code) (uses the --rl-space-2 token plus the sticky top)
 - [x] ~~Checked for DRY opportunities — repeated literals, expressions, or~~ (N/A: one declaration)
 patterns extracted to a helper / constant / type where it sharpens the contract
 (don't extract for its own sake; CLAUDE.md "three similar lines is better than a

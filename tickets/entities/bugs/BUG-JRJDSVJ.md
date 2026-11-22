@@ -27,5 +27,5 @@ Found in saas-dev.
 
 - [x] A long unbroken value in a properties section wraps within its row, in display and inline-edit sections.
 - [x] The main pane does not scroll sideways because of such a value.
-- [x] A non-JSON answer to a JSON API call rejects with an ApiError that tells the user to reload; components never receive the HTML as data. It also asks the session-ended probe (BUG-9DR9867) whether the session ended.
+- [x] An HTML answer to a JSON API call rejects with an ApiError that tells the user to reload; components never receive the HTML as data. It also asks the session-ended probe (BUG-9DR9867) whether the session ended.
 - [x] Empty bodies, JSON bodies and calls that ask for another response type (blob downloads) keep working.

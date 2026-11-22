@@ -449,7 +449,7 @@ func worldCapablePath(path string) bool {
 	// headers, the outside parents through store.InWorld, and the drill
 	// closure through its GraphQuery. Refusing the world showed the default
 	// world's spans on a page bound to another one.
-	if isGanttPath(trimmed) {
+	if isGanttPath(trimmed) || isSankeyPath(trimmed) {
 		return true
 	}
 	if strings.HasPrefix(trimmed, "_") {

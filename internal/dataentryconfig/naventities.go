@@ -62,6 +62,7 @@ func navEntryDestinations(nav NavigationEntry) []string {
 		{"kanban", nav.Kanban != ""},
 		{"calendar", nav.Calendar != ""},
 		{"gantt", nav.Gantt != ""},
+		{"sankey", nav.Sankey != ""},
 		{"search", nav.Search},
 		{"settings", nav.Settings},
 		{"action", nav.Action != ""},

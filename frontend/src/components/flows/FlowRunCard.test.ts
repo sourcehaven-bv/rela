@@ -312,6 +312,65 @@ describe('FlowRunCard', () => {
     expect(useUIStore().toasts).toHaveLength(0)
   })
 
+  it('says at each empty required field that it is required when the step is blocked', async () => {
+    getEntityMock.mockResolvedValue({ properties: { name: 'Ann', terms: false } })
+    const card = () =>
+      run({
+        waiting: {
+          roles: ['hr'],
+          you_hold: true,
+          form: 'terms_form',
+          fields: ['country', 'terms', 'name'],
+          branches: [
+            {
+              to: 'review',
+              guard: 'entity.terms == true and entity.country ~= nil and entity.name ~= nil',
+              holds: false,
+              fields: ['country', 'terms', 'name'],
+            },
+          ],
+        },
+      })
+    useSchemaStore().entityTypes.set('person', {
+      label: 'Person',
+      properties: {
+        country: { type: 'string', label: 'Country' },
+        terms: { type: 'boolean', label: 'Terms accepted' },
+        name: { type: 'string', label: 'Name' },
+      },
+    } as unknown as EntityType)
+    const form: FormConfig = {
+      entity: 'person',
+      fields: [{ property: 'country' }, { property: 'terms' }, { property: 'name' }],
+    }
+    useSchemaStore().forms.set('terms_form', form)
+    completeFlowStepMock.mockResolvedValue({
+      written: [],
+      moved: false,
+      state: 'collect',
+      finished: false,
+      problem: 'blocked',
+    })
+    getFlowRunMock.mockResolvedValue(card())
+    const wrapper = mountCard(card())
+    await flushPromises()
+
+    await wrapper.find('[data-testid="flow-step-form"]').trigger('submit')
+    await flushPromises()
+
+    const [country, terms, name] = wrapper.findAll('[data-testid="flow-step-field"]')
+    expect(country.text()).toContain('This field is required')
+    // An unticked checkbox the condition reads is empty too.
+    expect(terms.text()).toContain('This field is required')
+    expect(name.text()).not.toContain('This field is required')
+
+    // Filling the field takes its message away.
+    await country.find('input').setValue('NL')
+    expect(wrapper.findAll('[data-testid="flow-step-field"]')[0].text()).not.toContain(
+      'This field is required'
+    )
+  })
+
   it("says the flow's own text to a reader of a failed step who does not manage it", async () => {
     const failed = (failed_message?: string) =>
       run({

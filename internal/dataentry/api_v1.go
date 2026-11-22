@@ -225,12 +225,18 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	if a.taskItems != nil {
 		mux.HandleFunc("/api/v1/_task_item_conversions/", a.taskItems.handleV1TaskItemConversions)
 	}
-	mux.HandleFunc("/api/v1/_gantts/", a.gantt.handleV1Gantt)
+	registerDiagramRoutes(mux, a)
 	mux.HandleFunc("/api/v1/_action/", a.write.handleV1Action)
 	mux.HandleFunc("/api/v1/_apps/", a.handleV1App)
 
 	// Dynamic entity routes are handled by a catch-all
 	mux.HandleFunc("/api/v1/", a.handleV1DynamicRoutes)
+}
+
+// registerDiagramRoutes registers the read-only gantt and sankey endpoints.
+func registerDiagramRoutes(mux *http.ServeMux, a *App) {
+	mux.HandleFunc("/api/v1/_gantts/", a.gantt.handleV1Gantt)
+	mux.HandleFunc("/api/v1/_sankeys/", a.sankey.handleV1Sankey)
 }
 
 // registerAppearanceRoutes registers the settings, palette and theme routes.

@@ -36,3 +36,4 @@ export { NextActionPage } from './next-action.page';
 export { CollabBodyPage } from './collab.page';
 export { FlowsPage } from './flows.page';
 export { RemotesPage } from './remotes.page';
+export { NotFoundPage } from './not-found.page';

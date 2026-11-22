@@ -243,6 +243,7 @@ var identityWrites = map[string]bool{
 	"secrets credential-name": false, "lease list": false, "channel list": false, "channel read": false,
 	"channel file": false, "channel watch": false, "channel inbox": false, "channel session": false,
 	"reconcile diff": false, "remote conflicts": false,
+	"records append": true, "records expire": true, "records list": false, "records aggregate": false,
 }
 
 // writesAsIdentity reports whether cmd may write as its principal.

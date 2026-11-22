@@ -19,6 +19,7 @@
  * sees a rename rather than an object literal that happens to fit.
  */
 import type { ListColumn } from '@/types/config'
+import type { PropertyDef } from '@/types'
 import type { TableColumn } from 'rela-components/components/table/types'
 import { t } from '@/i18n'
 
@@ -65,6 +66,36 @@ export function columnHeader(column: ListColumn): string {
 export const BUSY_COLUMN_WIDTH = 160
 
 /**
+ * A property column's preferred and minimum width, by the property's type.
+ *
+ * The library's default (150px, shrinking to 112px) suits free text. A date,
+ * an amount or a yes/no needs far less, and giving it the text width is what
+ * pushed a five-column list past a laptop page beside the sidebar. Sized for
+ * the formatted value plus the cell's padding; a longer value is cut with an
+ * ellipsis, as any cell's is. Undefined keeps the library's default.
+ */
+export function propertyColumnSize(
+  property: PropertyDef | undefined
+): Pick<TableColumn, 'width' | 'minWidth'> | undefined {
+  if (!property || property.list) return undefined
+  if (property.type === 'enum' || (property.values?.length ?? 0) > 0) return { width: 128, minWidth: 96 }
+  switch (property.type) {
+    case 'date':
+      return { width: 128, minWidth: 116 }
+    case 'datetime':
+      return { width: 168, minWidth: 136 }
+    case 'integer':
+      return { width: 104, minWidth: 80 }
+    case 'decimal':
+      return { width: 112, minWidth: 88 }
+    case 'boolean':
+      return { width: 96, minWidth: 72 }
+    default:
+      return undefined
+  }
+}
+
+/**
  * Converts rela's list columns to the library's, dropping the FIRST column.
  *
  * The library's table owns the leading name column itself — it holds the
@@ -81,7 +112,8 @@ export const BUSY_COLUMN_WIDTH = 160
  */
 export function toTableColumns(
   columns: ListColumn[],
-  name: ListColumn | undefined = columns[0]
+  name: ListColumn | undefined = columns[0],
+  properties: Record<string, PropertyDef> = {}
 ): TableColumn[] {
   const seen = new Set<string>()
   return columns
@@ -107,6 +139,7 @@ export function toTableColumns(
         // plain string or number, which is the one case rela does not have.
         sortable: column.sortable !== false && !!column.property,
         ...(column.busy ? { width: BUSY_COLUMN_WIDTH } : {}),
+        ...(column.property ? propertyColumnSize(properties[column.property]) : {}),
         // `meta` carries the originating config so a cell slot can render from
         // the same object the rest of EntityList already reasons about,
         // instead of looking it back up by key. Namespaced by the library

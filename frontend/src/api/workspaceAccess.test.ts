@@ -7,14 +7,17 @@ import { AxiosError, type AxiosAdapter, type InternalAxiosRequestConfig } from '
 import { api } from './client'
 import {
   accessRefusal,
+  isQuietFailure,
   loginUrl,
   loginUrlOf,
   probeSessionEnded,
   refusalDetail,
   refusalOf,
   resetAccessForTest,
+  refusedRequestError,
   trackAccess,
 } from './workspaceAccess'
+import { ApiError } from './errors'
 
 const problem = (code: string) => ({
   type: `https://rela.dev/errors/${code}`,
@@ -195,11 +198,34 @@ describe('API client', () => {
     expect(loginUrl.value).toBe(`${window.location.origin}/auth/login?rd=%2Ftickets`)
   })
 
+  it('sends no request after an ended session, and fails it as a cancellation', async () => {
+    const adapter = vi.fn(refuse(401, { error: 'session_expired' }))
+    api.getAxios().defaults.adapter = adapter
+    await expect(api.get('/tickets')).rejects.toMatchObject({ status: 401 })
+    expect(adapter).toHaveBeenCalledTimes(1)
+
+    await expect(api.get('/_analyze')).rejects.toMatchObject({ kind: 'cancelled' })
+    await expect(api.put('/_live/c1', [])).rejects.toMatchObject({ kind: 'cancelled' })
+    expect(adapter).toHaveBeenCalledTimes(1)
+  })
+
   it('asks whether a request that got no response met a sign-in redirect', async () => {
     fetchSpy.mockResolvedValue({ type: 'opaqueredirect', status: 0 } as Response)
     api.getAxios().defaults.adapter = (config) =>
       Promise.reject(new AxiosError('Network Error', 'ERR_NETWORK', config, {}, undefined))
     await expect(api.get('/tickets')).rejects.toMatchObject({ kind: 'network' })
     await vi.waitFor(() => expect(accessRefusal.value).toBe('session_ended'))
+  })
+})
+
+describe('isQuietFailure', () => {
+  afterEach(() => resetAccessForTest())
+
+  it('is quiet for a cancellation, and for any failure under a refusal', () => {
+    const failed = new ApiError('boom', { kind: 'http', status: 500, original: null })
+    expect(isQuietFailure(refusedRequestError())).toBe(true)
+    expect(isQuietFailure(failed)).toBe(false)
+    trackAccess(401, null)
+    expect(isQuietFailure(failed)).toBe(true)
   })
 })

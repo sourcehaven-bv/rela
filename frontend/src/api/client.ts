@@ -3,7 +3,7 @@ import { ApiError, toApiError } from './errors'
 import { apiUrl } from './base'
 import { isProvisioningResponse, startProvisioningPoll } from './tenantProvisioning'
 import { trackWorkspaceReadOnly } from './workspaceReadOnly'
-import { probeSessionEnded, trackAccess } from './workspaceAccess'
+import { accessRefusal, probeSessionEnded, refusedRequestError, trackAccess } from './workspaceAccess'
 import { carriesAsOf, currentAsOf } from './asOf'
 import { htmlResponseError, isHtmlResponse } from './htmlResponse'
 import { t } from '@/i18n'
@@ -26,6 +26,9 @@ class ApiClient {
     // A page reading at a past instant sends the instant with every read
     // the server can answer at it, and writes nothing (see asOf.ts).
     this.client.interceptors.request.use((config) => {
+      // After a refusal (an ended session, a suspended workspace) no request
+      // can succeed until the page reloads, so none is sent.
+      if (accessRefusal.value) return Promise.reject(refusedRequestError())
       const at = currentAsOf()
       if (!at) return config
       const method = (config.method ?? 'get').toLowerCase()
