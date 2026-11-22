@@ -39,10 +39,10 @@ describe('WorkspaceAccessScreen', () => {
 
   it('sends "Sign in again" to the sign-in page the server named', async () => {
     const { wrapper, location } = render('session_ended', {
-      loginUrl: 'https://hub.example/login',
+      loginUrl: '/auth/login?rd=%2Ftickets',
     })
     await wrapper.get('button').trigger('click')
-    expect(location.assign).toHaveBeenCalledWith('https://hub.example/login')
+    expect(location.assign).toHaveBeenCalledWith('/auth/login?rd=%2Ftickets')
     expect(location.reload).not.toHaveBeenCalled()
   })
 

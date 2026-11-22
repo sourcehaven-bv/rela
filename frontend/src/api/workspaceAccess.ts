@@ -58,19 +58,19 @@ function detailOf(data: unknown): string | null {
 }
 
 /**
- * The sign-in page a 401 body names, if it is an https URL, or an http URL on
- * a page that is itself served over http. Anything else is ignored, so a body
- * cannot send the browser to a `javascript:` URL or down to plain http.
+ * The sign-in page a 401 body names, if it is a local path on this site. The
+ * edge names its sign-in page so (`/auth/login?rd=...`). Anything else is
+ * ignored, so a body cannot send the browser to another site: an absolute
+ * URL, a `javascript:` URL, a scheme-relative `//host`, and a `/\host`,
+ * which browsers also read as scheme-relative.
  */
 export function loginUrlOf(data: unknown): string | null {
   if (typeof data !== 'object' || data === null) return null
   const raw = (data as { login_url?: unknown }).login_url
-  if (typeof raw !== 'string' || raw === '') return null
+  if (typeof raw !== 'string' || !raw.startsWith('/') || /^\/[/\\]/.test(raw)) return null
   try {
-    const url = new URL(raw, window.location.href)
-    if (url.protocol === 'https:') return url.href
-    if (url.protocol === 'http:' && window.location.protocol === 'http:') return url.href
-    return null
+    const url = new URL(raw, window.location.origin)
+    return url.origin === window.location.origin ? url.pathname + url.search + url.hash : null
   } catch {
     return null
   }

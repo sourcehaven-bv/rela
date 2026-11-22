@@ -13,7 +13,7 @@ status: done
 - [x] Unit tests written for new code (workspaceAccess.test.ts, WorkspaceAccessScreen.test.ts, ReadOnlyBanner.test.ts, cluster_test.go, host_test.go, provision_test.go, staticshell_test.go)
 - [x] Integration tests written (test full flow, not just units) (refusals go through the real API client and its interceptor; the host tests serve real requests)
 - [x] Happy path implemented
-- [x] Edge cases from planning handled (first refusal wins; login_url protocol check; probe cooldown; no identity; provisioning and erased stay unknown_tenant)
+- [x] Edge cases from planning handled (first refusal wins; login_url limited to local paths; probe cooldown; no identity; provisioning and erased stay unknown_tenant)
 - [x] Error handling in place (errors surfaced, not swallowed)
 
 ## Test Quality
@@ -40,6 +40,6 @@ Full vitest (472 files), vue-tsc, eslint, and go test for internal/tenant, inter
 patterns extracted to a helper / constant / type where it sharpens the contract
 (don't extract for its own sake; CLAUDE.md "three similar lines is better than a
 premature abstraction" still holds)
-- [x] No security issues introduced (login_url accepts https, or http on an http page; the gates only hide UI, the server still refuses)
+- [x] No security issues introduced (login_url is limited to a local path on the same site; the gates only hide UI, the server still refuses)
 - [x] No silent failures (errors logged AND returned)
 - [x] No debug code left behind

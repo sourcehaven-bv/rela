@@ -922,7 +922,7 @@ input:
 | 401 with a problem `detail` and no `login_url` | "This server cannot identify you", the detail, and Try again. A server with no identity source answers so. |
 
 Sign in again is a full page navigation to the `login_url` of the 401 body,
-when it is an https URL (or an http URL on an http page), and otherwise a reload of the page, which
+when it is a local path on the same site, and otherwise a reload of the page, which
 the edge sends to sign-in. pratique's edge answers an expired session's API
 request with 401 and `{"error":"session_expired","login_url":"..."}`. An
 edge that redirects such a request to sign-in instead gives the browser a

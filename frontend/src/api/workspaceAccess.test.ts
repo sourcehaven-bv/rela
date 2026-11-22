@@ -29,7 +29,7 @@ describe('refusalOf', () => {
     // A 401 that explains itself and names no sign-in page: signing in again
     // cannot help.
     expect(refusalOf(401, { status: 401, detail: 'no user identity' })).toBe('no_identity')
-    expect(refusalOf(401, { detail: 'expired', login_url: 'https://hub.example/login' })).toBe(
+    expect(refusalOf(401, { detail: 'expired', login_url: '/auth/login?rd=%2Ftickets' })).toBe(
       'session_ended'
     )
     expect(refusalOf(403, problem('tenant_suspended'))).toBe('suspended')
@@ -45,18 +45,16 @@ describe('refusalOf', () => {
 })
 
 describe('loginUrlOf', () => {
-  it('accepts an http(s) sign-in page and nothing else', () => {
-    expect(loginUrlOf({ login_url: 'https://account.example/login?x=1' })).toBe(
-      'https://account.example/login?x=1'
-    )
-    expect(loginUrlOf({ login_url: '/auth/login' })).toBe(
-      new URL('/auth/login', window.location.href).href
-    )
+  it('accepts a local path and nothing else', () => {
+    expect(loginUrlOf({ login_url: '/auth/login?rd=%2Ftickets' })).toBe('/auth/login?rd=%2Ftickets')
+    // Another site, however it is written.
+    expect(loginUrlOf({ login_url: 'https://account.example/login' })).toBeNull()
+    expect(loginUrlOf({ login_url: `${window.location.origin}/auth/login` })).toBeNull()
+    expect(loginUrlOf({ login_url: '//evil.example/login' })).toBeNull()
+    expect(loginUrlOf({ login_url: '/\\evil.example/login' })).toBeNull()
+    expect(loginUrlOf({ login_url: '/\t/evil.example/login' })).toBeNull()
     expect(loginUrlOf({ login_url: 'javascript:alert(1)' })).toBeNull()
-    // http only from a page that is itself served over http.
-    expect(loginUrlOf({ login_url: 'http://hub.example/login' })).toBe(
-      window.location.protocol === 'http:' ? 'http://hub.example/login' : null
-    )
+    expect(loginUrlOf({ login_url: 'auth/login' })).toBeNull()
     expect(loginUrlOf({ login_url: 42 })).toBeNull()
     expect(loginUrlOf(null)).toBeNull()
   })
@@ -66,10 +64,10 @@ describe('trackAccess', () => {
   afterEach(resetAccessForTest)
 
   it('keeps the first refusal and the sign-in page of a 401', () => {
-    trackAccess(401, { error: 'session_expired', login_url: 'https://hub.example/login' })
+    trackAccess(401, { error: 'session_expired', login_url: '/auth/login?rd=%2Ftickets' })
     trackAccess(403, problem('tenant_suspended'))
     expect(accessRefusal.value).toBe('session_ended')
-    expect(loginUrl.value).toBe('https://hub.example/login')
+    expect(loginUrl.value).toBe('/auth/login?rd=%2Ftickets')
   })
 
   it('keeps the explanation of a 401 that names no sign-in page', () => {
@@ -107,11 +105,11 @@ describe('probeSessionEnded', () => {
     const fetchFn = respond({
       type: 'basic',
       status: 401,
-      json: async () => ({ error: 'session_expired', login_url: 'https://hub.example/login' }),
+      json: async () => ({ error: 'session_expired', login_url: '/auth/login?rd=%2Ftickets' }),
     })
     await probeSessionEnded(fetchFn)
     expect(accessRefusal.value).toBe('session_ended')
-    expect(loginUrl.value).toBe('https://hub.example/login')
+    expect(loginUrl.value).toBe('/auth/login?rd=%2Ftickets')
   })
 
   it('leaves a server that answers, or does not answer at all, alone', async () => {
@@ -183,11 +181,11 @@ describe('API client', () => {
   it("records the edge's 401 for an ended session", async () => {
     api.getAxios().defaults.adapter = refuse(401, {
       error: 'session_expired',
-      login_url: 'https://hub.example/login',
+      login_url: '/auth/login?rd=%2Ftickets',
     })
     await expect(api.get('/tickets')).rejects.toThrow()
     expect(accessRefusal.value).toBe('session_ended')
-    expect(loginUrl.value).toBe('https://hub.example/login')
+    expect(loginUrl.value).toBe('/auth/login?rd=%2Ftickets')
   })
 
   it('asks whether a request that got no response met a sign-in redirect', async () => {
