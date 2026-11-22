@@ -106,6 +106,25 @@ spaces:
 `,
 		},
 		{
+			name: "flow runs panel",
+			yaml: `
+entity_panels:
+  flow_runs:
+    permission: report:sales
+`,
+		},
+		{
+			name: "flow runs panel inside a space",
+			yaml: `
+spaces:
+  - id: sales
+    label: Sales
+    entity_panels:
+      flow_runs:
+        permission: report:sales
+`,
+		},
+		{
 			name: "page tab",
 			yaml: `
 pages:

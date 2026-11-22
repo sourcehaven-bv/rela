@@ -53,6 +53,7 @@ var validTopLevelKeys = map[string]bool{
 	"piles":                true,
 	"channels":             true,
 	"header_buttons":       true,
+	"entity_panels":        true,
 	"list_buttons":         true,
 }
 
@@ -547,6 +548,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, llmUnknownKeys(data)...)
 	errs = append(errs, validatePiles(data, cfg, meta)...)
 	errs = append(errs, headerButtonsUnknownKeys(data)...)
+	errs = append(errs, entityPanelsUnknownKeys(data)...)
 	errs = append(errs, listButtonsUnknownKeys(data)...)
 	errs = append(errs, validateChannelsShape(data, cfg)...)
 	errs = append(errs, validateCrossReferences(cfg)...)

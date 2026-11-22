@@ -169,6 +169,11 @@ func TestValidateConfig_PageChrome(t *testing.T) {
 		{"entity page header unknown key", "header_buttons: {histroy: false}", `header_buttons: unknown key "histroy"`},
 		{"list buttons", "list_buttons: {add_to_pile: {permission: staff.manage}}", ""},
 		{"list buttons unknown key", "list_buttons: {add_to_piles: false}", `list_buttons: unknown key "add_to_piles"`},
+		{"entity panels", "entity_panels: {flow_runs: {permission: staff.manage}}", ""},
+		{"entity panels unknown key", "entity_panels: {flowruns: false}", `entity_panels: unknown key "flowruns"`},
+		{"space entity panels unknown key",
+			"spaces: [{id: portal, label: Portal, entity_panels: {flowruns: false}}]",
+			`spaces[portal].entity_panels: unknown key "flowruns"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -188,5 +193,45 @@ func TestValidateConfig_PageChrome(t *testing.T) {
 				t.Fatalf("error = %v, want it to contain %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestFlowRunsPanelShown pins that the top-level toggle and that of the
+// page's space each hide the flow runs panel, and an unknown space applies
+// the top-level toggle alone.
+func TestFlowRunsPanelShown(t *testing.T) {
+	var cfg Config
+	data := `
+entity_panels: {flow_runs: {permission: staff}}
+spaces:
+  - {id: portal, label: Portal, entity_panels: {flow_runs: false}}
+  - {id: office, label: Office}
+`
+	if err := yaml.Unmarshal([]byte(data), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	staff := func(p string) bool { return p == "staff" }
+	customer := func(string) bool { return false }
+	cases := []struct {
+		name    string
+		space   string
+		permits func(string) bool
+		want    bool
+	}{
+		{"staff in office", "office", staff, true},
+		{"staff in portal", "portal", staff, false},
+		{"customer in office", "office", customer, false},
+		{"staff without space", "", staff, true},
+		{"staff in unknown space", "nope", staff, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cfg.FlowRunsPanelShown(tc.space, tc.permits); got != tc.want {
+				t.Errorf("FlowRunsPanelShown(%q) = %v, want %v", tc.space, got, tc.want)
+			}
+		})
+	}
+	if !(*Config)(nil).FlowRunsPanelShown("portal", customer) {
+		t.Error("a nil config must show the panel")
 	}
 }

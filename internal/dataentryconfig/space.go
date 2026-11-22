@@ -48,6 +48,11 @@ type Space struct {
 	// Builtins hides or gates the built-in sidebar rows in this space. Nil:
 	// accepted, means every row is shown. See [BuiltinConfig].
 	Builtins Builtins `yaml:"builtins,omitempty" json:"builtins,omitempty"`
+
+	// EntityPanels hides built-in panels of an entity page opened in this
+	// space, on top of the top-level `entity_panels:`. Its zero value hides
+	// nothing. See [EntityPanelsConfig].
+	EntityPanels EntityPanelsConfig `yaml:"entity_panels,omitempty" json:"entity_panels,omitzero"`
 }
 
 // spaceIDPattern is the shape of [Space.ID]: short, lowercase and safe as a

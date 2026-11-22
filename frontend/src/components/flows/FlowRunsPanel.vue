@@ -26,6 +26,7 @@ import { isCancelledFetch } from '@/composables/usePageData'
 import { useEvents } from '@/composables/useEvents'
 import { useFlowList } from '@/composables/useFlowList'
 import { useUIStore } from '@/stores'
+import { spaceOf } from '@/utils/spacePath'
 import FlowRunCard from './FlowRunCard.vue'
 import { focusRunCard, requestedRun } from './focusRun'
 
@@ -80,7 +81,7 @@ async function load() {
   const ctl = new AbortController()
   controller = ctl
   try {
-    const res = await listSubjectRuns(props.entityId, ctl.signal)
+    const res = await listSubjectRuns(props.entityId, ctl.signal, spaceOf(route?.path ?? ''))
     runs.value = res.runs
     mayStart.value = new Set(res.startable)
     error.value = ''

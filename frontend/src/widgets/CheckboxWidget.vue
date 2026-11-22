@@ -25,6 +25,7 @@ function onChange(event: Event) {
     :checked="boolValue"
     disabled
     aria-readonly="true"
+    :aria-label="label || undefined"
     class="display-checkbox"
   />
   <input
@@ -33,6 +34,7 @@ function onChange(event: Event) {
     type="checkbox"
     :checked="boolValue"
     :disabled="disabled"
+    :aria-label="label || undefined"
     :aria-describedby="describedBy"
     :aria-invalid="invalid || undefined"
     @change="onChange"

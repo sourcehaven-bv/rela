@@ -240,6 +240,21 @@ export class MobileLayoutPage extends BasePage {
     return Math.min(table.y, firstRow.y) - (header.y + header.height);
   }
 
+  /**
+   * The left edge of each kept (primary) cell, per list row, in pixels. The
+   * compressed row hides the other cells with `display: none`, which leaves
+   * them without a box.
+   */
+  async keptCellLefts(): Promise<number[][]> {
+    return this.page.locator(".entity-list .rl-table-row").evaluateAll((rows) =>
+      rows.map((row) =>
+        Array.from(row.querySelectorAll<HTMLElement>(".rl-table-row__cell"))
+          .filter((cell) => getComputedStyle(cell).display !== "none")
+          .map((cell) => Math.round(cell.getBoundingClientRect().left)),
+      ),
+    );
+  }
+
   /** Open an entity page and wait for its `display: table` section. */
   async openEntityTable(type: string, id: string, heading: string) {
     await this.navigateTo(`/entity/${type}/${id}`);

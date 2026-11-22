@@ -300,6 +300,22 @@ export function useNextAction() {
     }, REFRESH_DEBOUNCE_MS)
   }
 
+  /**
+   * Re-resolve at once, without the debounce, for a caller that has just
+   * written to the graph and reloads its page: an action on the viewed
+   * entity. A notice whose condition the write settled then goes with the
+   * entity's new values instead of up to a few seconds later, when the
+   * change event's debounced refresh lands. Sticky like that refresh: the
+   * reader acted on the entity, not on the suggestion. Does nothing when no
+   * source on the page depends on graph changes.
+   */
+  async function refreshNow() {
+    if (refreshTypes.length === 0) return
+    if (refreshTimer) clearTimeout(refreshTimer)
+    refreshTimer = null
+    await load(true)
+  }
+
   async function respond(kind: NextActionFeedbackKind, duration?: string) {
     const s = suggestion.value
     if (!s || busy.value) return
@@ -358,6 +374,7 @@ export function useNextAction() {
     loadOnce,
     markShown,
     refreshForChange,
+    refreshNow,
     respond,
     acknowledge,
     // Re-resolve the slot for a caller that has just INVALIDATED the current

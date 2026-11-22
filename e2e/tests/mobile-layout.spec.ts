@@ -162,6 +162,32 @@ test.describe("Mobile app shell", () => {
   });
 
   /*
+   * An entity page names itself in the bar beside the menu toggle, as a list
+   * and a dashboard do. Its heading is below the bar, so the bar names the
+   * entity type.
+   */
+  test("an entity page has a title in the top bar", async ({ appPage }) => {
+    const mobile = new MobileLayoutPage(appPage);
+    await mobile.navigateTo(`/entity/feature/${SEED.features.authentication}`);
+    await expect(appPage.getByTestId("mobile-menu-bar-title")).toHaveText(/feature/i);
+  });
+
+  /*
+   * The badges of a list line up down the column on a phone. A kept cell
+   * used to size to its value, so a shorter or empty value moved the badge
+   * after it into another column.
+   */
+  test("a list keeps its columns in place on a phone", async ({ appPage }) => {
+    const mobile = new MobileLayoutPage(appPage);
+    await mobile.openList("features");
+
+    const rows = await mobile.keptCellLefts();
+    expect(rows.length).toBeGreaterThan(1);
+    expect(rows[0].length).toBeGreaterThan(0);
+    for (const row of rows) expect(row).toEqual(rows[0]);
+  });
+
+  /*
    * A view section table stacks each row on a phone, as a list does: the
    * first column heads the row and every other column is a labelled line.
    * It used to scroll sideways, with its last columns off screen

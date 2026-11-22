@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import NextActionCard from './NextActionCard.vue'
 import { __resetNextActionForTest } from '@/composables/useNextAction'
 import { useSchemaStore } from '@/stores/schema'
@@ -31,12 +32,20 @@ function suggestion(over: Partial<NextActionSuggestion> = {}): NextActionSuggest
   }
 }
 
+// The suggestion is a module singleton: a card left mounted would react to
+// the next test's suggestion and report its impression.
+const mounted: VueWrapper[] = []
+afterEach(() => {
+  mounted.splice(0).forEach((w) => w.unmount())
+})
+
 async function mountCard(prominence?: string) {
   if (prominence) {
     const schemaStore = useSchemaStore()
     schemaStore.nextActionBands = [{ id: 'stalled', label: 'Stalled', prominence }] as never
   }
   const w = mount(NextActionCard, { global: { stubs } })
+  mounted.push(w)
   await vi.waitFor(() => expect(mockGet).toHaveBeenCalled())
   await w.vm.$nextTick()
   await w.vm.$nextTick()
@@ -94,6 +103,46 @@ describe('NextActionCard', () => {
       mockGet.mockResolvedValue({ suggestion: suggestion() })
       const notice = await mountCard('notice')
       expect(notice.find('.rela-na-band').exists()).toBe(false)
+    })
+  })
+
+  // "Open step" leads to the subject with ?run=, where the step form opens:
+  // the banner there would point at the form below it.
+  describe('a suggestion that leads to the page on screen', () => {
+    async function mountAt(path: string) {
+      const schemaStore = useSchemaStore()
+      schemaStore.nextActionBands = [
+        { id: 'stalled', label: 'Stalled', prominence: 'banner' },
+      ] as never
+      const router = createRouter({
+        history: createMemoryHistory(),
+        routes: [
+          { path: '/', component: { template: '<div/>' } },
+          { path: '/entity/:type/:id', name: 'entity', component: { template: '<div/>' } },
+        ],
+      })
+      await router.push(path)
+      const w = mount(NextActionCard, { global: { plugins: [router], stubs } })
+      mounted.push(w)
+      await vi.waitFor(() => expect(mockGet).toHaveBeenCalled())
+      await w.vm.$nextTick()
+      await w.vm.$nextTick()
+      return w
+    }
+    const step = () =>
+      suggestion({ actions: [{ label: 'Open step', navigate: '/entity/account/ACC-1?run=RUN-1' }] })
+
+    it('is hidden there and reports no impression', async () => {
+      mockGet.mockResolvedValue({ suggestion: step() })
+      const w = await mountAt('/entity/account/ACC-1?run=RUN-1')
+      expect(w.find('.rela-na').exists()).toBe(false)
+      expect(mockFeedback.mock.calls).toEqual([])
+    })
+
+    it('shows on any other page', async () => {
+      mockGet.mockResolvedValue({ suggestion: step() })
+      const w = await mountAt('/')
+      expect(w.find('.rela-na').exists()).toBe(true)
     })
   })
 

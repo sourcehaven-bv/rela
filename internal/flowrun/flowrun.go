@@ -95,9 +95,13 @@ const (
 	// ViaCancel: the run was cancelled in State. Only the log a header
 	// keeps ends with it; a stored run is never cancelled.
 	ViaCancel Via = "cancel"
+	// ViaFailed: the job of State failed for good. The run stays in
+	// State; it is no move.
+	ViaFailed Via = "failed"
 )
 
-// Step is one entry of a run's timeline: the run entered State at At.
+// Step is one entry of a run's timeline: the run entered State at At, or,
+// via [ViaFailed], the job of State failed for good at At.
 // The log lives in the run's stored state; when the run ends, its header
 // keeps it ([LogBody]).
 type Step struct {
@@ -633,7 +637,7 @@ func checkLog(log []Step) error {
 			return invalid("log entry out of range")
 		}
 		switch s.Via {
-		case ViaStart, ViaDone, ViaChange, ViaTimer, ViaJoin, ViaCancel:
+		case ViaStart, ViaDone, ViaChange, ViaTimer, ViaJoin, ViaCancel, ViaFailed:
 		default:
 			return invalid("log cause %q", s.Via)
 		}

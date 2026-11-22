@@ -14,10 +14,12 @@
  * caught up" card. Silence is the normal condition of a well-configured
  * system, and a placeholder would turn that quiet into noise on every page.
  */
-import { onMounted, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import { useNextAction } from '@/composables/useNextAction'
 import { useEvents } from '@/composables/useEvents'
+import { leadsHere } from '@/utils/nextActionPlacement'
 import NextActionOffers from './NextActionOffers.vue'
 
 const { t } = useI18n()
@@ -26,6 +28,30 @@ const { suggestion, bandLabel, prominence, isPageLevel, loadOnce, markShown, ref
 
 onMounted(loadOnce)
 
+// Undefined outside a router (a component test).
+const route = useRoute() as ReturnType<typeof useRoute> | undefined
+const router = useRouter() as ReturnType<typeof useRouter> | undefined
+
+/**
+ * A suggestion whose navigate offer leads to the page on screen is not
+ * shown: the reader is already there. "Open step" links to the subject with
+ * `?run=`, where the step form opens below the card.
+ */
+const alreadyHere = computed(() => {
+  const s = suggestion.value
+  if (!s || !route || !router) return false
+  return (s.actions ?? []).some((o) => {
+    if (!o.navigate) return false
+    try {
+      return leadsHere(router.resolve(o.navigate.replace('{id}', s.entity_id || '')), route)
+    } catch {
+      return false
+    }
+  })
+})
+
+const shown = computed(() => isPageLevel.value && !!suggestion.value && !alreadyHere.value)
+
 // Report the impression when this component actually RENDERS the suggestion —
 // not when it is resolved. The status-bar tier is rendered elsewhere, and a
 // suggestion replaced by feedback must not be counted before it is seen.
@@ -33,7 +59,7 @@ onMounted(loadOnce)
 // and a navigation can swap one page-level suggestion for another. markShown
 // is idempotent per suggestion key.
 watch(
-  () => (isPageLevel.value ? suggestion.value : null),
+  () => (shown.value ? suggestion.value : null),
   (shown) => {
     if (shown) void markShown()
   },
@@ -47,7 +73,7 @@ on('entity:changed', (data) => refreshForChange(data.type ?? ''))
 
 <template>
   <section
-    v-if="isPageLevel && suggestion"
+    v-if="shown && suggestion"
     class="na rela-na"
     :class="`na--${prominence}`"
     :data-band="suggestion.band"
