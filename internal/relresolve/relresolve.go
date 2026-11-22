@@ -269,7 +269,7 @@ func (b *Binder) Bind(
 	if len(specs) == 0 {
 		return func(string) predicate.TraversalFunc { return nil }, nil
 	}
-	answers, err := Answer(ctx, b.meta, b.gate, b.match, entityType, specs, dedupe(ids))
+	answers, err := Answer(ctx, b.meta, b.gate, b.match, entityType, specs, slices.Compact(slices.Sorted(slices.Values(ids))))
 	if err != nil {
 		return nil, err
 	}
@@ -293,13 +293,4 @@ func Specs(progs ...*predicate.Program) []predicate.TraversalSpec {
 		}
 	}
 	return out
-}
-
-func dedupe(ids []string) []string {
-	if len(ids) < 2 {
-		return ids
-	}
-	out := slices.Clone(ids)
-	slices.Sort(out)
-	return slices.Compact(out)
 }

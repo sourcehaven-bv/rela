@@ -229,15 +229,6 @@ func (b *RelationBuilder) To(id string) *RelationBuilder {
 	return b
 }
 
-// WithProperty adds a property to the relation.
-func (b *RelationBuilder) WithProperty(key string, value any) *RelationBuilder {
-	if b.relation.Properties == nil {
-		b.relation.Properties = make(map[string]any)
-	}
-	b.relation.Properties[key] = value
-	return b
-}
-
 // WithContent sets the relation's markdown content.
 func (b *RelationBuilder) WithContent(content string) *RelationBuilder {
 	b.relation.Content = content

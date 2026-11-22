@@ -191,19 +191,6 @@ type SeedPatcher interface {
 	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
 }
 
-// ApplySeed replays recorded seed ops against a store, using RAW store writes
-// (no entitymanager) so automations can't mutate the fixture. Used for both the
-// in-memory store (phase-2 resolvers) and the screenshot temp project's store
-// (Tier B), so the two representations cannot diverge (DR-S2).
-//
-// The one exception is the `edit` op, which is routed through patcher when one
-// is supplied — see ApplySeedWith. This preserves the fixture rule for
-// everything that CREATES the fixture, while letting a manual demonstrate a
-// real edit.
-func ApplySeed(ctx context.Context, st store.Store, ops []SeedOp) error {
-	return ApplySeedWith(ctx, st, nil, ops)
-}
-
 // ApplySeedWith is ApplySeed with a write path for the `edit` op.
 //
 // # Why `edit` is not a raw store write like the others

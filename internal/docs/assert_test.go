@@ -121,14 +121,6 @@ func TestCheckShows(t *testing.T) {
 	}
 }
 
-func TestDedupeKeepsFirstOrder(t *testing.T) {
-	got := dedupe([]string{"b", "a", "b", "c", "a"})
-	want := []string{"b", "a", "c"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("dedupe = %v, want %v", got, want)
-	}
-}
-
 // TestShowsIsland drives shows{} through the real Build path, so the binding —
 // argument extraction, the refusal rules, the seeded-store read — is covered,
 // not just the pure core.

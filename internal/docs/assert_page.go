@@ -3,6 +3,7 @@ package docs
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -338,10 +339,10 @@ func checkRegionText(region string, got, has, absent []string) string {
 	}
 	var parts []string
 	if len(missing) > 0 {
-		parts = append(parts, "missing "+strings.Join(quoteAll(dedupe(missing)), ", "))
+		parts = append(parts, "missing "+strings.Join(quoteAll(slices.Compact(slices.Sorted(slices.Values(missing)))), ", "))
 	}
 	if len(unexpected) > 0 {
-		parts = append(parts, "unexpectedly present "+strings.Join(quoteAll(dedupe(unexpected)), ", "))
+		parts = append(parts, "unexpectedly present "+strings.Join(quoteAll(slices.Compact(slices.Sorted(slices.Values(unexpected)))), ", "))
 	}
 	return strings.Join(parts, "; ")
 }

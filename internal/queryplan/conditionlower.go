@@ -41,14 +41,6 @@ type LoweredCond struct {
 	Args      []LoweredCond
 }
 
-// Walk calls visit on c and on every node below it, depth first.
-func (c LoweredCond) Walk(visit func(LoweredCond)) {
-	visit(c)
-	for _, a := range c.Args {
-		a.Walk(visit)
-	}
-}
-
 // LowerCondition decides whether a query condition on entityType can be
 // answered by the store alone, and if so returns the predicates that answer
 // it. A query condition is one that narrows a collection read: a list's

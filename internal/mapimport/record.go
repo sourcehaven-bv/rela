@@ -73,7 +73,7 @@ func derive(
 		if err != nil {
 			return nil, recErr(em, d.loc, "relations.%s: %v", rm.Name, err)
 		}
-		d.rels[rm.Name] = dedup(keys)
+		d.rels[rm.Name] = slices.Compact(slices.Sorted(slices.Values(keys)))
 	}
 	if em.idParts != nil {
 		id, err := em.idParts.render(rec, root, nil)
@@ -236,16 +236,4 @@ func coerce(pd metamodel.PropertyDef, s string) (any, error) {
 		return ref.Map(), nil
 	}
 	return s, nil
-}
-
-func dedup(in []string) []string {
-	seen := map[string]bool{}
-	out := in[:0]
-	for _, s := range in {
-		if !seen[s] {
-			seen[s] = true
-			out = append(out, s)
-		}
-	}
-	return out
 }
