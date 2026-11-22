@@ -48,6 +48,7 @@ import { useFlyout } from '@/composables/useFlyout'
 import { useInboxNotifications } from '@/composables/useInboxNotifications'
 import { useTabTitleBadge } from '@/composables/useTabTitleBadge'
 import { shouldDeferToBrowser } from '@/utils/openIntent'
+import { usePhoneScreen } from '@/composables/usePhoneScreen'
 import { useI18n } from 'vue-i18n'
 import { apiUrl } from '@/api/base'
 import { createPile } from '@/api/piles'
@@ -259,7 +260,12 @@ const { hasFlows } = useFlowList()
  * it is a UX filter, and the pages behind the rows stay reachable by URL.
  */
 const hiddenBuiltins = ref<ReadonlySet<BuiltinRow>>(new Set())
-const showsBuiltin = (row: BuiltinRow) => !hiddenBuiltins.value.has(row)
+// The rows `hidden_on_phone:` leaves out on a phone-sized screen. The server
+// names them; only the browser knows the screen width.
+const phoneHiddenBuiltins = ref<ReadonlySet<BuiltinRow>>(new Set())
+const phoneScreen = usePhoneScreen()
+const showsBuiltin = (row: BuiltinRow) =>
+  !hiddenBuiltins.value.has(row) && !(phoneScreen.value && phoneHiddenBuiltins.value.has(row))
 // The as-of picker waits for the first answer, so a space that hides it does
 // not show it for a moment first.
 const builtinsKnown = ref(false)
@@ -352,6 +358,7 @@ async function loadSidebar() {
     sidebarAppName.value = data.app.name
     sidebarGroups.value = data.navigation
     hiddenBuiltins.value = new Set(data.hidden_builtins ?? [])
+    phoneHiddenBuiltins.value = new Set(data.phone_hidden_builtins ?? [])
     builtinsKnown.value = true
     schemaStore.setLogoUrl(data.logoUrl ?? null)
     // Principal-scoped inline-create offers ride on this payload; see
@@ -567,7 +574,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
       the whole band, toggle included.
     -->
     <template #footer>
-      <SidebarFooter />
+      <SidebarFooter :show-shortcuts="showsBuiltin('shortcuts')" />
       <AccountMenu />
       <RlThemeToggle v-if="!schemaStore.darkDisabled" v-model="theme" class="sidebar-theme" />
     </template>

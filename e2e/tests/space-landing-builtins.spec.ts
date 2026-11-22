@@ -5,7 +5,8 @@ import { SpacesPage } from "../pages";
 
 /**
  * TKT-JEAR2UA: the app root opens the current space's home, and `builtins:`
- * hides the pinned sidebar rows per space.
+ * hides the pinned sidebar rows per space. TKT-KW8T8Y5 adds hidden_on_phone
+ * for the Shortcuts button.
  *
  * The shared project's top-level navigation is rewritten into two spaces
  * before the server starts, as in spaces.spec.ts.
@@ -27,6 +28,7 @@ const SPACES_YAML = `spaces:
       flow_tasks: {hidden: true}
       flow_runs: {hidden: true}
       analysis: {hidden: true}
+      shortcuts: {hidden_on_phone: true}
     navigation:
       - label: "Bugs"
         list: bugs
@@ -74,6 +76,22 @@ test.describe("Space landing and built-in rows", () => {
     await appPage.goto(`${serverUrl}/s/portal/list/bugs`);
     await expect(spaces.sidebarLink("Bugs")).toBeVisible();
     await expect(spaces.pinnedRows).toHaveCount(0);
+  });
+
+  test("hidden_on_phone drops the Shortcuts button on a phone only", async ({ appPage, serverUrl }) => {
+    const spaces = new SpacesPage(appPage);
+    const shortcuts = appPage.locator("#main-sidebar .shortcuts-btn");
+
+    await appPage.goto(`${serverUrl}/s/portal/list/bugs`);
+    await expect(spaces.sidebarLink("Bugs")).toBeVisible();
+    await expect(shortcuts).toBeVisible();
+
+    await appPage.setViewportSize({ width: 375, height: 812 });
+    await expect(shortcuts).toHaveCount(0);
+
+    await appPage.goto(`${serverUrl}/s/staff/list/features`);
+    await expect(spaces.sidebarLink("Features")).toBeAttached();
+    await expect(shortcuts).toHaveCount(1);
   });
 });
 

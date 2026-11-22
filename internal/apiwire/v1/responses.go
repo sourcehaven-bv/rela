@@ -1485,11 +1485,16 @@ type SidebarResponse struct {
 	// hint, like InlineCreate; the create endpoint re-authorizes.
 	Create []SidebarCreate `json:"create,omitempty"`
 	// HiddenBuiltins names the built-in sidebar rows ("search", "inbox",
-	// "flow_tasks", "flow_runs", "analysis") and the as-of picker ("as_of")
-	// that the current space, or the top-level sidebar without spaces, leaves
-	// out for this principal ([dataentryconfig.Builtins]). Absent when every row is shown. A UX
+	// "flow_tasks", "flow_runs", "analysis"), the as-of picker ("as_of") and
+	// the footer Shortcuts button ("shortcuts") that the current space, or the
+	// top-level sidebar without spaces, leaves out for this principal
+	// ([dataentryconfig.Builtins]). Absent when every row is shown. A UX
 	// filter: the pages behind the rows stay reachable by URL.
 	HiddenBuiltins []dataentryconfig.BuiltinRow `json:"hidden_builtins,omitempty"`
+	// PhoneHiddenBuiltins names the rows the same sidebar leaves out on a
+	// phone-sized screen (`hidden_on_phone:`). The SPA applies it. Absent
+	// when no row sets it.
+	PhoneHiddenBuiltins []dataentryconfig.BuiltinRow `json:"phone_hidden_builtins,omitempty"`
 
 	// Pages are the config's `pages:`, keyed by page id, each with the tabs
 	// this principal may see. Absent when the config declares no pages.

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"slices"
 	"sort"
@@ -340,7 +341,39 @@ type Action struct {
 	// A faced type is keyed `type@face`, one key per face. Requires
 	// AllowACLBypass.
 	ElevatedUpdates map[string][]string `yaml:"elevated_updates,omitempty" json:"-"`
+
+	// Style is how an entity page draws the action's button: empty for the
+	// normal secondary button, [ActionStyleDanger] for a destructive one.
+	// Other values are a load error. Lists, boards and the sidebar ignore it.
+	Style ActionStyle `yaml:"style,omitempty" json:"style,omitempty"`
+
+	// Order places the action among the other actions on an entity page:
+	// lower first, then by label. Zero, the value when the key is absent, is
+	// a position like any other, so an action without it sits between the
+	// negative and the positive ones. Lists, boards and the sidebar keep
+	// their own order.
+	Order ActionOrder `yaml:"order,omitempty" json:"order,omitempty"`
 }
+
+// ActionOrder is an action's `order:`, decoded strictly: yaml.v3 would
+// truncate `order: 1.5` to 1 without a word, as it would a span.
+type ActionOrder int
+
+// UnmarshalYAML decodes an order, rejecting a non-integer number.
+func (o *ActionOrder) UnmarshalYAML(value *yaml.Node) error {
+	n, err := decodeWholeNumber(value, "order must be a whole number")
+	if err != nil {
+		return err
+	}
+	*o = ActionOrder(n)
+	return nil
+}
+
+// ActionStyle is the `style:` of an action.
+type ActionStyle string
+
+// ActionStyleDanger draws the action as a destructive button.
+const ActionStyleDanger ActionStyle = "danger"
 
 // ActionScope names where an action is offered on entity detail pages.
 type ActionScope struct {
@@ -699,23 +732,37 @@ type Span int
 
 // UnmarshalYAML decodes a span, rejecting non-integer numbers.
 func (s *Span) UnmarshalYAML(value *yaml.Node) error {
+	n, err := decodeWholeNumber(value, "span must be a whole number of columns")
+	if err != nil {
+		return err
+	}
+	*s = Span(n)
+	return nil
+}
+
+// decodeWholeNumber decodes a YAML number that must be whole. yaml.v3 would
+// truncate 6.5 to 6 when decoding into an int, so the value is read as a
+// float first. what starts the error message; the line is appended.
+func decodeWholeNumber(value *yaml.Node, what string) (int, error) {
 	var f float64
 	if err := value.Decode(&f); err != nil {
-		// Not a number at all — let the int decode produce the usual
+		// Not a number at all: let the int decode produce the usual
 		// "cannot unmarshal !!str into int" message rather than inventing one.
 		var i int
 		if err := value.Decode(&i); err != nil {
-			return err
+			return 0, err
 		}
-		*s = Span(i)
-		return nil
+		return i, nil
 	}
-	if f != float64(int(f)) {
-		return fmt.Errorf("span must be a whole number of columns, got %v", f)
+	if f != math.Trunc(f) || math.Abs(f) > maxWholeNumber {
+		return 0, fmt.Errorf("%s, got %v (line %d)", what, f, value.Line)
 	}
-	*s = Span(int(f))
-	return nil
+	return int(f), nil
 }
+
+// maxWholeNumber bounds decodeWholeNumber so a float64 holds the value
+// exactly and the int conversion cannot overflow.
+const maxWholeNumber = 1 << 31
 
 // ValidCalendarColors is the allowlist of palette tokens a calendar source may
 // use to distinguish its events.
