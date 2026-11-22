@@ -298,3 +298,28 @@ func TestPropertyReads_AgreesWithInterpolate(t *testing.T) {
 		})
 	}
 }
+
+// TestInterpolate_CurrentUser pins that {{current_user.id}} fills in only
+// for the trigger engine: never in inline Lua code, which reads
+// rela.principal, and not for other callers of Interpolate (copy fields,
+// conversion templates), where it stays literal text.
+func TestInterpolate_CurrentUser(t *testing.T) {
+	t.Parallel()
+	const tmpl = "by {{current_user.id}}"
+	engineVars := TemplateVars{CurrentUserID: "PERS-1", currentUser: true}
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"engine", Interpolate(tmpl, engineVars, nil, nil), "by " + engineVars.CurrentUserID},
+		{"engine without a user", Interpolate(tmpl, TemplateVars{currentUser: true}, nil, nil), "by "},
+		{"inline Lua", InterpolateSafeOnly(tmpl, engineVars), tmpl},
+		{"other callers", Interpolate(tmpl, TemplateVars{CurrentUserID: "PERS-1"}, nil, nil), tmpl},
+	}
+	for _, tc := range tests {
+		if tc.got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, tc.got, tc.want)
+		}
+	}
+}

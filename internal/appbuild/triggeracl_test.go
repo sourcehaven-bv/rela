@@ -155,6 +155,13 @@ func TestCheckTriggerACL(t *testing.T) {
 			after: trigger("    on: {entity: task, updated: true}\n" +
 				"    outputs:\n      - relate: {type: about, to: \"{{new.notes}}\"}\n"),
 			want: []string{"relation target with a placeholder"}},
+		{name: "a relation target that is the acting user passes",
+			after: trigger("    on: {entity: task, created: true}\n" +
+				"    outputs:\n      - relate: {type: about, to: \"{{current_user.id}}\"}\n")},
+		{name: "the acting user inside a longer target",
+			after: trigger("    on: {entity: task, created: true}\n" +
+				"    outputs:\n      - relate: {type: about, to: \"x-{{current_user.id}}\"}\n"),
+			want: []string{"relation target with a placeholder"}},
 		{name: "a pile name from a placeholder",
 			after: trigger("    on: {entity: task, updated: true}\n" +
 				"    outputs:\n      - add_to_pile: {pile: \"{{new.title}}\", owner: \"{{new.owner}}\"}\n"),
