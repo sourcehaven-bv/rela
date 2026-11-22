@@ -27,6 +27,7 @@ import type {
   DashboardResponse,
 } from '@/types'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
+import PageHeaderContent from '@/components/common/PageHeaderContent'
 import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
 
 /**
@@ -414,10 +415,14 @@ watch([() => props.name, () => props.anchor, worldParam], () => void loadData())
 
 <template>
   <div class="dashboard-view" :data-testid="`page-state-${pageState}`">
-    <header class="dashboard-header mobile-topbar mobile-topbar--with-menu">
-      <h1>{{ title }}</h1>
-      <p v-if="description" class="description">{{ description }}</p>
-    </header>
+    <!--
+      The title goes in the shell's header band, like a list's. A header of
+      the dashboard's own sat below the page's notice, and on a phone it kept
+      a slot for a menu button that the notice had pushed onto a row of its
+      own (BUG-UX4P9T2).
+    -->
+    <PageHeaderContent :title="title" />
+    <p v-if="description" class="description">{{ description }}</p>
 
     <RlStatusRegion v-if="loading">{{ t('dashboardView.loading') }}</RlStatusRegion>
 
@@ -657,17 +662,9 @@ watch([() => props.name, () => props.anchor, worldParam], () => void loadData())
   max-width: 1200px;
 }
 
-.dashboard-header {
-  margin-bottom: 24px;
-}
-
-.dashboard-header h1 {
-  margin: 0 0 8px;
-}
-
 .description {
   color: var(--rl-color-text-muted);
-  margin: 0;
+  margin: 0 0 24px;
 }
 
 .dashboard-grid {
@@ -899,18 +896,6 @@ watch([() => props.name, () => props.anchor, worldParam], () => void loadData())
 }
 
 @media (max-width: 768px) {
-  /* .dashboard-header uses .mobile-topbar.mobile-topbar--with-menu from
-     mobile-bars.css. Override only typography and hide the description
-     to keep the bar compact. */
-  .dashboard-header h1 {
-    font-size: var(--font-size-lg);
-    margin: 0;
-  }
-
-  .dashboard-header .description {
-    display: none;
-  }
-
   .dashboard-grid {
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: var(--space-md);

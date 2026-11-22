@@ -11,6 +11,7 @@
 import type { CollectionItem } from '../../types'
 import { computed, nextTick, ref } from 'vue'
 import type { RowMove, TableColumn, TableCompact } from './types'
+import { cellSizeStyle, lastKeptKey } from './columnSizing'
 import RlCheckbox from '../form/RlCheckbox.vue'
 import { useReorderableRow } from '../../composables/useRowReorder'
 import { useMessages } from '../../composables/useMessages'
@@ -119,6 +120,9 @@ function onHandleKey(event: KeyboardEvent) {
  *   whatever element it gets across the full row, so no class is needed.
  */
 defineSlots<Record<string, (props: { item: T; column?: TableColumn; selected?: boolean }) => unknown>>()
+
+/** The last kept cell of a compressed row, which carries the right gutter. */
+const lastKept = computed(() => lastKeptKey(props.columns))
 
 /** The plain-text default for a column that names a field. */
 function fieldValue(column: TableColumn): unknown {
@@ -232,9 +236,10 @@ function asText(value: unknown): string | undefined {
         'rl-table-row__cell--empty': !hasValue(column),
         'rl-table-row__cell--end': column.align === 'end',
         'rl-table-row__cell--secondary': !column.primary,
+        'rl-table-row__cell--last-kept': column.key === lastKept,
       }"
       role="gridcell"
-      :style="{ '--rl-cell-width': `${column.width ?? 150}px` }"
+      :style="cellSizeStyle(column)"
     >
       <!-- Visible only once the row stacks, where the header is out of view. -->
       <span class="rl-table-row__cell-label" aria-hidden="true">{{ column.header }}</span>
@@ -335,8 +340,12 @@ function asText(value: unknown): string | undefined {
   display: flex;
   align-items: center;
   gap: var(--rl-space-3);
-  flex: 1;
-  min-width: 0;
+  /*
+   * The same basis and floor as the header's name cell (`columnSizing.ts`),
+   * so a shortfall takes the same share from the name in every row.
+   */
+  flex: 1 1 var(--rl-name-basis, 200px);
+  min-width: var(--rl-name-min-width, 160px);
   padding: var(--rl-space-2) var(--rl-space-4);
 }
 
@@ -457,18 +466,22 @@ function asText(value: unknown): string | undefined {
   display: flex;
   align-items: center;
   gap: var(--rl-space-2);
-  flex: none;
+  /*
+   * The column's width is a basis, not a fixed size: a table narrower than
+   * its columns shrinks every cell by the same share of its basis, down to
+   * its floor, and only then scrolls. The explicit floor rather than `auto`
+   * keeps the contents out of the sum, so every row and the header land on
+   * the same widths. See `columnSizing.ts`.
+   */
+  flex: 0 1 var(--rl-cell-width);
   align-self: stretch;
   box-sizing: border-box;
-  width: var(--rl-cell-width);
+  min-width: var(--rl-cell-min-width);
   /*
-   * A fixed width alone does not contain the contents: flex children take
-   * their own intrinsic size and push past the edge, so a cell with several
-   * tags spills into the column beside it. The min-width lets the cell
-   * actually shrink its children, and the clip keeps anything still too wide
-   * inside its own column instead of painting over the next one.
+   * The clip keeps anything too wide inside its own column instead of
+   * painting over the next one: flex children take their own intrinsic size
+   * and would otherwise push past the edge.
    */
-  min-width: 0;
   overflow: hidden;
   padding: var(--rl-space-2) var(--rl-space-4);
   border-left: 1px solid var(--rl-color-border);
@@ -504,7 +517,7 @@ function asText(value: unknown): string | undefined {
  * so each populated cell takes its own line and shows its own label. Nothing
  * is dropped, and the row grows as tall as its data needs.
  */
-@container rl-table (max-width: 767px) {
+@container rl-table (max-width: 639px) {
   .rl-table-row--stack {
     flex-direction: column;
     align-items: stretch;
@@ -530,11 +543,14 @@ function asText(value: unknown): string | undefined {
   }
 
   .rl-table-row--stack .rl-table-row__name {
+    flex: none;
+    min-width: 0;
     padding-inline: var(--rl-page-gutter-left) var(--rl-page-gutter-right);
   }
 
   .rl-table-row--stack .rl-table-row__cell {
-    width: auto;
+    flex: none;
+    min-width: 0;
     padding-inline: var(--rl-page-gutter-left) var(--rl-page-gutter-right);
     border-left: none;
     font-size: var(--rl-font-size-sm);
@@ -568,7 +584,7 @@ function asText(value: unknown): string | undefined {
  * no gap and is not read out. The cell is gone from this width only and comes
  * back whole when the table widens.
  */
-@container rl-table (max-width: 767px) {
+@container rl-table (max-width: 639px) {
   .rl-table-row--compress {
     /*
      * The same compact gutter the stacked row takes, and set here for the
@@ -580,7 +596,31 @@ function asText(value: unknown): string | undefined {
     --rl-page-gutter-right: calc(var(--rl-space-4) + var(--rl-safe-inset-right));
   }
 
-  .rl-table-row--compress .rl-table-row__name { padding-inline: var(--rl-page-gutter-left) 0; }
+  /*
+   * The title keeps a readable width. When it and the kept cells do not fit
+   * on one line, the cells move to a line of their own under the title,
+   * all of them together: the name's basis is then the whole line. A row
+   * that does fit gives the name exactly what the cells leave over. The
+   * `clamp` picks between the two without script: its middle term is a
+   * large positive length only when the floor and the kept cells overflow.
+   *
+   * The row is indented by the gutter less a cell's padding, so a wrapped
+   * cell's text starts under the title rather than at the screen edge.
+   */
+  .rl-table-row--compress {
+    flex-wrap: wrap;
+    padding-inline-start: calc(var(--rl-page-gutter-left) - var(--rl-space-2));
+  }
+
+  .rl-table-row--compress .rl-table-row__name {
+    flex: 1 0 clamp(
+      calc(100% - var(--rl-kept-width, 0px)),
+      calc((var(--rl-name-compact-min-width, 120px) + var(--rl-kept-width, 0px) - 100%) * 1000),
+      100%
+    );
+    min-width: 0;
+    padding-inline: var(--rl-space-2) 0;
+  }
 
   .rl-table-row--compress .rl-table-row__cell--secondary { display: none; }
 
@@ -595,14 +635,22 @@ function asText(value: unknown): string | undefined {
    * A longer value is clipped inside its own cell, as on desktop.
    */
   .rl-table-row--compress .rl-table-row__cell {
+    flex: none;
     width: min(var(--rl-cell-width), 30cqi);
+    min-width: 0;
     padding-inline: var(--rl-space-2);
     border-left: none;
     font-size: var(--rl-font-size-sm);
   }
 
-  /* The last kept cell sits against the gutter rather than the row's edge. */
-  .rl-table-row--compress .rl-table-row__cell:last-child {
+  /*
+   * The last kept cell sits against the gutter rather than the row's edge,
+   * and is wider by that gutter, so the gutter does not come out of its
+   * value: a "Download PDF" link was cut to "Download P…" by it.
+   * `keptWidth` in `columnSizing.ts` counts the same extra.
+   */
+  .rl-table-row--compress .rl-table-row__cell--last-kept {
+    width: calc(min(var(--rl-cell-width), 30cqi) + var(--rl-page-gutter-right) - var(--rl-space-2));
     padding-right: var(--rl-page-gutter-right);
   }
 
