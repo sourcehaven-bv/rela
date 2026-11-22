@@ -70,7 +70,7 @@
     "src/views/HistoryView.vue": 7,
     "src/views/RelationHistoryView.vue": 7,
     "src/views/SearchView.vue": 1,
-    "src/views/SettingsView.vue": 114,
+    "src/views/SettingsView.vue": 113,
     "src/widgets/SelectWidget.vue": 1
   }
 }

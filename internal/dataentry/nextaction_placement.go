@@ -90,20 +90,33 @@ func (p nextActionPage) enabled(cfg *dataentryconfig.Config) bool {
 	return cfg.NextActionsEnabled(p.surface, p.view)
 }
 
-// refreshType is the entity type whose changes can change this page's
-// answer: the page's context type, when some source that may compete here
-// is about it. Empty otherwise, so the client does not re-resolve on graph
-// changes no source here can see.
-func (p nextActionPage) refreshType(cfg *dataentryconfig.Config) string {
-	if p.contextType == "" || p.entityID == "" {
-		return ""
-	}
+// refreshTypes are the entity types whose changes can change this page's
+// answer. The page's context type is one when a context source that may
+// compete here is about it. The run type is one when a flow_tasks source may
+// compete here: completing a step changes the run, and the hint for that
+// task must go away. Empty otherwise, so the client does not re-resolve on
+// graph changes no source here can see.
+//
+// A run moves often (timers, other people's steps), so a page with a
+// flow_tasks source re-resolves on each move by anyone. The client debounces
+// it, and the resolve reads one task list plus one subject batch per type.
+func (p nextActionPage) refreshTypes(cfg *dataentryconfig.Config) []string {
+	var context, tasks bool
 	for id, src := range cfg.NextActions {
-		if src.Context != "" && p.keeps(id, src) {
-			return p.contextType
+		if !p.keeps(id, src) {
+			continue
 		}
+		context = context || (src.Context != "" && p.contextType != "" && p.entityID != "")
+		tasks = tasks || src.IsFlowTasks()
 	}
-	return ""
+	var out []string
+	if context {
+		out = append(out, p.contextType)
+	}
+	if tasks {
+		out = append(out, entityPkg.FlowRunType)
+	}
+	return out
 }
 
 // keeps reports whether a source may compete on this page. It runs before the
@@ -134,7 +147,7 @@ func nextActionCurrent(r *http.Request) *userstate.Key {
 // contextCandidates yields the viewed entity as the one candidate of a
 // context-aware source.
 //
-// The read runs in ctx, which nextActionCandidates has already rebound to the
+// The read runs in ctx, which nextActionHandler.candidates has already rebound to the
 // source's world, through the row gate. A missing entity, a hidden one and
 // one of another type are all the same empty answer, so the endpoint is no
 // oracle on which ids exist. A gate fault is an error, as on every read path:
@@ -143,19 +156,19 @@ func nextActionCurrent(r *http.Request) *userstate.Key {
 // The entity is then field-redacted like a query candidate, with verdicts
 // primed first, so the message template and the condition see only what this
 // principal may see.
-func (a *App) contextCandidates(
+func (h *nextActionHandler) contextCandidates(
 	ctx context.Context, src dataentryconfig.NextActionSource, entityID string,
 ) ([]nextaction.Candidate, error) {
 	if entityID == "" {
 		return nil, nil
 	}
-	e, ok, err := a.visibleReader.inWorld(ctx, src.Context, entityID)
+	e, ok, err := h.inWorld(ctx, src.Context, entityID)
 	if err != nil {
 		return nil, fmt.Errorf("next-action context %q: %w", src.Context, err)
 	}
 	if !ok || e.Type != src.Context {
 		return nil, nil
 	}
-	ctx = primeVerdicts(ctx, a.fieldResolver, []*entityPkg.Entity{e})
-	return []nextaction.Candidate{{Entity: a.redactedForSuggestion(ctx, e)}}, nil
+	ctx = primeVerdicts(ctx, h.fields(), []*entityPkg.Entity{e})
+	return []nextaction.Candidate{{Entity: redactedForSuggestion(ctx, h.affordances(), e)}}, nil
 }

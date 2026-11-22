@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -106,7 +108,7 @@ func storedCounts(files []channels.File) map[string]int {
 // [realtimelimits.MaxMessageFileBytes].
 func checkFileShape(mt *realtimecfg.MessageType, files []FileInput) error {
 	counts := inputCounts(files)
-	for _, name := range sortedKeys(mt.Properties) {
+	for _, name := range slices.Sorted(maps.Keys(mt.Properties)) {
 		p := mt.Properties[name]
 		if p.Type != realtimecfg.PropertyFile {
 			continue

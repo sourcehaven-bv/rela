@@ -16,6 +16,8 @@ import { setActivePinia, createPinia } from 'pinia'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import DynamicForm from './DynamicForm.vue'
+import { defineComponent } from 'vue'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import type { Entity } from '@/types'
 
 const push = vi.fn()
@@ -150,6 +152,30 @@ describe('DynamicForm — embedded mode', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+  })
+
+  // A form page names the tab; a form in a dialog leaves the host's title.
+  it('names the tab only as a page', async () => {
+    // With no page title the tab keeps its title for TITLE_HOLD_MS, so
+    // start from the shell's title: a page title would replace it.
+    document.title = 'Portal'
+    mounted.push(
+      mount(
+        defineComponent({
+          setup() {
+            useDocumentTitle('Portal')
+            return () => null
+          },
+        })
+      )
+    )
+    const { wrapper: inDialog } = await mountCreate({ embedded: true })
+    expect(document.title).toBe('Portal')
+    inDialog.unmount()
+    mounted.splice(mounted.indexOf(inDialog), 1)
+
+    await mountCreate()
+    expect(document.title).toBe('New Ticket · Portal')
   })
 
   it('emits the created entity instead of navigating', async () => {

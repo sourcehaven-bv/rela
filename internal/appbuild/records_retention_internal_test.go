@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/records"
@@ -45,7 +46,7 @@ records:
       kwh: {type: integer}
 `))
 	require.NoError(t, err)
-	svc, err := records.NewService(records.Deps{Store: memoryRecords(), Owners: openOwners{}, Meta: meta})
+	svc, err := records.NewService(records.Deps{Store: memoryRecords(), Owners: openOwners{}, Meta: meta, Audit: audit.Nop{}})
 	require.NoError(t, err)
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -85,7 +86,7 @@ records:
       kwh: {type: integer}
 `))
 	require.NoError(t, err)
-	svc, err := records.NewService(records.Deps{Store: memoryRecords(), Owners: openOwners{}, Meta: meta})
+	svc, err := records.NewService(records.Deps{Store: memoryRecords(), Owners: openOwners{}, Meta: meta, Audit: audit.Nop{}})
 	require.NoError(t, err)
 	require.False(t, hasRetention(svc))
 	startRecordRetention(svc, nil, time.Millisecond)()

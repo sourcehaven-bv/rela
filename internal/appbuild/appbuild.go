@@ -979,7 +979,7 @@ type GatedReadBundle struct {
 
 	// Conditions lowers a query condition to a page filter for Reader,
 	// which gates its traversals with the same gate as Traversals
-	// (TKT-Z099FGY).
+	// (TKT-Z099FGY). MCP list_entities answers its filters this way only.
 	Conditions QueryConditions
 
 	// Searcher gates hits by the principal's read scope, drops hits that
@@ -2454,9 +2454,23 @@ func (b *SharedBase) Config() Config { return b.cfg }
 // Paths returns the project context this base was built from.
 func (b *SharedBase) Paths() *project.Context { return b.cfg.Paths }
 
+// ProjectConfig returns the loader this base reads project config files
+// through, the same one every Services assembled from it uses.
+func (b *SharedBase) ProjectConfig() config.Loader { return b.cfg.configLoader() }
+
 // CacheDir returns the cache directory of the project this base was built
 // from, where a tenant host keeps each tenant's audit log.
 func (b *SharedBase) CacheDir() string { return b.cfg.Paths.CacheDir }
+
+// UserEntityType returns the entity type acl.yaml names for the people who
+// use the project, which a tenant host counts for usage. It is empty when
+// the project has no policy or the policy names none.
+func (b *SharedBase) UserEntityType() string {
+	if b.aclPolicy == nil {
+		return ""
+	}
+	return strings.TrimSpace(b.aclPolicy.UserEntityType)
+}
 
 // NewSharedBase builds the tenant-independent half of construction once:
 // validate config, apply options, parse `acl.yaml`, load and validate the
@@ -2819,6 +2833,7 @@ func buildEntityManager(
 		AttachmentLocker: attachLocker,
 		AnchorGuard:      anchorGuard,
 		RenameGuard:      flowRenameGuardFor(st, guard.flowRuns),
+		CreateHook:       guard.flowStarts.hook(),
 		ValidationMode:   base.validationMode,
 		Clock:            base.clock(),
 	})
@@ -3336,11 +3351,12 @@ func finishAssembly(
 	s.channels = refs.channels
 	// Before the flow engine, whose job runner runs llm actions through it.
 	newScriptHolders(s)
-	flowEngine, err := buildFlowEngine(s, refs.flowRuns)
+	flowEngine, flowAs, err := buildFlowEngine(s, refs.flowRuns)
 	if err != nil {
 		return nil, fmt.Errorf("flows: %w", err)
 	}
 	s.flowEngine = flowEngine
+	refs.flowStarts.setEngine(flowEngine, s.aclDeclarative, flowAs)
 	// Built, not started: the host starts it (see RunFlowWorker).
 	if s.flowWorker, err = buildFlowWorker(s.base, s.store, flowEngine); err != nil {
 		return nil, fmt.Errorf("flows: %w", err)

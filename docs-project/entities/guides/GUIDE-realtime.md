@@ -2116,7 +2116,10 @@ Three more rules stop a message from revealing what `acl.yaml` hides:
   `today`, `days_between` and `date_add`.
 - They may not read a property that a `visible:` grant or a client
   baseline restricts. A message posted on a hidden value would reveal it to
-  every channel reader.
+  every channel reader. A property is restricted when a role's `visible:`
+  block for the type leaves it out or lists it only with a `when:`, or a
+  client baseline hides it. A property that every role's `visible:` block
+  for the type lists without a `when:` is not restricted.
 - `from: entity.<property>` may not name such a property either.
 
 rela refuses the whole file for any of these problems, except one: a

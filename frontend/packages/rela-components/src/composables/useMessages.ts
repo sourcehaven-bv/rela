@@ -528,6 +528,16 @@ export interface Messages {
   /** The bulk action bar's tally: `3 tasks selected`. */
   selectedCount: (args: CountArgs) => string
 
+  /** The rendered diff's change tally: `3 changes`. */
+  diffChangeCount: (args: { count: number }) => string
+  /** The rendered diff's position while stepping: `2 of 3`. */
+  diffPosition: (args: { current: number; total: number }) => string
+  /** The rendered diff's step buttons, and its fold and empty state. */
+  diffPrevious: string
+  diffNext: string
+  diffUnchangedBlocks: (args: { count: number }) => string
+  diffNoChanges: string
+
   /** A search or filter's result tally: `4 of 120`. */
   resultCount: (args: { shown: number; total: number }) => string
 
@@ -738,7 +748,10 @@ export interface Messages {
 
   /** A table row's checkbox: `Select Fix login`. */
   selectItem: (args: { title: string }) => string
-  /** A table section's select-all checkbox: `Select all in Done`. */
+  /**
+   * A table section's select-all checkbox: `Select all in Done`, or
+   * `Select all` for a list without sections, whose one section has no title.
+   */
   selectAllIn: (args: { section: string }) => string
   /** A table row's drag handle: `Move Fix login`. */
   moveRow: (args: { title: string }) => string
@@ -871,6 +884,13 @@ export const DEFAULT_MESSAGES: Messages = {
 
   resultCount: ({ shown, total }) => `${shown} of ${total}`,
 
+  diffChangeCount: ({ count }) => `${count} ${count === 1 ? 'change' : 'changes'}`,
+  diffPosition: ({ current, total }) => `${current} of ${total}`,
+  diffPrevious: 'Previous change',
+  diffNext: 'Next change',
+  diffUnchangedBlocks: ({ count }) => `${count} unchanged blocks`,
+  diffNoChanges: 'No changes',
+
   cardGrabbed: ({ title }) =>
     `${title}, picked up. Use the arrow keys to choose a column, Enter to drop, Escape to cancel.`,
   cardAtRest: ({ title, section }) =>
@@ -997,7 +1017,7 @@ export const DEFAULT_MESSAGES: Messages = {
   dropFiles: ({ multiple }) => `Drop ${multiple ? 'files' : 'a file'} here, or click to choose`,
 
   selectItem: ({ title }) => `Select ${title}`,
-  selectAllIn: ({ section }) => `Select all in ${section}`,
+  selectAllIn: ({ section }) => (section.trim() ? `Select all in ${section}` : 'Select all'),
   moveRow: ({ title }) => `Move ${title}`,
   showMoreRows: ({ count }) => `Show ${count} more`,
   ofRemaining: ({ remaining }) => `of ${remaining} remaining`,

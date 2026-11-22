@@ -49,7 +49,9 @@ func TestEngine_Change(t *testing.T) {
 		{name: "holder, guard holds", docs: true, roles: []string{"hr"},
 			want: Changed{Moved: true, Finished: true}, wantLogs: 3},
 		{name: "holder, guard does not hold", docs: false, roles: []string{"hr"},
-			want: Changed{State: "collect"}, wantLogs: 1},
+			want: Changed{State: "collect", Blocked: true}, wantLogs: 1},
+		// A branch open to the caller whose guard does not hold is
+		// blocked; one the caller may not take is not.
 		{name: "role not held", docs: true, roles: []string{"manager"},
 			want: Changed{State: "collect"}, wantLogs: 1},
 		{name: "stale generation", docs: true, roles: []string{"hr"}, gen: 7, wantErr: ErrStale},
@@ -239,7 +241,7 @@ func TestEngine_Explain(t *testing.T) {
 	require.Equal(t, []TimerDue{{Name: "stalled", Label: "No documents in a week", To: "escalated",
 		Due: h.clock.Add(7 * 24 * time.Hour)}}, x.Timers)
 	require.Equal(t, []BranchCheck{{To: "review", Roles: []string{"hr"}, Guard: "entity.documents == true",
-		Holds: true}}, x.Branches)
+		Holds: true, Reads: []string{"documents"}}}, x.Branches)
 	require.Nil(t, x.Pending)
 	require.NotNil(t, x.Claim)
 	require.Equal(t, "alice", x.Claim.By)

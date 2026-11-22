@@ -115,7 +115,7 @@ func TestBatch_UnsupportedStoreIs501(t *testing.T) {
 	require.Zero(t, countOf(t, app.store, "ticket"))
 
 	sch := httptest.NewRecorder()
-	app.handleV1Schema(sch, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
+	app.schemaAPI.handleV1Schema(sch, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
 	var got v1.Schema
 	require.NoError(t, json.Unmarshal(sch.Body.Bytes(), &got))
 	require.False(t, got.Capabilities.AtomicBatch)

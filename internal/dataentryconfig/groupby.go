@@ -2,6 +2,8 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -77,7 +79,7 @@ func (g *ListGroupBy) UnmarshalYAML(value *yaml.Node) error {
 			key := value.Content[i].Value
 			if !listGroupByKeys[key] {
 				return fmt.Errorf("invalid group_by at line %d: unknown key %q (valid: %s)",
-					value.Content[i].Line, key, strings.Join(sortedMapKeys(listGroupByKeys), ", "))
+					value.Content[i].Line, key, strings.Join(slices.Sorted(maps.Keys(listGroupByKeys)), ", "))
 			}
 		}
 		// Alias to avoid recursing into this method.

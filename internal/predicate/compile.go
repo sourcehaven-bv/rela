@@ -36,16 +36,6 @@ func ValueProfile(expected Type) Profile {
 // AST cannot produce a runtime stack overflow.
 const defaultMaxDepth = 256
 
-// WithMaxDepth overrides the compile-time depth budget. Clamped to >= 1.
-func WithMaxDepth(n int) CompileOption {
-	return func(o *compileOptions) {
-		if n <= 0 {
-			n = 1
-		}
-		o.maxDepth = n
-	}
-}
-
 // Compile parses source as a single Lua expression, walks the AST
 // against the predicate engine's allow-list, and type-checks against
 // env. The returned *Program is safe for concurrent evaluation.

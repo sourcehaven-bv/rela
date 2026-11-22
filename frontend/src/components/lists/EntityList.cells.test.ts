@@ -429,4 +429,21 @@ describe('EntityList cell rendering via widgets', () => {
     expect(wrapper.find('.rl-table-row img').exists()).toBe(false)
     expect(wrapper.text()).toContain('picture.png')
   })
+
+  // TKT-WG1410D: an image property is a thumbnail built from the row's own
+  // value and id, one lazy <img> per row and no extra lookup.
+  it('renders a thumbnail for an image property column', async () => {
+    seedSchema({ title: { type: 'string' }, logo: { type: 'file', display: { image: true } } }, [
+      { property: 'title', label: 'Title' },
+      { property: 'logo', label: 'Logo' },
+    ])
+    seedEntities([
+      { id: 'T-1', type: entityType, properties: { title: 'Acme', logo: ['attachments/T-1/logo/abc/logo.png'] } },
+    ])
+    const wrapper = await mountList()
+    const img = wrapper.find('.rl-table-row img.image-cell')
+    expect(img.exists()).toBe(true)
+    expect(img.attributes('loading')).toBe('lazy')
+    expect(img.attributes('src')).toContain('/T-1/_attachments/logo/logo.png')
+  })
 })

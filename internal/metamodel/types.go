@@ -1045,9 +1045,9 @@ type PropertyDef struct {
 	// version history, because the merge base is a version tag.
 	Sync bool `yaml:"sync,omitempty"`
 
-	// Display says how the SPA renders the value for reading (TKT-SVLQQ6).
-	// It never changes the stored value or the input, which stays a plain
-	// number. Nil means the default rendering.
+	// Display says how the SPA renders the value (TKT-SVLQQ6). It never
+	// changes the stored value. A currency input stays a plain number; a link
+	// input is a URL field (TKT-0101IO4). Nil means the default rendering.
 	Display *PropertyDisplay `yaml:"display,omitempty"`
 }
 
@@ -1058,6 +1058,32 @@ type PropertyDisplay struct {
 	// Currency renders an integer or decimal property as an amount of money in the
 	// reader's locale, such as "€ 3.500" for EUR in Dutch. An ISO 4217 code.
 	Currency string `yaml:"currency,omitempty" json:"currency,omitempty"`
+	// Link renders a string property as a link (TKT-0101IO4). Only an http,
+	// https or mailto value becomes a link; any other value stays text. The
+	// form shows a URL input.
+	Link bool `yaml:"link,omitempty" json:"link,omitempty"`
+	// LinkText is the text a link shows instead of the URL (TKT-IO9PTLD).
+	// The URL stays the target. Only valid with Link.
+	LinkText string `yaml:"link_text,omitempty" json:"link_text,omitempty"`
+	// Image marks a single-valued `file` property as an image (TKT-WG1410D).
+	// The upload accepts only [ImageMIMETypes] up to [ImageMaxBytes], checked
+	// before any `transform:` step (an operator's step is trusted), and the
+	// SPA shows the file as a preview on the form and detail view and as a
+	// thumbnail in list rows.
+	Image bool `yaml:"image,omitempty" json:"image,omitempty"`
+}
+
+// ImageMaxBytes is the largest file an image property accepts.
+const ImageMaxBytes = 5 << 20
+
+// ImageMIMETypes are the sniffed content types an image property accepts.
+// SVG is not among them: it carries script, so it is refused everywhere.
+var ImageMIMETypes = []string{"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+// IsImage reports whether the property is a `file` property marked
+// `display: {image: true}`.
+func (p PropertyDef) IsImage() bool {
+	return p.Type == PropertyTypeFile && p.Display != nil && p.Display.Image
 }
 
 // TransformStep is one entry in a `transform:` pipeline. A step is EITHER an

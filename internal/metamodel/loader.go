@@ -2,6 +2,7 @@ package metamodel
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -393,7 +394,7 @@ func validateEntityStructure(m *Metamodel) error {
 func validateEntitySemantics(m *Metamodel) []string {
 	var errs []string
 
-	entityNames := sortedKeys(m.Entities)
+	entityNames := slices.Sorted(maps.Keys(m.Entities))
 	for _, name := range entityNames {
 		def := m.Entities[name]
 
@@ -477,7 +478,7 @@ func validatePluralSegment(name string, def EntityDef) []string {
 func validateUniquePlurals(m *Metamodel) []string {
 	var errs []string
 	owner := map[string]string{}
-	for _, name := range sortedKeys(m.Entities) {
+	for _, name := range slices.Sorted(maps.Keys(m.Entities)) {
 		def := m.Entities[name]
 		plural := def.GetPlural(name)
 		folded := strings.ToLower(plural)
@@ -517,7 +518,7 @@ func validateDisplayProperty(entityName string, def EntityDef) []string {
 		return nil
 	}
 
-	available := strings.Join(sortedKeys(def.Properties), ", ")
+	available := strings.Join(slices.Sorted(maps.Keys(def.Properties)), ", ")
 
 	var errs []string
 	if dp != strings.TrimSpace(dp) {
@@ -612,7 +613,7 @@ func validateDefaultSort(entityName string, def EntityDef) []string {
 func validateCustomTypes(m *Metamodel) []string {
 	var errs []string
 
-	typeNames := sortedKeys(m.Types)
+	typeNames := slices.Sorted(maps.Keys(m.Types))
 	for _, typeName := range typeNames {
 		customType := m.Types[typeName]
 
@@ -651,7 +652,7 @@ func validateCustomTypes(m *Metamodel) []string {
 func validateRelationReferences(m *Metamodel) []string {
 	var errs []string
 
-	relNames := sortedKeys(m.Relations)
+	relNames := slices.Sorted(maps.Keys(m.Relations))
 	for _, name := range relNames {
 		rel := m.Relations[name]
 		// A relation with no 'from' or no 'to' types is meaningless: no
@@ -709,7 +710,7 @@ func validateRelationInverses(m *Metamodel) []string {
 	var errs []string
 	owners := make(map[string]string, len(m.Relations))
 
-	for _, relType := range sortedKeys(m.Relations) {
+	for _, relType := range slices.Sorted(maps.Keys(m.Relations)) {
 		rel := m.Relations[relType]
 		if rel.Inverse == nil || rel.Inverse.ID == "" {
 			continue
@@ -758,7 +759,7 @@ func validateRelationProperties(m *Metamodel) []string {
 		"to":       true,
 	}
 
-	relNames := sortedKeys(m.Relations)
+	relNames := slices.Sorted(maps.Keys(m.Relations))
 	for _, name := range relNames {
 		rel := m.Relations[name]
 		errs = append(errs, validatePropertyDefs(fmt.Sprintf("relation %q", name), rel.Properties, m, reservedRelProps, false)...)
@@ -785,7 +786,7 @@ func validateRelationProperties(m *Metamodel) []string {
 func validateRelationOrderable(m *Metamodel) []string {
 	var errs []string
 
-	for _, name := range sortedKeys(m.Relations) {
+	for _, name := range slices.Sorted(maps.Keys(m.Relations)) {
 		rel := m.Relations[name]
 		if !rel.Orderable.IsValid() {
 			errs = append(errs, fmt.Sprintf(
@@ -808,7 +809,7 @@ func validateRelationOrderable(m *Metamodel) []string {
 // keeps a faceless project byte-identical.
 func validateRelationScope(m *Metamodel) []string {
 	var errs []string
-	for _, name := range sortedKeys(m.Relations) {
+	for _, name := range slices.Sorted(maps.Keys(m.Relations)) {
 		rel := m.Relations[name]
 		if !rel.Scope.IsValid() {
 			errs = append(errs, fmt.Sprintf(
@@ -827,7 +828,7 @@ func validateRelationScope(m *Metamodel) []string {
 // has a rule for that yet.
 func validateRelationOwning(m *Metamodel) []string {
 	var errs []string
-	for _, name := range sortedKeys(m.Relations) {
+	for _, name := range slices.Sorted(maps.Keys(m.Relations)) {
 		rel := m.Relations[name]
 		if !rel.Owning {
 			continue
@@ -869,7 +870,7 @@ func validateRelationOwning(m *Metamodel) []string {
 // defaulted in either direction.
 func validateWorlds(m *Metamodel) []string {
 	var errs []string
-	for _, worldName := range sortedKeys(m.Worlds) {
+	for _, worldName := range slices.Sorted(maps.Keys(m.Worlds)) {
 		world := m.Worlds[worldName]
 		if strings.EqualFold(worldName, DefaultWorldName) {
 			// Case-folded: YAML keys are case-sensitive but humans are not,
@@ -1093,9 +1094,9 @@ func validateFacePrimacy(m *Metamodel) []string {
 	heads := map[primacyKey][]string{}
 	claimed := map[primacyKey][]string{}
 
-	for _, worldName := range sortedKeys(m.Worlds) {
+	for _, worldName := range slices.Sorted(maps.Keys(m.Worlds)) {
 		world := m.Worlds[worldName]
-		for _, typeName := range sortedKeys(m.Entities) {
+		for _, typeName := range slices.Sorted(maps.Keys(m.Entities)) {
 			chain := world.Select
 			if o, ok := world.Overrides[typeName]; ok {
 				chain = o
@@ -1163,7 +1164,7 @@ func validateWorldChains(m *Metamodel, worldName string, world WorldDef) []strin
 				worldName, ptr))
 		}
 	}
-	for _, typeName := range sortedKeys(world.Overrides) {
+	for _, typeName := range slices.Sorted(maps.Keys(world.Overrides)) {
 		def, ok := m.Entities[typeName]
 		if !ok {
 			errs = append(errs, fmt.Sprintf(
@@ -1191,7 +1192,7 @@ func validateWorldChains(m *Metamodel, worldName string, world WorldDef) []strin
 				errs = append(errs, fmt.Sprintf(
 					"world %q: `overrides:` selects face %q for entity type %q, which declares "+
 						"only: %s",
-					worldName, ptr, typeName, strings.Join(sortedKeys(def.Faces), ", ")))
+					worldName, ptr, typeName, strings.Join(slices.Sorted(maps.Keys(def.Faces)), ", ")))
 			}
 		}
 	}
@@ -1241,18 +1242,6 @@ func anyTypeDeclaresFace(m *Metamodel, ptr string) bool {
 		}
 	}
 	return false
-}
-
-// sortedKeys returns the keys of a map sorted alphabetically.
-// Works with any map type using a generic constraint would be ideal,
-// but we use interface{} maps here.
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // validatePropertyDefs validates property definitions for entities or relations.
@@ -1315,19 +1304,37 @@ func validatePropertyDef(
 }
 
 // validatePropertyDisplay checks the `display:` format of a property
-// (TKT-SVLQQ6). Currency needs a single-valued integer or decimal property,
-// and a code shaped like ISO 4217. It checks the shape,
-// not a list of codes: the browser formats every well-formed code (an
+// (TKT-SVLQQ6). Exactly one format applies. Currency needs a single-valued
+// integer or decimal property, and a code shaped like ISO 4217. It checks the
+// shape, not a list of codes: the browser formats every well-formed code (an
 // unknown one shows as the code itself), so a list would only reject codes
-// it does not know yet.
+// it does not know yet. Link needs a single-valued string property without
+// a value set (TKT-0101IO4); link_text only applies to a link (TKT-IO9PTLD).
 func validatePropertyDisplay(schemaName, propName string, propDef PropertyDef) []string {
 	d := propDef.Display
 	if d == nil {
 		return nil
 	}
 	at := fmt.Sprintf("%s: property %q: display", schemaName, propName)
-	if d.Currency == "" {
-		return []string{at + " names no format; use currency"}
+	formats := 0
+	for _, set := range []bool{d.Currency != "", d.Link, d.Image} {
+		if set {
+			formats++
+		}
+	}
+	switch {
+	case d.LinkText != "" && !d.Link:
+		return []string{at + ": link_text needs link: true"}
+	case d.LinkText != "" && strings.TrimSpace(d.LinkText) == "":
+		return []string{at + ": link_text is blank; leave it out to show the URL"}
+	case formats == 0:
+		return []string{at + " names no format; use currency, link or image"}
+	case formats > 1:
+		return []string{at + " names two formats; use one of currency, link or image"}
+	case d.Link:
+		return validateLinkDisplay(at, propDef)
+	case d.Image:
+		return validateImageDisplay(at, propDef)
 	}
 	var errs []string
 	if !isCurrencyCode(d.Currency) {
@@ -1340,6 +1347,40 @@ func validatePropertyDisplay(schemaName, propName string, propDef PropertyDef) [
 		errs = append(errs, at+": currency is not supported on a list property")
 	}
 	return errs
+}
+
+// validateImageDisplay checks `display: {image: true}`. It needs a `file`
+// property that holds one file; an `accept` list may only narrow the image
+// types, so it can never admit SVG or a non-image.
+func validateImageDisplay(at string, propDef PropertyDef) []string {
+	var errs []string
+	switch {
+	case propDef.Type != PropertyTypeFile:
+		return []string{fmt.Sprintf("%s: image needs a file property, not %q", at, propDef.Type)}
+	case propDef.List || propDef.FileMax() > 1:
+		errs = append(errs, at+": image needs a single file; leave out list and max above 1")
+	}
+	for _, a := range propDef.Accept {
+		if !slices.Contains(ImageMIMETypes, strings.ToLower(strings.TrimSpace(a))) {
+			errs = append(errs, fmt.Sprintf("%s: accept %q is not an image type (allowed: %s; SVG is refused)",
+				at, a, strings.Join(ImageMIMETypes, ", ")))
+		}
+	}
+	return errs
+}
+
+// validateLinkDisplay checks `display: {link: true}`. A list or a value set
+// renders as tags or a select, so a link format there would never apply.
+func validateLinkDisplay(at string, propDef PropertyDef) []string {
+	switch {
+	case propDef.Type != PropertyTypeString:
+		return []string{fmt.Sprintf("%s: link needs a string property, not %q", at, propDef.Type)}
+	case propDef.List:
+		return []string{at + ": link is not supported on a list property"}
+	case len(propDef.Values) > 0:
+		return []string{at + ": link is not supported on a property with values"}
+	}
+	return nil
 }
 
 func isCurrencyCode(s string) bool {
@@ -1840,7 +1881,7 @@ relations:
 func validateValidationRelations(m *Metamodel) []string {
 	var errs []string
 	for _, rule := range m.Validations {
-		for _, relType := range sortedKeys(rule.Relations) {
+		for _, relType := range slices.Sorted(maps.Keys(rule.Relations)) {
 			c := rule.Relations[relType]
 			relDef, relOK := m.GetRelationDef(relType)
 			if !relOK {
@@ -2167,7 +2208,7 @@ func validateRuleFaceOnType(m *Metamodel, ruleName, face, typ string) []string {
 	return []string{fmt.Sprintf(
 		"validation %q: `faces: [%s]` names no declared face of entity %q "+
 			"(declares: %s) — the rule would match nothing and pass forever",
-		ruleName, face, typ, strings.Join(sortedKeys(def.Faces), ", "))}
+		ruleName, face, typ, strings.Join(slices.Sorted(maps.Keys(def.Faces)), ", "))}
 }
 
 // queryScopeName is the grammar for a `query_scopes:` key: an ASCII
@@ -2197,9 +2238,9 @@ var queryScopeName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*([_-][A-Za-z0-9]+)
 // compiling needs internal/predicatefns, which imports this package.
 func validateQueryScopes(m *Metamodel) []string {
 	var errs []string
-	for _, typeName := range sortedKeys(m.Entities) {
+	for _, typeName := range slices.Sorted(maps.Keys(m.Entities)) {
 		def := m.Entities[typeName]
-		for _, scopeName := range sortedKeys(def.QueryScopes) {
+		for _, scopeName := range slices.Sorted(maps.Keys(def.QueryScopes)) {
 			errs = append(errs, validateQueryScopeName(typeName, scopeName)...)
 			if strings.TrimSpace(def.QueryScopes[scopeName]) == "" {
 				errs = append(errs, fmt.Sprintf(

@@ -7,6 +7,7 @@ import TextWidget from './TextWidget.vue'
 import MultiSelectWidget from './MultiSelectWidget.vue'
 import FileWidget from './FileWidget.vue'
 import FileCellWidget from './FileCellWidget.vue'
+import ImageCellWidget from './ImageCellWidget.vue'
 
 describe('viewFieldRoutingHint', () => {
   it('routes propType-having fields to enum-list', () => {
@@ -141,6 +142,13 @@ describe('densePropertyRoutingHint', () => {
     const hint = densePropertyRoutingHint(def({ type: 'file' }), 'attachment')
     expect(hint.kind).toBe('file')
     expect(defaultRegistry.resolveDense(hint)).toBe(FileCellWidget)
+  })
+
+  it('routes an image file to the thumbnail cell', () => {
+    const hint = densePropertyRoutingHint(def({ type: 'file', display: { image: true } }), 'logo')
+    expect(hint.kind).toBe('image')
+    expect(hint.preformatted).toBe(false)
+    expect(defaultRegistry.resolveDense(hint)).toBe(ImageCellWidget)
   })
 
   it('routes a list-valued file to the file cell too', () => {

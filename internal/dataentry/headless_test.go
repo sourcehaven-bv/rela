@@ -57,7 +57,7 @@ func TestHeadless_NoEmbeddedUI(t *testing.T) {
 		"/assets/index-abc.js": http.StatusNotFound,
 	} {
 		rec := httptest.NewRecorder()
-		StaticShell().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, http.NoBody))
+		StaticShell(ShellBoot{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, http.NoBody))
 		if rec.Code != want {
 			t.Errorf("StaticShell %s = %d, want %d", path, rec.Code, want)
 		}

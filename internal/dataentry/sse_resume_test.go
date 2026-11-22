@@ -38,19 +38,19 @@ func resumeApp(t *testing.T, timing sseTimings) *App {
 	t.Helper()
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
-	app.sseTiming = timing
-	app.startStoreEventBridge()
+	app.sse.timing = timing
+	app.sse.startStoreEventBridge()
 	t.Cleanup(app.StopWatching)
 	return app
 }
 
-// sseServer serves app.handleSSE. withCtx adds the principal and read gate
+// sseServer serves app.sse.handleSSE. withCtx adds the principal and read gate
 // that the production middleware would; stashReplayPrincipal saves the
 // principal for live views, as in the router.
 func sseServer(t *testing.T, app *App, withCtx func(context.Context) context.Context) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(stashReplayPrincipal(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		app.handleSSE(w, r.WithContext(withCtx(r.Context())))
+		app.sse.handleSSE(w, r.WithContext(withCtx(r.Context())))
 	})))
 	t.Cleanup(srv.Close)
 	return srv
@@ -213,7 +213,7 @@ func TestSSEResume_ReadyFrameCarriesToken(t *testing.T) { // AC1
 // than replays run as the already resolved principal; the stream still works.
 func TestSSE_NoStashedPrincipalNoLiveViews(t *testing.T) {
 	app := resumeApp(t, fastSSE)
-	srv := httptest.NewServer(http.HandlerFunc(app.handleSSE))
+	srv := httptest.NewServer(http.HandlerFunc(app.sse.handleSSE))
 	t.Cleanup(srv.Close)
 	c := connect(t, srv, "", "")
 	if f := c.next(t); f.event != "ready" || f.data != "{}" {
@@ -417,12 +417,12 @@ func TestSSEResume_ConfigChangedEndsStream(t *testing.T) {
 	broker := make(chan sseEvent, 1)
 	broker <- sseEvent{Name: sseConfigChanged, Data: sseConfigChanged}
 	sink := &sseSink{}
-	conn := &sseConn{w: sink, flusher: sink, timing: app.sseTiming}
+	conn := &sseConn{w: sink, flusher: sink, timing: app.sse.timing}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_events", http.NoBody)
 
 	done := make(chan struct{})
 	go func() {
-		app.runSSELoop(conn, req, broker, sub, sub.Start(), nil)
+		app.sse.runSSELoop(conn, req, broker, sub, sub.Start(), nil)
 		close(done)
 	}()
 	select {

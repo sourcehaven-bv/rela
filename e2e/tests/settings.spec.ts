@@ -166,8 +166,8 @@ test.describe('Settings', () => {
       await settingsPage.navigateToSettings();
 
       // feature, bug, signoff, task, tag, decision, module, specification, plan, step,
-      // invoice, charge
-      await settingsPage.expectAppInfo('Entity Types', '12');
+      // invoice, charge, brand
+      await settingsPage.expectAppInfo('Entity Types', '13');
     });
 
     test('shows relation type count', async ({ appPage }) => {
@@ -185,8 +185,8 @@ test.describe('Settings', () => {
 
       // feature, bug, bug_signoff, task, task_add_another, task_wizard,
       // task_flat_conditional, task_clear_when_hidden, task_mixed_policies,
-      // tag, decision, module, specification
-      await settingsPage.expectAppInfo('Forms', '13');
+      // tag, decision, module, specification, brand
+      await settingsPage.expectAppInfo('Forms', '14');
     });
 
     test('shows lists count', async ({ appPage }) => {
@@ -194,7 +194,7 @@ test.describe('Settings', () => {
 
       await settingsPage.navigateToSettings();
 
-      await settingsPage.expectAppInfo('Lists', '4'); // bugs_triage, features, bugs, tasks
+      await settingsPage.expectAppInfo('Lists', '6'); // bugs_triage, features, bugs, tasks, bug_links, brand_logos
     });
   });
 });

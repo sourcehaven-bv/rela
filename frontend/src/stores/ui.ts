@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { browserTimeZone } from '@/utils/format'
+import { accessRefusal } from '@/api/workspaceAccess'
 import { useToasts } from 'rela-components/components/feedback/useToasts'
 import type { MessageTone, ToastAction } from 'rela-components/components/feedback/types'
 
@@ -158,12 +159,17 @@ export const useUIStore = defineStore('ui', () => {
 
   // The timer belongs to RlToast, which pauses it while the toast is hovered
   // or focused; a timeout of 0 keeps the toast until it is dismissed.
+  // While the session or workspace screen is up (api/workspaceAccess.ts),
+  // every request fails for the reason it already gives, so an error or
+  // warning per failed request only repeats it as "Request failed (401)"
+  // (BUG-ZL4K7QW). Returns '' for a toast that was not shown.
   function showToast(
     type: Toast['type'],
     message: string,
     timeout = 5000,
     action?: ToastAction
   ): string {
+    if (accessRefusal.value && (type === 'error' || type === 'warning')) return ''
     return toastQueue.show({ title: message, tone: TONE_OF[type], duration: timeout, action })
   }
 

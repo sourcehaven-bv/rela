@@ -14,6 +14,8 @@
 package audit
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -30,10 +32,14 @@ const (
 	OpCreateRelation = "create-relation"
 	OpUpdateRelation = "update-relation"
 	OpDeleteRelation = "delete-relation"
+	// OpAppendRecords is one append of record rows, a ledger reversal
+	// included. Subject has Kind "record", the record type and the id of the
+	// first row; Summary names the row count, the last row id, the owners
+	// and any ledger transactions. One line covers the whole batch.
+	OpAppendRecords = "append-records"
 	// OpUpdateRecord and OpDeleteRecord are changes to a row of a mutable
 	// record type (TKT-ERO2X5G). Subject has Kind "record", the record type
-	// and the row id. Appends are not audited: an append-only row keeps its
-	// own attribution.
+	// and the row id.
 	OpUpdateRecord = "update-record"
 	OpDeleteRecord = "delete-record"
 
@@ -262,6 +268,13 @@ const (
 	// principal; they enter the chain at the time of the import.
 	OpAuditImport = "audit-import"
 
+	// OpAuditRead records a read of the global audit view, the
+	// data-entry /api/v1/_audit endpoint behind the audit:read permission.
+	// Summary carries the cursor and the number of records served, never
+	// their content. A holder of audit:read sees every entity's records, so
+	// each such read is itself on the record.
+	OpAuditRead = "audit-read"
+
 	OpRemoteResolve = "remote-resolve"
 	OpRemoteDismiss = "remote-dismiss"
 	OpRemoteLink    = "remote-link"
@@ -271,8 +284,13 @@ const (
 // or {RelationType, FromID, ToID} is populated per record; readers
 // switch on Kind.
 //
-//   - entity:   Kind="entity",   Type and ID populated.
-//   - relation: Kind="relation", RelationType, FromID, ToID populated.
+//   - entity:   Kind="entity",   Type and ID populated, and Face for a
+//     faced row.
+//   - relation: Kind="relation", RelationType, FromID, ToID populated, and
+//     FromFace for an edge whose tail is one face.
+//
+// Face and FromFace let a per-entity read show one face its own records:
+// a record without them belongs to every face of the id.
 //
 // Rename ops leave Subject zero and populate [Record.Before] /
 // [Record.After] instead — the schema needs to carry both identities
@@ -281,10 +299,18 @@ type Subject struct {
 	Kind         string `json:"kind"`
 	Type         string `json:"type,omitempty"`
 	ID           string `json:"id,omitempty"`
+	Face         string `json:"face,omitempty"`
 	RelationType string `json:"relation_type,omitempty"`
 	FromID       string `json:"from_id,omitempty"`
+	FromFace     string `json:"from_face,omitempty"`
 	ToID         string `json:"to_id,omitempty"`
 }
+
+// IsEntity reports whether s names an entity.
+func (s *Subject) IsEntity() bool { return s.Kind == "entity" }
+
+// IsRelation reports whether s names a relation.
+func (s *Subject) IsRelation() bool { return s.Kind == "relation" }
 
 // Record is one audit row in the JSONL stream.
 //
@@ -319,6 +345,24 @@ type Record struct {
 	Source string `json:"source,omitempty"`
 }
 
+// SubjectQuery names the records a database log's ForEntity reads: those of one face
+// of an entity, with one of the listed ops.
+type SubjectQuery struct {
+	ID string
+	// Face is the face to read; '' for an unfaced type. Records stored
+	// without a face belong to every face and are read too.
+	Face string
+	// Ops lists the ops to read. Empty reads nothing.
+	Ops []string
+}
+
+// Entry is one stored record and its seq, the position a database log gave
+// it. A reader pages by seq.
+type Entry struct {
+	Seq    int64
+	Record Record
+}
+
 // Audit is the package's published sink shape — not a consumer-side
 // abstraction. Three sibling backends ([Nop], [Memory], [Filesystem])
 // implement it; consumers (today: entitymanager.Deps.Audit) take it
@@ -332,4 +376,32 @@ type Record struct {
 // self-log via slog.Error when a record cannot be persisted.
 type Audit interface {
 	Record(rec Record)
+}
+
+// copyCreatedSuffix ends the summary of a copy-state record whose copy
+// created its target face.
+const copyCreatedSuffix = " (created=true)"
+
+// CopyStateSummary is the summary of a copy-state record: the copy's name,
+// its source and target labels, and whether it created the target face.
+// [StartsLifecycle] reads the last part back.
+func CopyStateSummary(name, from, to string, created bool) string {
+	return fmt.Sprintf("copy %q: %s -> %s (created=%t)", name, from, to, created)
+}
+
+// StartsLifecycle reports whether rec begins a lifecycle of the entity
+// subject s it names: a create of it, a copy that created that face, or a
+// rename or conversion into it (s is the After).
+func StartsLifecycle(rec Record, s *Subject) bool {
+	if s == nil {
+		return false
+	}
+	switch s {
+	case rec.Subject:
+		return rec.Op == OpCreateEntity ||
+			(rec.Op == OpCopyState && strings.HasSuffix(rec.Summary, copyCreatedSuffix))
+	case rec.After:
+		return rec.Op == OpRenameEntity || rec.Op == OpConvertEntity
+	}
+	return false
 }

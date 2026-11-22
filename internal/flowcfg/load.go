@@ -214,6 +214,11 @@ func decodeNode(n *yaml.Node, out any) error {
 }
 
 // loader collects the problems of one load.
+//
+// It has a method per checked key, so each new key adds one. 40 → 42
+// (BUG-53GP5F5): `title:` and `failed_message:`.
+//
+//plimsoll:max-methods=42
 type loader struct {
 	meta     *metamodel.Metamodel
 	policy   *acl.Policy
@@ -308,7 +313,10 @@ func (l *loader) flow(key, name string, n *yaml.Node) *Flow {
 		f.outsideEdits = l.outsideEdits(key+".outside_edits", &raw.OutsideEdits, f)
 	}
 	f.starts = l.starts(key+".start", raw.Start, f.subject, f.perSubject)
+	f.manage = l.manage(key+".manage", raw.Manage)
 	f.runAs = l.runAs(key+".run_as", raw.RunAs, f)
+	f.title = l.title(key+".title", raw.Title, f)
+	f.failedMessage = l.failedMessage(key+".failed_message", raw.FailedMessage)
 	if len(l.problems) > before {
 		return nil
 	}
@@ -469,7 +477,7 @@ func (l *loader) starts(key string, raw []rawStart, subject string, per PerSubje
 				l.add(sk+".when", "is required for on: predicate")
 			}
 		case StartManual:
-			l.noKeys(sk, r, "when", "every")
+			l.noKeys(sk, r, "every")
 			s.Permission = l.permission(sk+".permission", r.Permission)
 		case StartSchedule:
 			l.noKeys(sk, r, "permission")
@@ -499,6 +507,22 @@ func (l *loader) noKeys(key string, r rawStart, names ...string) {
 			l.add(key+"."+n, "does not apply to on: "+r.On)
 		}
 	}
+}
+
+// manage compiles `manage:`. A permission no role grants loads with a
+// warning, like a start's: nobody can then cancel or retry a run.
+func (l *loader) manage(key string, raw *rawManage) string {
+	if raw == nil {
+		return ""
+	}
+	if raw.Permission == "" {
+		l.add(key+".permission", "is required: the permission that cancels and retries a run")
+		return ""
+	}
+	if l.policy != nil && !l.policyGrants(raw.Permission) {
+		l.warn(key+".permission", fmt.Sprintf("no role in acl.yaml grants permission %q, so nobody can cancel or retry a run", raw.Permission))
+	}
+	return raw.Permission
 }
 
 func (l *loader) permission(key, name string) string {
@@ -575,7 +599,8 @@ func (l *loader) guardWith(key, subject, src string, ints []string) *Guard {
 	for _, name := range fields {
 		if l.policy != nil && l.policy.FieldRestricted(subject, name) {
 			l.add(key, fmt.Sprintf("reads %s.%s, which a visible: grant in acl.yaml restricts; the run's state "+
-				"would disclose its value to every reader of the subject", subject, name))
+				"would disclose its value to every reader of the subject. A guard may read it once every role's "+
+				"visible: block for %s lists it without a when: and no client baseline hides it", subject, name, subject))
 			ok = false
 		}
 	}

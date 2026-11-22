@@ -12,8 +12,14 @@ withDefaults(
     pressed?: boolean
     /** `danger` marks a destructive action, such as delete. */
     tone?: 'default' | 'danger'
+    /**
+     * Gives the button an opaque raised surface, for a button that floats
+     * over content as it scrolls. Without one, the content under it shows
+     * through the icon.
+     */
+    raised?: boolean
   }>(),
-  { size: 18, active: false, tone: 'default' },
+  { size: 18, active: false, tone: 'default', raised: false },
 )
 
 defineEmits<{ click: [event: MouseEvent] }>()
@@ -23,7 +29,10 @@ defineEmits<{ click: [event: MouseEvent] }>()
   <button
     type="button"
     class="rl-icon-button"
-    :class="[`rl-icon-button--tone-${tone}`, { 'rl-icon-button--active': active }]"
+    :class="[
+      `rl-icon-button--tone-${tone}`,
+      { 'rl-icon-button--active': active, 'rl-icon-button--raised': raised },
+    ]"
     :aria-label="label"
     :aria-pressed="pressed"
     @click="$emit('click', $event)"
@@ -46,6 +55,14 @@ defineEmits<{ click: [event: MouseEvent] }>()
 .rl-icon-button:hover {
   background: var(--rl-color-bg-hover);
   color: var(--rl-color-text-muted);
+}
+
+/* A raised button keeps its surface on hover; only the fill changes. */
+.rl-icon-button--raised {
+  border: 1px solid var(--rl-color-border-raised);
+  border-radius: var(--rl-radius-md);
+  background: var(--rl-color-bg-raised);
+  box-shadow: var(--rl-shadow-sm);
 }
 
 /* Destructive actions read as such on hover rather than at rest, so a

@@ -7,13 +7,9 @@ import EntityTargetSelect from '@/components/common/EntityTargetSelect.vue'
 import Badge from '@/components/ui/Badge.vue'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlMultiSelect from 'rela-components/components/form/RlMultiSelect.vue'
-import type {
-  ListConfig,
-  EntityType,
-  FilterControl,
-  FilterState,
-  Entity,
-} from '@/types'
+import RlPopover from 'rela-components/components/overlay/RlPopover.vue'
+import RlIcon from 'rela-components/components/common/RlIcon.vue'
+import type { ListConfig, EntityType, FilterControl, FilterState, Entity } from '@/types'
 
 const props = defineProps<{
   // Only the filter controls are read, so a board (KanbanConfig) passes its
@@ -70,7 +66,9 @@ function multiOptions(filter: ResolvedFilter) {
 
 // Only the text and relation widgets render an element with the filter's id.
 function labelTarget(filter: ResolvedFilter): string | undefined {
-  return filter.widget === 'text' || filter.widget === 'relation' ? `filter-${filter.key}` : undefined
+  return filter.widget === 'text' || filter.widget === 'relation'
+    ? `filter-${filter.key}`
+    : undefined
 }
 
 // Candidate entities per relation-filter key, fetched on mount. Keyed by the
@@ -106,7 +104,15 @@ function resolveFilter(fc: FilterControl): ResolvedFilter {
   // Property filter
   const propDef = props.entityType?.properties[fc.property || '']
   if (!propDef) {
-    return { key, label, widget: 'text', options: [], optionLabels: {}, isRelation: false, substring: true }
+    return {
+      key,
+      label,
+      widget: 'text',
+      options: [],
+      optionLabels: {},
+      isRelation: false,
+      substring: true,
+    }
   }
 
   const options = propDef.values || []
@@ -305,9 +311,18 @@ function clearFilters() {
   emit('filter', {})
 }
 
+// How many controls hold a value: the number on the trigger, so a closed
+// menu still says the list is narrowed.
+const activeCount = computed(() => Object.values(localFilters.value).filter((v) => v).length)
+
 function hasActiveFilters(): boolean {
-  return Object.values(localFilters.value).some((v) => v)
+  return activeCount.value > 0
 }
+
+const popoverRef = ref<InstanceType<typeof RlPopover> | null>(null)
+
+// Lets the owning view open the menu from a shortcut.
+defineExpose({ open: () => popoverRef.value?.open(), close: () => popoverRef.value?.close() })
 
 // Load candidates on mount and whenever the set of relation filter controls
 // changes (component reuse across route params, config reload). Keyed on the
@@ -332,76 +347,116 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="filter-bar">
-    <div class="filters">
-      <div v-for="filter in resolvedFilters" :key="filter.key" class="filter-item">
-        <label :for="labelTarget(filter)">
-          {{ filter.label }}
-        </label>
+  <!--
+    The controls live in a drop-down, not inline: a list or board with several
+    filter controls otherwise spends a whole row above its rows on them. The
+    trigger carries the count of active filters, so a closed menu still says
+    the view is narrowed. The panel is a popover (a dialog), not a menu: it
+    holds inputs, and a menu closes on the first click inside it.
+  -->
+  <RlPopover ref="popoverRef" class="filter-bar" :title="t('list.filter.title')" align="start">
+    <template #trigger="{ toggle, attrs }">
+      <RlButton
+        variant="secondary"
+        class="filter-trigger"
+        data-testid="filter-menu-button"
+        v-bind="attrs"
+        @click="toggle"
+      >
+        {{ t('list.filter.title') }}
+        <span v-if="activeCount" class="filter-count" data-testid="filter-menu-count">{{
+          activeCount
+        }}</span>
+        <template #trailing><RlIcon name="chevron-down" :size="14" aria-hidden="true" /></template>
+      </RlButton>
+    </template>
 
-        <!-- Enum widgets draw each value as its badge, open and closed. -->
-        <RlMultiSelect
-          v-if="filter.widget === 'multi-select'"
-          :model-value="getMultiSelectValues(filter.key)"
-          :options="multiOptions(filter)"
-          :label="filter.label"
-          label-hidden
-          :placeholder="t('list.filter.all')"
-          @update:model-value="(v: string[]) => handleMultiSelectChange(filter.key, v)"
-        >
-          <template #option="{ value: option }">
-            <Badge :value="option" :property="filter.key" :entity-type="entityType" />
-          </template>
-        </RlMultiSelect>
+    <div class="filter-panel" data-testid="filter-panel">
+      <div class="filters">
+        <div v-for="filter in resolvedFilters" :key="filter.key" class="filter-item">
+          <label :for="labelTarget(filter)">
+            {{ filter.label }}
+          </label>
 
-        <!-- Relation widget — select (small) or typeahead (large) target
-             picker. Commits the target's bare display title as the value,
-             which the backend relation filter matches on. -->
-        <EntityTargetSelect
-          v-else-if="filter.widget === 'relation'"
-          :control-id="`filter-${filter.key}`"
-          :candidates="filter.relationCandidates || []"
-          :mode="filter.relationMode || 'select'"
-          :model-value="localFilters[filter.key] || ''"
-          :placeholder="t('list.filter.filterBy', { label: filter.label })"
-          :all-label="t('list.filter.all')"
-          @update:model-value="(v: string) => handleRelationChange(filter.key, v)"
-        />
+          <!-- Enum widgets draw each value as its badge, open and closed. -->
+          <RlMultiSelect
+            v-if="filter.widget === 'multi-select'"
+            :model-value="getMultiSelectValues(filter.key)"
+            :options="multiOptions(filter)"
+            :label="filter.label"
+            label-hidden
+            :placeholder="t('list.filter.all')"
+            @update:model-value="(v: string[]) => handleMultiSelectChange(filter.key, v)"
+          >
+            <template #option="{ value: option }">
+              <Badge :value="option" :property="filter.key" :entity-type="entityType" />
+            </template>
+          </RlMultiSelect>
 
-        <!-- Text widget (default) — debounced to avoid a fetch per keystroke -->
-        <input
-          v-else
-          :id="`filter-${filter.key}`"
-          v-model="localFilters[filter.key]"
-          type="text"
-          :placeholder="t('list.filter.filterBy', { label: filter.label })"
-          @input="handleTextInput"
-        />
+          <!-- Relation widget: select (small) or typeahead (large) target
+               picker. Commits the target's bare display title as the value,
+               which the backend relation filter matches on. -->
+          <EntityTargetSelect
+            v-else-if="filter.widget === 'relation'"
+            :control-id="`filter-${filter.key}`"
+            :candidates="filter.relationCandidates || []"
+            :mode="filter.relationMode || 'select'"
+            :model-value="localFilters[filter.key] || ''"
+            :placeholder="t('list.filter.filterBy', { label: filter.label })"
+            :all-label="t('list.filter.all')"
+            @update:model-value="(v: string) => handleRelationChange(filter.key, v)"
+          />
+
+          <!-- Text widget (default): debounced to avoid a fetch per keystroke -->
+          <input
+            v-else
+            :id="`filter-${filter.key}`"
+            v-model="localFilters[filter.key]"
+            type="text"
+            :placeholder="t('list.filter.filterBy', { label: filter.label })"
+            @input="handleTextInput"
+          />
+        </div>
       </div>
+      <RlButton v-if="hasActiveFilters()" variant="secondary" size="sm" @click="clearFilters">
+        {{ t('list.filter.clear') }}
+      </RlButton>
     </div>
-    <RlButton v-if="hasActiveFilters()" variant="secondary" size="sm" @click="clearFilters">
-      {{ t('list.filter.clear') }}
-    </RlButton>
-  </div>
+  </RlPopover>
 </template>
 
 <style scoped>
 .filter-bar {
+  /* Sits in the page header's tool row, level with the search box. */
+  align-self: stretch;
+}
+
+.filter-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  border: 1px solid var(--rl-color-accent);
+  background: var(--rl-color-bg-hover);
+  color: var(--rl-color-text);
+  font-size: var(--font-size-xs);
+  line-height: 16px;
+  text-align: center;
+}
+
+.filter-panel {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-md);
+  min-width: 260px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: var(--space-sm);
 }
 
 .filters {
   display: flex;
-  gap: var(--space-lg);
-  flex-wrap: wrap;
-  /* Top-align: the multi-select grows downward as chips wrap onto a second row,
-     and the default `stretch` would drag its neighbours' controls out of line
-     with it. Aligning at the top keeps every label and control on one line
-     regardless of how many chips are selected. */
-  align-items: flex-start;
+  flex-direction: column;
+  gap: var(--space-md);
 }
 
 .filter-item {
@@ -421,10 +476,10 @@ onBeforeUnmount(() => {
 .filter-item input {
   padding: 6px 10px;
   min-height: 38px;
+  width: 100%;
   border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-md);
   font-size: var(--font-size-base);
-  min-width: 150px;
   background: var(--rl-color-bg-raised);
   color: var(--rl-color-text);
 }
@@ -435,44 +490,5 @@ onBeforeUnmount(() => {
   box-shadow:
     0 0 0 2px var(--rl-color-bg),
     0 0 0 4px var(--rl-color-focus);
-}
-
-@media (max-width: 768px) {
-  .filter-bar {
-    padding: 0 0 12px 0;
-    margin-bottom: 4px;
-    /* Stack filters above the clear button so the button doesn't get
-       stretched vertically next to a wrapping filter grid. */
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-sm);
-  }
-
-  /* Filters fill the width and wrap evenly. Each item flexes from a small
-     min-width so up to two enum filters fit on a row before wrapping. */
-  .filters {
-    width: 100%;
-    gap: var(--space-sm);
-  }
-
-  .clear-filters {
-    align-self: flex-end;
-  }
-
-  .filter-item {
-    flex: 1 1 calc(50% - 4px);
-    min-width: 0;
-  }
-
-  /* Free-text filters (assignee etc.) get a full row on mobile because
-     the input target is more useful at full width. */
-  .filter-item:has(input[type='text']) {
-    flex: 1 1 100%;
-  }
-
-  .filter-item input {
-    width: 100%;
-    min-width: 0;
-  }
 }
 </style>

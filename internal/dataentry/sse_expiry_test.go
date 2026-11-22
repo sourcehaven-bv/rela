@@ -72,7 +72,7 @@ func expiryApp(t *testing.T, verifier assertionVerifier) (*App, http.Handler) {
 	t.Helper()
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
-	app.sseTiming = sseTimings{flush: 20 * time.Millisecond, ping: 10 * time.Second}
+	app.sse.timing = sseTimings{flush: 20 * time.Millisecond, ping: 10 * time.Second}
 	if verifier != nil {
 		if err := app.SetJWTGate(JWTGateConfig{Verifier: verifier, HeaderName: assertionHeader}); err != nil {
 			t.Fatalf("SetJWTGate: %v", err)
@@ -252,7 +252,7 @@ func TestSSEExpiry_RefreshedTokenKeepsStreamOwner(t *testing.T) {
 	other.ExpiresAt = refreshed.ExpiresAt
 
 	app, h := expiryApp(t, tokenVerifier{"tok-stream": stream, "tok-refreshed": refreshed, "tok-other": other})
-	app.startStoreEventBridge()
+	app.sse.startStoreEventBridge()
 	t.Cleanup(app.StopWatching)
 	env := &liveEnv{app: app, srv: httptest.NewServer(h)}
 	t.Cleanup(env.srv.Close)

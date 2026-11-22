@@ -53,8 +53,46 @@ describe('InlinePropertyValue', () => {
     expect(wrapper.findComponent({ name: 'RlInlineEdit' }).exists()).toBe(false)
   })
 
+  // A checkbox has no text of its own: without the field label a screen
+  // reader names it by its value, "on".
+  it.each([true, false])('names a checkbox by its field label (writable: %s)', (writable) => {
+    const wrapper = mountValue({
+      widget: CheckboxWidget,
+      value: true,
+      writable,
+      propertyDef: { type: 'boolean' } as PropertyDef,
+    })
+    expect(wrapper.get('input[type="checkbox"]').attributes('aria-label')).toBe('Status')
+  })
+
+  // Every empty value reads as the library's `emptyValue` text, whichever
+  // control edits it.
+  it('words an empty value the same for an enum, an enum list and a string', () => {
+    const TAGS_DEF = { type: 'enum', list: true, values: ['a'] } as PropertyDef
+    const wrappers = [
+      mountValue({ widget: SelectWidget, value: undefined, propertyDef: ENUM_DEF }),
+      mountValue({ widget: MultiSelectWidget, value: [], propertyDef: TAGS_DEF }),
+      mountValue({ widget: TextWidget, value: undefined, propertyDef: TEXT_DEF }),
+    ]
+    const texts = wrappers.map((w) => w.text().trim())
+    wrappers.forEach((w) => w.unmount())
+    expect(texts).toEqual(['Empty', 'Empty', 'Empty'])
+  })
+
+  it('names the empty option of an enum as it words an empty value', async () => {
+    const wrapper = mountValue({ widget: SelectWidget, value: undefined, propertyDef: ENUM_DEF })
+    const placeholder = wrapper.text().trim()
+    await wrapper.find('button').trigger('click')
+    await nextTick()
+    const options = [...document.querySelectorAll('[role="option"]')].map((o) =>
+      o.textContent?.trim()
+    )
+    wrapper.unmount()
+    expect(options[0]).toBe(placeholder)
+  })
+
   describe('pick (enum)', () => {
-    it('offers a None option when the property may be empty', () => {
+    it('offers an empty option when the property may be empty', () => {
       const wrapper = mountValue({ widget: SelectWidget, value: 'open', propertyDef: ENUM_DEF })
       expect(wrapper.findComponent({ name: 'RlOptionSelect' }).props('options')).toEqual([
         '',
@@ -63,7 +101,7 @@ describe('InlinePropertyValue', () => {
       ])
     })
 
-    it('offers no None option on a required property', () => {
+    it('offers no empty option on a required property', () => {
       const def = { ...ENUM_DEF, required: true } as PropertyDef
       const wrapper = mountValue({ widget: SelectWidget, value: 'open', propertyDef: def })
       expect(wrapper.findComponent({ name: 'RlOptionSelect' }).props('options')).toEqual([
@@ -72,7 +110,7 @@ describe('InlinePropertyValue', () => {
       ])
     })
 
-    it('emits the picked value, and undefined for None', async () => {
+    it('emits the picked value, and undefined for the empty option', async () => {
       const wrapper = mountValue({ widget: SelectWidget, value: 'open', propertyDef: ENUM_DEF })
       const select = wrapper.findComponent({ name: 'RlOptionSelect' })
       select.vm.$emit('update:modelValue', 'closed')
@@ -86,7 +124,7 @@ describe('InlinePropertyValue', () => {
       expect(wrapper.emitted('update')).toBeUndefined()
     })
 
-    it('disables an option the server denied, never None', () => {
+    it('disables an option the server denied, never the empty option', () => {
       const wrapper = mountValue({
         widget: SelectWidget,
         value: 'open',

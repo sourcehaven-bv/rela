@@ -66,6 +66,7 @@ const ALLOWED_PACKAGES = [
   '@floating-ui/vue',
   '@milkdown/kit',
   'lucide-vue-next',
+  'marked',
   'remark-stringify',
   /*
    * The boards' drag and drop. It renders nothing: it attaches the browser's
@@ -151,9 +152,9 @@ function* files(dir) {
   }
 }
 
-/** Stories and fixtures are the application standing in for one. */
-const isStoryOrFixture = (where) =>
-  where.includes('.stories.') || where.startsWith('src/fixtures') || where.startsWith('src/pages')
+/** Stories, fixtures and unit tests are the application standing in for one. */
+const isHarness = (where) =>
+  where.includes('.stories.') || where.includes('.test.') || where.startsWith('src/fixtures') || where.startsWith('src/pages')
 
 /** Source with comments stripped, so a dependency named in prose never matches. */
 function uncommented(source) {
@@ -232,7 +233,7 @@ for (const path of files(src)) {
   if (where.startsWith('src/styles')) continue
 
   // Stories and fixtures are the application standing in for one.
-  if (isStoryOrFixture(where)) continue
+  if (isHarness(where)) continue
 
   const source = readFileSync(path, 'utf8')
 

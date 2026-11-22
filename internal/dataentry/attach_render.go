@@ -134,9 +134,9 @@ func (ar attachRenderer) AttachRender(ctx context.Context, req lua.AttachRenderR
 		return lua.AttachedFile{}, err
 	}
 	source += fmt.Sprintf(" format=%q", req.Format)
-	// The subject is the full address, so a faced type records which face
-	// got the file.
-	ar.a.auditSink.Record(audit.AttachRendered(ctx, target.Type, target.Ref().String(), req.Property,
+	// The subject names the face, so a faced type records which face got
+	// the file.
+	ar.a.auditSink.Record(audit.AttachRendered(ctx, target.Type, target.ID, target.Face.String(), req.Property,
 		written.FileName, written.SHA256, written.Size, source))
 	return lua.AttachedFile{
 		Name: written.FileName, Size: written.Size, SHA256: written.SHA256, MIME: mimeType,

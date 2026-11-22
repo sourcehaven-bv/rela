@@ -52,7 +52,7 @@ func newLiveEnv(t *testing.T, setup func(app *App)) *liveEnv {
 func newLiveEnvFor(tb testing.TB, app *App, setup func(app *App)) *liveEnv {
 	tb.Helper()
 	app.broker = newEventBroker()
-	app.sseTiming = sseTimings{flush: 10 * time.Millisecond, ping: time.Hour}
+	app.sse.timing = sseTimings{flush: 10 * time.Millisecond, ping: time.Hour}
 	app.live.window = 20 * time.Millisecond
 	if setup != nil {
 		setup(app)
@@ -72,7 +72,7 @@ func newLiveEnvFor(tb testing.TB, app *App, setup func(app *App)) *liveEnv {
 	})
 	srv := httptest.NewServer(app.NewRouter())
 	tb.Cleanup(srv.Close)
-	app.startStoreEventBridge()
+	app.sse.startStoreEventBridge()
 	tb.Cleanup(app.StopWatching)
 	return &liveEnv{app: app, srv: srv}
 }

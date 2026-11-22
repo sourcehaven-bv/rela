@@ -27,6 +27,9 @@ import type {
   DocumentConfig,
   ActionConfig,
   PilesConfig,
+  SidebarAudit,
+  SidebarHeaderButtons,
+  SidebarListButtons,
 } from '@/types'
 
 export const useSchemaStore = defineStore('schema', () => {
@@ -49,6 +52,15 @@ export const useSchemaStore = defineStore('schema', () => {
   // renders, so it defaults to FALSE — an unset flag hides a button rather
   // than shipping one that can only 501.
   const historyEnabled = ref<boolean>(false)
+  // The storage keeps version history and serves reads at a past instant
+  // (`?as_of=`). Only the database backends do.
+  const asOfEnabled = ref<boolean>(false)
+  // The server keeps the project in git (capabilities.git), so the git
+  // status is worth asking for. False until the schema says so.
+  const gitEnabled = ref<boolean>(false)
+  // The project declares flows (capabilities.flows), so the flow routes
+  // answer. False until the schema says so; useFlowList asks only then.
+  const flowsEnabled = ref<boolean>(false)
   // Whether this server runs the co-editing relay (TKT-CJL604; see
   // AppConfig.collab_enabled). False keeps the single-writer editor.
   const collabEnabled = ref<boolean>(false)
@@ -102,6 +114,17 @@ export const useSchemaStore = defineStore('schema', () => {
   // availability depends on who is asking, which `/_config` cannot know.
   const pilesAvailable = ref(false)
   const pilesConfig = ref<PilesConfig | null>(null)
+  // The audit views (TKT-X1ZFO04), from the principal-scoped `/_sidebar`.
+  // Both default to off, so an older server shows neither.
+  const auditChanges = ref(false)
+  const auditGlobal = ref(false)
+  // Which built-in entity header buttons this principal is shown
+  // (`header_buttons:`, TKT-31822PN), fed by the principal-scoped `/_sidebar`.
+  // Shown until it says otherwise, as before the block existed. A UX filter:
+  // the history and pile APIs keep their own ACL.
+  const headerButtons = ref<SidebarHeaderButtons>({ history: true, add_to_pile: true })
+  // The same for lists and search results (`list_buttons:`).
+  const listButtons = ref<SidebarListButtons>({ add_to_pile: true })
   const loaded = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -115,6 +138,13 @@ export const useSchemaStore = defineStore('schema', () => {
 
   // Getters
   const getEntityType = computed(() => (name: string) => entityTypes.value.get(name))
+  // The schema's `label_plural:` for a type ("People"), or undefined when it
+  // sets none. Interface text that names a type in the plural falls back to
+  // a wording without the type then: the type name with an "s" misreads for
+  // many words ("persons") and in any other language.
+  const pluralLabel = computed(
+    () => (name: string) => entityTypes.value.get(name)?.label_plural?.trim() || undefined
+  )
   // Whether this caller may select the named world (`''`/`'default'` = the
   // default world). Drives affordances that NAVIGATE to a world, so it must
   // not manufacture a denial the server would not make.
@@ -342,6 +372,31 @@ export const useSchemaStore = defineStore('schema', () => {
     return scanPropertyDefs(property, entityType, (def) => (def?.display ? def : undefined))
   }
 
+  // Resolve the `display: {link_text}` of a URL property (TKT-IO9PTLD). With
+  // an entity type that declares the property, that type's def decides.
+  // Without one, the text is used only when every type that declares the
+  // property agrees on it, so a cell never shows another type's label for a
+  // link; any disagreement shows the URL.
+  function linkTextForProperty(
+    property: string,
+    entityType?: string | EntityType,
+  ): string | undefined {
+    const textOf = (def?: PropertyDef) => def?.display?.link_text?.trim() || undefined
+    if (entityType) {
+      const et = typeof entityType === 'string' ? entityTypes.value.get(entityType) : entityType
+      const own = et?.properties?.[property]
+      if (own) return textOf(own)
+    }
+    const texts = new Set<string | undefined>()
+    for (const types of [entityTypes.value, relationTypes.value]) {
+      for (const [, def] of types) {
+        const prop = def.properties?.[property]
+        if (prop) texts.add(textOf(prop))
+      }
+    }
+    return texts.size === 1 ? [...texts][0] : undefined
+  }
+
   // Resolve the badge style map (value → badge class) for a property. The
   // server keys `styles` by CUSTOM-TYPE name (buildStyleMap; validateStyles
   // rejects other keys), so resolve the property to its custom type first.
@@ -441,6 +496,9 @@ export const useSchemaStore = defineStore('schema', () => {
       customTypes.value = new Map(Object.entries(schemaData.types || {}))
       worlds.value = new Map(Object.entries(schemaData.worlds || {}))
       worldOrder.value = schemaData.world_order || []
+      asOfEnabled.value = schemaData.capabilities?.as_of === true
+      gitEnabled.value = schemaData.capabilities?.git === true
+      flowsEnabled.value = schemaData.capabilities?.flows === true
 
       // Feed the API layer's plural registry so it doesn't have to import
       // this store (B1a). Mirror the server's GetPlural fallback (type+'s')
@@ -531,6 +589,22 @@ export const useSchemaStore = defineStore('schema', () => {
     if (data.piles !== undefined) pilesConfig.value = data.piles ?? null
   }
 
+  /** Takes the audit flags from `/_sidebar`; absent means both off. */
+  function setAudit(audit: SidebarAudit | undefined) {
+    auditChanges.value = audit?.changes === true
+    auditGlobal.value = audit?.global === true
+  }
+
+  /** Takes `header_buttons` from `/_sidebar`; an older server sends none. */
+  function setHeaderButtons(header: SidebarHeaderButtons | undefined) {
+    if (header) headerButtons.value = header
+  }
+
+  /** Takes `list_buttons` from `/_sidebar`; an older server sends none. */
+  function setListButtons(list: SidebarListButtons | undefined) {
+    if (list) listButtons.value = list
+  }
+
   function setInlineCreate(map: Record<string, string>) {
     inlineCreate.value = map
   }
@@ -580,6 +654,8 @@ export const useSchemaStore = defineStore('schema', () => {
     logoUrl,
     inlineCreate,
     pilesAvailable,
+    auditChanges,
+    auditGlobal,
     pilesConfig,
     loaded,
     loading,
@@ -587,6 +663,7 @@ export const useSchemaStore = defineStore('schema', () => {
 
     // Getters
     getEntityType,
+    pluralLabel,
     getRelationType,
     worldReadable,
     defaultWorld,
@@ -594,6 +671,10 @@ export const useSchemaStore = defineStore('schema', () => {
     worldLabel,
     faceLabel,
     historyEnabled,
+    headerButtons,
+    asOfEnabled,
+    gitEnabled,
+    flowsEnabled,
     collabEnabled,
     collabEpoch,
     getInverseName,
@@ -607,6 +688,7 @@ export const useSchemaStore = defineStore('schema', () => {
     getAction,
     getEnumLabel,
     displayDefForProperty,
+    linkTextForProperty,
     enumValuesForProperty,
     resolveOptionLabels,
     stylesForProperty,
@@ -621,5 +703,9 @@ export const useSchemaStore = defineStore('schema', () => {
     setLogoUrl,
     setInlineCreate,
     setPiles,
+    setAudit,
+    setHeaderButtons,
+    listButtons,
+    setListButtons,
   }
 })

@@ -42,12 +42,12 @@ test.describe('Kanban Board', () => {
       await kanbanPage.expectColumnCountVisible('Approved');
     });
 
-    test('shows create button', async ({ appPage }) => {
+    test('shows column Add instead of a header New button', async ({ appPage }) => {
       const kanbanPage = new KanbanPage(appPage);
 
       await kanbanPage.navigateToKanban('feature-board');
 
-      await expect(kanbanPage.createButton).toBeVisible();
+      await kanbanPage.expectColumnAddWithoutHeaderNew();
     });
   });
 
@@ -161,6 +161,42 @@ test.describe('Kanban Board', () => {
       await expect(kanbanPage.cards.filter({ hasText: 'User Authentication' })).toBeVisible();
       await expect(kanbanPage.cards.filter({ hasText: 'Dashboard Analytics' })).toHaveCount(0);
       await expect(appPage).toHaveURL(/filter%5Bblocks%5D|filter\[blocks\]/);
+    });
+  });
+
+  test.describe('Search and sort', () => {
+    test('search narrows the cards to the matches', async ({ appPage }) => {
+      const kanbanPage = new KanbanPage(appPage);
+
+      await kanbanPage.navigateToKanban('feature-board');
+      await expect(kanbanPage.cards.filter({ hasText: 'Dashboard Analytics' })).toBeVisible();
+
+      await kanbanPage.search('Authentication');
+
+      await expect(kanbanPage.cards.filter({ hasText: 'User Authentication' })).toBeVisible();
+      await expect(kanbanPage.cards.filter({ hasText: 'Dashboard Analytics' })).toHaveCount(0);
+    });
+
+    test('the sort menu sends the sort with the board read', async ({ appPage }) => {
+      const kanbanPage = new KanbanPage(appPage);
+
+      await kanbanPage.navigateToKanban('feature-board');
+
+      await kanbanPage.sortByAndWaitForRead('title', 'Descending', '-title');
+      await expect(kanbanPage.cards.filter({ hasText: 'Dashboard Analytics' })).toBeVisible();
+    });
+
+    test('the sort is kept in the URL and survives a reload', async ({ appPage }) => {
+      const kanbanPage = new KanbanPage(appPage);
+
+      await kanbanPage.navigateToKanban('feature-board');
+      await kanbanPage.sortBy('title', 'Descending');
+      await expect(appPage).toHaveURL(/sort=-title/);
+
+      await appPage.reload();
+      await kanbanPage.sortMenuButton.waitFor();
+      await expect(kanbanPage.sortMenuButton).toContainText(/title/i);
+      await expect(appPage).toHaveURL(/sort=-title/);
     });
   });
 

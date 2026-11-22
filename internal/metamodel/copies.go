@@ -3,6 +3,7 @@ package metamodel
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -319,7 +320,7 @@ func validateCopySet(m *Metamodel, name string, def CopyDef, to CopyTarget) []st
 		return nil // already reported by validateCopyEndpoint
 	}
 	var errs []string
-	for _, f := range sortedKeys(def.Set) {
+	for _, f := range slices.Sorted(maps.Keys(def.Set)) {
 		prop, declared := targetDef.Properties[f]
 		switch {
 		case !declared:

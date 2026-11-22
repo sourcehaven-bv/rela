@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +23,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/flowrun"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
 // jobFlows adds two job-step flows to the sample: mark runs a script that
@@ -42,6 +44,7 @@ const jobFlows = `
       sent: { final: true }
   hook:
     subject: person
+    failed_message: Mail support.
     run_as: system:onboarding-bot
     per_subject: many
     start: [{ on: manual, permission: onboarding.start }]
@@ -145,6 +148,12 @@ func buildJobProject(t *testing.T, hook *hookServer, dataEntry string) (*appbuil
 	forms, err := os.ReadFile(filepath.Join(root, "data-entry.yaml"))
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "data-entry.yaml"), append(forms, dataEntry...), 0o600))
+	// alice reads every run, as an operator looking at the run list; bob
+	// manages the runs through onboarding.start.
+	policy, err := os.ReadFile(filepath.Join(root, "acl.yaml"))
+	require.NoError(t, err)
+	writePolicy(t, root, strings.Replace(string(policy), "assignments:\n",
+		"assignments:\n  alice: auditor\n  bob: hr\n", 1))
 	svc, err := appbuildOnDiskWithOpts(t, root, appbuild.WithBackgroundAutomationJobs(),
 		appbuild.WithHTTPClient(srv.Client()))
 	if err == nil {
@@ -270,4 +279,106 @@ func TestFlowJob_WebhookClientErrorFails(t *testing.T) {
 	require.Equal(t, flowrun.JobFailedPermanent, run.Pending.Job.FailKind)
 	require.Equal(t, 1, hook.calls(), "a permanent error is not tried again")
 	require.Equal(t, "send", header(t, svc, id)["state"])
+}
+
+// TestFlowJob_RunListShowsFailedJob pins BUG-S5VV0N0: a run whose job
+// failed for good reads failed in the run list, as on its own page,
+// though its header still says working.
+func TestFlowJob_RunListShowsFailedJob(t *testing.T) {
+	hook := &hookServer{status: http.StatusBadRequest}
+	svc := jobProject(t, hook)
+	id, _ := startJob(t, svc, "hook")
+	waitJobFailed(t, svc, id)
+	require.Equal(t, string(flow.StatusWorking), header(t, svc, id)["status"])
+
+	ctl := appbuild.FlowControlFor(svc)
+	alice := flowUser(t, svc, "alice")
+	detail, err := ctl.Run(alice, id)
+	require.NoError(t, err)
+	require.Equal(t, string(flow.StatusFailed), detail.Status)
+	list, err := ctl.RunList(alice, "hook", "", 1, 50)
+	require.NoError(t, err)
+	require.Len(t, list.Runs, 1)
+	require.Equal(t, detail.Status, list.Runs[0].Status)
+	require.True(t, list.Runs[0].Active, "a failed job can still be retried")
+}
+
+// TestFlowJob_FailedJobForManagers pins BUG-53GP5F5: the run's manager
+// reads the last job error and finds the run among the failed runs of the
+// task list; a reader who does not manage it gets neither. The run list's
+// failed filter finds it for both.
+func TestFlowJob_FailedJobForManagers(t *testing.T) {
+	hook := &hookServer{status: http.StatusBadRequest}
+	svc := jobProject(t, hook)
+	id, pid := startJob(t, svc, "hook")
+	waitJobFailed(t, svc, id)
+	ctl := appbuild.FlowControlFor(svc)
+	alice, bob := flowUser(t, svc, "alice"), flowUser(t, svc, "bob")
+
+	managed, err := ctl.Run(bob, id)
+	require.NoError(t, err)
+	require.True(t, managed.Actions.Manage)
+	require.Contains(t, managed.Waiting.Pending.Job.Error, "webhook answered 400")
+	read, err := ctl.Run(alice, id)
+	require.NoError(t, err)
+	require.False(t, read.Actions.Manage)
+	require.NotNil(t, read.Waiting.Pending.Job)
+	require.Empty(t, read.Waiting.Pending.Job.Error, "only a manager receives the job error")
+	require.Equal(t, "Mail support.", read.FailedMessage, "a failed job step carries the flow's text")
+	require.Equal(t, "hook", read.Title, "the flow has no label, and no display property titles the subject")
+
+	failed, _, err := ctl.FailedTasks(bob, "")
+	require.NoError(t, err)
+	require.Len(t, failed, 1)
+	require.Equal(t, string(id), failed[0].Run)
+	require.Equal(t, "send", failed[0].State)
+	require.Equal(t, pid, failed[0].Subject)
+	require.NotEmpty(t, failed[0].SubjectTitle)
+	none, _, err := ctl.FailedTasks(alice, "")
+	require.NoError(t, err)
+	require.Empty(t, none, "alice cannot retry the run")
+	other, _, err := ctl.FailedTasks(bob, "mark")
+	require.NoError(t, err)
+	require.Empty(t, other, "the flow filter applies")
+
+	for _, user := range []context.Context{alice, bob} {
+		list, lerr := ctl.RunList(user, "", string(flow.StatusFailed), 1, 50)
+		require.NoError(t, lerr)
+		require.Len(t, list.Runs, 1)
+		require.Equal(t, string(id), list.Runs[0].ID)
+		require.Equal(t, string(flow.StatusFailed), list.Runs[0].Status)
+	}
+	working, err := ctl.RunList(bob, "", string(flow.StatusWorking), 1, 50)
+	require.NoError(t, err)
+	require.Len(t, working.Runs, 1, "the working filter still matches the header")
+
+	require.NoError(t, ctl.Retry(bob, id))
+	waitJobFailed(t, svc, id)
+	require.Equal(t, 2, hook.calls())
+}
+
+// TestFlowJob_FailedTasksBudget pins the cost of the failed runs in the
+// task list (BUG-53GP5F5): the store calls do not grow with the number of
+// failed runs.
+func TestFlowJob_FailedTasksBudget(t *testing.T) {
+	cost := func(t *testing.T, n int) storetest.Cost {
+		t.Helper()
+		svc := jobProject(t, &hookServer{status: http.StatusBadRequest})
+		ctx := context.Background()
+		for i := range n {
+			p := entity.New(fmt.Sprintf("PER-%d", i+1), "person")
+			p.Properties = map[string]any{"name": p.ID, "status": "new"}
+			require.NoError(t, svc.Store().CreateEntity(ctx, p))
+			id, err := appbuild.FlowEngine(svc).Start(ctx, "hook", p.Ref())
+			require.NoError(t, err)
+			waitJobFailed(t, svc, id)
+		}
+		counting := storetest.NewCounting(svc.Store())
+		got, _, err := appbuild.FlowControlOver(svc, counting).FailedTasks(flowUser(t, svc, "bob"), "")
+		require.NoError(t, err)
+		require.Len(t, got, n)
+		return counting.Cost()
+	}
+	small, large := cost(t, 3), cost(t, 12)
+	require.Equal(t, small.Calls, large.Calls, "the failed runs' reads grow with their number")
 }

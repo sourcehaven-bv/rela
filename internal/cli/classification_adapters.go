@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io/fs"
+	"maps"
 	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/classification"
@@ -29,7 +30,7 @@ func classificationShape(mm *metamodel.Metamodel) classification.Shape {
 		}
 	}
 	for name, def := range mm.Relations {
-		fields := sortedKeys(def.Properties)
+		fields := slices.Sorted(maps.Keys(def.Properties))
 		if def.Content && !slices.Contains(fields, classification.BodyField) {
 			fields = append(fields, classification.BodyField)
 		}
@@ -55,7 +56,7 @@ func propertyOrder(order []string, props map[string]metamodel.PropertyDef) []str
 			seen[name] = true
 		}
 	}
-	for _, name := range sortedKeys(props) {
+	for _, name := range slices.Sorted(maps.Keys(props)) {
 		if !seen[name] {
 			fields = append(fields, name)
 		}

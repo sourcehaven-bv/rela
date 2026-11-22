@@ -14,10 +14,12 @@ export interface Schema {
   // The declared worlds in schema.yaml order, which a JSON object cannot
   // carry. Absent when the schema declares no worlds.
   world_order?: string[]
-  // What the deployment's storage supports. atomic_batch: POST
-  // /api/v1/_batch is served (the store rolls a failed write back). The
-  // server always sends it; it is optional for a server too old to.
-  capabilities?: { atomic_batch: boolean }
+  // What the deployment supports. atomic_batch: POST /api/v1/_batch is
+  // served (the store rolls a failed write back). The server always sends
+  // it; it is optional for a server too old to. as_of: reads take
+  // `?as_of=` and answer for a past instant. git: GET /_git/status has a
+  // status. flows: the project declares flows and /_flows answers.
+  capabilities?: { atomic_batch: boolean; as_of?: boolean; git?: boolean; flows?: boolean }
   // Abstract root types, keyed by name. An abstract type stores no
   // entities; its concrete variants appear in `entities` with `extends`
   // set. For integrations; the SPA does not read it.
@@ -151,12 +153,18 @@ export interface WorldMessages {
   stand_in?: string
 }
 
-// A property's display format. Only currency exists today; more formats may
-// join, and at most one applies.
+// A property's display format. More formats may join; at most one applies.
 export interface PropertyDisplay {
   // ISO 4217 code: the integer or decimal renders as money in the reader's
   // locale.
   currency?: string
+  // The string renders as a link through the url widget (TKT-0101IO4).
+  link?: boolean
+  // The text the link shows instead of the URL (TKT-IO9PTLD).
+  link_text?: string
+  // The file property is an image: previewed on the form and detail view,
+  // a thumbnail in list rows (TKT-WG1410D).
+  image?: boolean
 }
 
 export interface PropertyDef {

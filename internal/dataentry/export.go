@@ -147,7 +147,10 @@ func newExportHandler(app *App) (*exportHandler, error) {
 			}
 			return bindQueryIdentity(ctx, scope)
 		},
-		redactForCondition: app.redactedForSuggestion,
+		// A closure so a later reassignment of app.affordances is seen.
+		redactForCondition: func(ctx context.Context, e *entityPkg.Entity) *entityPkg.Entity {
+			return redactedForSuggestion(ctx, app.affordances, e)
+		},
 		findListForType: func(entityType string) string {
 			s := app.State()
 			for _, tree := range dataentryconfig.NavigationTrees(s.Cfg) {

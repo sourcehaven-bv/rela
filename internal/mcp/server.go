@@ -171,16 +171,11 @@ type LuaDeps struct {
 // RelatedReads computes over an entity's related rows under the caller's
 // gate. Both come from the same gated read bundle as [Deps.Store].
 type RelatedReads struct {
-	// Traversals answers related(...) in a list_entities filter.
-	//
-	// Nil: accepted. A filter that traverses a relation is then refused.
-	Traversals TraversalBinder
 	// Conditions lets the store answer a list_entities filter (TKT-Z099FGY).
-	// The wiring site supplies one whose traversal gate is the gate behind
-	// Traversals, so the store and the Go path judge a filter alike.
+	// The wiring site supplies one that lowers for the reader behind
+	// [Deps.Store], which gates the traversals.
 	//
-	// Nil: accepted. Every filter is then answered in Go over the whole
-	// readable type, and a filter naming current_user does not compile.
+	// Nil: accepted. list_entities then refuses every filter.
 	Conditions ConditionLowerer
 	// Rollups computes the roll-up properties (TKT-6I2OPG) show_entity
 	// serves.
@@ -277,20 +272,9 @@ type GraphReader interface {
 	ListEntityPage(ctx context.Context, q visibility.PageQuery) (visibility.EntityPage, error)
 }
 
-// TraversalBinder answers the `related(...)` calls of a list_entities filter
-// for a page of candidate rows. The wiring site supplies one whose gate
-// matches [Deps.Store]: an ungated binder behind a gated reader would reveal
-// edges to hidden entities. Nil: accepted — list_entities then refuses a
-// filter that contains a traversal.
-type TraversalBinder interface {
-	Bind(
-		ctx context.Context, entityType string, ids []string, progs ...*predicate.Program,
-	) (func(rowID string) predicate.TraversalFunc, error)
-}
-
 // ConditionLowerer rewrites a list_entities filter as a page filter,
 // declared here at the call site. It also stamps the query identity, so
-// `current_user` binds to the same caller in the store and in Go.
+// `current_user` binds to the caller.
 type ConditionLowerer interface {
 	// StampQueryIdentity returns ctx with the caller's query identity
 	// stamped. An error fails the call.
@@ -299,10 +283,10 @@ type ConditionLowerer interface {
 	// Props, Traversals and Where of a [visibility.PageQuery], whose
 	// predicates name every entity field prog reads and whose traversals
 	// the page reader gates for the caller. The filter is the AND of the
-	// three. ok=false means the filter does not lower exactly; the caller
-	// answers it in Go.
+	// three. An error means the filter does not lower exactly; its text
+	// names the part that does not.
 	Lower(ctx context.Context, prog *predicate.Program, entityType string) (
-		filter visibility.PageQuery, ok bool)
+		filter visibility.PageQuery, err error)
 }
 
 // GraphCounter is the structural half of [GraphReader]: type-level tallies

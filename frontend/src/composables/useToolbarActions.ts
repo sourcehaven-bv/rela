@@ -60,6 +60,7 @@ export function useToolbarActions(
         message:
           typeof config.confirm === 'string' ? config.confirm : t('page.confirmRun', { label }),
         confirmLabel: label,
+        danger: config.style === 'danger',
       })
       if (!ok) return
     }

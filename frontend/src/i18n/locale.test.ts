@@ -59,7 +59,7 @@ describe('interface language state', () => {
     const date = computed(() => formatDate('2024-01-15'))
     expect(intlLocale()).toBe('nl')
     expect(date.value).toBe('15 jan 2024')
-    expect(formatAmount(3500, 'EUR')).toMatch(/^€\s3\.500$/)
+    expect(formatAmount(3500, 'EUR')).toMatch(/^€\s3\.500,00$/)
 
     setUserLanguage('en')
     expect(date.value).toBe('Jan 15, 2024')

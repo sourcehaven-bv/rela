@@ -155,7 +155,11 @@ already wrote it in their language (TKT-ZL1QAO). Rules for new code:
 - **The language can change once after the first paint.** `app.language`
   arrives with the schema, so until it loads the shell follows the browser.
   This is accepted rather than holding the whole UI back on the config
-  request.
+  request. The server writes the language and app name into the shell
+  (`bootMeta`): a multi-tenant server per tenant, a single-tenant one from
+  `data-entry.yaml`. Those hold until the config loads, so a screen shown
+  before it, such as a refused request, uses `app.language`. Before that,
+  `schemaStore.app` is a placeholder; see `useShellAppConfig` (BUG-HZS0DGQ).
 - **Write keys literally.** `guards.test.ts` finds unused keys by their text, so
   `` t(`language.${code}`) `` reads as unused. Map values to keys with a literal
   record (see `LanguageSetting.vue`).

@@ -9,14 +9,48 @@ import {
 import { isCancelledFetch } from '@/composables/usePageData'
 import { useNavigationPending } from '@/composables/useNavigationPending'
 import { relaBase } from '@/api/base'
+import { currentAsOf } from '@/api/asOf'
 import { getSidebar } from '@/api/schema'
-import { spaceOf, useSpaceStore, withSpace } from '@/stores/space'
+import {
+  currentSpace,
+  lastSpace,
+  homeTarget,
+  spaceOf,
+  useSpaceStore,
+  withSpace,
+} from '@/stores/space'
 import { CONFIGURE_PREFIX, configureRoute, isConfigurePath } from '@/configure/routes'
+import { prefixResolvedLinks } from './spaceLinks'
+import { setLinkSpace } from '@/utils/spacePath'
+import { keepInView } from '@/utils/keepInView'
 
 const routes: RouteRecordRaw[] = [
   {
+    /*
+     * The root opens the home of the current space (TKT-JEAR2UA): the one
+     * the user is in, else the one they were last in, else the first they
+     * may enter. Without `spaces:` it opens the dashboard, as it always did.
+     *
+     * A guard rather than a `redirect` for the reason the `/s/:space` route
+     * gives: on a cold load the space store is still empty, so this asks the
+     * server, which resolves the remembered space against the principal's
+     * permitted ones. The answer fills the store, so a later visit to the
+     * root needs no request.
+     */
     path: '/',
-    redirect: '/dashboard',
+    // Never rendered: the guard always redirects.
+    component: { render: () => null },
+    beforeEnter: async () => {
+      const store = useSpaceStore()
+      if (store.loaded) return homeTarget(store.spaces, store.current)
+      try {
+        const data = await getSidebar(lastSpace())
+        store.set(data)
+        return homeTarget(store.spaces, store.current)
+      } catch {
+        return '/dashboard'
+      }
+    },
   },
   {
     path: '/dashboard',
@@ -117,6 +151,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/AnalyzeView.vue'),
   },
   {
+    path: '/audit',
+    name: 'audit',
+    component: () => import('@/views/AuditView.vue'),
+  },
+  {
     path: '/settings',
     name: 'settings',
     component: () => import('@/views/SettingsView.vue'),
@@ -178,6 +217,25 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/AppHostView.vue'),
     props: true,
   },
+  {
+    /*
+     * The SPA only runs with a session, and rela-server has no sign-in page
+     * of its own: the edge in front of it signs the user in. A `/login`
+     * reached with a session (a bookmark, the edge's own link) opens the
+     * home page instead of an empty pane (BUG-UZGMHIK). The alias loop below
+     * adds `/s/<space>/login`, which lands on the home of that space.
+     */
+    path: '/login',
+    redirect: (to) =>
+      typeof to.params.space === 'string' ? `/s/${encodeURIComponent(to.params.space)}` : '/',
+  },
+  {
+    // Any other address shows "Page not found" rather than an empty pane
+    // (BUG-UZGMHIK). The alias loop adds the `/s/<space>/...` form.
+    path: '/:pathMatch(.*)*',
+    name: 'not-found',
+    component: () => import('@/views/NotFoundView.vue'),
+  },
 ]
 
 /*
@@ -214,9 +272,7 @@ routes.push({
         spaces = []
       }
     }
-    const home = spaces.find((s) => s.id === id)?.home
-    // A home of "/" would land back on this route and redirect forever.
-    return withSpace(home && home !== '/' ? home : '/dashboard', id)
+    return homeTarget(spaces, id)
   },
 })
 
@@ -357,15 +413,12 @@ const router = createRouter({
 })
 
 // scrollToAnchorWhenReady polls for the target id, and once it appears
-// keeps re-scrolling to it as the page's rendered content settles —
-// document panels render mermaid diagrams and other lazy content for
-// seconds after the initial HTML is mounted, which shifts the target
-// off-screen if we only scroll once.
-//
-// Strategy: scroll immediately when the element appears, then observe
-// DOM mutations on the document body. Each mutation triggers a re-scroll
-// (preserving the target at the top). Stop after TOTAL_TIMEOUT, or when
-// `abort()` returns true (user navigated / scrolled manually).
+// keeps it in view while the page's rendered content settles: document
+// panels render mermaid diagrams and other lazy content for seconds after
+// the initial HTML is mounted, which shifts the target off-screen if we only
+// scroll once. keepInView re-scrolls whenever the target moves, and stops
+// when the page has settled, the user takes over, or `abort()` returns true
+// (the user navigated).
 function scrollToAnchorWhenReady(hash: string, abort: () => boolean) {
   const FIND_TIMEOUT_MS = 2000
   const SETTLE_TIMEOUT_MS = 5000
@@ -375,65 +428,12 @@ function scrollToAnchorWhenReady(hash: string, abort: () => boolean) {
 
   const findTick = () => {
     if (abort()) return
-    const el = document.getElementById(id)
-    if (el) {
-      settle(el)
+    if (document.getElementById(id)) {
+      keepInView(() => document.getElementById(id), { timeoutMs: SETTLE_TIMEOUT_MS, abort })
       return
     }
     if (Date.now() > findDeadline) return
     requestAnimationFrame(findTick)
-  }
-
-  const settle = (el: HTMLElement) => {
-    // Track user-initiated scrolls so we can bail if they take over.
-    // An auto-scroll we cause has a matching scrollY after the call
-    // resolves; any other scroll means the user took over.
-    let expectedScrollY = 0
-    const onUserScroll = () => {
-      if (Math.abs(window.scrollY - expectedScrollY) > 2) {
-        cleanup()
-      }
-    }
-    const reScroll = () => {
-      el.scrollIntoView({ behavior: 'auto', block: 'start' })
-      expectedScrollY = window.scrollY
-    }
-
-    // Initial jump.
-    reScroll()
-
-    // Observe mutations below .document-body (v-html + DOMPurify passes,
-    // lazy-rendered tables, image loads). Each mutation triggers a
-    // re-scroll. Mermaid rendering emits a dedicated `rela:mermaid-rendered`
-    // event once all diagrams for a container have been swapped in — we
-    // listen for that directly instead of polling, since mermaid is the
-    // main source of post-mount layout shift. Stop after SETTLE_TIMEOUT_MS
-    // or on user action.
-    const container = el.closest('.document-body') || document.body
-    const mo = new MutationObserver(reScroll)
-    mo.observe(container, { childList: true, subtree: true, characterData: true })
-
-    container.addEventListener('rela:mermaid-rendered', reScroll)
-    // PlantUML <img>s shift layout when they (lazily) load; same re-settle.
-    container.addEventListener('rela:plantuml-rendered', reScroll)
-    const deadline = window.setTimeout(cleanup, SETTLE_TIMEOUT_MS)
-    const abortTick = window.setInterval(() => {
-      if (abort()) cleanup()
-    }, 200)
-    window.addEventListener('wheel', onUserScroll, { passive: true })
-    window.addEventListener('touchmove', onUserScroll, { passive: true })
-    window.addEventListener('keydown', onUserScroll)
-
-    function cleanup() {
-      mo.disconnect()
-      container.removeEventListener('rela:mermaid-rendered', reScroll)
-      container.removeEventListener('rela:plantuml-rendered', reScroll)
-      window.clearTimeout(deadline)
-      window.clearInterval(abortTick)
-      window.removeEventListener('wheel', onUserScroll)
-      window.removeEventListener('touchmove', onUserScroll)
-      window.removeEventListener('keydown', onUserScroll)
-    }
   }
 
   findTick()
@@ -480,6 +480,22 @@ router.beforeEach((to) => {
   const space = useSpaceStore()
   if (!space.enabled || !space.current || spaceOf(to.path) || isConfigurePath(to.path)) return
   return { path: withSpace(to.path, space.current), query: to.query, hash: to.hash }
+})
+
+// The guard above covers navigation; these give a link's href the same
+// space, for router links and for hrefs built outside the router.
+prefixResolvedLinks(router, currentSpace)
+setLinkSpace(currentSpace)
+
+/**
+ * A page reading at a past instant stays there: a link or a navigation
+ * without `?as_of=` gets the page's instant (TKT-6KLUT3U). The way back to
+ * the present is `useAsOf().setAsOf(undefined)`, which reloads the page.
+ */
+router.beforeEach((to) => {
+  const at = currentAsOf()
+  if (!at || to.query.as_of === at) return
+  return { path: to.path, query: { ...to.query, as_of: at }, hash: to.hash }
 })
 
 router.onError((err, to, from) => {

@@ -300,18 +300,18 @@ func matchesPage(cmd CommandConfig, pageType, qualifier, entityType string) bool
 	// Check explicit scope matches.
 	switch pageType {
 	case "view":
-		if contains(scope.Views, qualifier) {
+		if slices.Contains(scope.Views, qualifier) {
 			return true
 		}
-		if contains(scope.EntityTypes, entityType) {
+		if slices.Contains(scope.EntityTypes, entityType) {
 			return true
 		}
 	case "entity":
-		if contains(scope.EntityTypes, entityType) {
+		if slices.Contains(scope.EntityTypes, entityType) {
 			return true
 		}
 	case "list":
-		if contains(scope.Lists, qualifier) {
+		if slices.Contains(scope.Lists, qualifier) {
 			return true
 		}
 	case "dashboard":
@@ -341,11 +341,6 @@ func contextMatchesPage(cmdContext, pageType string) bool {
 		return pageType == "dashboard"
 	}
 	return false
-}
-
-// contains checks if a string slice contains a value.
-func contains(slice []string, val string) bool {
-	return slices.Contains(slice, val)
 }
 
 // --- Stdin JSON builders ---

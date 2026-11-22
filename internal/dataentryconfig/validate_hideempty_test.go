@@ -76,7 +76,7 @@ func TestSectionHideEmpty_RefusedInSidePanel(t *testing.T) {
 				SidePanel: &SidePanelConfig{
 					Traverse: []ViewTraverse{{From: "entry", Follow: "belongs-to", CollectAs: "cats"}},
 					Sections: []ViewSection{
-						{Heading: "Categories", Source: "cats", Display: "cards", HideEmpty: true},
+						{Heading: "Categories", Source: "cats", Display: "cards", SectionVisibility: SectionVisibility{HideEmpty: true}},
 					},
 				},
 			},

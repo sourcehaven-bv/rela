@@ -20,7 +20,7 @@ import (
 func FlowControlOver(s *Services, st store.Store) *FlowControl {
 	reader, _, holders := scriptReads(st, s.aclDeclarative, s.fieldReads, s.worlds)
 	return &FlowControl{
-		eng: s.flowEngine, d: s.aclDeclarative, rows: reader, holders: holders, raw: st,
+		eng: s.flowEngine, d: s.aclDeclarative, rows: reader, holders: holders, raw: st, meta: s.meta,
 		writer: entitymanager.FieldGated(s.entityManager), now: time.Now,
 	}
 }

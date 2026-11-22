@@ -404,6 +404,12 @@ func TestResolveWidget(t *testing.T) {
 		{"list enum type", metamodel.PropertyDef{Type: metamodel.PropertyTypeEnum, List: true}, WidgetMultiSelect},
 		{"list custom type", metamodel.PropertyDef{Type: "priority_type", List: true}, WidgetMultiSelect},
 		{"list string type (not multi-select)", metamodel.PropertyDef{Type: metamodel.PropertyTypeString, List: true}, WidgetText},
+		{"string with link display", metamodel.PropertyDef{
+			Type: metamodel.PropertyTypeString, Display: &metamodel.PropertyDisplay{Link: true},
+		}, WidgetURL},
+		{"integer with currency display", metamodel.PropertyDef{
+			Type: metamodel.PropertyTypeInteger, Display: &metamodel.PropertyDisplay{Currency: "EUR"},
+		}, WidgetNumber},
 	}
 
 	for _, tt := range tests {
@@ -433,30 +439,6 @@ func TestCoalesce(t *testing.T) {
 			got := coalesce(tt.vals...)
 			if got != tt.want {
 				t.Errorf("coalesce(%v) = %q, want %q", tt.vals, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestContainsString(t *testing.T) {
-	tests := []struct {
-		name  string
-		slice []string
-		s     string
-		want  bool
-	}{
-		{"found", []string{"a", "b", "c"}, "b", true},
-		{"not found", []string{"a", "b", "c"}, "d", false},
-		{"empty slice", []string{}, "a", false},
-		{"nil slice", nil, "a", false},
-		{"empty string found", []string{"", "b"}, "", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := containsString(tt.slice, tt.s)
-			if got != tt.want {
-				t.Errorf("containsString(%v, %q) = %v, want %v", tt.slice, tt.s, got, tt.want)
 			}
 		})
 	}

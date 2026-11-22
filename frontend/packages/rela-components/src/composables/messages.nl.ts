@@ -271,6 +271,13 @@ export const NL_MESSAGES: Messages = {
 
   resultCount: ({ shown, total }) => `${shown} van ${total}`,
 
+  diffChangeCount: ({ count }) => `${count} ${count === 1 ? 'wijziging' : 'wijzigingen'}`,
+  diffPosition: ({ current, total }) => `${current} van ${total}`,
+  diffPrevious: 'Vorige wijziging',
+  diffNext: 'Volgende wijziging',
+  diffUnchangedBlocks: ({ count }) => `${count} ongewijzigde blokken`,
+  diffNoChanges: 'Geen wijzigingen',
+
   cardGrabbed: ({ title }) =>
     `${title}, opgepakt. Kies een kolom met de pijltjestoetsen, zet neer met Enter, annuleer met Escape.`,
   cardAtRest: ({ title, section }) =>
@@ -402,7 +409,8 @@ export const NL_MESSAGES: Messages = {
     `Sleep ${multiple ? 'bestanden' : 'een bestand'} hierheen, of klik om te kiezen`,
 
   selectItem: ({ title }) => `${title} selecteren`,
-  selectAllIn: ({ section }) => `Alles in ${section} selecteren`,
+  selectAllIn: ({ section }) =>
+    section.trim() ? `Alles in ${section} selecteren` : 'Alles selecteren',
   moveRow: ({ title }) => `${title} verplaatsen`,
   showMoreRows: ({ count }) => `Nog ${count} tonen`,
   ofRemaining: ({ remaining }) => `van de ${remaining} resterende`,

@@ -6,6 +6,7 @@ import { useModalStack } from '@/composables/modalStack'
 import { getErrorMessage } from '@/api'
 import { useConfirm } from '@/composables/useConfirm'
 import { apiUrl } from '@/api/base'
+import { currentAsOf } from '@/api/asOf'
 // RlModal brings the scrim, Tab trap, scroll lock, Escape and focus restore
 // this dialog never had. `useModalStack` above stays: it is rela's separate
 // registry, and it is what stops global shortcuts firing underneath.
@@ -34,6 +35,17 @@ const { confirm } = useConfirm()
 const { t } = useI18n()
 
 async function runCommand(cmd: Command) {
+  // A command acts on today's data. A page showing a past state never runs
+  // one: this fetch does not carry ?as_of=, so nothing on the server would
+  // refuse it.
+  if (currentAsOf() !== undefined) {
+    activeCommand.value = cmd
+    output.value = [{ type: 'text', text: t('asOf.readOnly') }]
+    success.value = false
+    running.value = false
+    showModal.value = true
+    return
+  }
   if (cmd.confirm) {
     const ok = await confirm({
       title: t('entity.action.confirmTitle', { label: cmd.label }),

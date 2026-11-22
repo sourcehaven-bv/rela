@@ -8,6 +8,7 @@
  */
 import { computed, ref } from 'vue'
 import { isUiLanguage, resolveLanguage, type ResolvedLanguage, type UiLanguage } from './language'
+import { bootMeta } from './bootMeta'
 
 /**
  * The localStorage key of the user's choice. Stored per browser, like the
@@ -35,7 +36,8 @@ function browserLanguages(): readonly string[] {
 }
 
 const userLanguage = ref<UiLanguage | null>(readStoredLanguage())
-const projectLanguage = ref<string | null>(null)
+// Until the config loads, the language the server named in the shell, if any.
+const projectLanguage = ref<string | null>(bootMeta('rela-language'))
 const browser = ref<readonly string[]>(browserLanguages())
 
 /** The language and formatting locale in effect now. */

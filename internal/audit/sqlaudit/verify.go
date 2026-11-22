@@ -202,37 +202,14 @@ func (l *Log) HashAt(ctx context.Context, seq int64) (hash string, found bool, e
 	return hash, true, nil
 }
 
-// Entry is one stored record and its seq.
-type Entry struct {
-	Seq    int64
-	Record audit.Record
-}
+// Entry is [audit.Entry], kept so callers of this package need not import
+// both.
+type Entry = audit.Entry
 
 // Records returns up to limit records appended after seq after, in seq
 // order. It is ungated: callers are operator tools and tests, not request
 // paths.
 func (l *Log) Records(ctx context.Context, after int64, limit int) ([]Entry, error) {
-	rows, err := l.db.Query(ctx, `SELECT seq, doc FROM audit_log WHERE seq > ? ORDER BY seq LIMIT ?`, after, limit)
-	if err != nil {
-		return nil, l.errf("records: %w", err)
-	}
-	defer rows.Close()
-	var out []Entry
-	for rows.Next() {
-		var (
-			e   Entry
-			doc string
-		)
-		if err := rows.Scan(&e.Seq, &doc); err != nil {
-			return nil, l.errf("records: %w", err)
-		}
-		if err := json.Unmarshal([]byte(doc), &e.Record); err != nil {
-			return nil, l.errf("records: seq %d: %w", e.Seq, err)
-		}
-		out = append(out, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, l.errf("records: %w", err)
-	}
-	return out, nil
+	return l.scanEntries(ctx, "records",
+		`SELECT seq, doc FROM audit_log WHERE seq > ? ORDER BY seq LIMIT ?`, after, limit)
 }

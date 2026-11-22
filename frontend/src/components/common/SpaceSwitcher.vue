@@ -71,7 +71,7 @@ function go(path: string, event: MouseEvent) {
 </script>
 
 <template>
-  <RlMenu v-if="hasMenu" align="start">
+  <RlMenu v-if="hasMenu" class="space-switcher" align="start">
     <template #trigger="{ toggle, attrs }">
       <RlWorkspaceSwitcher :name="name" v-bind="attrs" @click="toggle">
         <template v-if="$slots.logo" #logo><slot name="logo" /></template>
@@ -100,7 +100,7 @@ function go(path: string, event: MouseEvent) {
       >{{ t('switcher.configure') }}</RlMenuItem>
     </template>
   </RlMenu>
-  <RlWorkspaceSwitcher v-else :name="name" :menu="false">
+  <RlWorkspaceSwitcher v-else class="space-switcher" :name="name" :menu="false">
     <template v-if="$slots.logo" #logo><slot name="logo" /></template>
   </RlWorkspaceSwitcher>
 </template>

@@ -345,7 +345,7 @@ watch(
         <textarea
           v-model="newBody"
           class="comment-input"
-          rows="3"
+          rows="1"
           :placeholder="t('comments.addPlaceholder')"
           :aria-label="t('comments.bodyLabel')"
         />
@@ -488,21 +488,26 @@ watch(
   gap: 8px;
 }
 
+/* The composer look of RlCommentComposer (the bottom-docked panel one): page
+ * background, a rule above, page gutters, a rounded input. It is the same on
+ * the full page and in a side panel. */
 .comment-form {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 16px 24px;
+  gap: var(--rl-space-2);
+  padding: var(--rl-space-3) var(--rl-page-gutter-right) var(--rl-space-5)
+    var(--rl-page-gutter-left);
+  background: var(--rl-color-bg);
   border-top: 1px solid var(--rl-color-border);
 }
 
 .comment-input,
 .anchor-select {
   width: 100%;
-  padding: 8px 12px;
+  padding: var(--rl-space-3) var(--rl-space-4);
   border: 1px solid var(--rl-color-border);
-  border-radius: 6px;
-  background: var(--rl-color-bg-raised);
+  border-radius: var(--rl-radius-lg);
+  background: var(--rl-color-bg);
   color: var(--rl-color-text);
   font-size: 14px;
   font-family: inherit;

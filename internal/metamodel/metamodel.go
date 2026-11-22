@@ -57,6 +57,23 @@ func (m *Metamodel) DisplayTitle(id, entityType string, properties map[string]an
 	return id
 }
 
+// WholeDisplayTitle is [Metamodel.DisplayTitle] for a row as one reader
+// sees it: it falls back to id when any property the title is made of is
+// absent from properties. A gated read leaves out a property the reader may
+// not see, and a plain DisplayTitle would then render part of a templated
+// title ("Ada " with the surname hidden), which shows the readable half and
+// that a hidden half exists (BUG-R9EHKV).
+func (m *Metamodel) WholeDisplayTitle(id, entityType string, properties map[string]any) string {
+	if def, ok := m.GetEntityDef(entityType); ok {
+		for _, prop := range def.DisplayProperties() {
+			if _, present := properties[prop]; !present {
+				return id
+			}
+		}
+	}
+	return m.DisplayTitle(id, entityType, properties)
+}
+
 // GetRelationDef returns the relation definition
 func (m *Metamodel) GetRelationDef(name string) (*RelationDef, bool) {
 	if def, ok := m.Relations[name]; ok {

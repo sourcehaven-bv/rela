@@ -43,6 +43,14 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"AppendThenVerify", testAppendThenVerify},
 		{"StoresPreparedRecord", testStoresPreparedRecord},
 		{"IndexesSubjects", testIndexesSubjects},
+		{"NewestPages", testNewestPages},
+		{"ForEntityPages", testForEntityPages},
+		{"ForEntityOpFilter", testForEntityOpFilter},
+		{"ForEntityLifecycle", testForEntityLifecycle},
+		{"ForEntityFaces", testForEntityFaces},
+		{"ForEntityFacelessStart", testForEntityFacelessStart},
+		{"ForEntityCopyCreatesFace", testForEntityCopyCreatesFace},
+		{"ForEntityConversionKeepsID", testForEntityConversionKeepsID},
 		{"EditedRowBreaks", testEditedRowBreaks},
 		{"ColumnEditsBreak", testColumnEditsBreak},
 		{"DeletedRowBreaks", testDeletedRowBreaks},
@@ -185,6 +193,259 @@ func testIndexesSubjects(t *testing.T, h Harness) {
 	require.Equal(t, int64(1), count(t, h.Raw, `SELECT COUNT(*) FROM audit_subjects WHERE entity_id = ?`, "RSK-1"))
 	require.Equal(t, int64(1), count(t, h.Raw, `SELECT COUNT(*) FROM audit_subjects WHERE entity_id = ?`, "CTL-9"))
 	require.Equal(t, int64(0), count(t, h.Raw, `SELECT COUNT(*) FROM audit_subjects WHERE seq = 3`))
+	require.Equal(t, int64(1), count(t, h.Raw,
+		`SELECT COUNT(*) FROM audit_subjects WHERE starts AND entity_id = ?`, "CTL-9"), "a rename starts its After")
+	require.Equal(t, int64(0), count(t, h.Raw,
+		`SELECT COUNT(*) FROM audit_subjects WHERE starts AND entity_id = ?`, "CTL-1"))
+}
+
+// testNewestPages: Newest walks the log newest first, and a page's last
+// seq is the cursor of the next.
+func testNewestPages(t *testing.T, h Harness) {
+	ctx := context.Background()
+	appendN(t, h.Log, 1, 5)
+	var seqs []int64
+	for before := int64(0); ; {
+		page, err := h.Log.Newest(ctx, before, 2)
+		require.NoError(t, err)
+		if len(page) == 0 {
+			break
+		}
+		for _, e := range page {
+			seqs = append(seqs, e.Seq)
+		}
+		before = page[len(page)-1].Seq
+	}
+	require.Equal(t, []int64{5, 4, 3, 2, 1}, seqs)
+	page, err := h.Log.Newest(ctx, 3, 10)
+	require.NoError(t, err)
+	require.Len(t, page, 2)
+	require.Equal(t, "CTL-2", page[0].Record.Subject.ID)
+}
+
+// changeOps are the ops the per-entity tests read.
+var changeOps = []string{
+	audit.OpCreateEntity, audit.OpUpdateEntity, audit.OpDeleteEntity, audit.OpRenameEntity,
+	audit.OpCreateRelation, audit.OpCopyState, audit.OpConvertEntity,
+}
+
+func entityQuery(id, face string) sqlaudit.SubjectQuery {
+	return sqlaudit.SubjectQuery{ID: id, Face: face, Ops: changeOps}
+}
+
+func seqsOf(entries []sqlaudit.Entry) []int64 {
+	seqs := make([]int64, len(entries))
+	for i, e := range entries {
+		seqs[i] = e.Seq
+	}
+	return seqs
+}
+
+func appendAll(t *testing.T, l *sqlaudit.Log, recs ...audit.Record) {
+	t.Helper()
+	for _, r := range recs {
+		if r.Time.IsZero() {
+			r.Time = t0
+		}
+		require.NoError(t, l.Append(context.Background(), r))
+	}
+}
+
+func entityRec(op, id, face string) audit.Record {
+	return audit.Record{Op: op, Subject: &audit.Subject{Kind: "entity", Type: "control", ID: id, Face: face}}
+}
+
+// testForEntityPages: ForEntity returns the records that name an id in any
+// position, newest first, and nothing for another id.
+func testForEntityPages(t *testing.T, h Harness) {
+	ctx := context.Background()
+	appendN(t, h.Log, 1, 3) // CTL-1, CTL-2, CTL-3
+	appendAll(t, h.Log, audit.Record{
+		Op:      audit.OpCreateRelation,
+		Subject: &audit.Subject{Kind: "relation", RelationType: "mitigates", FromID: "CTL-2", ToID: "RSK-1"},
+	}, audit.Record{
+		Op:     audit.OpRenameEntity,
+		Before: &audit.Subject{Kind: "entity", Type: "control", ID: "CTL-2"},
+		After:  &audit.Subject{Kind: "entity", Type: "control", ID: "CTL-7"},
+	})
+
+	got, err := h.Log.ForEntity(ctx, entityQuery("CTL-2", ""), 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, []int64{5, 4, 2}, seqsOf(got))
+
+	got, err = h.Log.ForEntity(ctx, entityQuery("CTL-2", ""), 5, 1)
+	require.NoError(t, err)
+	require.Equal(t, []int64{4}, seqsOf(got))
+
+	got, err = h.Log.ForEntity(ctx, entityQuery("CTL-404", ""), 0, 10)
+	require.NoError(t, err)
+	require.Empty(t, got)
+
+	got, err = h.Log.ForEntity(ctx, sqlaudit.SubjectQuery{ID: "CTL-2"}, 0, 10)
+	require.NoError(t, err)
+	require.Empty(t, got, "no ops reads nothing")
+}
+
+// testForEntityOpFilter: only the listed ops are read, and the page cut
+// comes after the filter, so other ops cannot crowd a page out.
+func testForEntityOpFilter(t *testing.T, h Harness) {
+	ctx := context.Background()
+	appendAll(t, h.Log, entityRec(audit.OpCreateEntity, "CTL-1", ""))
+	for range 5 {
+		appendAll(t, h.Log, entityRec(audit.OpDeniedWrite, "CTL-1", ""))
+	}
+	got, err := h.Log.ForEntity(ctx, entityQuery("CTL-1", ""), 0, 1)
+	require.NoError(t, err)
+	require.Equal(t, []int64{1}, seqsOf(got))
+}
+
+// testForEntityLifecycle: an id deleted and created again, or renamed away
+// and reused, shows only the records of its latest lifecycle.
+func testForEntityLifecycle(t *testing.T, h Harness) {
+	ctx := context.Background()
+	appendAll(t, h.Log,
+		entityRec(audit.OpCreateEntity, "CTL-1", ""), // 1
+		entityRec(audit.OpUpdateEntity, "CTL-1", ""), // 2
+		entityRec(audit.OpDeleteEntity, "CTL-1", ""), // 3
+		entityRec(audit.OpCreateEntity, "CTL-1", ""), // 4
+		entityRec(audit.OpUpdateEntity, "CTL-1", ""), // 5
+		entityRec(audit.OpCreateEntity, "CTL-2", ""), // 6
+		audit.Record{ // 7
+			Op:     audit.OpRenameEntity,
+			Before: &audit.Subject{Kind: "entity", Type: "control", ID: "CTL-2"},
+			After:  &audit.Subject{Kind: "entity", Type: "control", ID: "CTL-8"},
+		},
+		entityRec(audit.OpCreateEntity, "CTL-2", ""), // 8
+		audit.Record{ // 9
+			Op:     audit.OpRenameEntity,
+			Before: &audit.Subject{Kind: "entity", Type: "control", ID: "CTL-3"},
+			After:  &audit.Subject{Kind: "entity", Type: "control", ID: "CTL-1"},
+		},
+	)
+	got, err := h.Log.ForEntity(ctx, entityQuery("CTL-2", ""), 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, []int64{8}, seqsOf(got), "a reused id starts at its create")
+
+	got, err = h.Log.ForEntity(ctx, entityQuery("CTL-8", ""), 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, []int64{7}, seqsOf(got), "a renamed id starts at the rename")
+
+	got, err = h.Log.ForEntity(ctx, entityQuery("CTL-1", ""), 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, []int64{9}, seqsOf(got), "renaming into an id starts a new lifecycle")
+
+	got, err = h.Log.ForEntity(ctx, entityQuery("CTL-1", ""), 9, 10)
+	require.NoError(t, err)
+	require.Empty(t, got, "a page before the fence is empty, not the predecessor's")
+}
+
+// testForEntityFaces: a face reads its own records and those stored without
+// a face, never another face's.
+func testForEntityFaces(t *testing.T, h Harness) {
+	ctx := context.Background()
+	appendAll(t, h.Log,
+		entityRec(audit.OpCreateEntity, "DOC-1", "draft"),     // 1
+		entityRec(audit.OpCreateEntity, "DOC-1", "published"), // 2
+		entityRec(audit.OpUpdateEntity, "DOC-1", "published"), // 3
+		audit.Record{ // 4: an edge from the draft face
+			Op: audit.OpCreateRelation,
+			Subject: &audit.Subject{
+				Kind: "relation", RelationType: "refs", FromID: "DOC-1", FromFace: "draft", ToID: "DOC-2",
+			},
+		},
+		audit.Record{ // 5: an edge into DOC-1, which has no head face
+			Op:      audit.OpCreateRelation,
+			Subject: &audit.Subject{Kind: "relation", RelationType: "refs", FromID: "DOC-2", ToID: "DOC-1"},
+		},
+		entityRec(audit.OpDeleteEntity, "DOC-1", "published"), // 6
+		entityRec(audit.OpCreateEntity, "DOC-1", "published"), // 7
+	)
+	got, err := h.Log.ForEntity(ctx, entityQuery("DOC-1", "draft"), 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, []int64{5, 4, 1}, seqsOf(got), "another face's records and fence do not apply")
+
+	got, err = h.Log.ForEntity(ctx, entityQuery("DOC-1", "published"), 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, []int64{7}, seqsOf(got))
+
+	got, err = h.Log.ForEntity(ctx, entityQuery("DOC-2", ""), 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, []int64{5, 4}, seqsOf(got))
+}
+
+// testForEntityFacelessStart: a start stored without a face (a record from
+// before faces were recorded) is shown on every face but fences none, so it
+// cannot hide a face's earlier records.
+func testForEntityFacelessStart(t *testing.T, h Harness) {
+	ctx := context.Background()
+	appendAll(t, h.Log,
+		entityRec(audit.OpCreateEntity, "DOC-1", "draft"), // 1
+		entityRec(audit.OpUpdateEntity, "DOC-1", "draft"), // 2
+		entityRec(audit.OpCreateEntity, "DOC-1", ""),      // 3
+	)
+	got, err := h.Log.ForEntity(ctx, entityQuery("DOC-1", "draft"), 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, []int64{3, 2, 1}, seqsOf(got))
+}
+
+// testForEntityCopyCreatesFace: a copy that created a face starts that
+// face's lifecycle, and LifecycleStart returns it; a copy onto an existing
+// face does not.
+func testForEntityCopyCreatesFace(t *testing.T, h Harness) {
+	ctx := context.Background()
+	copyRec := func(created bool) audit.Record {
+		return audit.Record{
+			Op:      audit.OpCopyState,
+			Subject: &audit.Subject{Kind: "entity", Type: "doc", ID: "DOC-1", Face: "published"},
+			Summary: audit.CopyStateSummary("promote", "DOC-1@draft", "DOC-1@published", created),
+		}
+	}
+	appendAll(t, h.Log,
+		entityRec(audit.OpCreateEntity, "DOC-1", "published"), // 1: an earlier family
+		entityRec(audit.OpDeleteEntity, "DOC-1", "published"), // 2
+		entityRec(audit.OpCreateEntity, "DOC-1", "draft"),     // 3
+		copyRec(true),  // 4
+		copyRec(false), // 5
+	)
+	got, err := h.Log.ForEntity(ctx, entityQuery("DOC-1", "published"), 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, []int64{5, 4}, seqsOf(got))
+
+	start, ok, err := h.Log.LifecycleStart(ctx, entityQuery("DOC-1", "published"))
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, int64(4), start.Seq)
+
+	_, ok, err = h.Log.LifecycleStart(ctx, entityQuery("DOC-9", ""))
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
+// testForEntityConversionKeepsID: a conversion that keeps the id and maps
+// one face onto another starts the face it lands on, so a deleted earlier
+// entity at that face stays behind the fence.
+func testForEntityConversionKeepsID(t *testing.T, h Harness) {
+	ctx := context.Background()
+	appendAll(t, h.Log,
+		entityRec(audit.OpCreateEntity, "DOC-1", "done"),  // 1: an earlier family
+		entityRec(audit.OpUpdateEntity, "DOC-1", "done"),  // 2
+		entityRec(audit.OpDeleteEntity, "DOC-1", "done"),  // 3
+		entityRec(audit.OpCreateEntity, "DOC-1", "draft"), // 4
+		audit.Record{ // 5
+			Op:     audit.OpConvertEntity,
+			Before: &audit.Subject{Kind: "entity", Type: "doc", ID: "DOC-1", Face: "draft"},
+			After:  &audit.Subject{Kind: "entity", Type: "task", ID: "DOC-1", Face: "done"},
+		},
+		entityRec(audit.OpUpdateEntity, "DOC-1", "done"), // 6
+	)
+	got, err := h.Log.ForEntity(ctx, entityQuery("DOC-1", "done"), 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, []int64{6, 5}, seqsOf(got))
+
+	start, ok, err := h.Log.LifecycleStart(ctx, entityQuery("DOC-1", "done"))
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, int64(5), start.Seq)
 }
 
 func testEditedRowBreaks(t *testing.T, h Harness) {

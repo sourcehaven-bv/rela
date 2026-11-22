@@ -160,15 +160,34 @@ const emit = defineEmits<{ toggleStar: []; menu: []; openNav: [] }>()
 
   .rl-page-header__title-row { gap: var(--rl-space-2); }
 
-  /* Tabs scroll horizontally; tools drop to avoid crushing them. */
+  /*
+   * Tabs scroll horizontally on a row of their own; the tools wrap to a full
+   * row below them. The tools hold a list's search, sort and filter, which a
+   * phone needs as much as a desktop does, so they are not dropped.
+   */
   .rl-page-header__bar {
+    flex-wrap: wrap;
+    align-items: stretch;
     margin-top: var(--rl-space-3);
+  }
+
+  .rl-page-header__bar > :not(.rl-page-header__tools) {
+    flex: 1 1 100%;
+    min-width: 0;
     overflow-x: auto;
     scrollbar-width: none;
   }
-  .rl-page-header__bar::-webkit-scrollbar { display: none; }
+  .rl-page-header__bar > :not(.rl-page-header__tools)::-webkit-scrollbar { display: none; }
 
-  .rl-page-header__tools { display: none; }
+  /* The tools wrap when they do not fit one row, so the last button never
+   * runs off the screen. */
+  .rl-page-header__tools {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    row-gap: var(--rl-space-2);
+    min-width: 0;
+    margin-left: 0;
+  }
 }
 
 /* Buttons do nothing on paper. */

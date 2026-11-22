@@ -74,37 +74,46 @@ export const BUSY_COLUMN_WIDTH = 160
  *
  * `nameColumn` returns the one taken out, since the caller still needs it to
  * render the title cell's contents through the `name` slot.
+ *
+ * `name` is the column that fills the name cell. It is the first column
+ * unless a later one carries `link`; then the first column (a `logo`, say)
+ * is an ordinary column and renders as configured, after the name.
  */
-export function toTableColumns(columns: ListColumn[]): TableColumn[] {
+export function toTableColumns(
+  columns: ListColumn[],
+  name: ListColumn | undefined = columns[0]
+): TableColumn[] {
   const seen = new Set<string>()
-  return columns.slice(1).map((column) => {
-    let key = columnKey(column)
-    // Malformed config can repeat the placeholder. Duplicate keys would make
-    // one `cell-<key>` slot serve two columns, so disambiguate rather than
-    // let the second one quietly take the first one's rendering.
-    if (seen.has(key)) {
-      let n = 2
-      while (seen.has(`${key}:${n}`)) n += 1
-      key = `${key}:${n}`
-    }
-    seen.add(key)
+  return columns
+    .filter((column) => column !== name)
+    .map((column) => {
+      let key = columnKey(column)
+      // Malformed config can repeat the placeholder. Duplicate keys would make
+      // one `cell-<key>` slot serve two columns, so disambiguate rather than
+      // let the second one quietly take the first one's rendering.
+      if (seen.has(key)) {
+        let n = 2
+        while (seen.has(`${key}:${n}`)) n += 1
+        key = `${key}:${n}`
+      }
+      seen.add(key)
 
-    return {
-      key,
-      header: columnHeader(column),
-      // No `field`: every cell goes through the `cell-<key>` slot, because
-      // rela renders property widgets, relation chips, a lock for an
-      // inaccessible cell and a provenance badge. `field` covers only a
-      // plain string or number, which is the one case rela does not have.
-      sortable: column.sortable !== false && !!column.property,
-      ...(column.busy ? { width: BUSY_COLUMN_WIDTH } : {}),
-      // `meta` carries the originating config so a cell slot can render from
-      // the same object the rest of EntityList already reasons about,
-      // instead of looking it back up by key. Namespaced by the library
-      // precisely so this cannot collide with a future library property.
-      meta: { listColumn: column },
-    }
-  })
+      return {
+        key,
+        header: columnHeader(column),
+        // No `field`: every cell goes through the `cell-<key>` slot, because
+        // rela renders property widgets, relation chips, a lock for an
+        // inaccessible cell and a provenance badge. `field` covers only a
+        // plain string or number, which is the one case rela does not have.
+        sortable: column.sortable !== false && !!column.property,
+        ...(column.busy ? { width: BUSY_COLUMN_WIDTH } : {}),
+        // `meta` carries the originating config so a cell slot can render from
+        // the same object the rest of EntityList already reasons about,
+        // instead of looking it back up by key. Namespaced by the library
+        // precisely so this cannot collide with a future library property.
+        meta: { listColumn: column },
+      }
+    })
 }
 
 /**

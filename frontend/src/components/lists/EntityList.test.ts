@@ -772,7 +772,7 @@ describe('EntityList compressed layout', () => {
    * A list whose columns cover both sides of the `primary` decision: an enum
    * (status) and a face column, against a date (due) and a relation (blocks).
    */
-  function seedSchema() {
+  function seedSchema(overrides: { status?: boolean; due?: boolean } = {}) {
     const schemaStore = useSchemaStore()
     schemaStore.lists.set(listId, {
       id: listId,
@@ -780,9 +780,9 @@ describe('EntityList compressed layout', () => {
       entity: entityType,
       columns: [
         { property: 'title', label: 'Title' },
-        { property: 'status', label: 'Status' },
+        { property: 'status', label: 'Status', primary: overrides.status },
         { face: true, label: 'Version' },
-        { property: 'due', label: 'Due' },
+        { property: 'due', label: 'Due', primary: overrides.due },
         { relation: 'blocks', label: 'Blocks' },
       ],
     } as never)
@@ -863,6 +863,22 @@ describe('EntityList compressed layout', () => {
 
     const secondary = wrapper.findAll('.rl-table-row__cell--secondary')
     expect(secondary.length).toBe(2)
+    wrapper.unmount()
+  })
+  it('follows the primary: of a column over the default, either way', async () => {
+    // The operator keeps the date and drops the enum badge.
+    seedSchema({ due: true, status: false })
+    const wrapper = mount(EntityList, {
+      props: { listId },
+      attachTo: document.body,
+      global: { plugins: [pinia, PiniaColada] },
+    })
+    await flushPromises()
+
+    const secondary = wrapper.findAll('.rl-table-row__cell--secondary').map((c) => c.text())
+    expect(secondary).toHaveLength(2)
+    expect(secondary.some((text) => text.includes('open'))).toBe(true)
+    expect(secondary.some((text) => text.includes('2026'))).toBe(false)
     wrapper.unmount()
   })
 })

@@ -39,6 +39,12 @@ export interface WidgetProps<T = unknown> {
   required?: boolean
   error?: string
   id?: string
+  // The field's label, for a control no `<label for>` names: a display-mode
+  // checkbox, or one in a label/value row whose label is not a `<label>`.
+  // A checkbox carries no text of its own, so without it a screen reader
+  // reads it by its value, "on". Text widgets ignore it: their value is
+  // their content.
+  label?: string
   placeholder?: string
   help?: string
   // Accessibility wiring handed down by FieldShell through its slot. The shell
@@ -109,6 +115,7 @@ export type WidgetHintKind =
   | 'datetime'
   | 'integer'
   | 'rrule'
+  | 'url'
 
 // DenseHintKind adds the kinds only a dense, read-only surface may route to.
 // They resolve to display-only components, so they are kept out of
@@ -116,7 +123,10 @@ export type WidgetHintKind =
 //
 // 'file': a file value as names and download links, never FileWidget's
 // <img> previews (one request per image per cell).
-export type DenseHintKind = WidgetHintKind | 'file'
+// 'image': the file of a `display: {image: true}` property as a small
+// thumbnail. The schema asked for it, so the request per row is intended;
+// the image is lazy-loaded, so only visible rows fetch it.
+export type DenseHintKind = WidgetHintKind | 'file' | 'image'
 
 export interface WidgetRoutingHint {
   kind: WidgetHintKind

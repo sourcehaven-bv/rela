@@ -36,6 +36,9 @@ type viewsHandler struct {
 	// owner identity. Nil: accepted, answers false (a test handler without
 	// piles).
 	pilesAvailable func(ctx context.Context) bool
+	// audit answers [v1.SidebarResponse.Audit]. Nil: accepted, answers
+	// false for both (a test handler without the audit log).
+	audit func(ctx context.Context) (changes, global bool)
 
 	schema      func() *Schema
 	store       store.Store
@@ -267,9 +270,13 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 			resp.Space = sp.ID
 			resp.Navigation = sidebarNavigation(ctx, aclImpl, s.Cfg, s.Meta, sp.Navigation, sp.ID)
 			resp.Create = h.spaceCreate(ctx, sp)
+			resp.HiddenBuiltins = hiddenBuiltins(ctx, aclImpl, sp.Builtins)
+			resp.PhoneHiddenBuiltins = sp.Builtins.HiddenOnPhone()
 		}
 	} else {
 		resp.Navigation = sidebarNavigation(ctx, aclImpl, s.Cfg, s.Meta, s.Cfg.Navigation, "")
+		resp.HiddenBuiltins = hiddenBuiltins(ctx, aclImpl, s.Cfg.Builtins)
+		resp.PhoneHiddenBuiltins = s.Cfg.Builtins.HiddenOnPhone()
 	}
 	h.setItemsCreate(ctx, resp.Navigation)
 	resp.Pages = sidebarPages(ctx, aclImpl, s.Cfg, s.Meta)
@@ -277,8 +284,35 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	resp.InlineCreate = h.inlineCreateForms(ctx)
 	resp.PilesAvailable = h.pilesAvailable != nil && h.pilesAvailable(ctx)
 	resp.Piles = pilesWire(s.Cfg.Piles)
+	if h.audit != nil {
+		resp.Audit.Changes, resp.Audit.Global = h.audit(ctx)
+	}
+	resp.HeaderButtons = headerButtonsWire(ctx, aclImpl, s.Cfg.HeaderButtons)
+	resp.ListButtons = listButtonsWire(ctx, aclImpl, s.Cfg.ListButtons)
 
 	writeV1JSON(w, http.StatusOK, resp)
+}
+
+// headerButtonsWire resolves `header_buttons:` for this principal. A UX
+// filter like permitsGatedUIElement: the history and pile endpoints keep
+// their own ACL whatever it says.
+func headerButtonsWire(
+	ctx context.Context, aclImpl acl.ACL, cfg dataentryconfig.HeaderButtonsConfig,
+) v1.SidebarHeaderButtons {
+	permits := func(perm string) bool { return permitsGatedUIElement(ctx, aclImpl, perm) }
+	return v1.SidebarHeaderButtons{
+		History:   cfg.History.Shown(permits),
+		AddToPile: cfg.AddToPile.Shown(permits),
+	}
+}
+
+// listButtonsWire resolves `list_buttons:` for this principal, the way
+// headerButtonsWire resolves `header_buttons:`.
+func listButtonsWire(
+	ctx context.Context, aclImpl acl.ACL, cfg dataentryconfig.ListButtonsConfig,
+) v1.SidebarListButtons {
+	permits := func(perm string) bool { return permitsGatedUIElement(ctx, aclImpl, perm) }
+	return v1.SidebarListButtons{AddToPile: cfg.AddToPile.Shown(permits)}
 }
 
 // sidebarNavigation builds the sidebar groups of one navigation tree. space
@@ -342,6 +376,28 @@ func sidebarNavigation(
 		}
 	}
 	return navigation
+}
+
+// hiddenBuiltins returns the built-in sidebar rows this principal does not
+// get. A row's `permission:` is the same UX filter as a navigation entry's
+// (permitsGatedUIElement): it tidies the sidebar and gates nothing behind it.
+func hiddenBuiltins(
+	ctx context.Context, aclImpl acl.ACL, builtins dataentryconfig.Builtins,
+) []dataentryconfig.BuiltinRow {
+	return builtins.Hidden(func(permission string) bool {
+		return permitsGatedUIElement(ctx, aclImpl, permission)
+	})
+}
+
+// flowRunsPanelShown reports whether the principal gets the flow runs panel
+// of an entity page in space (`entity_panels.flow_runs`). Its `permission:`
+// is the same display filter as a navigation entry's (permitsGatedUIElement):
+// the subject runs route answers empty for a hidden panel, and the runs stay
+// behind their own read rules on every other route.
+func flowRunsPanelShown(ctx context.Context, aclImpl acl.ACL, cfg *dataentryconfig.Config, space string) bool {
+	return cfg.FlowRunsPanelShown(space, func(permission string) bool {
+		return permitsGatedUIElement(ctx, aclImpl, permission)
+	})
 }
 
 // permittedSpaces returns the spaces the principal may enter, in config
@@ -902,7 +958,7 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	// After resolveSectionCreate, which indexes sections in step with the
 	// view config. Before ownerRows and the header create menu, so a hidden
 	// section contributes nothing.
-	sections = omitHiddenEmpty(sections)
+	sections = omitHiddenSections(sections)
 
 	// Build response
 	entityDef := s.Meta.Entities[result.Entry.Type]
@@ -1066,6 +1122,7 @@ func viewColumnsToV1(cols []ListColumn) []v1.ViewColumn {
 			Relation: col.Relation,
 			Link:     col.Link,
 			Render:   col.Render,
+			Primary:  col.Primary,
 		})
 	}
 	return out

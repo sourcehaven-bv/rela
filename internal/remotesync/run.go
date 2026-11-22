@@ -378,7 +378,7 @@ func (r *runner) sweep(ctx context.Context) error {
 // row kind plus its local address.
 func (r *runner) present(ctx context.Context, ids, from map[string][]string) (map[string]bool, error) {
 	present := map[string]bool{}
-	for _, typ := range sortedKeys(ids) {
+	for _, typ := range slices.Sorted(maps.Keys(ids)) {
 		q := store.EntityQuery{Type: typ, IDs: ids[typ], Faces: store.AllFaces()}
 		for h, err := range store.ListEntityHeaders(ctx, r.d.Store, q) {
 			if err != nil {
@@ -387,7 +387,7 @@ func (r *runner) present(ctx context.Context, ids, from map[string][]string) (ma
 			present["E"+h.ID] = true
 		}
 	}
-	for _, typ := range sortedKeys(from) {
+	for _, typ := range slices.Sorted(maps.Keys(from)) {
 		q := store.RelationQuery{Type: typ, EntityIDs: from[typ], Direction: store.DirectionOutgoing}
 		for rel, err := range r.d.Store.ListRelations(ctx, q) {
 			if err != nil {
@@ -489,7 +489,7 @@ func (r *runner) diff(ctx context.Context) (reconclient.Result, error) {
 		return reconclient.Result{}, err
 	}
 	res, err := differ.Diff(ctx, reconclient.Scope{
-		Entities: sortedKeys(r.m.Entities), Relations: sortedKeys(r.m.Relations),
+		Entities: slices.Sorted(maps.Keys(r.m.Entities)), Relations: slices.Sorted(maps.Keys(r.m.Relations)),
 	})
 	if err != nil {
 		return res, fmt.Errorf("remotesync: compare with the source: %w", err)

@@ -1,6 +1,7 @@
 package transitions
 
 import (
+	"maps"
 	"slices"
 	"strings"
 
@@ -59,7 +60,7 @@ func (s *Transitions) Headless() []*HeadlessFlow {
 		return nil
 	}
 	out := make([]*HeadlessFlow, 0, len(s.machines))
-	for _, name := range sortedKeys(s.machines) {
+	for _, name := range slices.Sorted(maps.Keys(s.machines)) {
 		out = append(out, s.machines[name])
 	}
 	return out

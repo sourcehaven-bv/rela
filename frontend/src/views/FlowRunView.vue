@@ -70,7 +70,7 @@ on('entity:changed', (data) => {
 <template>
   <PageLayout :data-testid="run ? 'flow-run-loaded' : 'flow-run-loading'">
     <template #topbar>
-      <PageTitle :title="run ? run.flow_label || run.flow : t('flows.run.title')" />
+      <PageTitle :title="run ? run.title || run.flow_label || run.flow : t('flows.run.title')" />
     </template>
 
     <RlCallout v-if="error" tone="danger" class="flow-run-view__error">{{ error }}</RlCallout>
@@ -78,11 +78,11 @@ on('entity:changed', (data) => {
     <template v-if="run">
       <p class="flow-run-view__subject">
         <RouterLink v-if="subjectLink" :to="subjectLink" data-testid="flow-run-subject">
-          {{ t('flows.run.openSubject', { subject: run.subject }) }}
+          {{ t('flows.run.openSubject', { subject: run.subject_title || run.subject }) }}
         </RouterLink>
         <span v-else>{{ t('flows.list.hiddenSubject') }}</span>
       </p>
-      <FlowRunCard :run="run" :subject-type="subjectType" @changed="load" @gone="load" />
+      <FlowRunCard :run="run" :subject-type="subjectType" hide-title @changed="load" @gone="load" />
     </template>
   </PageLayout>
 </template>

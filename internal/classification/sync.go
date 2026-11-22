@@ -3,6 +3,7 @@ package classification
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -207,7 +208,7 @@ func (s *syncer) section(root *yaml.Node, section string, schema map[string][]st
 		}
 	}
 
-	for _, typeName := range sortedKeys(schema) {
+	for _, typeName := range slices.Sorted(maps.Keys(schema)) {
 		fields := schema[typeName]
 		if len(fields) == 0 {
 			continue

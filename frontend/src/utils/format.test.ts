@@ -363,9 +363,10 @@ describe('formatAmount', () => {
   // Intl separates the symbol with a no-break space; compare on plain spaces.
   const plain = (s: string) => s.replace(/\u00a0/g, ' ')
 
-  it('formats a whole amount as money without decimals', () => {
-    expect(plain(formatAmount(3500, 'EUR', 'nl-NL'))).toBe('€ 3.500')
-    expect(plain(formatAmount(3500, 'EUR', 'en-US'))).toBe('€3,500')
+  it('formats a whole amount as money with the currency\'s minor unit', () => {
+    expect(plain(formatAmount(3500, 'EUR', 'nl-NL'))).toBe('€ 3.500,00')
+    expect(plain(formatAmount(3500, 'EUR', 'en-US'))).toBe('€3,500.00')
+    expect(plain(formatAmount(3500, 'JPY', 'en-US'))).toBe('¥3,500')
   })
 
   it('shows two decimals for an amount that is not whole', () => {
@@ -377,8 +378,8 @@ describe('formatAmount', () => {
   })
 
   it('formats zero and negative amounts', () => {
-    expect(plain(formatAmount(0, 'EUR', 'nl-NL'))).toBe('€ 0')
-    expect(plain(formatAmount(-1200, 'EUR', 'nl-NL'))).toBe('€ -1.200')
+    expect(plain(formatAmount(0, 'EUR', 'nl-NL'))).toBe('€ 0,00')
+    expect(plain(formatAmount(-1200, 'EUR', 'nl-NL'))).toBe('€ -1.200,00')
   })
 })
 
@@ -408,8 +409,8 @@ describe('formatDisplayNumber', () => {
   const eur = { type: 'integer' as const, display: { currency: 'EUR' } }
 
   it('formats a currency property as money', () => {
-    expect(plain(formatDisplayNumber(3500, eur, 'nl-NL'))).toBe('€ 3.500')
-    expect(plain(formatDisplayNumber('3500', eur, 'nl-NL'))).toBe('€ 3.500')
+    expect(plain(formatDisplayNumber(3500, eur, 'nl-NL'))).toBe('€ 3.500,00')
+    expect(plain(formatDisplayNumber('3500', eur, 'nl-NL'))).toBe('€ 3.500,00')
   })
 
   it('leaves a property without a format, or a non-number, to the caller', () => {
@@ -429,9 +430,16 @@ describe('formatDisplayNumber', () => {
     const dec = { type: 'decimal' as const, display: { currency: 'EUR' } }
     expect(plain(formatDisplayNumber('12.5', dec, 'nl-NL'))).toBe('€ 12,50')
     expect(plain(formatDisplayNumber('0.125', dec, 'nl-NL'))).toBe('€ 0,125')
-    expect(plain(formatDisplayNumber('3500', dec, 'nl-NL'))).toBe('€ 3.500')
+    expect(plain(formatDisplayNumber('3500', dec, 'nl-NL'))).toBe('€ 3.500,00')
     expect(plain(formatDisplayNumber('1234567890123456789.01', dec, 'en-US'))).toBe('€1,234,567,890,123,456,789.01')
     expect(formatDisplayNumber('1e3', dec, 'nl-NL')).toBeUndefined()
+  })
+
+  it('gives whole and fractional amounts the same digits (finding: €49 beside €59.29)', () => {
+    const dec = { type: 'decimal' as const, display: { currency: 'EUR' } }
+    expect(formatDisplayNumber('49', dec, 'en-US')).toBe('€49.00')
+    expect(formatDisplayNumber('59.29', dec, 'en-US')).toBe('€59.29')
+    expect(formatDisplayNumber('59.3', dec, 'en-US')).toBe('€59.30')
   })
 
   it('pads a decimal to its declared scale', () => {

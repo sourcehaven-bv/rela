@@ -88,10 +88,12 @@ func toolCompleteFlowStep() *mcpgo.Tool {
 			"check the form's own `required:` or `required_when:`, so read the form in data-entry.yaml "+
 			"and send what it asks for. "+
 			"Pass the generation show_flow_run returned: a run that moved on since is refused. "+
-			"Result: {written,moved,state,finished,problem}. problem is set when the properties were "+
-			"written but the run did not follow cleanly: guard (a branch guard could not be evaluated, "+
-			"so the run stays), moved (the run had already moved on) or settling (an output step "+
-			"failed after the move and is retried while rela-server or the desktop app runs)"),
+			"Result: {written,moved,state,finished,problem}. problem is set when the step was taken "+
+			"but the run did not follow cleanly: guard (a branch guard could not be evaluated, "+
+			"so the run stays), moved (the run had already moved on), settling (an output step "+
+			"failed after the move and is retried while rela-server or the desktop app runs) or "+
+			"blocked (no change branch you may take has a guard that holds, so the run stays; "+
+			"the properties are still written)"),
 		withString("run", required(), description("Run id")),
 		withNumber("generation", required(), description("The run's generation from show_flow_run, or "+
 			"the branch's generation from its `parallel` entry")),

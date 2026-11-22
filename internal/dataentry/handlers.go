@@ -5,6 +5,7 @@ import (
 	htmltemplate "html/template"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -320,7 +321,7 @@ func (a *App) gatherRelations(meta *metamodel.Metamodel, entityType string, outg
 			matchTypes, targetTypes = rel.To, rel.From
 			minCard, maxCard = rel.MinIncoming, rel.MaxIncoming
 		}
-		if !containsString(matchTypes, entityType) {
+		if !slices.Contains(matchTypes, entityType) {
 			continue
 		}
 		rh := RelationHelp{

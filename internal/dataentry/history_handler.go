@@ -82,7 +82,7 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	typeName := parts[0]
-	ref, refErr := entityPkg.ParseRef(parts[1])
+	ref, refErr := parseHistoryAddress(parts[1])
 	if refErr != nil {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
@@ -337,4 +337,12 @@ func serveHistoryVersion(a *App,
 		payload["origin"] = o
 	}
 	writeV1JSON(w, http.StatusOK, payload)
+}
+
+// parseHistoryAddress parses the id segment of a per-face history route
+// (`_history`, `_changes`). The result names the face whose lineage is read
+// and goes to [historySubjectOr404], which resolves a bare id in the
+// request's world.
+func parseHistoryAddress(segment string) (entityPkg.Ref, error) {
+	return entityPkg.ParseRef(segment)
 }

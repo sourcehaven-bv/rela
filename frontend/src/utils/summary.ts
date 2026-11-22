@@ -46,7 +46,7 @@ const DEFAULT_LABELS = {
 } as const satisfies Record<SummaryFunction, string>
 
 /**
- * One summary as display text, such as "Total: € 11.500".
+ * One summary as display text, such as "Total: € 11.500,00".
  *
  * An empty set shows 0 for count and sum, and "–" for avg, min and max: an
  * average or extreme of nothing does not exist, but a sum of nothing is 0.

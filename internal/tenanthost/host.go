@@ -10,8 +10,10 @@
 // cannot be opened is refused, and the refusal opens no store:
 //
 //   - no assertion, or one that does not verify: 401;
-//   - a verified assertion with no `org_id`, or an org that is not an active
-//     tenant (unknown, suspended or being erased): 403 `unknown_tenant`;
+//   - a verified assertion with no `org_id`, or an org that is not a tenant
+//     or is being erased: 403 `unknown_tenant`;
+//   - a suspended tenant: 403 `tenant_suspended`; an archived one: 403
+//     `tenant_archived`;
 //   - with provisioning on ([ProvisionConfig]), an org whose tenant is being
 //     created: 202 with a `{"status":"provisioning"}` body for GET and HEAD,
 //     and 503 `tenant_provisioning` for any other method. No tenant is
@@ -70,7 +72,7 @@ const WebhookPath = "/webhooks/idp"
 
 // StatusPath answers the caller's own tenant status, for a client to poll
 // while its tenant is being created. It never names another org.
-const StatusPath = "/api/v1/_tenant"
+const StatusPath = dataentry.TenantStatusPath
 
 // webhookMaxBody caps the webhook body read before verification, matching
 // the data-entry receiver's own cap.
@@ -115,6 +117,10 @@ type Config struct {
 	// Webhook. Without it those events are refused with 503, never passed
 	// to the tenant or acknowledged.
 	StatusSync StatusSyncer
+	// TenantAPI enables the tenant API under [TenantsPath]. Optional: nil
+	// leaves [TenantsPath] an ordinary path that needs an assertion. It
+	// needs provisioning on.
+	TenantAPI *TenantAPIConfig
 }
 
 // Host is the front http.Handler of a multi-tenant server.
@@ -142,7 +148,10 @@ func New(cfg Config) (*Host, error) {
 	if cfg.StatusSync != nil && cfg.Webhook == nil {
 		return nil, errors.New("tenanthost: status sync needs the IdP webhook")
 	}
-	if err := validateProvision(cfg.Provision, cfg.Webhook != nil); err != nil {
+	if err := validateProvision(cfg.Provision, cfg.Webhook != nil, cfg.TenantAPI != nil); err != nil {
+		return nil, err
+	}
+	if err := cfg.TenantAPI.validate(); err != nil {
 		return nil, err
 	}
 	return &Host{cfg: cfg, prov: newProvisioning(cfg.Provision)}, nil
@@ -169,6 +178,10 @@ func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	clean := cleanPath(r.URL.Path)
 	if h.cfg.Webhook != nil && r.Method == http.MethodPost && clean == WebhookPath {
 		h.serveWebhook(w, r)
+		return
+	}
+	if h.cfg.TenantAPI != nil && strings.HasPrefix(clean, TenantsPath) {
+		h.serveTenantAPI(w, r, clean)
 		return
 	}
 	// shell serves the static shell instead of a refusal on a tenant-free
@@ -203,11 +216,13 @@ func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if id.OrgID == "" {
+	if id.OrgID == "" || id.PrincipalType == operatorPrincipal {
+		// An operator principal manages tenants through the tenant API; it
+		// never acts inside one, even when its assertion names an org.
 		if !shell() {
-			slog.InfoContext(r.Context(), "tenant host: verified assertion carries no org_id",
-				"path", r.URL.Path, "method", r.Method)
-			writeError(w, r, http.StatusForbidden, "unknown_tenant", "No tenant for this organization")
+			slog.InfoContext(r.Context(), "tenant host: verified assertion names no tenant to act in",
+				"path", r.URL.Path, "method", r.Method, "principal_type", id.PrincipalType)
+			writeError(w, r, http.StatusForbidden, "unknown_tenant", unknownTenantMessage)
 		}
 		return
 	}
@@ -321,10 +336,13 @@ func (h *Host) acquireFailed(w http.ResponseWriter, r *http.Request, orgID strin
 			return
 		}
 	}
+	if refuseInactive(w, r, err) {
+		return
+	}
 	if errors.Is(err, tenant.ErrUnknownTenant) {
 		slog.InfoContext(r.Context(), "tenant host: org is not a tenant of this server",
 			"org_id", orgID, "path", r.URL.Path)
-		writeError(w, r, http.StatusForbidden, "unknown_tenant", "No tenant for this organization")
+		writeError(w, r, http.StatusForbidden, "unknown_tenant", unknownTenantMessage)
 		return
 	}
 	// Logged only, never sent: an open error can name the database host,
@@ -333,6 +351,27 @@ func (h *Host) acquireFailed(w http.ResponseWriter, r *http.Request, orgID strin
 		"org_id", orgID, "path", r.URL.Path, "error", err)
 	w.Header().Set("Retry-After", "5")
 	writeError(w, r, http.StatusServiceUnavailable, "tenant_unavailable", "Tenant unavailable")
+}
+
+// unknownTenantMessage is the refusal's text for an org with no workspace.
+// The SPA shows its own translated text for the code; this is for other
+// clients.
+const unknownTenantMessage = "No workspace for this organization"
+
+// refuseInactive answers a suspended or archived tenant with its own code,
+// so the SPA can say which state the workspace is in rather than suggest it
+// does not exist. It reports whether it answered. A tenant whose create has
+// not finished is left to the caller: it is not suspended.
+func refuseInactive(w http.ResponseWriter, r *http.Request, err error) bool {
+	switch {
+	case errors.Is(err, tenant.ErrTenantArchived):
+		writeError(w, r, http.StatusForbidden, "tenant_archived", "This workspace is archived")
+	case errors.Is(err, tenant.ErrTenantSuspended):
+		writeError(w, r, http.StatusForbidden, "tenant_suspended", "This workspace is suspended")
+	default:
+		return false
+	}
+	return true
 }
 
 func (h *Host) unauthenticated(w http.ResponseWriter, r *http.Request) {
@@ -394,13 +433,20 @@ type problem struct {
 	Type     string `json:"type"`
 	Title    string `json:"title"`
 	Status   int    `json:"status"`
+	Detail   string `json:"detail,omitempty"`
 	Instance string `json:"instance,omitempty"`
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, status int, code, title string) {
+	writeProblem(w, r, status, code, title, "")
+}
+
+// writeProblem is [writeError] with a detail, for a refusal whose reason is
+// the caller's own input.
+func writeProblem(w http.ResponseWriter, r *http.Request, status int, code, title, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(problem{
-		Type: "https://rela.dev/errors/" + code, Title: title, Status: status, Instance: r.URL.Path,
+		Type: "https://rela.dev/errors/" + code, Title: title, Status: status, Detail: detail, Instance: r.URL.Path,
 	})
 }

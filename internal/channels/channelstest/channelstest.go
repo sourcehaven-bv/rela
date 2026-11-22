@@ -5,7 +5,6 @@
 package channelstest
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1593,10 +1592,6 @@ func testLegacyTypeRecord(t *testing.T, h Harness) {
 	require.Equal(t, map[string]channels.TypeRecord{"room": filledRoom, "review": faceOne}, got,
 		"a fill without refs still writes the cardinality")
 }
-
-// Contains reports whether raw holds needle; a helper for backend tests
-// that inspect raw bytes themselves.
-func Contains(raw []byte, needle string) bool { return bytes.Contains(raw, []byte(needle)) }
 
 // testIncarnation pins the id-reuse guard: a channel records the
 // incarnation it was created in, keeps it across a rekey, and refuses an

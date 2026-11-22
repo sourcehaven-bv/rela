@@ -1,5 +1,6 @@
 import { onBeforeUnmount, watch, type Ref } from 'vue'
 import type { InboxSummary } from '@/types/channels'
+import { setTitleBadgeCount } from '@/composables/useDocumentTitle'
 
 /**
  * The count the tab title carries: unread mentions and replies plus what
@@ -11,27 +12,13 @@ export function titleCount(summary: InboxSummary | undefined): number {
   return summary.mentions + summary.waiting
 }
 
-/** The title with a `(N) ` prefix, or the title alone for zero. */
-export function badgedTitle(base: string, count: number): string {
-  return count > 0 ? `(${count}) ${base}` : base
-}
-
 /**
- * Puts the inbox count in front of the tab title (TKT-48S88RB). The title
- * the page had when this is called is the base; nothing else in the SPA
- * sets the title. A hidden tab's count moves only in the tab that notifies,
- * since the summary refetches only in a visible tab (TASK-550RD).
+ * Puts the inbox count in front of the tab title (TKT-48S88RB). The count
+ * goes to useDocumentTitle, which writes the title. A hidden tab's count
+ * moves only in the tab that notifies, since the summary refetches only in
+ * a visible tab (TASK-550RD).
  */
 export function useTabTitleBadge(summary: Ref<InboxSummary | undefined>) {
-  const base = document.title
-  watch(
-    () => titleCount(summary.value),
-    (n) => {
-      document.title = badgedTitle(base, n)
-    },
-    { immediate: true }
-  )
-  onBeforeUnmount(() => {
-    document.title = base
-  })
+  watch(() => titleCount(summary.value), setTitleBadgeCount, { immediate: true })
+  onBeforeUnmount(() => setTitleBadgeCount(0))
 }

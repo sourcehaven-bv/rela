@@ -2,12 +2,14 @@ package flowengine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 
@@ -242,8 +244,8 @@ func TestJob_ExhaustsItsAttemptsThenOperatorRetryStartsAFreshCount(t *testing.T)
 	xs, err := h.eng.Explain(ctx, run)
 	require.NoError(t, err)
 	require.Equal(t, flow.StatusFailed, xs[0].Status)
-	require.Equal(t, &JobStep{Phase: flowrun.JobFailed, Failed: 3, Attempts: 3, FailKind: flowrun.JobExhausted},
-		xs[0].Pending.Job)
+	require.Equal(t, &JobStep{Phase: flowrun.JobFailed, Failed: 3, Attempts: 3, FailKind: flowrun.JobExhausted,
+		Error: "503"}, xs[0].Pending.Job)
 
 	// A failed job waits for an operator.
 	h.advance(t, time.Hour)
@@ -265,6 +267,19 @@ func TestJob_PermanentErrorFailsAtOnce(t *testing.T) {
 	require.Equal(t, flowrun.JobFailed, j.Phase)
 	require.Equal(t, flowrun.JobFailedPermanent, j.FailKind)
 	require.Equal(t, 1, h.r.callCount())
+
+	// The timeline says where the run stopped, once.
+	ctx := context.Background()
+	run, err := h.eng.Run(ctx, id)
+	require.NoError(t, err)
+	last := run.Log[len(run.Log)-1]
+	require.Equal(t, flowrun.ViaFailed, last.Via)
+	require.Equal(t, "send", last.State)
+	n := len(run.Log)
+	h.advance(t, time.Hour)
+	run, err = h.eng.Run(ctx, id)
+	require.NoError(t, err)
+	require.Len(t, run.Log, n, "a failed job that waits adds no entry")
 }
 
 func TestJob_RetryFalseFailsOnTheFirstError(t *testing.T) {
@@ -326,6 +341,7 @@ func TestJob_LostWorker(t *testing.T) {
 
 			h.advance(t, time.Second)
 			j := h.job(t, id)
+			require.Equal(t, errAttemptLost, j.Error, "a lost attempt does not show an older error")
 			if !idempotent {
 				require.Equal(t, flowrun.JobFailed, j.Phase)
 				require.Equal(t, flowrun.JobLost, j.FailKind)
@@ -411,6 +427,8 @@ func TestJob_ForkOtherBranchesGoOnWhileTheJobFails(t *testing.T) {
 	require.NoError(t, err)
 	send := run.Branches[branchAt(run, "send")]
 	require.Equal(t, flowrun.JobFailed, send.Pending.Job.Phase)
+	last := run.Log[len(run.Log)-1]
+	require.Equal(t, flowrun.Step{At: last.At, State: "send", Via: flowrun.ViaFailed, Branch: "send"}, last)
 
 	// The review branch's timer still fires; the join waits for the job.
 	h.advance(t, time.Hour)
@@ -458,7 +476,7 @@ func TestJob_FinishedOutcomeIsDueWhenItsSettleDidNotRun(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, 1, call.Attempt)
-	_, ok, err = jobSteps{h.eng}.finishAttempt(ctx, ref, flowrun.JobOK)
+	_, ok, err = jobSteps{h.eng}.finishAttempt(ctx, ref, flowrun.JobOK, "")
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, flowrun.JobFinished, h.job(t, id).Phase)
@@ -512,4 +530,60 @@ func TestJob_ParkedBranchDoesNotHoldAJoinThatDoesNotNeedIt(t *testing.T) {
 func TestNewAttemptHandler_RejectsNil(t *testing.T) {
 	_, err := NewAttemptHandler(nil)
 	require.Error(t, err)
+}
+
+// TestJob_KeepsTheLastError pins BUG-53GP5F5: the attempt stores the
+// error of the last failed attempt, on one line, while the job waits, is
+// queued and after it failed, and a successful attempt clears it.
+func TestJob_KeepsTheLastError(t *testing.T) {
+	h, id := startJob(t, jobFlow, &fakeRunner{results: []error{
+		errors.New("first\nline"), errors.New("second"), errors.New("third"),
+	}})
+	ctx := context.Background()
+	require.Empty(t, h.job(t, id).Error, "no attempt has failed yet")
+
+	require.NoError(t, jobSteps{h.eng}.HandleAttempt(ctx, h.q.last(t)))
+	require.Equal(t, "first line", h.job(t, id).Error)
+	h.advance(t, 10*time.Second)
+	j := h.job(t, id)
+	require.Equal(t, flowrun.JobQueued, j.Phase)
+	require.Equal(t, "first line", j.Error, "the queued attempt keeps the last error")
+
+	require.NoError(t, jobSteps{h.eng}.HandleAttempt(ctx, h.q.last(t)))
+	require.Equal(t, "second", h.job(t, id).Error)
+	h.advance(t, 20*time.Second)
+	require.NoError(t, jobSteps{h.eng}.HandleAttempt(ctx, h.q.last(t)))
+	j = h.job(t, id)
+	require.Equal(t, flowrun.JobFailed, j.Phase)
+	require.Equal(t, "third", j.Error)
+
+	require.NoError(t, h.eng.Retry(ctx, id))
+	require.Equal(t, "third", h.job(t, id).Error, "a retry keeps the last error until an attempt ends")
+	ref := h.q.last(t)
+	_, _, _, ok, err := jobSteps{h.eng}.startAttempt(ctx, ref) //nolint:dogsled // only the verdict matters here
+	require.NoError(t, err)
+	require.True(t, ok)
+	_, ok, err = jobSteps{h.eng}.finishAttempt(ctx, ref, flowrun.JobOK, "")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Empty(t, h.job(t, id).Error, "a successful attempt clears the error")
+}
+
+func TestJobErrorText(t *testing.T) {
+	require.Empty(t, jobErrorText(nil))
+	require.Equal(t, "a b c", jobErrorText(errors.New(" a\n\tb  c ")))
+	long := jobErrorText(errors.New(strings.Repeat("é", flowrun.MaxJobError)))
+	require.LessOrEqual(t, len(long), flowrun.MaxJobError)
+	require.True(t, strings.HasSuffix(long, "…"))
+	require.True(t, utf8.ValidString(long), "the cut falls on a rune boundary")
+	// Invalid bytes become U+FFFD before the cap, as JSON would store them,
+	// so the stored text stays within the cap.
+	broken := jobErrorText(errors.New(strings.Repeat("a", flowrun.MaxJobError-2) + "\xff\xfe"))
+	require.True(t, utf8.ValidString(broken))
+	require.LessOrEqual(t, len(broken), flowrun.MaxJobError)
+	data, err := json.Marshal(broken)
+	require.NoError(t, err)
+	var back string
+	require.NoError(t, json.Unmarshal(data, &back))
+	require.Equal(t, broken, back)
 }

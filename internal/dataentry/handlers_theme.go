@@ -173,7 +173,7 @@ func sniffLogoMime(b []byte) string {
 // whether the first real element is <svg, after optional whitespace, a
 // UTF-8 BOM, an XML prologue, a doctype declaration, or comments.
 //
-// A loose contains("<svg") would let polyglots through ("<?xml ?><!--
+// A loose slices.Contains("<svg") would let polyglots through ("<?xml ?><!--
 // junk --><div><svg>...</svg><script>...</script>"). We rely on the
 // browser <img> sandbox + CSP for ultimate safety, but a tight server
 // sniff keeps the trust boundary simple to reason about.

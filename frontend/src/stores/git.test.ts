@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useGitStore } from './git'
+import { useSchemaStore } from './schema'
 import * as api from '@/api'
 
 vi.mock('@/api', () => ({
@@ -12,7 +13,15 @@ describe('Git Store', () => {
 
   beforeEach(() => {
     store = useGitStore()
+    useSchemaStore().gitEnabled = true
     vi.clearAllMocks()
+  })
+
+  it('does not ask for the status when the server has no git', async () => {
+    useSchemaStore().gitEnabled = false
+    await store.fetchStatus()
+    expect(api.getGitStatus).not.toHaveBeenCalled()
+    expect(store.status).toBeNull()
   })
 
   describe('initial state', () => {

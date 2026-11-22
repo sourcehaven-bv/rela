@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { FlowRun } from '@/api/flows'
-import { runHref, statusLabel, statusTone, subjectHref, timelineEntries } from './flowView'
+import { labelOf, runHref, statusLabel, statusTone, subjectHref, timelineEntries } from './flowView'
 
 const t = (key: string, values?: Record<string, unknown>) =>
   values ? `${key} ${JSON.stringify(values)}` : key
@@ -56,6 +56,21 @@ describe('flowView', () => {
     expect(entries[1].current).toBe(false)
   })
 
+  it('names a failed job in red at its state', () => {
+    const entries = timelineEntries(
+      run({
+        log: [
+          { at: '2026-01-01T10:00:00Z', state: 'collect', via: 'start' },
+          { at: '2026-01-01T10:01:00Z', state: 'collect', via: 'failed' },
+        ],
+      }),
+      t
+    )
+    expect(entries[0].summary).toBe('flows.log.failed {"state":"collect"}')
+    expect(entries[0].tone).toBe('red')
+    expect(entries[0].current).toBe(true)
+  })
+
   it('marks the newest entry of each live branch current in a forked run', () => {
     const entries = timelineEntries(
       run({
@@ -108,6 +123,59 @@ describe('flowView', () => {
     expect(entries[0].summary).toBe('flows.log.join {"state":"joined"}')
   })
 
+  it('names the actor by title when the server sends one', () => {
+    const entries = timelineEntries(
+      run({
+        log: [
+          {
+            at: '2026-01-01T10:00:00Z',
+            state: 'collect',
+            via: 'start',
+            by: 'PSN-5',
+            by_title: 'Nina',
+          },
+          { at: '2026-01-02T10:00:00Z', state: 'review', via: 'change', by: 'ann' },
+        ],
+      }),
+      t
+    )
+    expect(entries.map((e) => e.actor)).toEqual(['ann', 'Nina'])
+  })
+
+  // BUG-UZGMHIK: the timeline showed `system:signup-bot` raw, where Changes
+  // says "System" for the same principal.
+  it('names a system principal as the Changes list does', () => {
+    const entries = timelineEntries(
+      run({
+        log: [
+          { at: '2026-01-01T10:00:00Z', state: 'collect', via: 'start', by: 'system:signup-bot' },
+          { at: '2026-01-02T10:00:00Z', state: 'review', via: 'timer' },
+        ],
+      }),
+      t
+    )
+    expect(entries.map((e) => e.actor)).toEqual([undefined, 'System'])
+  })
+
+  it('says in which state a run was cancelled', () => {
+    const entries = timelineEntries(
+      run({
+        active: false,
+        log: [
+          {
+            at: '2026-01-01T10:00:00Z',
+            state: 'collect',
+            label: 'Collect',
+            via: 'cancel',
+            by: 'alice',
+          },
+        ],
+      }),
+      t
+    )
+    expect(entries[0].summary).toBe('flows.log.cancel {"state":"Collect"}')
+  })
+
   it('marks no entry current once the run has finished', () => {
     const entries = timelineEntries(
       run({ active: false, log: [{ at: '2026-01-01T10:00:00Z', state: 'finished', via: 'done' }] }),
@@ -121,5 +189,15 @@ describe('flowView', () => {
     expect(subjectHref('PER-1', 'person')).toBe('/entity/person/PER-1')
     expect(subjectHref(undefined, 'person')).toBe('')
     expect(subjectHref('PER-1', undefined)).toBe('')
+  })
+})
+
+describe('labelOf', () => {
+  it.each([
+    ['Company details', 'details', 'Company details'],
+    ['', 'check_vat', 'check_vat'],
+    [undefined, 'ready', 'ready'],
+  ])('labelOf(%j, %j) is %j', (label, name, want) => {
+    expect(labelOf(label, name)).toBe(want)
   })
 })

@@ -132,6 +132,7 @@ function isLong(prop: PropertyItem): boolean {
           v-else
           :model-value="row.prop.value"
           :mode="'display'"
+          :label="row.prop.label"
           :property-def="row.propertyDef"
           :property-name="row.propertyName"
           :entity-type="entityType"
@@ -148,13 +149,9 @@ function isLong(prop: PropertyItem): boolean {
  * styles/properties-list.css, shared with SectionEditForm and SidePanel.
  * Do not redefine them here. */
 
+/* Unbreakable strings wrap through the shared dd rule in properties-list.css. */
 .property-item.property-long dd {
   white-space: pre-wrap;
-  /* Force-wrap unbreakable strings (URLs, no-space identifiers).
-     overflow-wrap: anywhere is in src/styles/text-utilities.css as
-     .text-wrap-anywhere — we keep it inline here because dd is rendered
-     via v-for and we don't want to thread a class through PropertyItem. */
-  overflow-wrap: anywhere;
 }
 
 .property-inaccessible {

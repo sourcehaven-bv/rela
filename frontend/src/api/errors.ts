@@ -45,6 +45,9 @@ export interface ValidationError {
   source?: { pointer: string }
   code?: string
   field?: string
+  /** For a schema validation rule: the properties it reads, so a form can show it at one. */
+  fields?: string[]
+  /** For a schema validation rule: its description, without the rule name. */
   message?: string
   detail?: string
 }
@@ -165,12 +168,47 @@ export function normalizeApiError(error: AxiosError): ApiError {
     })
   }
 
+  // The same-origin check refuses with its own small body, not a problem
+  // document: `{"error": "forbidden", "reason": "origin_not_allowed"}`. It
+  // means the page was opened at an address the server does not accept, so
+  // say that rather than "Request failed (403)".
+  const reason = originRefusal(data)
+  if (reason) {
+    // English, like every message the normalizer writes; API_ERROR_KEYS
+    // translates it by the synthesized type.
+    const message = ORIGIN_REFUSAL_MESSAGES[reason]
+    return new ApiError(message, {
+      kind: 'http',
+      status: response.status,
+      problem: {
+        type: `https://rela.dev/errors/${reason}`,
+        title: message,
+        status: response.status,
+      },
+      original: error,
+    })
+  }
+
   // Response without a structured body (proxy error page, empty body, …).
   return new ApiError(`Request failed (${response.status})`, {
     kind: 'http',
     status: response.status,
     original: error,
   })
+}
+
+const ORIGIN_REFUSAL_MESSAGES = {
+  origin_not_allowed:
+    'This page was opened at an address this server does not accept. Open it at its usual address.',
+  origin_missing:
+    'The browser did not say which page sent this request, so the server refused it. Reload the page and try again.',
+} as const
+
+/** The reason of a same-origin refusal body, or undefined for any other body. */
+function originRefusal(data: unknown): 'origin_not_allowed' | 'origin_missing' | undefined {
+  if (typeof data !== 'object' || data === null) return undefined
+  const reason = (data as { reason?: unknown }).reason
+  return reason === 'origin_not_allowed' || reason === 'origin_missing' ? reason : undefined
 }
 
 /**
@@ -247,10 +285,8 @@ export function getScriptError(err: unknown): ScriptError | null {
  * rela's config-is-not-a-secret rule). Both are content that no longer exists,
  * so clearing the view is the right answer for them anyway — the cost of the
  * ambiguity is an empty state instead of stale content, not a wrong decision.
- * What is NOT free is the 401 case: the SPA has no global re-authentication
- * handler, so an expired session yields a blank view and a toast with no route
- * back. Confidentiality still wins that trade, but see the bug entity for the
- * follow-up.
+ * A 401 also replaces the whole app with the "session ended" page (see
+ * workspaceAccess.ts), so dropping the content here costs nothing more.
  *
  * Do NOT use this to drive a login redirect. It answers "should a view drop
  * content it is holding", not "was the user denied" — a deleted entity is a

@@ -585,18 +585,17 @@ function asText(value: unknown): string | undefined {
   .rl-table-row--compress .rl-table-row__cell--secondary { display: none; }
 
   /*
-   * A kept cell sizes to its contents rather than to `column.width`. The
-   * width was chosen to line up a full table, and holding it here would
-   * spend most of a narrow row on whitespace around a badge; there is no
-   * column header left to line up with anyway, since the section hides it at
-   * this width.
-   *
-   * `max-width` still caps it, so one long value cannot crowd out the title:
-   * the name cell is the flexible one and has to keep the room it needs.
+   * A kept cell has the same width in every row, so a column of badges lines
+   * up down the list. A cell sized to its contents moved with each value: an
+   * empty cell shrank to its padding and the badge after it slid into its
+   * place, under the wrong column. The width is `column.width`, capped to a
+   * share of the table: the full width was chosen to line up a desktop table
+   * and would spend most of a narrow row on whitespace around a badge, and
+   * the name cell is the flexible one that has to keep the room it needs.
+   * A longer value is clipped inside its own cell, as on desktop.
    */
   .rl-table-row--compress .rl-table-row__cell {
-    width: auto;
-    max-width: var(--rl-cell-width);
+    width: min(var(--rl-cell-width), 30cqi);
     padding-inline: var(--rl-space-2);
     border-left: none;
     font-size: var(--rl-font-size-sm);
@@ -611,7 +610,7 @@ function asText(value: unknown): string | undefined {
    * An empty primary cell keeps its place rather than collapsing. Unlike the
    * stacked card there is no label to strand, and letting cells disappear per
    * row would leave a column of badges that jitters left and right as it
-   * scrolls.
+   * scrolls. With the fixed width above it keeps its whole column.
    *
    * The `:not` is load-bearing. A cell can be both secondary and empty, and
    * `--empty` alone outranks the rule above that drops it, so without this a

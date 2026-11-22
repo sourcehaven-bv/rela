@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { usePageTitle } from '@/composables/useDocumentTitle'
 import { I18nT, useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import RlButton from 'rela-components/components/common/RlButton.vue'
@@ -12,6 +13,7 @@ import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView, getCommands, getErrorMessage } from '@/api'
 import { liveViewPath } from '@/api/live'
+import { accessRefusal } from '@/api/workspaceAccess'
 import { useLiveSubscription } from '@/composables/useLiveSubscription'
 import { runAction, type ActionProposal } from '@/api/actions'
 import { useActionFeedback } from '@/composables/useActionFeedback'
@@ -27,12 +29,14 @@ import { useMe } from '@/queries/me'
 import { UNKNOWN_USER } from '@/utils/userToken'
 import { useEntitySession } from '@/composables/useEntitySession'
 import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
-import type { ActionConfig, Command } from '@/types'
+import type { Command } from '@/types'
+import { offeredDetailActions, type DetailAction } from '@/components/entity/detailActions'
 import { getEditFormId } from '@/types'
 import { anchorSections } from '@/utils/rowAnchors'
 import { editFormRoute, entityDetailHref, ownedEntityHref } from '@/utils/entityRoute'
 import { shouldDeferToBrowser } from '@/utils/openIntent'
 import { computeActionAllowed } from '@/utils/affordancesWarning'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 import { isInputFocused } from '@/utils/dom'
 import { isAnyModalOpen } from '@/composables/modalStack'
 import {
@@ -61,7 +65,7 @@ import type { AutoSaveOwner } from '@/composables/useSectionAutoSave'
 import type { PropertyItem } from '@/components/common/PropertyDisplay.vue'
 import { ChevronRight } from 'lucide-vue-next'
 import { defaultRegistry } from '@/widgets/registry'
-import { isDenseEmpty, viewFieldRoutingHint } from '@/widgets/viewRouting'
+import { isDenseEmpty, viewFieldRoutingHintFor } from '@/widgets/viewRouting'
 import { formatDisplayNumber } from '@/utils/format'
 import type { WidgetRoutingHint } from '@/widgets/types'
 import type { PropertyDef } from '@/types'
@@ -72,6 +76,8 @@ import ChannelsPanel from '@/components/entity/ChannelsPanel.vue'
 import FlowRunsPanel from '@/components/flows/FlowRunsPanel.vue'
 import { withAboveRelationsBlock } from '@/components/entity/channels/channelPlacement'
 import MentionedByPanel from '@/components/entity/MentionedByPanel.vue'
+import ChangesPanel from '@/components/entity/ChangesPanel.vue'
+import { currentAsOf } from '@/api/asOf'
 import CommentIndicator from '@/components/entity/CommentIndicator.vue'
 import TextSelectionComment from '@/components/entity/TextSelectionComment.vue'
 import TextCommentPopover from '@/components/entity/TextCommentPopover.vue'
@@ -126,13 +132,16 @@ import { useConfirm, withConfirmError } from '@/composables/useConfirm'
 import { useDelayedPending } from '@/composables/useDelayedPending'
 import { beginRouteLoad } from '@/composables/useNavigationPending'
 import { useStickyHeight } from '@/composables/useStickyHeight'
+import { useHasHistory } from '@/composables/useHasHistory'
 import { PENDING_TIMINGS } from '@/composables/pendingTimings'
 import { recordRecentEntity } from '@/utils/recentEntities'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 import type { RowMove } from 'rela-components/components/table/types'
 import OrderedSectionRow from '@/components/entity/OrderedSectionRow.vue'
+import { sectionColumnLabel } from '@/utils/sectionTable'
 import { sectionRowLabel, useSectionReorder } from '@/composables/useSectionReorder'
 import { useQueryCache } from '@pinia/colada'
+import { useNextAction } from '@/composables/useNextAction'
 import { entityKeys } from '@/queries/entities'
 
 const props = withDefaults(
@@ -158,8 +167,14 @@ const props = withDefaults(
      * entity itself with a link to its owner instead of navigating the host.
      */
     followOwner?: boolean
+    /**
+     * Name the browser tab after this entity. Only the entity route sets it;
+     * a panel or preview leaves the tab to the page around it. Read at setup
+     * time and never reactive afterwards, like DynamicForm's `embedded`.
+     */
+    namesTab?: boolean
   }>(),
-  { hideActions: false, followOwner: true }
+  { hideActions: false, followOwner: true, namesTab: false }
 )
 
 const emit = defineEmits<{
@@ -175,6 +190,9 @@ const route = useRoute()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const { t } = useI18n()
+// Backlinks come from the mention index, which keeps no history, so a
+// page reading a past instant does not show them.
+const readingPast = currentAsOf() !== undefined
 const { confirm } = useConfirm()
 // The world is read from the URL, the same source EntityList reads, so a
 // detail page reached from a world-bound list stays in that world and a
@@ -251,7 +269,8 @@ const pileActions = useEntityPileActions(
     const target = scopeTarget('next') ?? scopeTarget('prev')
     if (target) void router.push(target)
     else void loadScopeNav()
-  }
+  },
+  () => schemaStore.headerButtons.add_to_pile
 )
 const backTarget = useBackTarget()
 
@@ -385,6 +404,8 @@ const entryTitle = computed(() => {
   if (!entry.value) return props.entityId
   return entityDisplayTitle(entry.value)
 })
+// Until the entity loads the tab shows the app name alone, not the raw id.
+if (props.namesTab) usePageTitle(() => (entry.value ? entryTitle.value : undefined))
 
 // inaccessibleByName maps each inaccessible field's name to its reason
 // (e.g. 'git-crypt'), letting consumers render per-property tooltips
@@ -424,9 +445,12 @@ const canDelete = computed(() => mayDelete.value)
 // authorization: the create re-authorizes.
 //
 // Withheld on an inaccessible entity: its properties are ciphertext, so a
-// "copy" of them would be a copy of nothing.
+// "copy" of them would be a copy of nothing. Withheld in a read-only
+// workspace, which refuses the create.
 const duplicateFormId = computed(() =>
-  isInaccessible.value ? undefined : schemaStore.inlineCreateFormFor(props.entityType)
+  isInaccessible.value || workspaceReadOnly.value
+    ? undefined
+    : schemaStore.inlineCreateFormFor(props.entityType)
 )
 const canDuplicate = computed(() => !!duplicateFormId.value && !!entry.value)
 const showDuplicateModal = ref(false)
@@ -1103,23 +1127,15 @@ function runCommand(cmd: Command) {
 // Lua actions offered on this page (TKT-VVS16W). The server publishes each
 // as `_actions['action:<id>']` only when type, face, `when` and `permission`
 // all hold, so the page renders exactly the keys it is given and decides
-// nothing itself. Sorted by label so the order does not depend on map order.
-interface DetailAction {
-  id: string
-  label: string
-  config: ActionConfig
-}
-const detailActions = computed<DetailAction[]>(() => {
-  const out: DetailAction[] = []
-  for (const [key, allowed] of Object.entries(entry.value?._actions ?? {})) {
-    if (!allowed || !key.startsWith('action:')) continue
-    const id = key.slice('action:'.length)
-    const config = schemaStore.getAction(id)
-    if (config) out.push({ id, label: config.label || id, config })
-  }
-  return out.sort((a, b) => a.label.localeCompare(b.label))
-})
+// nothing itself. Sorted by the action's `order:`, then by label, so the
+// order does not depend on map order.
+const detailActions = computed<DetailAction[]>(() =>
+  offeredDetailActions(entry.value?._actions, (id) => schemaStore.getAction(id))
+)
 const detailActionBusy = ref(false)
+// Bumped after an action, so the panels that read their own lists (changes,
+// documents, flow runs, mentions) read them again.
+const panelRevision = ref(0)
 // The action whose request is in flight; its button shows the pending label.
 const runningActionId = ref<string | null>(null)
 // The open proposal of an `llm:` action (TKT-4USH1HO). The action wrote
@@ -1130,6 +1146,17 @@ const llmProposal = ref<{ proposal: ActionProposal; label: string; entityType: s
   null
 )
 const { reportResult, reportError } = useActionFeedback()
+
+const nextAction = useNextAction()
+
+// After an action or an applied proposal wrote to this entity. The view
+// brings the sections and relations; the panels below it read their own
+// lists, so they are told to read again (BUG-UZGMHIK). The page's notices
+// are read again with the view, so one the write settled goes with it.
+async function reloadAfterWrite() {
+  await Promise.all([loadView(), nextAction.refreshNow()])
+  panelRevision.value++
+}
 
 async function runDetailAction(action: DetailAction, ev?: Event) {
   if (detailActionBusy.value) return
@@ -1143,6 +1170,7 @@ async function runDetailAction(action: DetailAction, ev?: Event) {
           ? config.confirm
           : t('entity.action.confirmRun', { label }),
       confirmLabel: label,
+      danger: config.style === 'danger',
     })
     if (!ok) return
   }
@@ -1168,7 +1196,7 @@ async function runDetailAction(action: DetailAction, ev?: Event) {
     }
     // The script usually rewrote this entity; show the result without a
     // manual refresh.
-    await loadView()
+    await reloadAfterWrite()
   } catch (err) {
     reportError(err, triggerEl, label)
   } finally {
@@ -1469,9 +1497,14 @@ async function requestDelete() {
 // Always an array. The wire keeps `_copies` absent (no capability) distinct
 // from `[]` (none declared), but this page renders nothing for both, so the
 // distinction is collapsed HERE, once, rather than carried into every reader.
-const copyOffers = computed<CopyOffer[]>(() => entry.value?._copies ?? [])
-const conversionOffers = computed<ConversionOffer[]>(
-  () => entry.value?._conversions?.filter((o) => o.allowed) ?? []
+//
+// A read-only workspace refuses the writes a copy or a conversion makes, so
+// it offers neither.
+const copyOffers = computed<CopyOffer[]>(() =>
+  workspaceReadOnly.value ? [] : (entry.value?._copies ?? [])
+)
+const conversionOffers = computed<ConversionOffer[]>(() =>
+  workspaceReadOnly.value ? [] : (entry.value?._conversions?.filter((o) => o.allowed) ?? [])
 )
 // The body editor's task-item recipes, and the entity they convert from.
 const taskItemSource = computed(() =>
@@ -1507,10 +1540,17 @@ const faceOptions = computed<Face[] | undefined>(() => entry.value?._faces)
 // from its host, and the detail panel takes the faces as actions.
 const faceToggle = computed(() =>
   faceOptions.value && !props.hideActions
-    ? faceToggleOptions(bareEntityId.value, servedFace.value, faceOptions.value, typeDef.value?.faces)
-    : null,
+    ? faceToggleOptions(
+        bareEntityId.value,
+        servedFace.value,
+        faceOptions.value,
+        typeDef.value?.faces
+      )
+    : null
 )
-const menuFaces = computed<Face[] | undefined>(() => (faceToggle.value ? undefined : faceOptions.value))
+const menuFaces = computed<Face[] | undefined>(() =>
+  faceToggle.value ? undefined : faceOptions.value
+)
 
 // The face's address, for an older server that sends no `ref`: the stored
 // coordinate appended to the bare id is that face's spelling for every
@@ -1754,7 +1794,23 @@ watch([viewData, worldInfo], ([, info]) => {
 // 501. Rendering the button regardless is the affordance-that-lies shape, so
 // it is ABSENT when the capability is — never disabled, which would still
 // advertise a feature this deployment cannot provide.
-const showHistory = computed(() => schemaStore.historyEnabled)
+//
+// The operator may also hide it with `header_buttons.history` (TKT-31822PN),
+// which the server resolves per principal. That is a UX choice, not access
+// control: `/_history` keeps its own ACL.
+//
+// It is also absent while the face has no recorded version (BUG-9WCZYOX):
+// a button that opens "No versions recorded yet" leads nowhere.
+const historyOffered = computed(
+  () => schemaStore.historyEnabled && schemaStore.headerButtons.history
+)
+const hasHistory = useHasHistory({
+  enabled: () => historyOffered.value,
+  entityType: () => props.entityType,
+  address: () => servedRef.value,
+  world: () => worldParam.value,
+})
+const showHistory = computed(() => historyOffered.value && hasHistory.value)
 
 // The export formats, for the action list. ExportMenu fetches the same cached
 // registry for the desktop button.
@@ -1785,6 +1841,7 @@ const actions = computed<EntityAction[]>(() => {
       label: a.label,
       group: 'command',
       icon: 'play',
+      tone: a.config.style === 'danger' ? 'danger' : undefined,
       disabled: detailActionBusy.value,
       run: () => void runDetailAction(a),
     })
@@ -2044,9 +2101,9 @@ interface NestedCell {
 // fieldRowsFor returns the precomputed FieldRow array for one entity's
 // fields. Cards/list templates iterate this instead of calling helper
 // functions inline per cell.
-function fieldRowsFor(ent: { fields?: ViewSectionField[] }): FieldRow[] {
+function fieldRowsFor(ent: { type: string; fields?: ViewSectionField[] }): FieldRow[] {
   return (ent.fields ?? []).map((field) => {
-    const hint = viewFieldRoutingHint(field)
+    const hint = viewFieldRoutingHintFor(field, ent.type, getPropertyDef)
     return {
       field,
       hint,
@@ -2484,6 +2541,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
     <RlStatusRegion v-if="showBlockLoader">{{ t('common.loading') }}</RlStatusRegion>
     <div v-else-if="loading && !entry" class="entity-detail-placeholder" />
 
+    <!-- The session or workspace screen says why; see EntityList. -->
+    <div v-else-if="error && accessRefusal" class="entity-detail-placeholder" />
     <RlStatusRegion v-else-if="error" tone="error">
       {{ error }}
       <template #actions>
@@ -2604,7 +2663,6 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 
       <header ref="headerEl" class="detail-header">
         <div ref="headerInfoEl" class="header-info">
-          <span class="entity-type-badge">{{ typeDef?.label || entityType }}</span>
           <RouterLink v-if="ownerHref" :to="ownerHref" class="owner-link">
             {{ t('entity.partOf', { title: viewData?.entry?._owner?.title }) }}
           </RouterLink>
@@ -2653,6 +2711,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
               v-for="a in detailActions"
               :key="`action-${a.id}`"
               variant="secondary"
+              :tone="a.config.style === 'danger' ? 'danger' : undefined"
               :disabled="detailActionBusy && runningActionId !== a.id"
               :loading="runningActionId === a.id"
               :pending-label="t('entity.action.running')"
@@ -2708,7 +2767,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             and the page's world, in which the export resolves the entry's links.
           -->
             <ExportMenu :url-for="exportUrlFor(entityRef(entry))" />
+            <!--
+            Hidden by `header_buttons.add_to_pile` (TKT-31822PN), a UX choice
+            the server resolves per principal; the action list gates on the
+            same flag through useEntityPileActions.
+          -->
             <AddToPileMenu
+              v-if="schemaStore.headerButtons.add_to_pile"
               :addresses="() => (entry ? [entityRef(entry)] : [])"
               size="md"
               :new-label="t('entity.addToNewPile')"
@@ -2766,7 +2831,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
         :entity-type="llmProposal.entityType"
         :label="llmProposal.label"
         @close="llmProposal = null"
-        @applied="loadView()"
+        @applied="reloadAfterWrite()"
       />
       <DuplicateModal
         v-if="showDuplicateModal && entry && duplicateFormId"
@@ -3142,6 +3207,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                       v-else
                       :model-value="rowDisplayValue(ent, row.field)"
                       :mode="'display'"
+                      :label="row.field.label"
                       :property-name="row.hint.propertyName"
                       :entity-type="ent.type"
                       class="field-value"
@@ -3204,6 +3270,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                       v-else
                       :model-value="rowDisplayValue(ent, row.field)"
                       :mode="'display'"
+                      :label="row.field.label"
                       :property-name="row.hint.propertyName"
                       :entity-type="ent.type"
                     />
@@ -3228,23 +3295,26 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                   class="table-group"
                 >
                   <h3 class="group-heading">{{ group.groupName }}</h3>
-                  <table class="data-table">
-                    <thead>
-                      <tr>
+                  <table class="data-table" role="table">
+                    <thead role="rowgroup">
+                      <tr role="row">
                         <th
-                          v-for="col in group.columns ?? section.columns"
+                          v-for="(col, ci) in group.columns ?? section.columns"
                           :key="col.property || col.relation"
+                          role="columnheader"
+                          :class="{ 'section-col--secondary': ci > 0 && col.primary === false }"
                         >
-                          {{ col.label || col.property || col.relation }}
+                          {{ sectionColumnLabel(col) }}
                         </th>
-                        <th class="actions-col" />
+                        <th class="actions-col" role="columnheader" />
                       </tr>
                     </thead>
-                    <tbody>
+                    <tbody role="rowgroup">
                       <tr
                         v-for="row in group.rows"
                         :id="anchorId(section.sectionId, row.entityId)"
                         :key="row.entityId"
+                        role="row"
                       >
                         <SectionTableRowCells
                           :key="tableRowKey(row)"
@@ -3274,19 +3344,28 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 </div>
               </template>
 
-              <table v-else class="data-table">
-                <thead>
-                  <tr>
-                    <th v-if="sectionReorder.movable(section)" class="order-col">
+              <table v-else class="data-table" role="table">
+                <thead role="rowgroup">
+                  <tr role="row">
+                    <th
+                      v-if="sectionReorder.movable(section)"
+                      class="order-col"
+                      role="columnheader"
+                    >
                       <span class="rl-visually-hidden">{{ t('entity.order') }}</span>
                     </th>
-                    <th v-for="col in section.columns" :key="col.property || col.relation">
-                      {{ col.label || col.property || col.relation }}
+                    <th
+                      v-for="(col, ci) in section.columns"
+                      :key="col.property || col.relation"
+                      role="columnheader"
+                      :class="{ 'section-col--secondary': ci > 0 && col.primary === false }"
+                    >
+                      {{ sectionColumnLabel(col) }}
                     </th>
-                    <th class="actions-col" />
+                    <th class="actions-col" role="columnheader" />
                   </tr>
                 </thead>
-                <tbody>
+                <tbody role="rowgroup">
                   <!--
                   A section in relation order the reader may change gets a
                   handle per row. The row component is the <tr> itself, so
@@ -3297,6 +3376,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                     v-for="row in section.rows"
                     :id="anchorId(section.sectionId, row.entityId)"
                     :key="row.entityId"
+                    role="row"
                     v-bind="
                       sectionReorder.movable(section)
                         ? {
@@ -3400,6 +3480,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                         :model-value="cell.value"
                         :mode="'display'"
                         :property-name="cell.propertyName"
+                        :entity-type="node.entity.type"
                       />
                     </span>
                   </summary>
@@ -3464,20 +3545,37 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
              Nested here (not a sibling of .sections) so it picks up the
              container's flex `gap` for free instead of duplicating that
              spacing via its own margin. -->
-        <DocumentsPanel :entity-type="entityType" :entity-id="entityRef(entry)" />
+        <DocumentsPanel
+          :entity-type="entityType"
+          :entity-id="entityRef(entry)"
+          :revision="panelRevision"
+        />
 
         <!-- Flow runs on this entity (TKT-ZAXRXND). Self-gating: renders
              nothing unless flows.yaml declares a flow on this type. -->
-        <FlowRunsPanel :entity-type="entityType" :entity-id="entityRef(entry)" />
+        <FlowRunsPanel
+          :entity-type="entityType"
+          :entity-id="entityRef(entry)"
+          :revision="panelRevision"
+        />
 
         <!-- Backlinks: entities whose body mentions this one. Self-gating:
              renders nothing while nothing the reader can see mentions it.
              Left out when the view shows backlinks itself or the operator
              turned it off; the server decides (hideMentionedByPanel). -->
         <MentionedByPanel
-          v-if="!viewData.hideMentionedByPanel"
+          v-if="!viewData.hideMentionedByPanel && !readingPast"
           :entity-type="entityType"
           :entity-id="entityRef(entry)"
+          :revision="panelRevision"
+        />
+
+        <!-- Audit changes (TKT-X1ZFO04). Self-gating: renders nothing unless
+             the sidebar reports a database audit log. -->
+        <ChangesPanel
+          :entity-type="entityType"
+          :entity-id="entityRef(entry)"
+          :revision="panelRevision"
         />
 
         <!-- Comment thread. Self-gating: renders nothing unless the schema
@@ -3680,15 +3778,6 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   min-width: min(16rem, 100%);
 }
 
-.entity-type-badge {
-  display: inline-block;
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--rl-color-text-muted);
-}
-
 .header-presence {
   display: flex;
   align-items: center;
@@ -3862,7 +3951,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 /* Cards grid (relation sections etc.) */
 .cards-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  /* min(): a pane narrower than 300px, as on a small phone, gets one card
+     that fits instead of one that overflows (BUG-E4XWNGR). */
+  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
   gap: var(--space-lg);
 }
 
@@ -4016,9 +4107,11 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   align-items: center;
 }
 
-/* Table */
+/* Table. The wrapper is the container the stacked layout below measures, so
+   a section in a narrow detail panel stacks as it does on a phone. */
 .table-wrapper {
   overflow-x: auto;
+  container: section-table / inline-size;
 }
 
 /* display: nested — parent rows that expand to their children. */
@@ -4097,6 +4190,46 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   font-size: var(--font-size-sm);
   color: var(--rl-color-text-muted);
   white-space: nowrap;
+}
+
+/*
+ * A narrow nested section, as on a phone, moves the column values onto
+ * their own line under the title and lets them wrap (BUG-E4XWNGR). In one
+ * line they cannot shrink, so the tree's `overflow: hidden` cut them off.
+ */
+.nested-tree-wrap {
+  container: nested-tree / inline-size;
+}
+
+@container nested-tree (max-width: 480px) {
+  .nested-row,
+  .nested-child {
+    flex-wrap: wrap;
+  }
+
+  /* A zero basis keeps a long title on the first line beside the twisty and
+     badge, where it wraps; only the values move to a line of their own. */
+  .nested-link {
+    flex: 1 1 0;
+  }
+
+  /* A level without columns renders an empty values span; as its own line
+     it would add a row gap to every row. */
+  .nested-values:empty {
+    display: none;
+  }
+
+  .nested-values {
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    margin-left: 0;
+    row-gap: var(--space-xs);
+    white-space: normal;
+  }
+
+  .nested-row .nested-values {
+    padding-left: calc(18px + var(--space-md));
+  }
 }
 
 .nested-children {
@@ -4191,6 +4324,123 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 
 .actions-col {
   width: 60px;
+}
+
+/* The column name beside each value; only a stacked row shows it. */
+.data-table :deep(.section-cell__label) {
+  display: none;
+}
+
+/*
+ * A narrow section stacks each row into a block (BUG-6WQ1U8S), as a list
+ * and a dashboard table card do on a phone: the first column heads the row,
+ * and each other column is a "name  value" line. A table that scrolled
+ * sideways wrapped its dates and pushed its last columns off screen.
+ *
+ * The row is a grid. The order handle, the heading cell and the edit button
+ * share the first line; every other cell takes a full line of its own. The
+ * explicit roles in the template keep the table a table for a screen reader
+ * once its parts are no longer laid out as one.
+ */
+@container section-table (max-width: 480px) {
+  .data-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .data-table,
+  .data-table tbody {
+    display: block;
+  }
+
+  .data-table tbody > tr {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--rl-color-border);
+  }
+
+  .data-table tbody > tr:last-child {
+    border-bottom: none;
+  }
+
+  .data-table :deep(td:not(.ordered-row__handle-cell)) {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    align-items: center;
+    gap: var(--space-sm);
+    padding: 2px 0;
+    border-bottom: none;
+  }
+
+  /* A long value without spaces, such as an email address, wraps within its
+     line rather than widening the row. */
+  .data-table :deep(.section-cell__value) {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .data-table :deep(td.ordered-row__handle-cell) {
+    grid-column: 1;
+    grid-row: 1;
+    padding-right: var(--space-sm);
+    border-bottom: none;
+  }
+
+  .data-table :deep(td.section-cell--title) {
+    grid-column: 2;
+    grid-row: 1;
+    grid-template-columns: minmax(0, 1fr);
+    font-weight: 600;
+  }
+
+  .data-table :deep(td.actions-cell) {
+    grid-column: 3;
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .data-table :deep(td:not(.section-cell--title) .section-cell__label) {
+    display: block;
+    color: var(--rl-color-text-muted);
+    overflow-wrap: break-word;
+    hyphens: auto;
+  }
+
+  /* A number reads as a value on its line, not trailing at the far edge. */
+  .data-table :deep(td.data-table-cell--numeric) {
+    text-align: left;
+  }
+
+  /* `primary: false` leaves a column out of the stacked row. Its header
+     goes too, so a screen reader still pairs each cell with its own header,
+     and a link in the column is not a hidden tab stop. */
+  .data-table th.section-col--secondary,
+  .data-table :deep(td.section-cell--secondary) {
+    display: none;
+  }
+
+  /* A cell with no value would leave a label with no answer. It is hidden
+     from sight only: a screen reader still counts it, so the cells after it
+     keep their column headers. */
+  .data-table :deep(td.section-cell--empty) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
 
 .section-totals {

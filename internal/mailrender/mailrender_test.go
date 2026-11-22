@@ -851,3 +851,40 @@ func TestRender_RaggedRowsMatchHeaderWidth(t *testing.T) {
 	require.NotContains(t, html, "OVERFLOW", "a cell past the header width is dropped")
 	require.Contains(t, html, "short", "a short row still renders its real cells")
 }
+
+// TestRender_Button pins the call to action: a link in a colored cell whose
+// href is resolved like a table link, an escaped label, a "label: URL"
+// line in the text part, and a refusal for a missing label or an unsafe URL.
+func TestRender_Button(t *testing.T) {
+	t.Parallel()
+	r := newRenderer(t, &mailrender.Options{BaseURL: "https://app.example"})
+
+	html, text := render(t, r, &mailrender.Message{
+		Subject: "Finish your signup",
+		Intro:   "One step is left.",
+		Button:  &mailrender.Button{Label: "Open the step", URL: "/s/portal/entity/account/ACC-1"},
+	})
+	require.Regexp(t, `<td class="btn-cell"[^>]*><a class="btn" href="https://app.example/s/portal/entity/account/ACC-1"`, html)
+	require.NotContains(t, html, "role=\"button\"", "the button navigates, so it stays a link")
+	require.Contains(t, text, "Open the step: https://app.example/s/portal/entity/account/ACC-1\n")
+	require.Less(t, strings.Index(text, "One step is left."), strings.Index(text, "Open the step:"),
+		"the text part keeps the button below the intro")
+
+	escaped, _ := render(t, r, &mailrender.Message{Subject: "s",
+		Button: &mailrender.Button{Label: "<b>Go</b>", URL: "https://app.example/x"}})
+	require.Contains(t, escaped, "&lt;b&gt;Go&lt;/b&gt;</a>", "the label is text, not markup")
+
+	for _, b := range []*mailrender.Button{
+		{Label: "", URL: "https://app.example/x"},
+		{Label: "Go", URL: "javascript:alert(1)"},
+		{Label: "Go", URL: ""},
+	} {
+		_, _, err := r.Render(&mailrender.Message{Subject: "s", Button: b})
+		require.ErrorIs(t, err, mailrender.ErrButton, "button %+v", b)
+	}
+
+	// Without a base URL a relative button would be dead, so it is refused.
+	bare := newRenderer(t, &mailrender.Options{})
+	_, _, err := bare.Render(&mailrender.Message{Subject: "s", Button: &mailrender.Button{Label: "Go", URL: "/x"}})
+	require.ErrorIs(t, err, mailrender.ErrButton)
+}

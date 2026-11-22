@@ -384,18 +384,27 @@ func (p *Policy) ConditionallyVisible(entityType, property string) bool {
 }
 
 // FieldRestricted reports whether the policy may hide property of
-// entityType from some reader, by a role or by a client ceiling. It is
-// broader than [Policy.ConditionallyVisible] in two ways, for callers that
-// turn a value into something every reader of another surface sees (a
-// realtime trigger's message, a channel role decided by the value):
+// entityType from some reader, by a role or by a client ceiling. Callers
+// turn a value into something every reader of another surface sees (a flow
+// run's state, a realtime trigger's message, a channel role decided by the
+// value), so the property is restricted when:
 //
-//   - any role declaring `visible:` for the type, or one of its faces
-//     (type@face), or every type ("*"), restricts every property of the
-//     type, listed or not: a listed property is still a gated one;
-//   - a client baseline's closed-world `visible:` that leaves the property
-//     out, or a `redact:` that names it, restricts it too.
+//   - a role's `visible:` block for the type leaves it out, or lists it
+//     only under a `when:`;
+//   - a role's `visible:` block is keyed by a face of the type (type@face)
+//     or by every type ("*"). The affordance resolver refuses such a key at
+//     load; it restricts every property here so the answer stays safe if
+//     that changes;
+//   - a client baseline's closed-world `visible:` leaves it out, or its
+//     `redact:` names it.
 //
-// Like ConditionallyVisible the answer is policy-wide and
+// A property that every role's `visible:` block for the type lists without
+// a `when:` is not restricted: a role without a block shows every property,
+// and the role union only adds, so no reader of a row is denied it on a
+// live read. TestFieldRestricted_AgreesWithFieldVerdicts (affordances) pins
+// this against the read path.
+//
+// Like [Policy.ConditionallyVisible] the answer is policy-wide and
 // principal-independent, so a refusal built on it is a load-time property
 // of the configuration.
 //
@@ -405,8 +414,14 @@ func (p *Policy) FieldRestricted(entityType, property string) bool {
 		return false
 	}
 	for _, role := range p.Roles {
-		for key := range role.Visible {
-			if grantKeyApplies(key, entityType) {
+		for key, grants := range role.Visible {
+			if !grantKeyApplies(key, entityType) {
+				continue
+			}
+			if key != entityType {
+				return true // a face or "*" key
+			}
+			if !showsUnconditionally(grants, property) {
 				return true
 			}
 		}
@@ -424,6 +439,14 @@ func (p *Policy) FieldRestricted(entityType, property string) bool {
 		}
 	}
 	return false
+}
+
+// showsUnconditionally reports whether grants list property without a
+// `when:`.
+func showsUnconditionally(grants []FieldGrant, property string) bool {
+	return slices.ContainsFunc(grants, func(g FieldGrant) bool {
+		return g.Field == property && g.When == ""
+	})
 }
 
 // GrantKeyApplies reports whether an acl.yaml grant key names entityType:

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { usePageTitle } from '@/composables/useDocumentTitle'
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { I18nT, useI18n } from 'vue-i18n'
 import { searchEntities } from '@/api'
@@ -23,6 +24,7 @@ import AddToPileMenu from '@/components/piles/AddToPileMenu.vue'
 import { entityRef } from '@/utils/entityRef'
 
 const { t } = useI18n()
+usePageTitle(() => t('common.search'))
 const route = useRoute()
 const router = useRouter()
 const { worldParam } = useWorld()
@@ -559,6 +561,7 @@ watch(
       <div class="results-head">
         <p id="search-results-heading" class="results-count">{{ t('search.resultCount', { n: results.length }, results.length) }}</p>
         <AddToPileMenu
+          v-if="schemaStore.listButtons.add_to_pile"
           :addresses="resultAddresses"
           :label="t('search.addResultsToPile')"
           :new-label="t('search.newPileFromResults')"

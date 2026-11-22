@@ -682,6 +682,60 @@ describe('FileWidget', () => {
     expect(w.text()).toContain('b.pdf')
   })
 
+  describe('image mode', () => {
+    const imageDef = { type: 'file', display: { image: true } } as const
+    const base = { modelValue: '', propertyName: 'logo', propertyDef: imageDef, entityType: 'ticket' }
+
+    it('previews the image in display mode, without the file card', () => {
+      const w = mount(FileWidget, { props: { ...base, mode: 'display' as const, attachments: [att] } })
+      expect(w.find('img.image-preview-img').attributes('src')).toBe(att.href)
+      expect(w.find('.file-item').exists()).toBe(false)
+      expect(w.find('.image-remove').exists()).toBe(false)
+    })
+
+    it('shows an image-specific empty state', () => {
+      const w = mount(FileWidget, { props: { ...base, mode: 'display' as const } })
+      expect(w.text()).toContain('No image')
+    })
+
+    it('limits the picker to image types and offers replace and remove', () => {
+      const w = mount(FileWidget, {
+        props: { ...base, mode: 'edit' as const, entityId: 'TKT-1', attachments: [att] },
+      })
+      expect(w.find('input[type=file]').attributes('accept')).toBe(
+        'image/png,image/jpeg,image/gif,image/webp'
+      )
+      expect(w.text()).toContain('Replace image')
+      expect(w.find('.image-remove').exists()).toBe(true)
+    })
+
+    it('refuses a non-image pick on the client without uploading', async () => {
+      const w = mount(FileWidget, { props: { ...base, mode: 'edit' as const, entityId: 'TKT-1' } })
+      const input = w.find('input[type=file]')
+      const file = new File(['x'], 'doc.pdf', { type: 'application/pdf' })
+      Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+      await input.trigger('change')
+      expect(w.find('.file-error').text()).toContain('PNG, JPEG, GIF or WebP')
+    })
+
+    it('stages an image in create mode', async () => {
+      const w = mount(FileWidget, { props: { ...base, mode: 'edit' as const } })
+      const input = w.find('input[type=file]')
+      const file = new File(['x'], 'logo.png', { type: 'image/png' })
+      Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+      await input.trigger('change')
+      expect(w.emitted('update:staged-files')?.[0]).toEqual([[file]])
+    })
+
+    it('keeps the card for a plain file property', () => {
+      const w = mount(FileWidget, {
+        props: { modelValue: '', mode: 'display' as const, propertyName: 'p', attachments: [att] },
+      })
+      expect(w.find('.image-preview').exists()).toBe(false)
+      expect(w.find('.file-item').exists()).toBe(true)
+    })
+  })
+
   it('shows an empty-state when there are no files in display mode', () => {
     const w = mount(FileWidget, {
       props: { modelValue: '', mode: 'display' as const, propertyName: 'p' },

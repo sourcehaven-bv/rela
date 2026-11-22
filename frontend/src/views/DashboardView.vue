@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { ref, computed, onMounted, watch } from 'vue'
+import { usePageTitle } from '@/composables/useDocumentTitle'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { searchEntities, analyze, getDashboard, getDashboardCard, ApiError } from '@/api'
 import { useWorld } from '@/composables/useWorld'
@@ -112,12 +113,21 @@ function valueMatches(card: DashboardCardEntry, value: DashboardCardValue): bool
 // Computed
 const dashboardConfig = computed(() => (props.name ? named.value : schemaStore.dashboard))
 const title = computed(() => dashboardConfig.value?.title || t('dashboardView.title'))
+usePageTitle(title)
 const description = computed(() => dashboardConfig.value?.description)
 const cards = computed(() => dashboardConfig.value?.cards || [])
 // Every card of an entity dashboard has a scope, and no other card does.
 const entityDashboard = computed(() => cards.value.some((c) => !!c.scope))
 // An entity dashboard needs its anchor; without one no card is asked for.
 const anchorMissing = computed(() => entityDashboard.value && !props.anchor)
+// Whether the validation card shows. The server resolves the dashboard's
+// `validation:` toggle for this principal (TKT-31822PN); an older server
+// sends nothing and the card shows. The card covers the whole project, so an
+// entity dashboard, which is about one entity, never shows it. Hiding it is a
+// UX choice, not access control: /analyze keeps its own gate.
+const showValidation = computed(
+  () => !entityDashboard.value && dashboardConfig.value?.validation !== false
+)
 
 // Methods
 // Bumped on every load, so a slow load for a dashboard the user has already
@@ -182,11 +192,10 @@ async function loadData() {
       })
     })
 
-    // The validation card covers the whole project, so an entity dashboard,
-    // which is about one entity, does not show it.
-    const analysisPromise = entityDashboard.value
-      ? Promise.resolve()
-      : analyze().then((r) => (analysisResult.value = r))
+    // A hidden validation card has nothing to load.
+    const analysisPromise = showValidation.value
+      ? analyze().then((r) => (analysisResult.value = r))
+      : Promise.resolve()
 
     await Promise.all([...cardPromises, analysisPromise])
   } catch (err) {
@@ -205,6 +214,8 @@ interface CardView {
   count: number
   breakdown: BreakdownItem[]
   rows: TableRow[]
+  /** A table card's column headers, one per column, resolved once. */
+  columnLabels: string[]
   /** Some rows hide the grouped value from this reader and are not counted. */
   partial: boolean
   /** The server-computed value of a list card; absent for a query card. */
@@ -282,50 +293,75 @@ function buildRows(card: DashboardCardEntry, entities: Entity[]): Entity[] {
  */
 const cardViews = computed<CardView[]>(() =>
   cards.value.map((card) => {
-    const key = cardKey(card)
-    const link = entityDashboard.value || card.records ? undefined : cardLink(card)
-    if (card.list) {
-      const value = cardValues.value.get(key)
-      return {
-        card,
-        key,
-        link,
-        value,
-        count: value?.total ?? 0,
-        partial: value?.partial ?? false,
-        breakdown:
-          value && card.display === 'breakdown'
-            ? listBreakdown(schemaStore, card, value, t('dashboard.unknown'))
-            : [],
-        rows:
-          value && card.display === 'table'
-            ? tableRows(schemaStore, card, valueRows(value), uiStore.effectiveTimezone)
-            : [],
-        summary: value
-          ? summaryText(schemaStore, card, value, uiStore.effectiveTimezone)
-          : undefined,
-        failed: cardErrors.value.has(key),
-      }
-    }
-    const entities = cardData.value.get(key)?.entities ?? []
-    const breakdown =
-      card.display === 'breakdown' && card.group_by
-        ? queryBreakdown(schemaStore, card.group_by, entities, t('dashboard.unknown'))
-        : { items: [], partial: false }
+    const view = buildCardView(card)
+    const columnLabels =
+      card.display === 'table'
+        ? (card.columns ?? []).map((col) => getColumnLabel(col, view.rows))
+        : []
+    return { ...view, columnLabels }
+  })
+)
+
+/** One tile without its column labels, which need the rows first. */
+function buildCardView(card: DashboardCardEntry): Omit<CardView, 'columnLabels'> {
+  const key = cardKey(card)
+  const link = entityDashboard.value || card.records ? undefined : cardLink(card)
+  if (card.list) {
+    const value = cardValues.value.get(key)
     return {
-      link,
-      failed: false,
       card,
       key,
-      count: cardData.value.get(key)?.count || 0,
-      partial: breakdown.partial,
-      breakdown: breakdown.items,
-      rows:
-        card.display === 'table'
-          ? tableRows(schemaStore, card, buildRows(card, entities), uiStore.effectiveTimezone)
+      link,
+      value,
+      count: value?.total ?? 0,
+      partial: value?.partial ?? false,
+      breakdown:
+        value && card.display === 'breakdown'
+          ? listBreakdown(schemaStore, card, value, t('dashboard.unknown'))
           : [],
+      rows:
+        value && card.display === 'table'
+          ? tableRows(schemaStore, card, valueRows(value), uiStore.effectiveTimezone)
+          : [],
+      summary: value ? summaryText(schemaStore, card, value, uiStore.effectiveTimezone) : undefined,
+      failed: cardErrors.value.has(key),
     }
-  })
+  }
+  const entities = cardData.value.get(key)?.entities ?? []
+  const breakdown =
+    card.display === 'breakdown' && card.group_by
+      ? queryBreakdown(schemaStore, card.group_by, entities, t('dashboard.unknown'))
+      : { items: [], partial: false }
+  return {
+    link,
+    failed: false,
+    card,
+    key,
+    count: cardData.value.get(key)?.count || 0,
+    partial: breakdown.partial,
+    breakdown: breakdown.items,
+    rows:
+      card.display === 'table'
+        ? tableRows(schemaStore, card, buildRows(card, entities), uiStore.effectiveTimezone)
+        : [],
+  }
+}
+
+/**
+ * Whether a `hide_empty:` card loaded and has no rows for this reader. A
+ * card that failed or has not loaded is not empty: an error must not read
+ * as "nothing to show".
+ */
+function loadedEmpty(view: CardView): boolean {
+  if (view.failed) return false
+  if (view.card.list) return view.value !== undefined && view.value.total === 0
+  const data = cardData.value.get(view.key)
+  return data !== undefined && data.count === 0
+}
+
+/** The tiles that show: every card but a `hide_empty:` card with no rows. */
+const shownViews = computed(() =>
+  cardViews.value.filter((view) => !(view.card.hide_empty && loadedEmpty(view)))
 )
 
 /**
@@ -338,8 +374,23 @@ function widthClass(width: DashboardCardEntry['width']): string | undefined {
   return undefined
 }
 
-function getColumnLabel(col: { property?: string; label?: string }): string {
-  return col.label || col.property || ''
+/**
+ * A table card's column header: its own label, then the schema label of the
+ * property on the first row type that has one (the label forms show), then
+ * the raw property name.
+ */
+function getColumnLabel(
+  col: { property?: string; label?: string },
+  rows: { entity: { type: string } }[]
+): string {
+  if (col.label) return col.label
+  if (col.property) {
+    for (const type of new Set(rows.map((r) => r.entity.type))) {
+      const label = schemaStore.getEntityType(type)?.properties[col.property]?.label
+      if (label) return label
+    }
+  }
+  return col.property || ''
 }
 
 // Lifecycle
@@ -397,7 +448,7 @@ watch([() => props.name, () => props.anchor, worldParam], () => void loadData())
 
       <div v-else class="dashboard-grid">
         <section
-          v-for="view in cardViews"
+          v-for="view in shownViews"
           :key="view.key"
           class="dashboard-card"
           :class="widthClass(view.card.width)"
@@ -466,40 +517,60 @@ watch([() => props.name, () => props.anchor, worldParam], () => void loadData())
           </div>
 
           <!-- Table display -->
+          <!--
+            The explicit roles keep the table a table for assistive technology
+            on a phone, where the CSS below stacks each row into a block and a
+            browser would otherwise drop the table semantics.
+          -->
           <div v-else-if="view.card.display === 'table'" class="card-table">
             <table
               v-if="view.rows.length > 0"
+              role="table"
               :aria-labelledby="`dashboard-card-${view.key}-title`"
             >
-              <thead>
-                <tr>
-                  <th v-for="col in view.card.columns" :key="col.property" scope="col">
-                    {{ getColumnLabel(col) }}
+              <thead role="rowgroup">
+                <tr role="row">
+                  <th
+                    v-for="(label, i) in view.columnLabels"
+                    :key="view.card.columns?.[i]?.property ?? i"
+                    role="columnheader"
+                    scope="col"
+                  >
+                    {{ label }}
                   </th>
                 </tr>
               </thead>
-              <tbody>
-                <tr v-for="row in view.rows" :key="row.entity.id">
-                  <td v-for="cell in row.cells" :key="cell.key">
-                    <router-link v-if="cell.link" :to="cell.link" class="cell-link">
-                      {{ cell.text }}
-                    </router-link>
-                    <span
-                      v-else-if="cell.hidden"
-                      class="cell-hidden"
-                      :title="t('dashboard.hiddenTitle')"
-                      >{{ t('dashboard.hidden') }}</span
-                    >
-                    <component
-                      :is="cell.widget.component"
-                      v-else-if="cell.widget"
-                      :model-value="cell.widget.modelValue"
-                      mode="display"
-                      :property-name="cell.widget.propertyName"
-                      :entity-type="row.entity.type"
-                      :entity-id="row.entity.id"
-                    />
-                    <span v-else>{{ cell.text }}</span>
+              <tbody role="rowgroup">
+                <tr v-for="row in view.rows" :key="row.entity.id" role="row">
+                  <td
+                    v-for="(cell, i) in row.cells"
+                    :key="cell.key"
+                    role="cell"
+                    :class="{ 'cell--empty': !cell.hidden && !cell.widget && !cell.text }"
+                  >
+                    <!-- The column name beside the value, shown only on a phone. -->
+                    <span class="cell-label" aria-hidden="true">{{ view.columnLabels[i] }}</span>
+                    <span class="cell-value" :class="{ 'cell-value--nowrap': cell.nowrap }">
+                      <router-link v-if="cell.link" :to="cell.link" class="cell-link">
+                        {{ cell.text }}
+                      </router-link>
+                      <span
+                        v-else-if="cell.hidden"
+                        class="cell-hidden"
+                        :title="t('dashboard.hiddenTitle')"
+                        >{{ t('dashboard.hidden') }}</span
+                      >
+                      <component
+                        :is="cell.widget.component"
+                        v-else-if="cell.widget"
+                        :model-value="cell.widget.modelValue"
+                        mode="display"
+                        :property-name="cell.widget.propertyName"
+                        :entity-type="row.entity.type"
+                        :entity-id="row.entity.id"
+                      />
+                      <span v-else>{{ cell.text }}</span>
+                    </span>
                   </td>
                 </tr>
               </tbody>
@@ -542,7 +613,7 @@ watch([() => props.name, () => props.anchor, worldParam], () => void loadData())
       </div>
 
       <!-- Validation card -->
-      <div v-if="!entityDashboard" class="validation-card">
+      <div v-if="showValidation" class="validation-card" data-testid="dashboard-validation">
         <div class="card-header">
           <h3>&#9888; {{ t('dashboardView.validation') }}</h3>
           <router-link to="/analyze" class="card-link" :title="t('dashboardView.viewAnalysis')">
@@ -754,6 +825,15 @@ watch([() => props.name, () => props.anchor, worldParam], () => void loadData())
   color: var(--rl-color-text);
 }
 
+/* The column name beside each value; only the stacked phone layout shows it. */
+.cell-label {
+  display: none;
+}
+
+.cell-value--nowrap {
+  white-space: nowrap;
+}
+
 .cell-link {
   color: var(--rl-color-accent);
   text-decoration: none;
@@ -871,6 +951,79 @@ watch([() => props.name, () => props.anchor, worldParam], () => void loadData())
        the track shrink below item min-content — with plain 1fr a table card
        blows the track past the viewport. */
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* A table card stacks each row into a block on a phone: the first column
+     as the row's heading, each other column as a "name  value" line. A
+     table that scrolled sideways cut its columns off at the card's edge,
+     and a reader could not tell more columns were there. */
+  .card-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .card-table table,
+  .card-table tbody,
+  .card-table tr,
+  .card-table td {
+    display: block;
+  }
+
+  .card-table tr {
+    position: relative;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--rl-color-border);
+  }
+
+  .card-table tr:last-child {
+    border-bottom: none;
+  }
+
+  /* The value column is at least as wide as an unbreakable short value, so
+     an id never overflows the card; the label column gives way. */
+  .card-table td {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(min-content, 3fr);
+    align-items: center;
+    gap: var(--space-sm);
+    padding: 2px 0;
+    border-bottom: none;
+  }
+
+  .card-table td:first-child {
+    grid-template-columns: minmax(0, 1fr);
+    font-weight: 600;
+  }
+
+  /* A long value without spaces, such as an email address, wraps rather
+     than widening its column past the labels of the other lines. A short
+     token keeps its line (cell-value--nowrap). */
+  .card-table .cell-value:not(.cell-value--nowrap) {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .card-table td:not(:first-child) .cell-label {
+    display: block;
+    color: var(--rl-color-text-muted);
+    overflow-wrap: anywhere;
+  }
+
+  /* A value with nothing in it would leave a label with no answer. The cell
+     is hidden from sight only: a screen reader still counts it, so the cells
+     after it keep their column headers. */
+  .card-table td.cell--empty:not(:first-child) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 }
 </style>

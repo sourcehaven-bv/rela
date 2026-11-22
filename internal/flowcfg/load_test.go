@@ -176,6 +176,12 @@ func TestParse_Problems(t *testing.T) {
 		{"predicate without when", [2]string{"      - on: predicate\n        when: \"entity.status == 'hired'\"", "      - on: predicate"},
 			"flows.onboarding.start[1].when", "required"},
 		{"manual without permission", [2]string{"permission: onboarding.start", ""}, "flows.onboarding.start[2].permission", "required"},
+		{"manage without permission", [2]string{"per_subject: one", "per_subject: one\n    manage: {}"},
+			"flows.onboarding.manage.permission", "required"},
+		{"manual with every", [2]string{"permission: onboarding.start", "permission: onboarding.start\n        every: 1d"},
+			"flows.onboarding.start[2].every", "does not apply"},
+		{"manual guard on hidden field", [2]string{"permission: onboarding.start",
+			"permission: onboarding.start\n        when: \"entity.salary > 3\""}, "flows.onboarding.start[2].when", "visible: grant"},
 		{"schedule with permission", [2]string{"every: 1d", "every: 1d\n        permission: x"}, "flows.onboarding.start[3].permission", "does not apply"},
 		{"guard does not compile", [2]string{"entity.documents == true\"\n        after", "entity.docs == true\"\n        after"},
 			"flows.onboarding.states.collect.on.change[0].when", "does not compile"},
@@ -292,6 +298,55 @@ func TestParse_AliasSubjectReadsNoHiddenProperty(t *testing.T) {
 	}
 }
 
+// TestParse_GuardReadsFieldEveryVisibleBlockShows pins that a guard may read
+// a property that a role's visible: block lists without a when:, while one the
+// block leaves out or shows only under a when: is still refused. The run's
+// state, and each branch's verdict in the run view, would otherwise disclose a
+// hidden value to a reader of the subject.
+func TestParse_GuardReadsFieldEveryVisibleBlockShows(t *testing.T) {
+	tests := []struct {
+		name    string
+		visible string
+		refused string // "" means the flows load
+	}{
+		{"guard fields listed, others left out",
+			"[{field: name}, {field: status}, {field: documents}]", ""},
+		{"guard field left out",
+			"[{field: name}, {field: status}]", "reads person.documents"},
+		{"guard field shown under a when",
+			"[{field: name}, {field: status}, {field: documents, when: \"entity.status == 'active'\"}]",
+			"reads person.documents"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := string(readFile(t, "acl.yaml"))
+			if !strings.Contains(src, "assignments:\n") {
+				t.Fatal("the fixture acl.yaml has no assignments: line to insert the role before")
+			}
+			src = strings.Replace(src, "assignments:\n",
+				"  employee:\n    read: [person]\n    visible:\n      person: "+tt.visible+"\nassignments:\n", 1)
+			policy, err := acl.ParsePolicy([]byte(src), "acl.yaml")
+			if err != nil {
+				t.Fatalf("parse acl: %v", err)
+			}
+			_, err = Parse(readFile(t, "flows.yaml"), testMeta(t), policy)
+			if tt.refused == "" {
+				if err != nil {
+					t.Fatalf("Parse = %v; want the flows to load", err)
+				}
+				return
+			}
+			var e *Error
+			if !errors.As(err, &e) {
+				t.Fatalf("Parse = %v; want a load error", err)
+			}
+			if !slices.ContainsFunc(e.Problems, func(p Problem) bool { return strings.Contains(p.Message, tt.refused) }) {
+				t.Errorf("problems %v; want ...%s...", e.Problems, tt.refused)
+			}
+		})
+	}
+}
+
 func TestParse_Warnings(t *testing.T) {
 	c, err := parseSample(t, [2]string{"permission: onboarding.start", "permission: nobody.has"})
 	if err != nil {
@@ -299,6 +354,35 @@ func TestParse_Warnings(t *testing.T) {
 	}
 	if w := c.Warnings(); len(w) != 1 || w[0].Key != "flows.onboarding.start[2].permission" {
 		t.Errorf("warnings = %v", w)
+	}
+}
+
+func TestParse_Manage(t *testing.T) {
+	tests := []struct {
+		name string
+		edit string
+		want string
+		warn bool
+	}{
+		{"absent", "per_subject: one", "", false},
+		{"granted", "per_subject: one\n    manage: { permission: onboarding.start }", "onboarding.start", false},
+		{"not granted", "per_subject: one\n    manage: { permission: nobody.has }", "nobody.has", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := parseSample(t, [2]string{"per_subject: one", tc.edit})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f, _ := c.Flow("onboarding")
+			if got := f.ManagePermission(); got != tc.want {
+				t.Errorf("ManagePermission() = %q; want %q", got, tc.want)
+			}
+			w := c.Warnings()
+			if got := len(w) == 1 && w[0].Key == "flows.onboarding.manage.permission"; got != tc.warn {
+				t.Errorf("warnings = %v; want a manage warning: %v", w, tc.warn)
+			}
+		})
 	}
 }
 
@@ -431,7 +515,7 @@ func TestFlow_Mermaid(t *testing.T) {
 		t.Fatal(err)
 	}
 	f, _ := c.Flow("onboarding")
-	m := f.Mermaid()
+	m := f.MermaidAt()
 	for _, want := range []string{"stateDiagram-v2", "change by hr when entity.documents == true", "after 7d", "done"} {
 		if !strings.Contains(m, want) {
 			t.Errorf("mermaid lacks %q:\n%s", want, m)

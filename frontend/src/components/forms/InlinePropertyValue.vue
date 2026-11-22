@@ -18,11 +18,11 @@
  * `writable` false renders the display widget with no affordance at all.
  */
 import { computed, ref, toRaw, type Component } from 'vue'
-import { useI18n } from 'vue-i18n'
 import type { AttachmentInfo, PropertyDef, TransitionOption } from '@/types'
 import RlInlineEdit from 'rela-components/components/common/RlInlineEdit.vue'
 import RlOptionSelect from 'rela-components/components/form/RlOptionSelect.vue'
 import RlMultiSelect from 'rela-components/components/form/RlMultiSelect.vue'
+import { useMessages } from 'rela-components/composables/useMessages'
 import Badge from '@/components/ui/Badge.vue'
 import SelectWidget from '@/widgets/SelectWidget.vue'
 import MultiSelectWidget from '@/widgets/MultiSelectWidget.vue'
@@ -52,7 +52,10 @@ const props = defineProps<{
   numeric?: boolean
 }>()
 
-const { t } = useI18n()
+// One wording for "no value": the swap's read view (RlInlineEdit) shows the
+// library's `emptyValue` text, so the pickers and the empty option use it too.
+const rlMessages = useMessages()
+const emptyText = computed(() => rlMessages.chromeText({ key: 'emptyValue' }))
 
 const emit = defineEmits<{
   update: [value: unknown]
@@ -164,6 +167,7 @@ function floatingPanels(): Element[] {
         :is="widget"
         mode="display"
         :model-value="value"
+        :label="label"
         :property-name="property"
         :property-def="propertyDef"
         :attachments="attachments"
@@ -186,13 +190,13 @@ function floatingPanels(): Element[] {
       :model-value="stringValue"
       :options="pickOptions"
       :label="label"
-      :placeholder="t('common.none')"
+      :placeholder="emptyText"
       :is-option-disabled="isOptionDisabled"
       @update:model-value="pick"
     >
       <template #option="{ value: option }">
         <Badge v-if="option" :value="option" :property="property" :entity-type="entityType" />
-        <span v-else class="inline-property-none">{{ t('common.none') }}</span>
+        <span v-else class="inline-property-empty">{{ emptyText }}</span>
       </template>
     </RlOptionSelect>
 
@@ -202,7 +206,7 @@ function floatingPanels(): Element[] {
       :model-value="arrayValue"
       :options="multiOptions"
       :label="label"
-      :placeholder="t('common.none')"
+      :placeholder="emptyText"
       :is-option-disabled="isOptionDisabled"
       @update:model-value="pickMany"
     >
@@ -217,6 +221,7 @@ function floatingPanels(): Element[] {
       :id="fieldId"
       mode="edit"
       :model-value="value"
+      :label="label"
       :property-name="property"
       :property-def="propertyDef"
       :attachments="attachments"
@@ -243,6 +248,7 @@ function floatingPanels(): Element[] {
           :is="widget"
           mode="display"
           :model-value="value"
+          :label="label"
           :property-name="property"
           :property-def="propertyDef"
           :max="propertyDef?.max"
@@ -295,7 +301,7 @@ function floatingPanels(): Element[] {
   color: var(--rl-color-danger);
 }
 
-.inline-property-none {
+.inline-property-empty {
   color: var(--rl-color-text-subtle);
 }
 

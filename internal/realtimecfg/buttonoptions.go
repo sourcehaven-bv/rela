@@ -2,6 +2,8 @@ package realtimecfg
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -143,7 +145,7 @@ type typeButtonChecker struct{ *validator }
 // merges it into the type's preset buttons. It runs after the session is
 // compiled, because it reads the session's entries and buttons.
 func (v typeButtonChecker) check(raw *rawChannelType, ct *ChannelType) {
-	for _, mn := range sortedKeys(raw.MessageTypes) {
+	for _, mn := range slices.Sorted(maps.Keys(raw.MessageTypes)) {
 		rd := raw.MessageTypes[mn].DecisionButton
 		mt := ct.MessageTypes[mn]
 		if rd == nil || mt == nil {
@@ -209,7 +211,7 @@ func (v typeButtonChecker) effect(key string, s *Session, mt *MessageType, opts 
 		return
 	}
 	required := ""
-	for _, pn := range sortedKeys(mt.Properties) {
+	for _, pn := range slices.Sorted(maps.Keys(mt.Properties)) {
 		if mt.Properties[pn].Required {
 			required = pn
 			break

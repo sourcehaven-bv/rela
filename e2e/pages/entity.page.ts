@@ -6,7 +6,6 @@ export class EntityPage extends BasePage {
   readonly heading: Locator;
   readonly editButton: Locator;
   readonly deleteButton: Locator;
-  readonly typeBadge: Locator;
   /** Rendered document body inside the documents panel (if any). */
   readonly documentBody: Locator;
   /** Document panel tab selector (only rendered when >1 doc applies). */
@@ -18,7 +17,6 @@ export class EntityPage extends BasePage {
     this.heading = page.locator('main h1').first();
     this.editButton = page.locator('a:has-text("Edit"), button:has-text("Edit")').first();
     this.deleteButton = page.locator('button:has-text("Delete")').first();
-    this.typeBadge = page.locator('.entity-type-badge');
     this.documentBody = page.locator('.document-body').first();
     this.documentSelector = page.locator('.documents-panel .doc-select');
   }
@@ -108,6 +106,11 @@ export class EntityPage extends BasePage {
     await expect(this.page.locator('main').getByText(matcher).first()).toBeVisible();
   }
 
+  /** A url-widget property on the detail page; `href` null means plain text. */
+  async expectUrlProperty(text: string, href: string | null) {
+    await this.expectUrlValue(this.page.locator("main"), text, href);
+  }
+
   /** Click the Edit action on the entity view to navigate to the edit form. */
   async clickEdit() {
     await expect(this.editButton).toBeVisible();
@@ -168,6 +171,23 @@ export class EntityPage extends BasePage {
     return this.page
       .locator('.view-section', { has: this.page.getByRole('heading', { name: heading }) })
       .first();
+  }
+
+  /** A detail-page section heading, matched exactly. */
+  private sectionHeading(heading: string) {
+    return this.page.locator('.view-section').getByRole('heading', { name: heading, exact: true });
+  }
+
+  /** Assert the page shows a section with this heading. */
+  async expectSectionShown(heading: string) {
+    await expect(this.sectionHeading(heading)).toBeVisible();
+  }
+
+  /** Assert the page has no section with this heading. Waits for the view
+   *  to render a section first, so an unloaded page cannot pass. */
+  async expectSectionAbsent(heading: string) {
+    await expect(this.page.locator('.view-section').first()).toBeVisible();
+    await expect(this.sectionHeading(heading)).toHaveCount(0);
   }
 
   /** Assert the enum badges in a display section read exactly `texts`, in
@@ -384,11 +404,6 @@ export class EntityPage extends BasePage {
     await expect(item).toBeVisible();
     const trigger = item.locator('.card-header, .list-link').first();
     await trigger.click();
-  }
-
-  async expectTypeBadge(type: string | RegExp) {
-    const matcher = type instanceof RegExp ? type : new RegExp(type, 'i');
-    await expect(this.typeBadge.filter({ hasText: matcher }).first()).toBeVisible();
   }
 
   async hasEditButton(): Promise<boolean> {
@@ -803,7 +818,9 @@ export class EntityPage extends BasePage {
 
   async expectTableCellText(heading: string, rowId: string, column: string, text: string) {
     const cell = await this.sectionTableCell(heading, rowId, column);
-    await expect(cell).toHaveText(text);
+    // innerText, not textContent: each cell also holds its column label for
+    // the stacked phone layout, hidden at this width (BUG-6WQ1U8S).
+    await expect(cell).toHaveText(text, { useInnerText: true });
   }
 
   /** Open a cell's inline editor, type `value` and keep it with Enter.
@@ -850,5 +867,10 @@ export class EntityPage extends BasePage {
     const startUrl = this.page.url();
     await this.page.locator('.scope-nav').getByRole('link', { name: /^Next/ }).click();
     await this.page.waitForURL((url) => url.href !== startUrl);
+  }
+
+  /** The image preview a file property with `display: {image: true}` shows. */
+  imagePreview(): Locator {
+    return this.page.locator("main img.image-preview-img");
   }
 }

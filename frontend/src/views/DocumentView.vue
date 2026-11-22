@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, useTemplateRef } from 'vue'
+import { usePageTitle } from '@/composables/useDocumentTitle'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
@@ -89,6 +90,7 @@ watch(sanitizedContent, async () => {
 const docConfig = computed(() => schemaStore.documents.get(props.name))
 // Authored `title:` wins; otherwise the raw document id — DEC-6C1NAA.
 const docTitle = computed(() => docConfig.value?.title || props.name)
+usePageTitle(docTitle)
 
 // Back affordance — follows return_to > from precedence. See TKT-JIEKC.
 // Renders no button when neither is present (e.g. deep-linked arrival).
@@ -255,7 +257,7 @@ onUnmounted(() => {
         <!-- Renders nothing when no transforms are registered; the menu hides
              itself on an empty registry. Both document kinds are supported —
              entityId is undefined for a standalone document. -->
-        <ExportMenu :url-for="exportUrlFor" />
+        <ExportMenu more :url-for="exportUrlFor" />
         <RlButton
           variant="secondary"
           :loading="loading"

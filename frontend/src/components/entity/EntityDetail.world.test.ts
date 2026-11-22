@@ -62,6 +62,13 @@ vi.mock('@/api/entities', async (orig) => ({
 vi.mock('@/api/copies', () => ({
   invokeCopy: (...a: unknown[]) => invokeCopyMock(...a),
 }))
+// History shows only for a face with versions (BUG-9WCZYOX); every face here
+// has one unless a test says otherwise.
+const listVersionsMock = vi.fn()
+vi.mock('@/api/history', async (orig) => ({
+  ...(await orig<typeof import('@/api/history')>()),
+  listVersions: (...a: unknown[]) => listVersionsMock(...a),
+}))
 // The confirm dialog is a host-bound singleton (App.vue); here it records
 // what it was asked and answers no, so a delete test can assert the WORDING
 // without a write leaving the client.
@@ -165,6 +172,12 @@ describe('EntityDetail world binding', () => {
   beforeEach(() => {
     pinia = createPinia()
     setActivePinia(pinia)
+    listVersionsMock.mockReset()
+    listVersionsMock.mockResolvedValue({
+      versions: [{ version: 1 }],
+      face: '',
+      worldFaceAbsent: false,
+    })
     const schemaStore = useSchemaStore()
     schemaStore.entityTypes.set(entityType, {
       name: entityType,
@@ -1590,6 +1603,52 @@ describe('EntityDetail world binding', () => {
       rendersProof(w)
       expect(w.find('.desktop-actions').text()).toContain('History')
       expect(overflowText(w)).toContain('History')
+    })
+
+    // BUG-9WCZYOX: History that would open "No versions recorded yet" is
+    // left out, in both blocks.
+    it('renders in neither block when the face has no versions', async () => {
+      useSchemaStore().historyEnabled = true
+      listVersionsMock.mockResolvedValue({ versions: [], face: '', worldFaceAbsent: false })
+      const w = await mountDetail(viewResponse({ _copies: [promoteOffer()] }))
+      rendersProof(w)
+      expect(listVersionsMock).toHaveBeenCalled()
+      expect(w.find('.desktop-actions').text()).not.toContain('History')
+      expect(overflowText(w)).toContain('Publish this policy')
+      expect(overflowText(w)).not.toContain('History')
+    })
+  })
+
+  // `header_buttons:` (TKT-31822PN): the operator hides History or Add to
+  // pile, resolved per principal by `/_sidebar`. Asserted in both blocks for
+  // the reason above.
+  describe('header_buttons hides built-in buttons, in both blocks', () => {
+    it('hides History when header_buttons.history is off', async () => {
+      const store = useSchemaStore()
+      store.historyEnabled = true
+      store.setHeaderButtons({ history: false, add_to_pile: true })
+      const w = await mountDetail(viewResponse({ _copies: [promoteOffer()] }))
+      rendersProof(w)
+      expect(w.find('.desktop-actions').text()).not.toContain('History')
+      expect(overflowText(w)).toContain('Publish this policy')
+      expect(overflowText(w)).not.toContain('History')
+    })
+
+    it('shows Add to pile by default and hides it when header_buttons.add_to_pile is off', async () => {
+      const store = useSchemaStore()
+      store.setPiles({ piles_available: true })
+      const shown = await mountDetail(viewResponse())
+      rendersProof(shown)
+      expect(shown.find('.desktop-actions').text()).toContain('Add to pile')
+      expect(overflowText(shown)).toContain('Add to new pile')
+      shown.unmount()
+
+      store.setHeaderButtons({ history: true, add_to_pile: false })
+      const hidden = await mountDetail(viewResponse({ _copies: [promoteOffer()] }))
+      rendersProof(hidden)
+      expect(hidden.find('.desktop-actions').text()).not.toContain('Add to pile')
+      expect(overflowText(hidden)).toContain('Publish this policy')
+      expect(overflowText(hidden)).not.toContain('Add to new pile')
     })
   })
 

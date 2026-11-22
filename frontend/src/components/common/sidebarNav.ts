@@ -23,6 +23,7 @@ import type { NavEntitiesLookup } from '@/composables/useNavEntities'
 import type { PileSummary } from '@/api/piles'
 import { pileIcon } from '@/components/piles/pileIcon'
 import { t } from '@/i18n'
+import { stripSpace } from '@/stores/space'
 
 /**
  * The stable identifier for a nav row.
@@ -246,7 +247,10 @@ export function expandEntityEntries(
  *
  * Mirrors rela's old `isActive`: a prefix match, so `/list/features/TKT-1`
  * still highlights the `/list/features` row. Longest match wins, since a
- * prefix match alone would light up `/` for every route.
+ * prefix match alone would light up `/` for every route. A space's home
+ * row (`/s/<space>`) matches only its own page too: every page of the space
+ * lies beneath it, and a page with no row of its own, such as a run page,
+ * must leave nothing highlighted.
  *
  * Nil: undefined when no row matches, which leaves nothing highlighted.
  */
@@ -257,7 +261,7 @@ export function activeNavId(groups: NavGroup[], path: string): string | undefine
     for (const item of group.items) {
       const to = item.attrs?.to
       if (typeof to !== 'string') continue
-      if (path !== to && !path.startsWith(`${to}/`)) continue
+      if (path !== to && (stripSpace(to) === '/' || !path.startsWith(`${to}/`))) continue
       if (!best || to.length > best.length) best = { id: item.id, length: to.length }
     }
   }
@@ -320,8 +324,8 @@ export function pileNavId(id: string): string {
  * of readable items, and an add control for a new pile.
  *
  * A row opens the pile in the flyout rather than navigating, so it is a
- * button that claims `opensFlyout`. The group is shown even with no piles,
- * because its add control is how the first one gets made.
+ * button that claims `opensFlyout`. The sidebar leaves the group out until
+ * the user has a pile of their own.
  */
 export function pilesNavGroup(piles: readonly PileSummary[]): NavGroup {
   return {

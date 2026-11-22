@@ -3,6 +3,7 @@ import type { TimelineEntry } from 'rela-components/components/feedback/timeline
 import type { FlowEvent, FlowRun } from '@/api/flows'
 import { browserTimeZone, formatDatetime } from '@/utils/format'
 import { entityDetailHref } from '@/utils/entityRoute'
+import { actorLabel } from '@/utils/actorLabel'
 
 /** Translates a key with named values; vue-i18n's `t` fits it. */
 export type Translate = (key: string, values?: Record<string, unknown>) => string
@@ -25,6 +26,14 @@ const STATUS_TONES: Record<string, StatusColor> = {
   completed: 'green',
   cancelled: 'grey',
   failed: 'red',
+}
+
+/**
+ * The label of a flow, state or timer, or its name when it has none. A name
+ * is never turned into a label (DEC-6C1NAA): the author writes `label:`.
+ */
+export function labelOf(label: string | undefined, name: string): string {
+  return label || name
 }
 
 /** The status in the interface language; an unknown status as it came. */
@@ -52,17 +61,24 @@ function eventSummary(e: FlowEvent, t: Translate): string {
 function moveSummary(e: FlowEvent, t: Translate): string {
   switch (e.via) {
     case 'start':
-      return t('flows.log.start', { state: e.label || e.state })
+      return t('flows.log.start', { state: labelOf(e.label, e.state) })
     case 'done':
-      return t('flows.log.done', { state: e.label || e.state })
+      return t('flows.log.done', { state: labelOf(e.label, e.state) })
     case 'change':
-      return t('flows.log.change', { state: e.label || e.state })
+      return t('flows.log.change', { state: labelOf(e.label, e.state) })
     case 'timer':
-      return t('flows.log.timer', { state: e.label || e.state, timer: e.timer ?? '' })
+      return t('flows.log.timer', {
+        state: labelOf(e.label, e.state),
+        timer: e.timer ?? '',
+      })
     case 'join':
-      return t('flows.log.join', { state: e.label || e.state })
+      return t('flows.log.join', { state: labelOf(e.label, e.state) })
+    case 'cancel':
+      return t('flows.log.cancel', { state: labelOf(e.label, e.state) })
+    case 'failed':
+      return t('flows.log.failed', { state: labelOf(e.label, e.state) })
     default:
-      return t('flows.log.moved', { state: e.label || e.state })
+      return t('flows.log.moved', { state: labelOf(e.label, e.state) })
   }
 }
 
@@ -78,13 +94,20 @@ export function timelineEntries(run: FlowRun, t: Translate): TimelineEntry[] {
     .map((e, i) => ({
       id: `${i}`,
       summary: eventSummary(e, t),
-      actor: e.by || undefined,
+      // The server names a person by title; any other principal reads as
+      // the Changes list names it, so `system:signup-bot` is "System".
+      actor: e.by_title || (e.by ? actorLabel(e.by) : undefined),
       timestamp: formatInstant(e.at),
       datetime: e.at,
-      tone: (e.via === 'timer' ? 'amber' : 'grey') as StatusColor,
+      tone: entryTone(e.via),
       current: current.has(i),
     }))
     .reverse()
+}
+
+function entryTone(via: FlowEvent['via']): StatusColor {
+  if (via === 'failed') return 'red'
+  return via === 'timer' ? 'amber' : 'grey'
 }
 
 /** The indexes of the log entries for the states the run is in now. */

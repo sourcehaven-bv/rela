@@ -18,6 +18,8 @@ import * as path from "path";
 export const FLOW_USERS = {
   /** Holds `hr`: reads and updates persons and may start onboarding. */
   hr: "hr@example.com",
+  /** Holds `applicant`: may start onboarding and do its step, not manage it. */
+  applicant: "applicant@example.com",
 } as const;
 
 /** Seed rows and flow names, in the words the spec asserts on. */
@@ -32,6 +34,10 @@ export const FLOW_SEED = {
    * the schema label, so the spec proves the step renders the form.
    */
   stepField: "Documents received",
+  /** The step's fields as labelled: by the form, or by the property name. */
+  stepFields: ["Documents received", "start_date"],
+  /** The collect step's guard, which only a manager sees. */
+  guard: "entity.documents == true",
 } as const;
 
 export const FLOW_SCHEMA_YAML = `
@@ -51,6 +57,8 @@ entities:
       documents:
         label: Documents
         type: boolean
+      start_date:
+        type: string
 `;
 
 export const FLOW_DATA_ENTRY_YAML = `
@@ -79,6 +87,7 @@ forms:
     title: "Collect documents"
     fields:
       - { property: documents, label: "${FLOW_SEED.stepField}" }
+      - { property: start_date }
 navigation:
   - { label: "Persons", list: persons }
 `;
@@ -89,12 +98,17 @@ roles:
     read: [person]
     create: [person]
     update: [person]
+    permissions: [onboarding.start, onboarding.manage]
+  applicant:
+    read: [person]
+    update: [person]
     permissions: [onboarding.start]
   onboarding-bot:
     read: [person]
     update: [person]
 assignments:
   ${FLOW_USERS.hr}: hr
+  ${FLOW_USERS.applicant}: applicant
   system:onboarding-bot: onboarding-bot
 `;
 
@@ -105,6 +119,7 @@ flows:
     subject: person
     run_as: system:onboarding-bot
     per_subject: one
+    manage: { permission: onboarding.manage }
     start:
       - on: manual
         permission: onboarding.start
@@ -112,13 +127,13 @@ flows:
     states:
       collect:
         label: ${FLOW_SEED.states.collect}
-        waiting_for: [${FLOW_SEED.role}]
+        waiting_for: [${FLOW_SEED.role}, applicant]
         form: collect_documents
         on:
           change:
             - to: finished
-              roles: [${FLOW_SEED.role}]
-              when: "entity.documents == true"
+              roles: [${FLOW_SEED.role}, applicant]
+              when: "${FLOW_SEED.guard}"
       finished:
         label: ${FLOW_SEED.states.finished}
         final: true

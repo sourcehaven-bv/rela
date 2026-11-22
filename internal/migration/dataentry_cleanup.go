@@ -255,8 +255,8 @@ func (m *DataEntryCleanupMigration) isRedundantTargetType(node *yaml.Node, entit
 
 	// Infer direction if not specified
 	if direction == "" && entityType != "" {
-		inFrom := containsStr(fromTypes, entityType)
-		inTo := containsStr(toTypes, entityType)
+		inFrom := slices.Contains(fromTypes, entityType)
+		inTo := slices.Contains(toTypes, entityType)
 		if inFrom && !inTo {
 			direction = "outgoing"
 		} else if inTo && !inFrom {
@@ -354,8 +354,4 @@ func getScalarValue(node *yaml.Node, key string) string {
 		return val.Value
 	}
 	return ""
-}
-
-func containsStr(slice []string, s string) bool {
-	return slices.Contains(slice, s)
 }

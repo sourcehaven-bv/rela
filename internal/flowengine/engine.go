@@ -65,6 +65,10 @@ type Headers interface {
 	CreateHeader(ctx context.Context, subject entity.Ref, props map[string]any) (flow.RunID, error)
 	// PatchHeader writes props on the header.
 	PatchHeader(ctx context.Context, id flow.RunID, props map[string]any) error
+	// EndHeader writes props on the header of a run that ended, and body,
+	// the run's log as [flowrun.LogBody] wrote it, as its body. The log
+	// holds state names, times and the principals who moved the run.
+	EndHeader(ctx context.Context, id flow.RunID, props map[string]any, body string) error
 	// DeleteHeader deletes the header and its relations.
 	DeleteHeader(ctx context.Context, id flow.RunID) error
 	// LinkProduced writes the `_produced` edge from the header to created.
@@ -174,56 +178,11 @@ func (e *Engine) Start(ctx context.Context, name string, subject entity.Ref) (fl
 		return "", fmt.Errorf("%w: %s is a %s, flow %s carries a %s", ErrSubjectNotFound, subj.ID, subj.Type,
 			f.Name(), f.Subject())
 	}
-	singleton := f.PerSubject() != flowcfg.PerSubjectMany
-	if singleton {
-		// A cheap refusal before anything is written. The store's create
-		// is the authority; this only spares a header write and delete.
-		open, lerr := e.d.Runs.List(ctx, flowrun.Query{Flow: f.Name(), SubjectID: subj.ID, Limit: flowrun.MaxPage})
-		if lerr != nil {
-			return "", lerr
-		}
-		for _, r := range open {
-			if r.Singleton {
-				return "", ErrSubjectBusy
-			}
-		}
-	}
-	by := byOf(ctx)
-	ctx = audit.WithFlowStep(ctx, audit.FlowStep{Flow: f.Name(), Step: f.Initial(), By: by})
-	now := e.now()
-	initial, _ := f.State(f.Initial())
-	props := map[string]any{
-		metamodel.FlowRunPropFlow:    f.Name(),
-		metamodel.FlowRunPropVersion: f.Version(),
-		metamodel.FlowRunPropStatus:  string(initial.Status),
-		metamodel.FlowRunPropState:   initial.Name,
-		metamodel.FlowRunPropStarted: now,
-	}
-	if !f.Deadline().IsZero() {
-		props[metamodel.FlowRunPropDeadline] = f.Deadline().AddTo(now)
-	}
-	id, err := e.d.Headers.CreateHeader(ctx, subj.Ref(), props)
+	run, err := begin(ctx, e, e.d.Runs, f, subj, 0)
 	if err != nil {
-		return "", fmt.Errorf("flowengine: write run header: %w", err)
+		return "", err
 	}
-	ctx = audit.WithFlowStep(ctx, audit.FlowStep{Flow: f.Name(), Run: string(id), Step: f.Initial(), By: by})
-	// Every new run is unsettled in its initial state, so a crash before
-	// it settles leaves it due.
-	nr := flowrun.NewRun{
-		ID: id, Flow: f.Name(), Version: f.Version(), Definition: f.Source(),
-		Subject: subj.Ref(), Singleton: singleton, At: now,
-		Pending: &flowrun.Pending{State: initial.Name},
-		Log:     []flowrun.Step{{At: now, State: initial.Name, Via: flowrun.ViaStart, By: clip(by)}},
-	}
-	nr.Instance.NextDueAt = now
-	run, err := e.d.Runs.Create(ctx, nr)
-	if err != nil {
-		e.dropHeader(ctx, id)
-		if errors.Is(err, flowrun.ErrSubjectBusy) {
-			return "", ErrSubjectBusy
-		}
-		return "", fmt.Errorf("flowengine: store run: %w", err)
-	}
+	id := run.ID
 	// A delete of the subject that raced the start must not leave a run on
 	// a missing subject (RR-DTSDBII).
 	if _, err := e.d.Subjects.Subject(ctx, subj.Ref()); errors.Is(err, ErrSubjectNotFound) {
@@ -238,6 +197,69 @@ func (e *Engine) Start(ctx context.Context, name string, subject entity.Ref) (fl
 		return id, err
 	}
 	return id, nil
+}
+
+// begin writes the header and stores the run of f on subj, in its initial
+// state with a pending mark, on runs. It settles nothing. depth, when not
+// zero, is stored on the header ([metamodel.FlowRunPropDepth]). A function
+// rather than a method: Engine is at its method cap.
+func begin(ctx context.Context, e *Engine, runs flowrun.Store, f *flowcfg.Flow, subj *entity.Entity,
+	depth int) (flowrun.Run, error) {
+	singleton := f.PerSubject() != flowcfg.PerSubjectMany
+	if singleton {
+		// A cheap refusal before anything is written. The store's create
+		// is the authority; this only spares a header write and delete.
+		open, lerr := runs.List(ctx, flowrun.Query{Flow: f.Name(), SubjectID: subj.ID, Limit: flowrun.MaxPage})
+		if lerr != nil {
+			return flowrun.Run{}, lerr
+		}
+		for _, r := range open {
+			if r.Singleton {
+				return flowrun.Run{}, ErrSubjectBusy
+			}
+		}
+	}
+	by := byOf(ctx)
+	ctx = audit.WithFlowStep(ctx, audit.FlowStep{Flow: f.Name(), Step: f.Initial(), By: by})
+	now := e.now()
+	initial, _ := f.State(f.Initial())
+	props := map[string]any{
+		metamodel.FlowRunPropTitle:   f.RunTitle(subj, now),
+		metamodel.FlowRunPropFlow:    f.Name(),
+		metamodel.FlowRunPropVersion: f.Version(),
+		metamodel.FlowRunPropStatus:  string(initial.Status),
+		metamodel.FlowRunPropState:   initial.Name,
+		metamodel.FlowRunPropStarted: now,
+	}
+	if !f.Deadline().IsZero() {
+		props[metamodel.FlowRunPropDeadline] = f.Deadline().AddTo(now)
+	}
+	if depth > 0 {
+		props[metamodel.FlowRunPropDepth] = depth
+	}
+	id, err := e.d.Headers.CreateHeader(ctx, subj.Ref(), props)
+	if err != nil {
+		return flowrun.Run{}, fmt.Errorf("flowengine: write run header: %w", err)
+	}
+	ctx = audit.WithFlowStep(ctx, audit.FlowStep{Flow: f.Name(), Run: string(id), Step: f.Initial(), By: by})
+	// Every new run is unsettled in its initial state, so a crash before
+	// it settles leaves it due.
+	nr := flowrun.NewRun{
+		ID: id, Flow: f.Name(), Version: f.Version(), Definition: f.Source(),
+		Subject: subj.Ref(), Singleton: singleton, At: now,
+		Pending: &flowrun.Pending{State: initial.Name},
+		Log:     []flowrun.Step{{At: now, State: initial.Name, Via: flowrun.ViaStart, By: clip(by)}},
+	}
+	nr.Instance.NextDueAt = now
+	run, err := runs.Create(ctx, nr)
+	if err != nil {
+		e.dropHeader(ctx, id)
+		if errors.Is(err, flowrun.ErrSubjectBusy) {
+			return flowrun.Run{}, ErrSubjectBusy
+		}
+		return flowrun.Run{}, fmt.Errorf("flowengine: store run: %w", err)
+	}
+	return run, nil
 }
 
 // byOf returns the By of the flow step ctx carries.
@@ -271,6 +293,26 @@ func (e *Engine) Cancel(ctx context.Context, id flow.RunID) error {
 		if err != nil {
 			return err
 		}
+		at := e.now()
+		props := endProps(flow.StatusCancelled, at)
+		// A forked run's header keeps the join it was headed for; its
+		// cancel is logged at the state of its newest move.
+		var state string
+		if n := len(run.Log); n > 0 {
+			state = run.Log[n-1].State
+		}
+		if f, ferr := e.flowOf(ctx, run); ferr == nil && !forked(run) {
+			state = flow.Read(f.Definition(), run.Instance, run.CreatedAt).State
+			props[metamodel.FlowRunPropState] = state
+		}
+		var last *flowrun.Step
+		if state != "" {
+			last = &flowrun.Step{At: at, State: state, Via: flowrun.ViaCancel, By: byOf(ctx)}
+		}
+		body, err := endBody(run, last)
+		if err != nil {
+			return err
+		}
 		err = e.d.Runs.Delete(ctx, id, run.Rev)
 		switch {
 		case errors.Is(err, flowrun.ErrConflict):
@@ -280,13 +322,8 @@ func (e *Engine) Cancel(ctx context.Context, id flow.RunID) error {
 		case err != nil:
 			return err
 		}
-		props := endProps(flow.StatusCancelled, e.now())
-		// A forked run's header keeps the join it was headed for.
-		if f, ferr := e.flowOf(ctx, run); ferr == nil && !forked(run) {
-			props[metamodel.FlowRunPropState] = flow.Read(f.Definition(), run.Instance, run.CreatedAt).State
-		}
 		wctx := audit.WithFlowStep(ctx, audit.FlowStep{Flow: run.Flow, Run: string(id), By: byOf(ctx)})
-		if err := e.d.Headers.PatchHeader(wctx, id, props); err != nil {
+		if err := e.d.Headers.EndHeader(wctx, id, props, body); err != nil {
 			return fmt.Errorf("flowengine: run %s is cancelled, but its header is not: %w", id, err)
 		}
 		return nil

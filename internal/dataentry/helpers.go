@@ -316,6 +316,11 @@ func resolveWidget(prop metamodel.PropertyDef, meta *metamodel.Metamodel) string
 	if prop.List && isEnum {
 		return WidgetMultiSelect
 	}
+	// The loader admits a link format only on a single-valued string
+	// without values, so no higher-precedence rule can apply here.
+	if prop.Display != nil && prop.Display.Link {
+		return WidgetURL
+	}
 
 	return metamodel.ResolveWidgetFromType(meta, prop.Type)
 }
@@ -328,11 +333,6 @@ func coalesce(vals ...string) string {
 		}
 	}
 	return ""
-}
-
-// containsString returns true if slice contains the given string.
-func containsString(slice []string, s string) bool {
-	return slices.Contains(slice, s)
 }
 
 // slugify converts a string to a URL-safe slug (lowercase, hyphens, no special chars).

@@ -551,7 +551,7 @@ type AbstractType struct {
 }
 
 // Capabilities lists optional API surfaces whose availability depends on
-// the deployment's storage, decided once when the server is wired.
+// the deployment, decided once when the server is wired.
 type Capabilities struct {
 	// AtomicBatch reports that POST /api/v1/_batch is served: the store
 	// rolls a failed transaction back. False on the markdown-file and
@@ -561,6 +561,14 @@ type Capabilities struct {
 	// with the state at that instant. False on the markdown-file and memory
 	// stores, which keep no version history and answer such a read with 501.
 	AsOf bool `json:"as_of"`
+	// Git reports that the server keeps the project in git and serves
+	// GET /api/v1/_git/status with a status. False on a deployment without
+	// git, such as a database backend, where the SPA then skips the call.
+	Git bool `json:"git"`
+	// Flows reports that the project declares flows and serves the routes
+	// under /api/v1/_flows. False on a project without flows.yaml, where
+	// those routes answer 404 and the SPA then skips them.
+	Flows bool `json:"flows"`
 }
 
 // World is the JSON representation of one declared world — a named
@@ -673,7 +681,12 @@ type World struct {
 
 // EntityType is the JSON representation of an entity type.
 type EntityType struct {
-	Label       string                 `json:"label"`
+	Label string `json:"label"`
+	// LabelPlural is the schema's `label_plural:`, the plural display name
+	// ("People"). Absent when the schema sets none: the SPA then uses a
+	// wording without the type rather than a guessed plural such as
+	// "Persons".
+	LabelPlural string                 `json:"label_plural,omitempty"`
 	Plural      string                 `json:"plural"`
 	Description string                 `json:"description,omitempty"`
 	Primary     string                 `json:"primary,omitempty"`
@@ -796,14 +809,26 @@ type PropertyDef struct {
 	// (TKT-SM20FG). The value is read-only on every interactive surface.
 	System string `json:"system,omitempty"`
 	// Display is the property's display format, such as a currency
-	// (TKT-SVLQQ6). The SPA applies it wherever it renders the value for
-	// reading; inputs stay plain. Omitted when unset.
+	// (TKT-SVLQQ6) or a link (TKT-0101IO4). The SPA applies it wherever it
+	// renders the value. Omitted when unset.
 	Display *PropertyDisplay `json:"display,omitempty"`
 }
 
 // PropertyDisplay is the wire form of metamodel.PropertyDisplay.
 type PropertyDisplay struct {
 	Currency string `json:"currency,omitempty"`
+	// Image marks a file property as an image (TKT-WG1410D).
+	Image bool `json:"image,omitempty"`
+	// LinkDisplay carries the link format; its fields sit at the top level
+	// of the JSON object.
+	LinkDisplay
+}
+
+// LinkDisplay is the link part of a property display (TKT-0101IO4).
+type LinkDisplay struct {
+	Link bool `json:"link,omitempty"`
+	// LinkText replaces the URL as the text of a link (TKT-IO9PTLD).
+	LinkText string `json:"link_text,omitempty"`
 }
 
 // RelationType is the JSON representation of a relation type.
@@ -855,9 +880,9 @@ type CustomType struct {
 // Config is the JSON representation of the UI config.
 //
 // It mirrors the top-level keys of data-entry.yaml, so a new key raises the
-// pin by one; `channels` (TKT-91BK6F) is the most recent.
+// pin by one; `builtins` (TKT-JEAR2UA) is the most recent.
 //
-//plimsoll:max-fields=22
+//plimsoll:max-fields=23
 type Config struct {
 	App AppConfig `json:"app"`
 	// AboutDescription is the deployment description shown by the SPA's global
@@ -884,6 +909,7 @@ type Config struct {
 	Actions     map[string]dataentryconfig.Action              `json:"actions,omitempty"`
 	Navigation  []dataentryconfig.NavigationEntry              `json:"navigation"`
 	Spaces      []dataentryconfig.Space                        `json:"spaces,omitempty"`
+	Builtins    dataentryconfig.Builtins                       `json:"builtins,omitempty"`
 	Pages       map[string]dataentryconfig.Page                `json:"pages,omitempty"`
 	Documents   map[string]dataentryconfig.DocumentConfig      `json:"documents,omitempty"`
 	Apps        map[string]App                                 `json:"apps,omitempty"`
@@ -1011,6 +1037,11 @@ type FieldError struct {
 	Source ErrorSource `json:"source"`
 	Code   string      `json:"code"`
 	Detail string      `json:"detail"`
+	// Fields and Message are set for a failed validation rule, which names
+	// no one property: the properties the rule reads, so a form can show
+	// it at one, and the rule's description without its name.
+	Fields  []string `json:"fields,omitempty"`
+	Message string   `json:"message,omitempty"`
 }
 
 // ErrorSource points to the location of an error: an RFC 6901 JSON pointer
@@ -1329,6 +1360,12 @@ type DashboardResponse struct {
 	// entity dashboard by that, and passes `?anchor=` on
 	// /api/v1/_dashboard/card.
 	Cards []DashboardCardEntry `json:"cards"`
+	// Validation reports whether this principal is shown the validation
+	// card: the dashboard's `validation:` toggle, resolved for the caller
+	// (TKT-31822PN). Always false on an entity dashboard, which never shows
+	// the card. A UX filter, not access control: `/api/v1/_analyze` keeps
+	// its own gate.
+	Validation bool `json:"validation"`
 }
 
 // DashboardCardEntry is one card of a DashboardResponse: its config plus its
@@ -1447,6 +1484,17 @@ type SidebarResponse struct {
 	// the principal may create and for which a create form resolves. A UI
 	// hint, like InlineCreate; the create endpoint re-authorizes.
 	Create []SidebarCreate `json:"create,omitempty"`
+	// HiddenBuiltins names the built-in sidebar rows ("search", "inbox",
+	// "flow_tasks", "flow_runs", "analysis"), the as-of picker ("as_of") and
+	// the footer Shortcuts button ("shortcuts") that the current space, or the
+	// top-level sidebar without spaces, leaves out for this principal
+	// ([dataentryconfig.Builtins]). Absent when every row is shown. A UX
+	// filter: the pages behind the rows stay reachable by URL.
+	HiddenBuiltins []dataentryconfig.BuiltinRow `json:"hidden_builtins,omitempty"`
+	// PhoneHiddenBuiltins names the rows the same sidebar leaves out on a
+	// phone-sized screen (`hidden_on_phone:`). The SPA applies it. Absent
+	// when no row sets it.
+	PhoneHiddenBuiltins []dataentryconfig.BuiltinRow `json:"phone_hidden_builtins,omitempty"`
 
 	// Pages are the config's `pages:`, keyed by page id, each with the tabs
 	// this principal may see. Absent when the config declares no pages.
@@ -1488,6 +1536,45 @@ type SidebarResponse struct {
 	// both piles fields from this one boot payload. Null when the block is
 	// absent.
 	Piles *dataentryconfig.PilesConfig `json:"piles"`
+	// HeaderButtons says which built-in buttons the entity page header shows
+	// this principal: `header_buttons:` of data-entry.yaml, resolved for the
+	// caller (TKT-31822PN). It rides here for the reason PilesAvailable
+	// does. A UX filter, not access control: the history and pile APIs keep
+	// their own ACL.
+	HeaderButtons SidebarHeaderButtons `json:"header_buttons"`
+	// ListButtons says which built-in buttons lists and search results
+	// show this principal: `list_buttons:` of data-entry.yaml, resolved
+	// like HeaderButtons.
+	ListButtons SidebarListButtons `json:"list_buttons"`
+	// Audit says which audit views the SPA offers (TKT-X1ZFO04). A UI hint,
+	// never authorization: the audit endpoints check again.
+	Audit SidebarAudit `json:"audit"`
+}
+
+// SidebarHeaderButtons is [SidebarResponse.HeaderButtons]. Each field is true
+// when the button may show. The SPA still applies its own preconditions: the
+// History button needs a deployment with version history, and "Add to pile"
+// needs piles to be available.
+type SidebarHeaderButtons struct {
+	History   bool `json:"history"`
+	AddToPile bool `json:"add_to_pile"`
+}
+
+// SidebarListButtons is [SidebarResponse.ListButtons]. AddToPile is true when
+// "Add to pile" may show on lists and search results; the SPA still needs
+// piles to be available.
+type SidebarListButtons struct {
+	AddToPile bool `json:"add_to_pile"`
+}
+
+// SidebarAudit is [SidebarResponse.Audit].
+type SidebarAudit struct {
+	// Changes reports that a database audit log is wired, so an entity
+	// page offers its Changes tab.
+	Changes bool `json:"changes"`
+	// Global reports that the log is wired and this principal may read the
+	// global audit view (the audit:read permission).
+	Global bool `json:"global"`
 }
 
 // ConflictItem represents a conflicted file.
@@ -1800,6 +1887,10 @@ type ViewColumn struct {
 	// (TKT-4Q2EIVZ), empty otherwise. A cell is an input only when its row's
 	// `_fields` verdict also allows the write.
 	Render string `json:"render,omitempty"`
+	// Primary is the column's `primary:` (BUG-6WQ1U8S). A table section
+	// stacks its rows on a phone and leaves out a column set to false there.
+	// Nil when the config does not set it.
+	Primary *bool `json:"primary,omitempty"`
 }
 
 // ViewRow represents a table row.

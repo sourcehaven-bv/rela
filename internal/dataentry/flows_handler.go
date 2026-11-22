@@ -28,19 +28,22 @@ type FlowService interface {
 	Flows() []flowview.Flow
 	RunList(ctx context.Context, flowName, status string, page, perPage int) (flowview.Runs, error)
 	SubjectRuns(ctx context.Context, addr string) ([]flowview.Run, error)
+	Startable(ctx context.Context, addr string) ([]string, error)
 	Run(ctx context.Context, id flow.RunID) (flowview.Run, error)
 	Start(ctx context.Context, name, addr string) (flow.RunID, error)
 	Complete(ctx context.Context, id flow.RunID, gen int64, props map[string]any) (flowview.Completed, error)
 	Cancel(ctx context.Context, id flow.RunID) error
 	Retry(ctx context.Context, id flow.RunID) error
 	Tasks(ctx context.Context, flowName string, page, perPage int) (flowview.Tasks, error)
+	FailedTasks(ctx context.Context, flowName string) ([]flowview.Task, bool, error)
 }
 
 // flowsHandler owns the flow routes (TKT-ZAXRXND):
 //
 //	GET  /api/v1/_flows                       the flows of flows.yaml
-//	GET  /api/v1/_flows/tasks                 the caller's tasks
+//	GET  /api/v1/_flows/tasks                 the caller's tasks and the failed runs they manage
 //	GET  /api/v1/_flows/runs                  the run list; ?subject= the runs on one entity
+//	                                          and the flows the caller may start on it
 //	POST /api/v1/_flows/runs                  start a run (201)
 //	GET  /api/v1/_flows/runs/{id}             one run, with why it waits and `_actions`
 //	POST /api/v1/_flows/runs/{id}/_complete   complete the step
@@ -55,6 +58,9 @@ type FlowService interface {
 // configuration, not a secret.
 type flowsHandler struct {
 	svc FlowService
+	// panelShown reports whether the caller gets the flow runs panel of an
+	// entity page in space (`entity_panels.flow_runs`). Nil shows it.
+	panelShown func(ctx context.Context, space string) bool
 }
 
 // SetFlows installs the flow service. Call it before [App.NewRouter]. It
@@ -66,7 +72,9 @@ func SetFlows(a *App, svc FlowService) error {
 	if svc == nil {
 		return errors.New("dataentry: SetFlows requires a flow service")
 	}
-	a.flows = &flowsHandler{svc: svc}
+	a.flows = &flowsHandler{svc: svc, panelShown: func(ctx context.Context, space string) bool {
+		return flowRunsPanelShown(ctx, a.acl, a.State().Cfg, space)
+	}}
 	return nil
 }
 
@@ -142,20 +150,42 @@ func (h *flowsHandler) tasks(w http.ResponseWriter, r *http.Request) {
 		writeFlowError(w, r, err)
 		return
 	}
+	// The Flow tasks page lists the failed runs the caller manages above
+	// the tasks (BUG-53GP5F5).
+	if out.Failed, out.FailedTruncated, err = h.svc.FailedTasks(r.Context(), q.Get("flow")); err != nil {
+		writeFlowError(w, r, err)
+		return
+	}
 	writeV1JSON(w, http.StatusOK, out)
 }
 
 // runs answers the run list, or with ?subject= every run on that entity
-// the caller can see.
+// the caller can see and the flows the caller may start on it. The subject
+// form feeds the flow runs panel, so where `entity_panels.flow_runs` hides
+// the panel from the caller in ?space= it answers no runs and no flows.
 func (h *flowsHandler) runs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	if addr := q.Get("subject"); addr != "" {
+		if h.panelShown != nil && !h.panelShown(r.Context(), q.Get("space")) {
+			writeV1JSON(w, http.StatusOK, flowview.SubjectRuns{
+				Runs: flowview.Runs{Runs: []flowview.Run{}}, Startable: []string{},
+			})
+			return
+		}
 		runs, err := h.svc.SubjectRuns(r.Context(), addr)
 		if err != nil {
 			writeFlowError(w, r, err)
 			return
 		}
-		writeV1JSON(w, http.StatusOK, flowview.Runs{Runs: orEmpty(runs), Total: len(runs)})
+		startable, err := h.svc.Startable(r.Context(), addr)
+		if err != nil {
+			writeFlowError(w, r, err)
+			return
+		}
+		writeV1JSON(w, http.StatusOK, flowview.SubjectRuns{
+			Runs:      flowview.Runs{Runs: orEmpty(runs), Total: len(runs)},
+			Startable: startable,
+		})
 		return
 	}
 	page, perPage := parseV1Pagination(q)

@@ -7,6 +7,8 @@ import axios from 'axios'
 import { getPlural } from './entities'
 import type { Entity } from '@/types'
 import { apiUrl } from './base'
+import { currentAsOf } from './asOf'
+import { t } from '@/i18n'
 
 function propertyUrl(entityType: string, entityId: string, property: string): string {
   return apiUrl(
@@ -62,6 +64,12 @@ export function attachmentErrorReason(err: unknown): string {
   return typeof message === 'string' && message ? message : 'upload failed'
 }
 
+// These calls use axios directly, so the shared client's interceptor that
+// refuses writes under ?as_of= does not cover them; refuse here as well.
+function refuseAtPastInstant(): void {
+  if (currentAsOf()) throw new AttachmentError(t('asOf.readOnly'), 422)
+}
+
 /** Upload (append, or replace at max:1) a file on a property. `onProgress`
  *  receives a 0..1 fraction. Returns the updated entity (its
  *  `_attachments` reflects the new file). Throws AttachmentError on a
@@ -73,6 +81,7 @@ export async function uploadAttachment(
   file: File,
   onProgress?: (fraction: number) => void
 ): Promise<Entity> {
+  refuseAtPastInstant()
   const form = new FormData()
   form.append('file', file)
   try {
@@ -94,6 +103,7 @@ export async function uploadAttachment(
  *  prefix. Idempotent. Throws AttachmentError on a non-2xx (non-204)
  *  response. */
 export async function deleteAttachment(href: string): Promise<void> {
+  refuseAtPastInstant()
   try {
     await axios.delete(apiUrl(href))
   } catch (err) {

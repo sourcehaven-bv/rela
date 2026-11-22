@@ -76,6 +76,9 @@ var editable = map[File][]string{
 		"entities.*.properties.*.default",
 		"entities.*.properties.*.description",
 		"entities.*.properties.*.display.currency",
+		"entities.*.properties.*.display.link",
+		"entities.*.properties.*.display.link_text",
+		"entities.*.properties.*.display.image",
 		"entities.*.properties.*.label",
 		"entities.*.properties.*.format",
 		"entities.*.properties.*.labels.*",
@@ -105,6 +108,9 @@ var editable = map[File][]string{
 		"relations.*.properties.*.default",
 		"relations.*.properties.*.description",
 		"relations.*.properties.*.display.currency",
+		"relations.*.properties.*.display.link",
+		"relations.*.properties.*.display.link_text",
+		"relations.*.properties.*.display.image",
 		"relations.*.properties.*.label",
 		"relations.*.properties.*.format",
 		"relations.*.properties.*.labels.*",
@@ -222,6 +228,8 @@ var editable = map[File][]string{
 		"lists.*.columns.[].direction",
 		"lists.*.columns.[].label",
 		"lists.*.columns.[].link",
+		// Which columns stay on a phone (TKT-3VLKP3D); display only.
+		"lists.*.columns.[].primary",
 		"lists.*.columns.[].property",
 		"lists.*.columns.[].relation",
 		"lists.*.columns.[].sortable",
@@ -231,6 +239,7 @@ var editable = map[File][]string{
 		"lists.*.create_form",
 		"lists.*.description",
 		"lists.*.edit_form",
+		"lists.*.empty_message",
 		"lists.*.entity_type",
 		"lists.*.filter_controls.[].**",
 		"lists.*.filters.[].**",
@@ -398,6 +407,10 @@ var locked = map[File][]string{
 		// Access control and actions.
 		"nav.permission", "nav.action", "spaces.[].permission", "dashboard.cards.[].permission",
 		"dashboards.*.cards.[].permission",
+		// Page chrome toggles (TKT-31822PN): true, false or {permission}.
+		// Not in the Configure space yet; locked with the other permissions.
+		"dashboard.validation.**", "dashboards.*.validation.**", "header_buttons.**", "list_buttons.**",
+		"entity_panels.**", "spaces.[].entity_panels.**",
 		// Not in the Configure space yet: list-sourced, matrix and ratio cards
 		// (TKT-2SGPJZ). The Configure dashboard page edits query cards only.
 		"dashboard.cards.[].list", "dashboard.cards.[].rows", "dashboard.cards.[].tone_by",
@@ -413,6 +426,8 @@ var locked = map[File][]string{
 		// Not in the Configure space yet: card width (TKT-H21TYS). Editing a
 		// card in Configure keeps the width it has.
 		"dashboard.cards.[].width", "dashboards.*.cards.[].width",
+		// Not in the Configure space yet: hiding an empty card (TKT-3U99O4L).
+		"dashboard.cards.[].hide_empty", "dashboards.*.cards.[].hide_empty",
 		// Not in the Configure space yet: entity dashboards and their card
 		// scopes, which pair with pages: (also locked).
 		"dashboard.entity_type", "dashboards.*.entity_type",
@@ -427,6 +442,11 @@ var locked = map[File][]string{
 		"git.**", "palette.**",
 		"documents.**", "feeds.**", "caldav.**", "commands.**", "actions.**", "webhooks.**",
 		"pages.**", "next_action_bands.**", "next_actions.**", "account.**", "lists.*.create_world",
+		// The logo the server writes into the shell for the workspace pages,
+		// like the account links: operator config, not in the Configure space.
+		"app.logo",
+		// Built-in sidebar rows (TKT-JEAR2UA): not in the Configure space yet.
+		"builtins.**", "spaces.[].builtins.**",
 		// Where suggestions appear (TKT-6EEXXE), locked like next_actions.
 		// Calendars and gantts carry the key too, but those trees are
 		// editable whole (calendars.**, gantts.**).
@@ -436,6 +456,8 @@ var locked = map[File][]string{
 		"dashboards.*.cards.[].columns.[].face",
 		// Busy columns are list-only (TKT-TU3XH4); the load refuses them here.
 		"dashboard.cards.[].columns.[].busy", "dashboards.*.cards.[].columns.[].busy",
+		// So is primary (TKT-3VLKP3D).
+		"dashboard.cards.[].columns.[].primary", "dashboards.*.cards.[].columns.[].primary",
 		// Editable columns are view-table-only (TKT-4Q2EIVZ); the load refuses them here.
 		"lists.*.columns.[].render", "dashboard.cards.[].columns.[].render",
 		"dashboards.*.cards.[].columns.[].render",
@@ -466,6 +488,8 @@ var protective = map[File][]string{
 		"app.disable_custom_injection", "app.max_attachment_bytes",
 		"nav.permission", "spaces.[].permission", "dashboard.cards.[].permission",
 		"dashboards.*.cards.[].permission",
+		"dashboard.validation.**", "dashboards.*.validation.**", "header_buttons.**", "list_buttons.**",
+		"entity_panels.**", "spaces.[].entity_panels.**",
 	},
 	// A script may stamp what acl.yaml decides access by; removing it
 	// would drop that stamp from every record written afterwards.

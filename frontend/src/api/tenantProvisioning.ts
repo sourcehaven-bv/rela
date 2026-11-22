@@ -7,8 +7,8 @@
  * problem. A create that is throttled, failed or needs an operator is a `503`
  * `provisioning_busy`, `provisioning_failed` or `provisioning_needs_operator`
  * problem. On any of these the SPA shows a "setting up" screen, polls the
- * status endpoint, and reloads once it reports `active`, or `suspended`, which
- * the reloaded app then reports as a refused organization.
+ * status endpoint, and reloads once it reports `active`, or `suspended` or
+ * `archived`, which the reloaded app then shows as such.
  */
 import { ref } from 'vue'
 import { apiUrl } from './base'
@@ -33,7 +33,7 @@ const UNAVAILABLE_PROBLEMS = [
   'provisioning_needs_operator',
 ]
 
-/** Whether a response is the server's "your organization is being set up". */
+/** Whether a response is the server's "this workspace is still being set up". */
 export function isProvisioningResponse(status: number, data: unknown): boolean {
   if (typeof data !== 'object' || data === null) return false
   if (status === 202) return (data as { status?: unknown }).status === 'provisioning'
@@ -74,7 +74,8 @@ export function startProvisioningPoll(
         // Active, or a state polling cannot fix (a suspended org, a session
         // that ended, an org the server does not serve): reload, so the app
         // handles it.
-        const settled = body.status === 'active' || body.status === 'suspended'
+        const settled =
+          body.status === 'active' || body.status === 'suspended' || body.status === 'archived'
         if ((res.ok && settled) || res.status === 401 || res.status === 403) {
           polling = false
           reload()

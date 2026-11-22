@@ -1,6 +1,10 @@
 package metamodel
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"maps"
+	"slices"
+)
 
 // ShapeProjection is the data-shape slice of a metamodel: exactly the schema
 // facts that determine whether STORED CONTENT conforms to the schema —
@@ -121,7 +125,7 @@ func NewShapeProjection(m *Metamodel) ShapeProjection {
 	for name, def := range m.Entities {
 		es := EntityShape{
 			Properties: make(map[string]PropertyShape, len(def.Properties)),
-			Faces:      sortedKeys(def.Faces),
+			Faces:      slices.Sorted(maps.Keys(def.Faces)),
 		}
 		for pname, pdef := range def.Properties {
 			es.Properties[pname] = propertyShape(pdef)
@@ -197,7 +201,7 @@ func (p ShapeProjection) Hash() string {
 
 	h.str("entities")
 	h.count(len(p.Entities))
-	for _, name := range sortedKeys(p.Entities) {
+	for _, name := range slices.Sorted(maps.Keys(p.Entities)) {
 		es := p.Entities[name]
 		h.str(name)
 		hashPropertyShapes(h, es.Properties)
@@ -206,7 +210,7 @@ func (p ShapeProjection) Hash() string {
 
 	h.str("relations")
 	h.count(len(p.Relations))
-	for _, name := range sortedKeys(p.Relations) {
+	for _, name := range slices.Sorted(maps.Keys(p.Relations)) {
 		rs := p.Relations[name]
 		h.str(name)
 		h.strList(rs.From)
@@ -232,7 +236,7 @@ func (p ShapeProjection) Hash() string {
 
 	h.str("types")
 	h.count(len(p.Types))
-	for _, name := range sortedKeys(p.Types) {
+	for _, name := range slices.Sorted(maps.Keys(p.Types)) {
 		h.str(name)
 		h.strList(p.Types[name])
 	}
@@ -242,7 +246,7 @@ func (p ShapeProjection) Hash() string {
 
 func hashPropertyShapes(h *projectionHasher, props map[string]PropertyShape) {
 	h.count(len(props))
-	for _, pname := range sortedKeys(props) {
+	for _, pname := range slices.Sorted(maps.Keys(props)) {
 		ps := props[pname]
 		h.str(pname)
 		h.str(ps.Type)

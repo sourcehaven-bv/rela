@@ -1,0 +1,440 @@
+package visibility
+
+import (
+	"context"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+)
+
+// ChangeOps are the audit ops a per-entity change list shows: the writes that
+// changed an entity or one of its relations. Every other op stays out,
+// because it records a read, a refusal, an operator action or a record that
+// is not about the entity's content. TestChangeOpsClassifyEveryOp fails for
+// an op that is in neither this list nor its exclusions.
+var ChangeOps = []string{
+	audit.OpCreateEntity,
+	audit.OpUpdateEntity,
+	audit.OpDeleteEntity,
+	audit.OpRenameEntity,
+	audit.OpConvertEntity,
+	audit.OpRestoreEntity,
+	audit.OpPurgeDeletedEntity,
+	audit.OpCopyState,
+	audit.OpAttachRender,
+	audit.OpCreateRelation,
+	audit.OpUpdateRelation,
+	audit.OpDeleteRelation,
+}
+
+// AuditEntries is the ungated audit source [EntityChanges] reads: one face
+// of an entity's records, newest first, paged by seq, and the record that
+// began that face's latest lifecycle. sqlaudit.Log implements it.
+type AuditEntries interface {
+	ForEntity(ctx context.Context, q audit.SubjectQuery, before int64, limit int) ([]audit.Entry, error)
+	LifecycleStart(ctx context.Context, q audit.SubjectQuery) (audit.Entry, bool, error)
+}
+
+// ReadableIDs answers which of ids the principal may read some face of, with
+// each one's type. [Resolver.ReadableTypes] implements it.
+type ReadableIDs interface {
+	ReadableTypes(ctx context.Context, ids []string) (map[string]string, error)
+}
+
+// FieldVisibility answers whether the principal sees a property on every
+// row of a type. A change list names a changed property only when it does,
+// because a summary that names a hidden property tells when its value
+// changed.
+type FieldVisibility interface {
+	FieldVisibleOnEveryRow(ctx context.Context, entityType, property string) bool
+}
+
+// ChangeRecord is one entry of an entity's change list as a reader may see
+// it. It is built field by field from an audit record, never copied, so a
+// field the record gains later stays off this view until it is added here.
+//
+// Summary is kept only in a shape that names no entity (property, type and
+// face names are configuration, not data); Trigger is the kind of what
+// caused the write, with an automation or schedule name but no entity id.
+type ChangeRecord struct {
+	Seq     int64          `json:"seq"`
+	Time    time.Time      `json:"time"`
+	Op      string         `json:"op"`
+	Subject *audit.Subject `json:"subject,omitempty"`
+	Before  *audit.Subject `json:"before,omitempty"`
+	After   *audit.Subject `json:"after,omitempty"`
+	User    string         `json:"user,omitempty"`
+	Tool    string         `json:"tool,omitempty"`
+	Summary string         `json:"summary,omitempty"`
+	Trigger string         `json:"trigger,omitempty"`
+}
+
+// ChangesQuery names the entity face whose changes [EntityChanges] reads.
+type ChangesQuery struct {
+	Ref  entity.Ref
+	Type string
+	// Before is the page cursor: the seq of the last record of the previous
+	// page, or 0 for the newest page.
+	Before int64
+	// Limit is the page size; [EntityChanges] refuses one below 1.
+	Limit int
+	// Live reports that q.Ref is a live entity of q.Type. A deleted face
+	// is shown only when the log holds the record that started it as q.Type.
+	Live bool
+}
+
+// changeScanRounds caps the source reads one page makes while records it
+// may not show fill the reads. Past the cap the page is served short, with
+// a cursor, so a page costs at most this many source reads and one
+// readability batch per read.
+const changeScanRounds = 4
+
+// EntityChanges returns one page of the changes of q.Ref, newest first, and
+// the cursor of the next page (0 when there is none).
+//
+// The caller has already decided that the principal may see q.Ref's
+// history; this function decides which records of it the principal may see.
+//
+// The page is empty unless the record that started q.Ref's latest
+// lifecycle started it as q.Type, or, when no such record is kept, q.Ref is
+// live. So a deleted id of another type is never served under q.Type,
+// whatever relation records name it.
+//
+// A record of a relation rela manages itself (a `_` relation type, such as a
+// flow run's `_carries`) is left out: it is bookkeeping, not a change the
+// reader made or can act on. So is a renumber of the siblings of a moved
+// relation (trigger `renumber:`), and an update whose changed properties the
+// reader does not see on every row of the type, or that are managed: even a
+// bare "updated" would tell when a hidden value changed (BUG-XR1DUQA).
+//
+// A record is shown only when every other entity it names (a relation's far
+// end) is readable to the principal now, by one [ReadableIDs] batch per
+// source read. The earlier id of a rename or conversion into q.Ref is this
+// entity's own earlier name, so it needs no check; the later id of a rename
+// away from q.Ref is checked. An entity record must be of q.Type and
+// at q.Ref's face, and a relation must leave q.Ref from q.Ref's face, so a
+// record of another type or face that held the id is never shown. A record
+// of a hidden or deleted far end is left out entirely, as the live relation
+// list leaves out a hidden neighbor. So is an edge into q.Ref from one face
+// of another entity, because readability is answered per id, not per face.
+//
+// Records left out do not shorten a page while the source has more: the
+// page reads on, up to [changeScanRounds] reads. A full page returns a
+// cursor only once a later record it would show is found, so Load more does
+// not come back empty. Past that cap the cursor is the seq of the last
+// record read, which may be one left out. It tells only that a record the
+// principal may not see exists at that position.
+func EntityChanges(
+	ctx context.Context, src AuditEntries, readable ReadableIDs, fields FieldVisibility, q ChangesQuery,
+) ([]ChangeRecord, int64, error) {
+	if q.Limit < 1 {
+		return nil, 0, fmt.Errorf("visibility: change list limit %d is below 1", q.Limit)
+	}
+	eq := audit.SubjectQuery{ID: q.Ref.ID, Face: q.Ref.Face.String(), Ops: ChangeOps}
+	ok, err := startedAs(ctx, src, eq, q)
+	if err != nil || !ok {
+		return nil, 0, err
+	}
+	var out []ChangeRecord
+	before := q.Before
+	for range changeScanRounds {
+		entries, err := src.ForEntity(ctx, eq, before, q.Limit+1)
+		if err != nil {
+			return nil, 0, err
+		}
+		shown, err := showable(ctx, readable, q, entries)
+		if err != nil {
+			return nil, 0, err
+		}
+		for _, e := range shown {
+			rec, ok := changeRecord(ctx, fields, e)
+			if !ok {
+				continue
+			}
+			if len(out) == q.Limit {
+				return out, out[len(out)-1].Seq, nil
+			}
+			out = append(out, rec)
+		}
+		if len(entries) <= q.Limit {
+			return out, 0, nil
+		}
+		before = entries[len(entries)-1].Seq
+	}
+	// The scan stopped at its cap with more to read: continue after the
+	// last record read, shown or not.
+	return out, before, nil
+}
+
+// startedAs reports whether q.Ref's change list may be served as q.Type: the
+// record that started its latest lifecycle started an entity of q.Type at
+// q.Ref's face, or there is no such record and q.Ref is live.
+func startedAs(ctx context.Context, src AuditEntries, eq audit.SubjectQuery, q ChangesQuery) (bool, error) {
+	start, found, err := src.LifecycleStart(ctx, eq)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return q.Live, nil
+	}
+	r := start.Record
+	for _, s := range []*audit.Subject{r.Subject, r.After} {
+		if audit.StartsLifecycle(r, s) && s.IsEntity() && s.ID == q.Ref.ID {
+			return s.Type == q.Type && s.Face == eq.Face, nil
+		}
+	}
+	return false, nil
+}
+
+// showable returns the entries of page the principal may see.
+func showable(ctx context.Context, readable ReadableIDs, q ChangesQuery, page []audit.Entry) ([]audit.Entry, error) {
+	others := make([][]string, len(page))
+	var all []string
+	for i, e := range page {
+		others[i] = otherIDs(e.Record, q.Ref.ID)
+		all = append(all, others[i]...)
+	}
+	types := map[string]string{}
+	if len(all) > 0 {
+		var err error
+		if types, err = readable.ReadableTypes(ctx, all); err != nil {
+			return nil, err
+		}
+	}
+	shown := page[:0:0]
+	for i, e := range page {
+		if !aboutEntity(e.Record, q) || !atFace(e.Record, q) {
+			continue
+		}
+		ok := true
+		for _, id := range others[i] {
+			if _, readable := types[id]; !readable {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			shown = append(shown, e)
+		}
+	}
+	return shown, nil
+}
+
+// aboutEntity reports whether rec is an entity or relation record that names
+// q.Ref.ID, with every entity subject naming it of q.Type.
+func aboutEntity(rec audit.Record, q ChangesQuery) bool {
+	named := false
+	for _, s := range []*audit.Subject{rec.Subject, rec.Before, rec.After} {
+		if s == nil {
+			continue
+		}
+		switch {
+		case s.IsEntity():
+			if s.ID == q.Ref.ID {
+				if s.Type != q.Type && !isConversionBefore(rec, s) {
+					return false
+				}
+				named = true
+			}
+		case s.IsRelation():
+			if entity.IsManagedName(s.RelationType) {
+				return false
+			}
+			if s.FromID == q.Ref.ID || s.ToID == q.Ref.ID {
+				named = true
+			}
+		default:
+			return false
+		}
+	}
+	return named
+}
+
+// atFace reports whether rec names q.Ref.ID only at q.Ref's face: every
+// entity subject with that id is at the face (a conversion's Before names
+// the face it left), and a relation leaves it from that face or from no
+// recorded face. A relation into q.Ref must leave its tail from no recorded
+// face, since readability is answered per id, not per face.
+func atFace(rec audit.Record, q ChangesQuery) bool {
+	face := q.Ref.Face.String()
+	for _, s := range []*audit.Subject{rec.Subject, rec.Before, rec.After} {
+		if s == nil {
+			continue
+		}
+		switch {
+		case s.IsEntity():
+			if s.ID == q.Ref.ID && s.Face != face && !isConversionBefore(rec, s) {
+				return false
+			}
+		case s.IsRelation():
+			if s.FromID == q.Ref.ID && s.FromFace != "" && s.FromFace != face {
+				return false
+			}
+			if s.FromID != q.Ref.ID && s.FromFace != "" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// isConversionBefore reports whether s is the Before of a conversion, which
+// names the entity's earlier type.
+func isConversionBefore(rec audit.Record, s *audit.Subject) bool {
+	return rec.Op == audit.OpConvertEntity && s == rec.Before && rec.After != nil && rec.After.ID == s.ID
+}
+
+// otherIDs returns the ids rec names besides id, leaving out the earlier id
+// of a rename or conversion into id: that is id's own earlier name, not
+// another entity. The later id of a rename away from id is kept, so it is
+// checked like any other: the entity may now be hidden under its new id.
+func otherIDs(rec audit.Record, id string) []string {
+	var out []string
+	for _, s := range []*audit.Subject{rec.Subject, rec.Before, rec.After} {
+		if s == nil || isLineage(rec, s, id) {
+			continue
+		}
+		for _, other := range []string{s.ID, s.FromID, s.ToID} {
+			if other != "" && other != id {
+				out = append(out, other)
+			}
+		}
+	}
+	return out
+}
+
+// isLineage reports whether s is the Before of a rename or conversion into
+// id.
+func isLineage(rec audit.Record, s *audit.Subject, id string) bool {
+	if rec.Op != audit.OpRenameEntity && rec.Op != audit.OpConvertEntity {
+		return false
+	}
+	return s == rec.Before && rec.After != nil && rec.After.ID == id
+}
+
+// changeRecord builds the reader's view of e, or reports false when the
+// reader may not see it at all: a renumber of siblings, or an update of
+// properties all hidden or managed.
+func changeRecord(ctx context.Context, fields FieldVisibility, e audit.Entry) (ChangeRecord, bool) {
+	r := e.Record
+	if strings.HasPrefix(r.TriggeredBy, renumberTrigger) {
+		return ChangeRecord{}, false
+	}
+	summary := ChangeSummary(r.Summary)
+	if props, found := strings.CutPrefix(summary, updatedPrefix); found {
+		var ok bool
+		if summary, ok = visibleUpdate(ctx, fields, r.Subject, props); !ok {
+			return ChangeRecord{}, false
+		}
+	}
+	if summary == "" && (r.Op == audit.OpUpdateEntity || r.Op == audit.OpUpdateRelation) {
+		// An update summary of an unknown shape still says what happened.
+		summary = "updated"
+	}
+	return ChangeRecord{
+		Seq:     e.Seq,
+		Time:    r.Time,
+		Op:      r.Op,
+		Subject: copySubject(r.Subject),
+		Before:  copySubject(r.Before),
+		After:   copySubject(r.After),
+		User:    r.Principal.User,
+		Tool:    r.Principal.Tool,
+		Summary: summary,
+		Trigger: TriggerKind(r.TriggeredBy),
+	}, true
+}
+
+func copySubject(s *audit.Subject) *audit.Subject {
+	if s == nil {
+		return nil
+	}
+	return &audit.Subject{
+		Kind: s.Kind, Type: s.Type, ID: s.ID, Face: s.Face,
+		RelationType: s.RelationType, FromID: s.FromID, FromFace: s.FromFace, ToID: s.ToID,
+	}
+}
+
+// updatedPrefix starts the summary of an update that lists its properties.
+const updatedPrefix = "updated: "
+
+// visibleUpdate returns the summary of an update that changed props, naming
+// only the properties the principal sees on every row of the subject's type
+// and that rela does not manage. It reports false when that leaves none: the
+// record then tells only when a value the reader may not see changed.
+// A relation's properties are never named: their visibility is judged per
+// relation, which this list does not do.
+func visibleUpdate(ctx context.Context, fields FieldVisibility, subject *audit.Subject, props string) (string, bool) {
+	if subject == nil || !subject.IsEntity() {
+		return "updated", true
+	}
+	var shown []string
+	for p := range strings.SplitSeq(props, ",") {
+		if !entity.IsManagedName(p) && fields.FieldVisibleOnEveryRow(ctx, subject.Type, p) {
+			shown = append(shown, p)
+		}
+	}
+	if len(shown) == 0 {
+		return "", false
+	}
+	return updatedPrefix + strings.Join(shown, ","), true
+}
+
+// name is a configuration name: a property, type, face, conversion or
+// automation name. An entity id would also match, so a summary shape below
+// puts a name only where the write path puts a configuration name.
+const name = `[A-Za-z0-9_.-]+`
+
+// summaryShapes are the summaries a change list keeps. Each names only
+// configuration; one that may name an entity (a copy's source and target, a
+// mention rewrite's ids) or count hidden rows (a cascade's relation count) is
+// not here or has the count cut first.
+var summaryShapes = regexp.MustCompile(`^(?:` + strings.Join([]string{
+	`(?:created|deleted|restored|renamed|updated)(?: \(undoable\))?(?: face ` + name + `)?`,
+	`updated: ` + name + `(?:,` + name + `)*`,
+	`(?:renumbered|moved) ` + name,
+	`(?:created|removed) by conversion to ` + name,
+	`converted from ` + name + ` by ` + name + `(?: face ` + name + `)?`,
+	`purged after soft delete`,
+}, "|") + `)$`)
+
+// countSuffix is the relation count a delete or purge summary ends with.
+var countSuffix = regexp.MustCompile(` \((?:cascade: )?\d+ relations\)$`)
+
+// ChangeSummary returns summary when it has a shape that names no entity,
+// with any relation count cut, and "" otherwise.
+func ChangeSummary(summary string) string {
+	s := countSuffix.ReplaceAllString(summary, "")
+	if summaryShapes.MatchString(s) {
+		return s
+	}
+	return ""
+}
+
+// namedTriggers are the trigger kinds whose label after the colon is a
+// configuration name, kept whole.
+var namedTriggers = map[string]bool{"automation": true, "schedule": true, "renumber": true}
+
+// renumberTrigger starts the triggered_by label of a sibling a move
+// renumbered (entitymanager's auditRenumbered).
+const renumberTrigger = "renumber:"
+
+// TriggerKind returns the kind of a triggered_by label: the part before the
+// first colon, or the whole label for an automation, schedule or renumber,
+// whose rest is a configuration name. Other kinds carry entity ids
+// (cascade:delete-entity:<id>, rename:<old>-><new>), which a change list
+// does not gate.
+func TriggerKind(label string) string {
+	kind, rest, found := strings.Cut(label, ":")
+	if !found {
+		return label
+	}
+	if namedTriggers[kind] && !strings.Contains(rest, ":") {
+		return label
+	}
+	return kind
+}

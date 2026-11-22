@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/nextaction"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
 
@@ -29,6 +31,86 @@ const (
 	dismissHorizon = 365 * 24 * time.Hour
 )
 
+// nextActionHandler owns /api/v1/_next_action and the ACL-gated candidate
+// reads behind it. Extracted from App to take the cluster and its two fields
+// (the per-user state and the condition compiler) off that god-object.
+//
+// The read collaborators are closures over App rather than captured values:
+// test builders reassign App.queries, App.worlds, App.fieldResolver,
+// App.affordances and App.visibleReader after construction, and a captured
+// copy would go stale (the attachmentHandler idiom). Each is the narrowest
+// shape the candidate path uses.
+//
+// userState and matchers are installed by [App.SetNextActions] before the
+// app serves, and are not written afterwards.
+type nextActionHandler struct {
+	// schema is the reloadable snapshot. Each request takes it once.
+	schema func() *Schema
+	// defaultWorld names the world a source with no `source_world:` reads in.
+	defaultWorld func() string
+	worlds       func() WorldLookup
+	queries      func() nextActionQueries
+	fields       func() FieldVerdictResolver
+	affordances  func() affordanceService
+	// store is the UNGATED graph store: the count_ungated count and the
+	// `related(...)` matcher (which gates through the ctx) use it.
+	store func() store.GraphQueryer
+	// scoped is the gated, query-scoped list read a gated count runs on.
+	scoped func(ctx context.Context, typeName string, query map[string][]string) ([]*entityPkg.Entity, error)
+	// inWorld is the gated single-entity read a context source runs on.
+	inWorld func(ctx context.Context, entityType, id string) (*entityPkg.Entity, bool, error)
+	// flowTasks answers a `source: flow_tasks` source.
+	flowTasks func(
+		ctx context.Context, meta *metamodel.Metamodel, src dataentryconfig.NextActionSource, want nextaction.Want,
+	) ([]nextaction.Candidate, error)
+
+	// userState backs the per-user snooze / mute / cooldown records. NOT
+	// graph content: a snooze is a fact about one person's relationship to a
+	// suggestion, and storing it as an entity would flood the audit log and
+	// the postgres version sweep (cooldown alone writes on every render). Nil
+	// when the deployment wires no backend — the endpoints then report "not
+	// configured" rather than silently forgetting what users asked to hide.
+	userState userstate.Store
+
+	// matchers compiles a source's `condition:` into a predicate matcher.
+	// Injected because the compiler lives above this package (it needs
+	// predicatefns + the metamodel), the same way the composition root picks
+	// the userstate backend while consumers take the seam.
+	//
+	// Takes the live config + metamodel rather than a prebuilt lookup: both
+	// reload at runtime, and a lookup captured at boot would evaluate a stale
+	// condition after an operator edits data-entry.yaml. Nil when no
+	// deployment wired it — sources declaring a condition then fail engine
+	// construction rather than silently matching everything.
+	matchers NextActionMatcherFunc
+}
+
+// nextActionQueries is the slice of the search-query pipeline the candidate
+// and pick_one reads use.
+type nextActionQueries interface {
+	executeQueryWith(ctx context.Context, query string, opts queryOptions) ([]*entityPkg.Entity, error)
+	executeQueryCut(ctx context.Context, query string, opts queryOptions) ([]*entityPkg.Entity, bool, error)
+}
+
+// newNextActionHandler wires the handler to app's live collaborators. The
+// state backend and condition compiler start unset; see [App.SetNextActions].
+func newNextActionHandler(app *App) *nextActionHandler {
+	return &nextActionHandler{
+		schema:       app.State,
+		defaultWorld: func() string { return effectiveDefaultWorld(app) },
+		worlds:       func() WorldLookup { return app.worlds },
+		queries:      func() nextActionQueries { return app.queries },
+		fields:       func() FieldVerdictResolver { return app.fieldResolver },
+		affordances:  func() affordanceService { return app.affordances },
+		store:        func() store.GraphQueryer { return app.store },
+		scoped:       app.scopedSortedEntities,
+		inWorld: func(ctx context.Context, entityType, id string) (*entityPkg.Entity, bool, error) {
+			return app.visibleReader.inWorld(ctx, entityType, id)
+		},
+		flowTasks: flowTaskSource{app: app}.candidates,
+	}
+}
+
 // nextActionResponse is the wire shape for GET /api/v1/_next_action.
 //
 // A deliberately thin envelope: `suggestion` is null when nothing is owed,
@@ -43,6 +125,10 @@ type nextActionResponse struct {
 	// re-resolves on a change of that type and of no other, so a page that no
 	// context source is about never refreshes on graph changes.
 	ContextType string `json:"context_type,omitempty"`
+	// RefreshTypes are all the entity types whose changes can change the
+	// answer: the context type above, and the flow run type when a
+	// flow_tasks source can apply here. It supersedes ContextType.
+	RefreshTypes []string `json:"refresh_types,omitempty"`
 }
 
 // nextActionWire is one suggestion as the SPA sees it.
@@ -97,23 +183,23 @@ type nextActionFeedbackRequest struct {
 // The two are separate verbs on purpose. Resolving is a READ: a caller that
 // previews or discards the result must not start a cooldown, so the clock
 // only moves when the client explicitly reports the suggestion was shown.
-func (a *App) handleV1NextAction(w http.ResponseWriter, r *http.Request) {
+func (h *nextActionHandler) handleV1NextAction(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		a.handleV1NextActionGet(w, r)
+		h.handleV1NextActionGet(w, r)
 	case http.MethodPost:
-		a.handleV1NextActionPost(w, r)
+		h.handleV1NextActionPost(w, r)
 	default:
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 	}
 }
 
 //archplan:auth=required reason="ACL-scoped list"
-func (a *App) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
+func (h *nextActionHandler) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
 	// The request's world is the DISPLAY world: it decides which sources may
 	// surface here (visible_worlds), never which world a source queries. See
 	// nextActionSourceWorld.
-	st := a.State()
+	st := h.schema()
 	if st.Cfg == nil {
 		writeV1JSON(w, http.StatusOK, nextActionResponse{})
 		return
@@ -132,7 +218,7 @@ func (a *App) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	eng, scope, ok := a.nextActionEngine(st, nextActionDisplayWorld(r.Context()), page, nextActionCurrent(r))
+	eng, scope, ok := h.engine(st, nextActionDisplayWorld(r.Context()), page, nextActionCurrent(r))
 	if !ok {
 		// No sources configured: a valid, common state (the feature is
 		// opt-in). An empty answer, not a 404 — the SPA renders nothing.
@@ -156,21 +242,26 @@ func (a *App) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
 		writeNextActionError(w, r, err)
 		return
 	}
-	contextType := page.refreshType(st.Cfg)
+	refresh := page.refreshTypes(st.Cfg)
+	contextType := ""
+	if len(refresh) > 0 && refresh[0] != entityPkg.FlowRunType {
+		contextType = refresh[0]
+	}
 	if !found {
-		writeV1JSON(w, http.StatusOK, nextActionResponse{ContextType: contextType})
+		writeV1JSON(w, http.StatusOK, nextActionResponse{ContextType: contextType, RefreshTypes: refresh})
 		return
 	}
 
-	writeV1JSON(w, http.StatusOK, nextActionResponse{ContextType: contextType, Suggestion: &nextActionWire{
-		Source:      sug.Source,
-		Band:        sug.Band,
-		EntityID:    sug.EntityID,
-		Variant:     sug.Key.Variant,
-		Message:     sug.Message,
-		Actions:     sug.Actions,
-		PickOptions: pickOptionsWire(sug.PickOptions),
-	}})
+	writeV1JSON(w, http.StatusOK, nextActionResponse{
+		ContextType: contextType, RefreshTypes: refresh, Suggestion: &nextActionWire{
+			Source:      sug.Source,
+			Band:        sug.Band,
+			EntityID:    sug.EntityID,
+			Variant:     sug.Key.Variant,
+			Message:     sug.Message,
+			Actions:     sug.Actions,
+			PickOptions: pickOptionsWire(sug.PickOptions),
+		}})
 }
 
 // writeNextActionError maps a resolve failure to a response. The one error
@@ -211,9 +302,9 @@ func pickOptionsWire(in map[int][]nextaction.PickOption) map[string][]pickOption
 	return out
 }
 
-//archplan:auth=authz
-func (a *App) handleV1NextActionPost(w http.ResponseWriter, r *http.Request) {
-	state := a.userState
+//archplan:auth=required reason="writes only the caller's own snoozes and mutes, keyed by principal"
+func (h *nextActionHandler) handleV1NextActionPost(w http.ResponseWriter, r *http.Request) {
+	state := h.userState
 	if state == nil {
 		writeV1Error(w, r, http.StatusNotImplemented, "not_configured",
 			"Next-action state is not configured", "")
@@ -233,7 +324,7 @@ func (a *App) handleV1NextActionPost(w http.ResponseWriter, r *http.Request) {
 	// string would create user-state rows keyed on nothing — unbounded growth
 	// driven by request bodies, and a mute list full of ids that name no
 	// source and so can never be surfaced for un-muting.
-	src, known := a.Cfg().NextActions[req.Source]
+	src, known := h.schema().Cfg.NextActions[req.Source]
 	if !known {
 		writeV1Error(w, r, http.StatusBadRequest, "unknown_source",
 			"Unknown next-action source", req.Source)
@@ -337,15 +428,6 @@ func applyNextActionFeedback(
 	}
 }
 
-// nextActionEngine builds an engine for this request, or reports that the
-// feature is not configured.
-//
-// Constructed per call rather than held on App because the CandidateFunc
-// closes over nothing request-scoped — the ACL gate is read from the ctx
-// passed to Resolve — and an Engine is a thin value over config plus two
-// collaborators. If this ever becomes hot, cache the engine, never the
-// suggestions (see nextaction.Engine.Resolve on why results must not be
-// cached across principals).
 // nextActionDisplayWorld names the world this request is browsing, for the
 // visible_worlds allow list.
 //
@@ -361,19 +443,28 @@ func nextActionDisplayWorld(ctx context.Context) string {
 	return metamodel.DefaultWorldName
 }
 
-func (a *App) nextActionEngine(
+// engine builds an engine for this request, or reports that the
+// feature is not configured.
+//
+// Constructed per call rather than held on the handler because the CandidateFunc
+// closes over nothing request-scoped — the ACL gate is read from the ctx
+// passed to Resolve — and an Engine is a thin value over config plus two
+// collaborators. If this ever becomes hot, cache the engine, never the
+// suggestions (see nextaction.Engine.Resolve on why results must not be
+// cached across principals).
+func (h *nextActionHandler) engine(
 	st *Schema, displayWorld string, page nextActionPage, current *userstate.Key,
 ) (*nextaction.Engine, NextActionRequestScope, bool) {
 	// One snapshot for the whole request, taken by the caller: State() reads
 	// an atomic face, and two reads could observe different snapshots if a
 	// reload lands between them.
 	cfg := st.Cfg
-	if cfg == nil || len(cfg.NextActions) == 0 || a.userState == nil {
+	if cfg == nil || len(cfg.NextActions) == 0 || h.userState == nil {
 		return nil, nil, false
 	}
 
 	opts := []nextaction.Option{
-		nextaction.WithOptions(a.nextActionOptions(st.Meta)),
+		nextaction.WithOptions(h.options(st.Meta)),
 		nextaction.WithDisplayWorld(displayWorld),
 		nextaction.WithSourceFilter(page.keeps),
 		nextaction.WithCurrent(current),
@@ -383,21 +474,21 @@ func (a *App) nextActionEngine(
 		lookup nextaction.MatcherFunc
 		scope  NextActionRequestScope
 	)
-	if a.nextActionMatchers != nil {
+	if h.matchers != nil {
 		// Compile errors are already reported at load by projectsetup; a
 		// config that reached here should compile. If it somehow does not,
 		// leave matchers unwired so New fails loudly for a source that
 		// declares a condition, rather than silently keeping every candidate.
-		if l, s, issues := a.nextActionMatchers(cfg, st.Meta); len(issues) == 0 && l != nil {
-			lookup, scope = gatedNextActionMatchers(l, a.Services().Store), s
+		if l, s, issues := h.matchers(cfg, st.Meta); len(issues) == 0 && l != nil {
+			lookup, scope = gatedNextActionMatchers(l, h.store()), s
 			opts = append(opts, nextaction.WithMatchers(lookup))
 		}
 	}
 
 	// The SAME lookup feeds both the engine (which runs each condition in
 	// full) and the candidate func (which pushes the condition's
-	// store-evaluable part into the query) — see nextActionCandidates.
-	eng, err := nextaction.New(cfg, a.userState, a.nextActionCandidates(st.Meta, lookup, page), opts...)
+	// store-evaluable part into the query) — see nextActionHandler.candidates.
+	eng, err := nextaction.New(cfg, h.userState, h.candidates(st.Meta, lookup, page), opts...)
 	if err != nil {
 		return nil, nil, false
 	}

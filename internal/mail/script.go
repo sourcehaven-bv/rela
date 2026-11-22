@@ -75,16 +75,6 @@ type ScriptSender struct {
 // ScriptOption adjusts a ScriptSender.
 type ScriptOption func(*ScriptSender)
 
-// WithScriptStdout routes the script's print() output somewhere. For tests and
-// for `rela mail test`-style operator debugging.
-func WithScriptStdout(w io.Writer) ScriptOption {
-	return func(s *ScriptSender) {
-		if w != nil {
-			s.stdout = w
-		}
-	}
-}
-
 // NewScriptSender returns a sender that delivers by running cfg.Script.
 //
 // Nil: a nil config is rejected. The config is re-validated here rather than

@@ -189,6 +189,27 @@ describe('activeNavId', () => {
     expect(activeNavId(nav, '/')).toBe('href:/')
   })
 
+  it('lights a space home row only on the space home itself', () => {
+    // A run page under a space has no row of its own; the home row of the
+    // space must not claim it.
+    const spaced = toNavGroups(
+      [
+        {
+          items: [
+            { label: 'Overview', href: '/s/portal' },
+            { label: 'Accounts', href: '/s/portal/list/accounts' },
+          ],
+        },
+      ],
+      RouterLink
+    )
+    expect(activeNavId(spaced, '/s/portal/flows/runs/RUN-1')).toBeUndefined()
+    expect(activeNavId(spaced, '/s/portal')).toBe('href:/s/portal')
+    expect(activeNavId(spaced, '/s/portal/list/accounts/ACC-1')).toBe(
+      'href:/s/portal/list/accounts'
+    )
+  })
+
   it('does not match a path that merely shares a prefix string', () => {
     // `/list/features-archive` starts with `/list/features` as TEXT but is a
     // different route, so a bare startsWith would wrongly highlight it.

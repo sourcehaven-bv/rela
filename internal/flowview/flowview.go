@@ -22,20 +22,34 @@ type Flow struct {
 	Version string `json:"version"`
 	// Manual reports an `on: manual` start.
 	Manual bool `json:"manual"`
+	// PerSubject is `per_subject:`: one or many unfinished runs per subject.
+	PerSubject string `json:"per_subject"`
 	// Diagram is the flow as a Mermaid state diagram.
 	Diagram string `json:"diagram"`
 }
 
 // Run is one run as the caller may see it.
+//
+// It is the wire shape of GET /_flows/runs/{id}, flat as clients read it.
+// 20 → 21 fields (BUG-53GP5F5): Title and FailedMessage.
+//
+//plimsoll:max-fields=21
 type Run struct {
-	ID         string `json:"id"`
-	Flow       string `json:"flow"`
-	FlowLabel  string `json:"flow_label"`
-	Version    string `json:"version"`
-	Subject    string `json:"subject,omitempty"`
-	State      string `json:"state"`
-	StateLabel string `json:"state_label"`
-	Status     string `json:"status"`
+	ID string `json:"id"`
+	// Title is the title the run got when it started (BUG-53GP5F5); empty
+	// for a run started before runs had titles.
+	Title     string `json:"title,omitempty"`
+	Flow      string `json:"flow"`
+	FlowLabel string `json:"flow_label"`
+	Version   string `json:"version"`
+	Subject   string `json:"subject,omitempty"`
+	// SubjectTitle is the subject's display title as the caller reads it;
+	// the address when a property the title is made of is hidden from the
+	// caller; empty when the caller cannot read the subject.
+	SubjectTitle string `json:"subject_title,omitempty"`
+	State        string `json:"state"`
+	StateLabel   string `json:"state_label"`
+	Status       string `json:"status"`
 	// Generation counts the run's moves; a step names the one it saw. It
 	// is 0 while the run is in parallel branches: each branch has its own.
 	Generation int64     `json:"generation"`
@@ -53,7 +67,11 @@ type Run struct {
 	// Parallel are the branches of a run that forked (TKT-ZO9IB6V), in
 	// fork order. The run's State is then the join they continue at.
 	Parallel []Place `json:"parallel,omitempty"`
-	Actions  Actions `json:"_actions"`
+	// FailedMessage is the flow's `failed_message:`: what a client tells a
+	// reader who does not manage the run while its job step failed. Empty
+	// when flows.yaml sets none.
+	FailedMessage string  `json:"failed_message,omitempty"`
+	Actions       Actions `json:"_actions"`
 }
 
 // Place is one parallel branch of a run: where it is and why it waits.
@@ -116,6 +134,9 @@ type Branch struct {
 	Holds bool `json:"holds"`
 	// Failed is set when the guard could not be evaluated.
 	Failed bool `json:"failed,omitempty"`
+	// Fields are the properties of the step's writes that the guard
+	// reads: a step form marks them required.
+	Fields []string `json:"fields,omitempty"`
 }
 
 // Pending is a run that has not settled in its state.
@@ -137,6 +158,11 @@ type Job struct {
 	// FailKind is exhausted, permanent, timeout or lost once the job
 	// failed for good.
 	FailKind string `json:"fail_kind,omitempty"`
+	// Error is the error of the last attempt that failed, with the secret
+	// values rela knows of removed. Only a caller who manages the run
+	// receives it: unlike the rest of the view, it can quote what the job
+	// read as the flow's run_as.
+	Error string `json:"error,omitempty"`
 }
 
 // Event is one entry of a run's timeline.
@@ -149,6 +175,9 @@ type Event struct {
 	Via   string `json:"via"`
 	Timer string `json:"timer,omitempty"`
 	By    string `json:"by,omitempty"`
+	// ByTitle is the title of By when By is an entity the caller may
+	// read, as the subject title is; empty otherwise.
+	ByTitle string `json:"by_title,omitempty"`
 	// Branch names the parallel branch that moved; empty for the run.
 	Branch string `json:"branch,omitempty"`
 }
@@ -157,19 +186,27 @@ type Event struct {
 // the check its POST runs.
 type Actions struct {
 	Complete bool `json:"complete"`
-	Cancel   bool `json:"cancel"`
-	Retry    bool `json:"retry"`
+	// Manage reports that the caller holds the flow's manage permission:
+	// a client shows how the run works (roles, guards, timers, branches,
+	// job attempts, the diagram and the timeline) to such a caller and
+	// keeps it from one who only does a step. Every reader
+	// of the run may still read them over the API, except [Job.Error].
+	Manage bool `json:"manage"`
+	Cancel bool `json:"cancel"`
+	Retry  bool `json:"retry"`
 }
 
 // Task is a run that waits for a role the caller holds on its subject.
 type Task struct {
-	Run        string    `json:"run"`
-	Flow       string    `json:"flow"`
-	FlowLabel  string    `json:"flow_label"`
-	State      string    `json:"state"`
-	StateLabel string    `json:"state_label"`
-	Subject    string    `json:"subject"`
-	Started    time.Time `json:"started,omitzero"`
+	Run        string `json:"run"`
+	Flow       string `json:"flow"`
+	FlowLabel  string `json:"flow_label"`
+	State      string `json:"state"`
+	StateLabel string `json:"state_label"`
+	Subject    string `json:"subject"`
+	// SubjectTitle is as in [Run.SubjectTitle].
+	SubjectTitle string    `json:"subject_title,omitempty"`
+	Started      time.Time `json:"started,omitzero"`
 	// Branch names the parallel branch whose step it is; empty for the
 	// run's own step.
 	Branch string `json:"branch,omitempty"`
@@ -183,6 +220,14 @@ type Tasks struct {
 	// Truncated reports that more candidates exist than one call reads; a
 	// flow filter narrows them.
 	Truncated bool `json:"truncated"`
+	// Failed are the unfinished runs whose job step failed for good and
+	// that the caller manages, newest first (BUG-53GP5F5). They wait for a
+	// retry. Not paged, and not counted in Total. Only the HTTP route
+	// fills it; MCP and the next-action source leave it out.
+	Failed []Task `json:"failed,omitempty"`
+	// FailedTruncated reports that more runs sit in a job state than one
+	// call reads, so Failed may miss older ones.
+	FailedTruncated bool `json:"failed_truncated,omitempty"`
 }
 
 // Runs is one page of the run list.
@@ -195,6 +240,15 @@ type Runs struct {
 	Truncated bool `json:"truncated"`
 }
 
+// SubjectRuns is the answer for the runs on one entity.
+type SubjectRuns struct {
+	Runs
+	// Startable names the flows the caller may start by hand on the
+	// entity, as a manual start checks its permission. A client offers
+	// Start only for these. `per_subject:` is not applied.
+	Startable []string `json:"startable"`
+}
+
 // Completed is the answer to a completed step.
 type Completed struct {
 	// Written are the properties the step wrote.
@@ -205,12 +259,25 @@ type Completed struct {
 	State string `json:"state"`
 	// Finished reports that the run ended.
 	Finished bool `json:"finished"`
-	// Problem is set when the properties were written but the run did not
-	// follow cleanly: "guard" (a branch guard could not be evaluated, so
+	// Problem is set when the step was taken but the run did not follow
+	// cleanly: "guard" (a branch guard could not be evaluated, so
 	// the run stays), "moved" (the run moved on meanwhile, for example by
-	// a timer) or "settling" (an output step failed after the move; it is
-	// retried with backoff). Empty means the step went through.
+	// a timer), "settling" (an output step failed after the move; it is
+	// retried with backoff) or "blocked" (no change branch the caller
+	// may take has a guard that holds, so the run stays and waits for
+	// the step again; any properties given were written). Empty means the step went
+	// through.
 	Problem string `json:"problem,omitempty"`
+	// Warnings are the soft findings on the subject after the write, such
+	// as a value that breaks its type's pattern, for the step's written
+	// properties only (BUG-53GP5F5). They never quote a value.
+	Warnings []FieldNote `json:"warnings,omitempty"`
+}
+
+// FieldNote is a message about one property of a step form.
+type FieldNote struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
 }
 
 // The values of [Completed.Problem].
@@ -218,6 +285,7 @@ const (
 	ProblemGuard    = "guard"
 	ProblemMoved    = "moved"
 	ProblemSettling = "settling"
+	ProblemBlocked  = "blocked"
 )
 
 // The kinds of error a flow call answers, for a transport to map onto its

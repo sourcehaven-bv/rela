@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
@@ -19,6 +20,7 @@ const (
 	statusActive       = "active"
 	statusProvisioning = "provisioning"
 	statusSuspended    = "suspended"
+	statusArchived     = "archived"
 )
 
 // Retry-After values, in seconds. A provisioning run takes seconds, so the
@@ -31,19 +33,45 @@ const (
 	retryNeedsOperator = "300"
 )
 
-// tenantStatus is the body of [StatusPath] and of a 202 answer.
+// tenantStatus is the body of [StatusPath] and of a 202 answer. The plan
+// fields are set for an active tenant when the tenant API is on: they are
+// what the control plane stored, shown to the tenant's own users.
 type tenantStatus struct {
-	Status string `json:"status"`
+	Status       string              `json:"status"`
+	ReadOnly     bool                `json:"read_only,omitempty"`
+	Plan         string              `json:"plan,omitempty"`
+	Entitlements tenant.Entitlements `json:"entitlements,omitempty"`
 }
 
 func writeStatus(w http.ResponseWriter, code int, status string) {
+	writeStatusBody(w, code, tenantStatus{Status: status})
+}
+
+func writeStatusBody(w http.ResponseWriter, code int, body tenantStatus) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	if status == statusProvisioning {
+	if body.Status == statusProvisioning {
 		w.Header().Set("Retry-After", retryProvisioning)
 	}
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(tenantStatus{Status: status})
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+// activeStatus is the [StatusPath] body of orgID's active tenant. With the
+// tenant API on it adds the access state and plan from the control row; a
+// failed lookup leaves them out rather than failing the answer.
+func (h *Host) activeStatus(r *http.Request, orgID string) tenantStatus {
+	body := tenantStatus{Status: statusActive}
+	if h.cfg.TenantAPI == nil {
+		return body
+	}
+	rec, err := h.cfg.TenantAPI.Control.Lookup(r.Context(), orgID)
+	if err != nil {
+		slog.WarnContext(r.Context(), "tenant host: plan lookup failed", "org_id", orgID, "error", err)
+		return body
+	}
+	body.ReadOnly, body.Plan, body.Entitlements = rec.ReadOnly, rec.Plan, rec.Entitlements
+	return body
 }
 
 // writeProvisioning answers a request for a tenant being created. A read
@@ -67,7 +95,7 @@ func (h *Host) serveStatus(w http.ResponseWriter, r *http.Request, orgID string)
 	switch {
 	case err == nil:
 		release()
-		writeStatus(w, http.StatusOK, statusActive)
+		writeStatusBody(w, http.StatusOK, h.activeStatus(r, orgID))
 	case h.prov != nil && h.prov.lazy && provisionable(err):
 		h.provisionLazily(w, r, orgID, http.StatusOK)
 	case errors.Is(err, tenant.ErrTenantProvisioning):
@@ -75,6 +103,8 @@ func (h *Host) serveStatus(w http.ResponseWriter, r *http.Request, orgID string)
 			h.prov.noteStuck(r.Context(), orgID)
 		}
 		writeStatus(w, http.StatusOK, statusProvisioning)
+	case errors.Is(err, tenant.ErrTenantArchived):
+		writeStatus(w, http.StatusOK, statusArchived)
 	case errors.Is(err, tenant.ErrTenantInactive):
 		writeStatus(w, http.StatusOK, statusSuspended)
 	default:
@@ -90,13 +120,13 @@ func (h *Host) serveStatus(w http.ResponseWriter, r *http.Request, orgID string)
 func (h *Host) provisionLazily(w http.ResponseWriter, r *http.Request, orgID string, code int) {
 	if _, err := tenant.SchemaFor(orgID); err != nil {
 		slog.InfoContext(r.Context(), "tenant host: org id cannot be a tenant", "error", err)
-		writeError(w, r, http.StatusForbidden, "unknown_tenant", "No tenant for this organization")
+		writeError(w, r, http.StatusForbidden, "unknown_tenant", unknownTenantMessage)
 		return
 	}
 	_, err := h.prov.start(r.Context(), orgID)
 	var held *heldFailureError
 	switch {
-	case errors.Is(err, errProvisionElsewhere):
+	case errors.Is(err, errProvisionElsewhere), errors.Is(err, errProvisionedRecently):
 		writeProvisioning(w, r, code)
 	case errors.Is(err, errProvisionBusy):
 		slog.WarnContext(r.Context(), "tenant host: provisioning at its limit", "org_id", orgID)
@@ -147,6 +177,12 @@ func (h *Host) provisionFromWebhook(w http.ResponseWriter, r *http.Request, clai
 		// Another server is creating the tenant, as for a run that found
 		// it so below.
 		w.WriteHeader(http.StatusAccepted)
+		return
+	case errors.Is(err, errProvisionedRecently):
+		// Not acknowledged: this request read the tenant as absent, and
+		// the retry after the hold reads it again (see successHold).
+		w.Header().Set("Retry-After", strconv.Itoa(int(successHold/time.Second)))
+		http.Error(w, "tenant provisioned moments ago; retry", http.StatusServiceUnavailable)
 		return
 	case err != nil:
 		webhookProvisionFailed(w, err)

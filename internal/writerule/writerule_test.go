@@ -242,6 +242,57 @@ validations:
 	}
 }
 
+// TestCheck_Fields pins BUG-53GP5F5: a violation names the properties its
+// then side reads, or its when side's when the then side reads none, and
+// carries the description without the rule name, so a form can show it at
+// a field.
+func TestCheck_Fields(t *testing.T) {
+	tests := []struct {
+		name  string
+		rule  string
+		props map[string]any
+		want  []string
+	}{
+		{"then side", termijnGrens, map[string]any{"bewaartermijn": 20}, []string{"rechtsgrond"}},
+		{"then side reads two", `
+validations:
+  - name: twee
+    description: Vul beide in.
+    entity_type: verwerking
+    enforce: write
+    then_condition: "entity.rechtsgrond ~= nil and entity.versiestatus == 'goedgekeurd'"
+`, map[string]any{}, []string{"rechtsgrond", "versiestatus"}},
+		{"when side only", `
+validations:
+  - name: nooit
+    entity_type: verwerking
+    enforce: write
+    when_condition: "entity.bewaartermijn > 10"
+    then_condition: "false"
+`, map[string]any{"bewaartermijn": 20}, []string{"bewaartermijn"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := parse(t, tc.rule)
+			set, err := writerule.NewSet(meta)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := set.Check(context.Background(), &entity.Entity{ID: "VW-1", Type: "verwerking",
+				Properties: tc.props})
+			if len(got) != 1 {
+				t.Fatalf("got %v, want one violation", got)
+			}
+			if !reflect.DeepEqual(got[0].Fields, tc.want) {
+				t.Errorf("Fields = %v, want %v", got[0].Fields, tc.want)
+			}
+			if got[0].Description != meta.Validations[0].Description {
+				t.Errorf("Description = %q, want %q", got[0].Description, meta.Validations[0].Description)
+			}
+		})
+	}
+}
+
 func TestNewSet_Refuses(t *testing.T) {
 	tests := []struct {
 		name        string

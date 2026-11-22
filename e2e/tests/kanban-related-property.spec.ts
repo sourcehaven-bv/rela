@@ -38,6 +38,6 @@ test.describe('Kanban related-property card fields', () => {
     const kanban = new KanbanPage(appPage);
     await kanban.navigateToKanban('task-bug-estimate');
 
-    await kanban.expectCardFieldText('Fix the costly bug', /^Fix value:\s*€\s3\.500$/);
+    await kanban.expectCardFieldText('Fix the costly bug', /^Fix value:\s*€\s3\.500,00$/);
   });
 });

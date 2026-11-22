@@ -80,7 +80,7 @@ func doNextActionGet(ctx context.Context, t *testing.T, app *App) *httptest.Resp
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_next_action", http.NoBody).WithContext(ctx)
-	app.handleV1NextAction(rec, req)
+	app.nextActions.handleV1NextAction(rec, req)
 	return rec
 }
 
@@ -114,7 +114,7 @@ func TestNextAction_ConditionPrefiltersReachTheStore(t *testing.T) {
 			push:  []store.PropPredicate{{Property: "assignee", Op: store.PropEqual, Value: "alice", Scalar: true}},
 			match: true,
 		}
-		require.NoError(t, app.SetNextActionMatchers(matcherFuncFor(m)))
+		require.NoError(t, app.nextActions.setMatchers(matcherFuncFor(m)))
 		resp, status := getNextAction(aliceCtx(), t, app)
 		require.Equal(t, http.StatusOK, status)
 		require.NotNil(t, resp.Suggestion)
@@ -128,7 +128,7 @@ func TestNextAction_ConditionPrefiltersReachTheStore(t *testing.T) {
 			push:  []store.PropPredicate{{Property: "assignee", Op: store.PropEqual, Value: "alice", Scalar: true}},
 			match: false,
 		}
-		require.NoError(t, app.SetNextActionMatchers(matcherFuncFor(m)))
+		require.NoError(t, app.nextActions.setMatchers(matcherFuncFor(m)))
 		resp, status := getNextAction(aliceCtx(), t, app)
 		require.Equal(t, http.StatusOK, status)
 		require.Nil(t, resp.Suggestion)
@@ -139,7 +139,7 @@ func TestNextAction_ConditionPrefiltersReachTheStore(t *testing.T) {
 		// candidates, so whichever the stable-random pick lands on, it must
 		// be one of them — proving the empty pre-filter did not narrow.
 		m := &recordingMatcher{match: true}
-		require.NoError(t, app.SetNextActionMatchers(matcherFuncFor(m)))
+		require.NoError(t, app.nextActions.setMatchers(matcherFuncFor(m)))
 		resp, status := getNextAction(aliceCtx(), t, app)
 		require.Equal(t, http.StatusOK, status)
 		require.NotNil(t, resp.Suggestion)
@@ -158,7 +158,7 @@ func TestNextAction_CurrentUserConditionEndToEnd(t *testing.T) {
 	seedAssignedTicket(app, "TKT-alice", "alice")
 	seedAssignedTicket(app, "TKT-bob", "bob")
 	seedAssignedTicket(app, "TKT-watched", "carol", "dave", "alice")
-	require.NoError(t, app.SetNextActionMatchers(appbuild.NextActionMatchers))
+	require.NoError(t, app.nextActions.setMatchers(appbuild.NextActionMatchers))
 
 	t.Run("the composition-root matcher offers the pre-filter capability", func(t *testing.T) {
 		lookup, scope, problems := appbuild.NextActionMatchers(&dataentryconfig.Config{
@@ -215,7 +215,7 @@ func TestNextAction_CurrentUserConditionWithoutIdentitySkipsTheSource(t *testing
 	app := newTestAppV1(t)
 	withTicketAssignment(t, app)
 	seedAssignedTicket(app, "TKT-alice", "alice")
-	require.NoError(t, app.SetNextActionMatchers(appbuild.NextActionMatchers))
+	require.NoError(t, app.nextActions.setMatchers(appbuild.NextActionMatchers))
 	twoBands := []dataentryconfig.NextActionBand{{ID: "b"}, {ID: "c"}}
 	withNextActions(t, app, twoBands, map[string]dataentryconfig.NextActionSource{
 		"mine": {Band: "b", Query: "type:ticket", Condition: "is_current_user(entity.assignee)", Suggest: "mine {id}"},
@@ -257,7 +257,7 @@ func TestNextAction_IdentityConflictIsNamed(t *testing.T) {
 			func(ctx context.Context) (context.Context, error) { return ctx, nextaction.ErrIdentityConflict },
 			nil
 	}
-	require.NoError(t, app.SetNextActionMatchers(conflicting))
+	require.NoError(t, app.nextActions.setMatchers(conflicting))
 	withNextActions(t, app, oneBand, map[string]dataentryconfig.NextActionSource{
 		"s": {Band: "b", Query: "type:ticket", Condition: "x", Suggest: "{id}"},
 	})
@@ -278,7 +278,7 @@ func TestNextAction_HiddenPropertyMakesCurrentUserConditionFalse(t *testing.T) {
 	app := newTestAppV1(t)
 	withTicketAssignment(t, app)
 	seedAssignedTicket(app, "TKT-alice", "alice")
-	require.NoError(t, app.SetNextActionMatchers(appbuild.NextActionMatchers))
+	require.NoError(t, app.nextActions.setMatchers(appbuild.NextActionMatchers))
 	d := mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},

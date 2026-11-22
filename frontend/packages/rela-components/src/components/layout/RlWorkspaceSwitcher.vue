@@ -91,10 +91,16 @@ defineEmits<{ click: [] }>()
   color: var(--rl-color-text);
 }
 
+/*
+ * A long name wraps rather than ending in an ellipsis: the name is how a
+ * reader knows which workspace this is, and the sidebar has no room to show
+ * the rest on hover. A single word longer than the row still breaks.
+ */
 .rl-workspace-switcher__name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  text-align: start;
+  line-height: var(--rl-line-height-tight);
+  overflow-wrap: anywhere;
 }
 
 .rl-workspace-switcher:focus-visible {

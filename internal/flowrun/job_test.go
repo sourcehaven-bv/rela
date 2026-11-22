@@ -1,6 +1,7 @@
 package flowrun_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -38,6 +39,10 @@ func TestCheckState_JobAttempt(t *testing.T) {
 		{"seq too large", flowrun.JobAttempt{Phase: flowrun.JobWaiting, Seq: flowrun.MaxJobSeq + 1}, false},
 		{"too many unsent", flowrun.JobAttempt{Phase: flowrun.JobWaiting,
 			Unsent: flowrun.MaxPendingFailures + 1}, false},
+		{"error at the cap", flowrun.JobAttempt{Phase: flowrun.JobWaiting,
+			Error: strings.Repeat("x", flowrun.MaxJobError)}, true},
+		{"error too long", flowrun.JobAttempt{Phase: flowrun.JobWaiting,
+			Error: strings.Repeat("x", flowrun.MaxJobError+1)}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

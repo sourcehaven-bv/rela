@@ -1,6 +1,6 @@
 // Lua binding for mail.render.
 //
-//	local html, text = mail.render{subject = ..., sections = {...}}
+//	local html, text = mail.render{subject = ..., button = {label = ..., url = ...}, sections = {...}}
 //
 // This is the structured alternative to hand-writing HTML for mail.send.
 // A script describes a message — subject, intro markdown, sections, a footer —
@@ -79,7 +79,7 @@ func baseURLFor(sender MailSender) string {
 // A FREE function returning a closure, rather than a method on Runtime like
 // mail.send. Two reasons, and the first is the load-bearing one:
 //
-//   - Runtime sits at its plimsoll load line (//plimsoll:max-methods=46), and
+//   - Runtime sits at its plimsoll load line (//plimsoll:max-methods), and
 //     the sanctioned fix for a full type is to take methods off it (TKT-N0IKN9),
 //     not to raise the cap. A binding that needs one field is not a reason to
 //     widen the type's surface.
@@ -145,7 +145,33 @@ func parseRenderMessage(opts *lua.LTable) (*mailrender.Message, error) {
 		return nil, err
 	}
 	msg.Sections = sections
+
+	if v := opts.RawGetString("button"); v != lua.LNil {
+		button, btnErr := parseRenderButton(v)
+		if btnErr != nil {
+			return nil, btnErr
+		}
+		msg.Button = &button
+	}
 	return msg, nil
+}
+
+// parseRenderButton converts the optional `button = {label = ..., url = ...}`.
+// The renderer vets the label and URL; this only checks the shape.
+func parseRenderButton(v lua.LValue) (mailrender.Button, error) {
+	tbl, ok := v.(*lua.LTable)
+	if !ok {
+		return mailrender.Button{}, fmt.Errorf("button must be a table, got %s", v.Type().String())
+	}
+	label, err := requiredString(tbl, "label")
+	if err != nil {
+		return mailrender.Button{}, fmt.Errorf("button: %w", err)
+	}
+	url, err := requiredString(tbl, "url")
+	if err != nil {
+		return mailrender.Button{}, fmt.Errorf("button: %w", err)
+	}
+	return mailrender.Button{Label: label, URL: url}, nil
 }
 
 // parseRenderSections converts the `sections` array.

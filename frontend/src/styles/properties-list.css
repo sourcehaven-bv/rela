@@ -88,6 +88,11 @@
   color: var(--rl-color-text);
   line-height: 1.5;
   min-width: 0;
+  /* A long value without spaces (an ID, a URL) breaks inside the value
+   * rather than running past the row; on a phone it scrolled the page
+   * sideways (BUG-JRJDSVJ). min-width: 0 alone lets the box shrink, not
+   * the text. */
+  overflow-wrap: anywhere;
 }
 
 /* Long-form values (multiline text, markdown) always take the full row: a
@@ -109,6 +114,10 @@
 .property-row {
   grid-column: span var(--field-span, 12);
   min-width: 0;
+  /* Inherited by the value inside the library row, which sizes the inline
+   * edit to its content: without it a long unbroken value is as wide as its
+   * text, and on a phone wider than the screen. */
+  overflow-wrap: anywhere;
 }
 
 /* Compact variant for narrow rails (the form side panel). Always one column:

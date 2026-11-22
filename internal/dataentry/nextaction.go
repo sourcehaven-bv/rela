@@ -17,7 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
 
-// nextActionCandidates adapts the app's ACL-gated read paths into the
+// candidates adapts the app's ACL-gated read paths into the
 // [nextaction.CandidateFunc] the engine takes.
 //
 // # Why this lives here and not in internal/nextaction
@@ -39,6 +39,8 @@ import (
 //     does not apply on this path.
 //   - Count  -> GraphCount over the type, for the entity-less first-run case.
 //     Uses the ungated count deliberately: see countCandidates.
+//   - Source flow_tasks -> FlowService.Tasks, the Flow tasks list itself
+//     (see flowTaskSource.candidates).
 //   - Context -> the entity the page is about (see contextCandidates). The
 //     page's source filter already dropped context sources for any other
 //     type, so this only runs on a page about an entity of src.Context.
@@ -64,17 +66,22 @@ import (
 // pushdown is coherent with its own authoritative pass, and a gate can only
 // decline to push, never widen — so the divergence is tolerated rather than
 // threaded through queryService.
-func (a *App) nextActionCandidates(
+func (h *nextActionHandler) candidates(
 	meta *metamodel.Metamodel, lookup nextaction.MatcherFunc, page nextActionPage,
 ) nextaction.CandidateFunc {
 	return func(
 		ctx context.Context, id string, src dataentryconfig.NextActionSource, want nextaction.Want,
 	) ([]nextaction.Candidate, error) {
+		if src.IsFlowTasks() {
+			// The task list reads every face of the run headers and gates
+			// them itself; a flow_tasks source has no source world.
+			return h.flowTasks(ctx, meta, src, want)
+		}
 		// The SOURCE world is resolved per source, before any read, and
 		// REPLACES whatever world the request carried. See
 		// nextActionSourceWorld for why the caller's `?world=` must not reach
 		// a candidate query.
-		ctx, ok, err := nextActionSourceWorld(ctx, a.worlds, effectiveDefaultWorld(a), src)
+		ctx, ok, err := nextActionSourceWorld(ctx, h.worlds(), h.defaultWorld(), src)
 		if err != nil {
 			return nil, err
 		}
@@ -85,11 +92,11 @@ func (a *App) nextActionCandidates(
 		}
 		switch {
 		case src.Count != "":
-			return a.countCandidates(ctx, src.Count, src.CountUngated)
+			return h.countCandidates(ctx, src.Count, src.CountUngated)
 		case src.Query != "":
-			return a.queryCandidates(ctx, src.Query, nextActionPrefilters(ctx, meta, lookup, id, src), want)
+			return h.queryCandidates(ctx, src.Query, nextActionPrefilters(ctx, meta, lookup, id, src), want)
 		case src.Context != "":
-			return a.contextCandidates(ctx, src, page.entityID)
+			return h.contextCandidates(ctx, src, page.entityID)
 		default:
 			return nil, nil
 		}
@@ -246,7 +253,7 @@ func nextActionSourceWorld(
 // Labels come from the entity's display title, which the read gate has
 // already approved — this is why the resolution belongs here and not in the
 // SPA: a client-side fetch would be a second read surface to gate.
-func (a *App) nextActionOptions(meta *metamodel.Metamodel) nextaction.OptionFunc {
+func (h *nextActionHandler) options(meta *metamodel.Metamodel) nextaction.OptionFunc {
 	return func(
 		ctx context.Context, src dataentryconfig.NextActionSource, query string, limit int,
 	) ([]nextaction.PickOption, error) {
@@ -254,14 +261,14 @@ func (a *App) nextActionOptions(meta *metamodel.Metamodel) nextaction.OptionFunc
 		// candidates. An option list resolved in a different world than the
 		// suggestion it belongs to would offer the user entities that do not
 		// exist from where the suggestion was computed.
-		ctx, ok, err := nextActionSourceWorld(ctx, a.worlds, effectiveDefaultWorld(a), src)
+		ctx, ok, err := nextActionSourceWorld(ctx, h.worlds(), h.defaultWorld(), src)
 		if err != nil {
 			return nil, err
 		}
 		if !ok {
 			return nil, nil
 		}
-		entities, err := a.queries.executeQueryWith(ctx, query, queryOptions{firstN: limit, limit: limit})
+		entities, err := h.queries().executeQueryWith(ctx, query, queryOptions{firstN: limit, limit: limit})
 		if err != nil {
 			return nil, fmt.Errorf("next-action pick_one query %q: %w", query, err)
 		}
@@ -269,13 +276,14 @@ func (a *App) nextActionOptions(meta *metamodel.Metamodel) nextaction.OptionFunc
 			entities = entities[:limit]
 		}
 		out := make([]nextaction.PickOption, 0, len(entities))
-		ctx = primeVerdicts(ctx, a.fieldResolver, entities)
+		ctx = primeVerdicts(ctx, h.fields(), entities)
+		aff := h.affordances()
 		for _, e := range entities {
 			// Redact BEFORE safeDisplayTitle: its guard is presence-based
 			// ("is the display property missing?"), so against an unredacted
 			// entity every property is present and it happily returns the
 			// hidden value.
-			red := a.redactedForSuggestion(ctx, e)
+			red := redactedForSuggestion(ctx, aff, e)
 			out = append(out, nextaction.PickOption{
 				EntityID: e.ID,
 				// safeDisplayTitle, not the raw DisplayTitle: a redacted
@@ -308,23 +316,25 @@ func (a *App) nextActionOptions(meta *metamodel.Metamodel) nextaction.OptionFunc
 // suggestion on screen (want.Keep) can lie past that prefix when the match set
 // changed since it was picked. When the read was cut short and missed it,
 // the source is read whole, as before, so the engine can keep it on screen.
-func (a *App) queryCandidates(
+func (h *nextActionHandler) queryCandidates(
 	ctx context.Context, query string, prefilters []store.PropPredicate, want nextaction.Want,
 ) ([]nextaction.Candidate, error) {
-	entities, cut, err := a.queries.executeQueryCut(ctx, query,
+	queries := h.queries()
+	entities, cut, err := queries.executeQueryCut(ctx, query,
 		queryOptions{prefilters: prefilters, firstN: want.First})
 	if err == nil && cut && want.Keep != "" &&
 		!slices.ContainsFunc(entities, func(e *entityPkg.Entity) bool { return e.ID == want.Keep }) {
 
-		entities, err = a.queries.executeQueryWith(ctx, query, queryOptions{prefilters: prefilters})
+		entities, err = queries.executeQueryWith(ctx, query, queryOptions{prefilters: prefilters})
 	}
 	if err != nil {
 		return nil, fmt.Errorf("next-action query %q: %w", query, err)
 	}
 	out := make([]nextaction.Candidate, 0, len(entities))
-	ctx = primeVerdicts(ctx, a.fieldResolver, entities)
+	ctx = primeVerdicts(ctx, h.fields(), entities)
+	aff := h.affordances()
 	for _, e := range entities {
-		out = append(out, nextaction.Candidate{Entity: a.redactedForSuggestion(ctx, e)})
+		out = append(out, nextaction.Candidate{Entity: redactedForSuggestion(ctx, aff, e)})
 	}
 	return out, nil
 }
@@ -334,10 +344,24 @@ func (a *App) queryCandidates(
 //
 // A COPY, never a mutation: the entity comes from the store's iterator and may
 // be shared with a cache, so stripping in place would redact it for everyone.
-func (a *App) redactedForSuggestion(ctx context.Context, e *entityPkg.Entity) *entityPkg.Entity {
+//
+// A package function taking the one collaborator it needs. affordanceService
+// is at its plimsoll method cap, and the callers are not all next-action code
+// (view conditions, export and status pages use it through
+// [suggestionRedactor]).
+func redactedForSuggestion(ctx context.Context, aff affordanceService, e *entityPkg.Entity) *entityPkg.Entity {
 	clone := *e
-	clone.Properties = a.affordances.copyVisibleProperties(ctx, e)
+	clone.Properties = aff.copyVisibleProperties(ctx, e)
 	return &clone
+}
+
+// suggestionRedactor binds [redactedForSuggestion] to aff, in the shape
+// [applyViewCondition] takes. aff is copied when this is called, so a caller
+// that must see a later reassignment of App.affordances calls this per use.
+func suggestionRedactor(aff affordanceService) func(context.Context, *entityPkg.Entity) *entityPkg.Entity {
+	return func(ctx context.Context, e *entityPkg.Entity) *entityPkg.Entity {
+		return redactedForSuggestion(ctx, aff, e)
+	}
 }
 
 // countCandidates answers a `<entity_type> == 0` source: it yields exactly one
@@ -356,7 +380,7 @@ func (a *App) redactedForSuggestion(ctx context.Context, e *entityPkg.Entity) *e
 // being repeatedly offered "add a client": mild, visible, and fixable in
 // config. The unsafe default's failure mode is a silent disclosure nobody
 // notices. Prefer the loud, fixable error.
-func (a *App) countCandidates(
+func (h *nextActionHandler) countCandidates(
 	ctx context.Context, count string, ungated bool,
 ) ([]nextaction.Candidate, error) {
 	entityType, ok := parseCountZero(count)
@@ -366,7 +390,7 @@ func (a *App) countCandidates(
 		return nil, nil
 	}
 
-	empty, err := a.countIsZero(ctx, entityType, ungated)
+	empty, err := h.countIsZero(ctx, entityType, ungated)
 	if err != nil {
 		return nil, err
 	}
@@ -378,11 +402,11 @@ func (a *App) countCandidates(
 }
 
 // countIsZero reports whether the caller sees no entities of entityType.
-func (a *App) countIsZero(ctx context.Context, entityType string, ungated bool) (bool, error) {
+func (h *nextActionHandler) countIsZero(ctx context.Context, entityType string, ungated bool) (bool, error) {
 	if ungated {
 		// Every face: the operator question is "does anything exist?", and a
 		// type stored only at named faces must not look empty.
-		_, total, err := a.Services().Store.GraphCount(ctx, store.GraphQuery{
+		_, total, err := h.store().GraphCount(ctx, store.GraphQuery{
 			EntityType: entityType, Faces: store.AllFaces(),
 		})
 		if err != nil {
@@ -405,7 +429,7 @@ func (a *App) countIsZero(ctx context.Context, entityType string, ungated bool) 
 	// blank list with no explanation. This is why the non-SPA surfaces
 	// (analyze_*, validate, the tracer) deliberately do NOT resolve scopes —
 	// they answer what is true, and each has a test pinning that.
-	entities, err := a.scopedSortedEntities(ctx, entityType, nil)
+	entities, err := h.scoped(ctx, entityType, nil)
 	if err != nil {
 		return false, fmt.Errorf("next-action count for %q: %w", entityType, err)
 	}
@@ -423,39 +447,54 @@ func parseCountZero(count string) (string, bool) {
 	return fields[0], true
 }
 
-// SetUserState replaces the next-action per-user state backend.
+// SetNextActions installs the next-action per-user state backend and the
+// predicate compiler backing a source's `condition:`.
 //
-// Defaults to an in-memory store (see NewApp), which is correct for a
-// single-process deployment: this state is disposable, so losing it on
-// restart costs a user one repeated suggestion. A deployment that wants
-// snoozes to survive a restart, or to be shared across processes, injects a
-// persistent backend here.
+// The state store has no default: until this is called the endpoints report
+// "not configured". This state is disposable, so an in-memory backend is
+// correct for a single-process deployment, where losing it on restart costs a
+// user one repeated suggestion. A deployment that wants snoozes to survive a
+// restart, or to be shared across processes, injects a persistent backend.
 //
-// Rejects nil rather than quietly disabling the feature: a silently absent
-// store would make the app stop honoring snoozes and mutes, which users
-// experience as the system ignoring them — the deferred-failure symptom the
-// project's constructor rule exists to prevent.
-func (a *App) SetUserState(s userstate.Store) error {
-	if s == nil {
-		return errors.New("dataentry.SetUserState: store must be non-nil")
+// The compiler arrives here rather than through NewApp because it lives above
+// this package, so the composition root supplies it rather than this package
+// importing it.
+//
+// Nil: rejected for both, rather than quietly disabling the feature. A
+// silently absent store would make the app stop honoring snoozes and mutes,
+// which users experience as the system ignoring them. A silently absent
+// compiler would leave every condition unevaluated, showing suggestions for
+// entities the operator explicitly excluded. Both are the deferred-failure
+// symptom the project's constructor rule exists to prevent.
+func (a *App) SetNextActions(state userstate.Store, matchers NextActionMatcherFunc) error {
+	// Both are checked before either is installed, so a refused call leaves
+	// the handler as it was.
+	if state == nil || matchers == nil {
+		return errors.New("dataentry.SetNextActions: state store and matcher func must be non-nil")
 	}
-	a.userState = s
+	if err := a.nextActions.setUserState(state); err != nil {
+		return err
+	}
+	return a.nextActions.setMatchers(matchers)
+}
+
+// setUserState replaces the per-user state backend. Nil: rejected — see
+// [App.SetNextActions].
+func (h *nextActionHandler) setUserState(s userstate.Store) error {
+	if s == nil {
+		return errors.New("dataentry.SetNextActions: state store must be non-nil")
+	}
+	h.userState = s
 	return nil
 }
 
-// SetNextActionMatchers injects the predicate compiler backing a source's
-// `condition:`.
-//
-// Separate from NewApp for the same reason as [App.SetUserState]: the compiler
-// lives above this package, so the composition root supplies it rather than
-// this package importing it. Rejects nil for the same reason too — a silently
-// absent compiler would leave every condition unevaluated, showing suggestions
-// for entities the operator explicitly excluded.
-func (a *App) SetNextActionMatchers(fn NextActionMatcherFunc) error {
+// setMatchers replaces the condition compiler. Nil: rejected — see
+// [App.SetNextActions].
+func (h *nextActionHandler) setMatchers(fn NextActionMatcherFunc) error {
 	if fn == nil {
-		return errors.New("dataentry.SetNextActionMatchers: func must be non-nil")
+		return errors.New("dataentry.SetNextActions: matcher func must be non-nil")
 	}
-	a.nextActionMatchers = fn
+	h.matchers = fn
 	return nil
 }
 

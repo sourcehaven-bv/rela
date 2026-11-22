@@ -32,6 +32,8 @@ export interface Flow {
   version: string
   /** The flow has an `on: manual` start. */
   manual: boolean
+  /** `per_subject:`: how many unfinished runs one subject may carry. */
+  per_subject: 'one' | 'many'
   /** The flow as a Mermaid state diagram. */
   diagram: string
 }
@@ -55,6 +57,8 @@ export interface FlowBranch {
   holds: boolean
   /** The guard could not be evaluated. */
   failed?: boolean
+  /** The step's written properties the guard reads, in `writes` order. */
+  fields?: string[]
 }
 
 /** Where a state's job step is (TKT-PY2G11W). */
@@ -65,6 +69,11 @@ export interface FlowJob {
   /** The budget: every execution, the first included. */
   attempts: number
   fail_kind?: 'exhausted' | 'permanent' | 'timeout' | 'lost'
+  /**
+   * The error of the last failed attempt, one line with secrets redacted.
+   * Only a caller who manages the run receives it.
+   */
+  error?: string
 }
 
 export interface FlowPending {
@@ -101,15 +110,22 @@ export interface FlowEvent {
   /** The state's label, or its name when the flow lost the state. */
   label?: string
   from?: string
-  via: 'start' | 'done' | 'change' | 'timer' | 'join' | string
+  via: 'start' | 'done' | 'change' | 'timer' | 'join' | 'cancel' | 'failed' | string
   timer?: string
   by?: string
+  /** The title of `by` when it is an entity the reader may see. */
+  by_title?: string
   /** The parallel branch the move was in. */
   branch?: string
 }
 
 export interface FlowActions {
   complete: boolean
+  /**
+   * The caller holds the flow's manage permission. The card shows how the
+   * run works (guards, roles, diagram, timeline) only to such a caller.
+   */
+  manage?: boolean
   cancel: boolean
   retry: boolean
 }
@@ -137,11 +153,15 @@ export interface FlowPlace {
 /** One run as the caller may see it. */
 export interface FlowRun {
   id: string
+  /** The title the run got when it started; absent for an older run. */
+  title?: string
   flow: string
   flow_label: string
   version: string
   /** The subject address; absent when the caller cannot read the subject. */
   subject?: string
+  /** The subject's display title; absent when the caller cannot read the subject. */
+  subject_title?: string
   state: string
   state_label: string
   status: FlowRunStatus | string
@@ -159,6 +179,11 @@ export interface FlowRun {
   diagram?: string
   /** Set while the run is in parallel branches; `state` is then their join. */
   parallel?: FlowPlace[]
+  /**
+   * The flow's `failed_message:`, for a reader who does not manage the run
+   * while a job step failed. Absent when flows.yaml sets none.
+   */
+  failed_message?: string
   _actions: FlowActions
 }
 
@@ -170,6 +195,8 @@ export interface FlowTask {
   state: string
   state_label: string
   subject: string
+  /** The subject's display title, as in {@link FlowRun.subject_title}. */
+  subject_title?: string
   started?: string
   /** The parallel branch whose step waits. */
   branch?: string
@@ -177,6 +204,13 @@ export interface FlowTask {
 
 export interface FlowTaskPage {
   tasks: FlowTask[]
+  /**
+   * Runs whose job step failed, for a caller who manages them. Not paged
+   * and not counted in `total`.
+   */
+  failed?: FlowTask[]
+  /** More runs sit in a job state than one call reads; `failed` may miss older ones. */
+  failed_truncated?: boolean
   /** The tasks found, before paging. */
   total: number
   /** More candidates exist than one call reads; a flow filter narrows them. */
@@ -191,6 +225,16 @@ export interface FlowRunPage {
   truncated: boolean
 }
 
+/** The runs on one entity and the flows the caller may start on it. */
+export interface SubjectRuns {
+  runs: FlowRun[]
+  /**
+   * The flows the caller may start by hand on the entity: the caller holds
+   * the start's `permission:` for it. `per_subject:` is not applied.
+   */
+  startable: string[]
+}
+
 /** The answer to a completed step. */
 export interface FlowCompleted {
   /** The properties the step wrote. */
@@ -202,11 +246,23 @@ export interface FlowCompleted {
   /** The run ended. */
   finished: boolean
   /**
-   * Set when the values were saved but the run did not follow cleanly:
-   * a guard could not be evaluated, the run moved on meanwhile, or an
-   * output step failed after the move and is retried.
+   * Set when the step was taken but the run did not follow cleanly:
+   * a guard could not be evaluated, the run moved on meanwhile, an
+   * output step failed after the move and is retried, or (`blocked`) no
+   * condition of the next step holds, so the run stays.
    */
-  problem?: 'guard' | 'moved' | 'settling'
+  problem?: 'guard' | 'moved' | 'settling' | 'blocked'
+  /**
+   * Soft findings on the written values, such as a failed pattern, for
+   * the step's written properties only.
+   */
+  warnings?: FlowFieldNote[]
+}
+
+/** A message about one field of a step form. */
+export interface FlowFieldNote {
+  field: string
+  message: string
 }
 
 export interface FlowRunQuery {
@@ -259,10 +315,19 @@ export async function listFlowRuns(
   )
 }
 
-/** GET every run on one entity the caller can see, newest first. */
-export async function listSubjectRuns(subject: string, signal?: AbortSignal): Promise<FlowRun[]> {
-  const res = await api.get<FlowRunPage>('/_flows/runs', { subject }, signal)
-  return res.runs ?? []
+/**
+ * GET every run on one entity the caller can see, newest first, and the
+ * flows the caller may start on it. `space` is the space the entity page is
+ * open in: where `entity_panels.flow_runs` hides the panel there, the answer
+ * is empty.
+ */
+export async function listSubjectRuns(
+  subject: string,
+  signal?: AbortSignal,
+  space?: string
+): Promise<SubjectRuns> {
+  const res = await api.get<Partial<SubjectRuns>>('/_flows/runs', { subject, space }, signal)
+  return { runs: res.runs ?? [], startable: res.startable ?? [] }
 }
 
 /** GET one run, with why it waits, its timeline and `_actions`. */
@@ -294,7 +359,7 @@ export async function cancelFlowRun(id: string): Promise<void> {
   await api.post<void>(`${runPath(id)}/_cancel`, {})
 }
 
-/** POST a retry of the pending outputs of a run. */
+/** POST a retry of the pending outputs or the failed job of a run. */
 export async function retryFlowRun(id: string): Promise<void> {
   await api.post<void>(`${runPath(id)}/_retry`, {})
 }

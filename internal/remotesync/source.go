@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/reconclient"
 	"github.com/Sourcehaven-BV/rela/internal/reconclient/httpremote"
@@ -89,7 +91,7 @@ func plurals(ctx context.Context, g Getter, m *Mapping) (map[string]string, erro
 		return nil, fmt.Errorf("%w: the schema is not valid JSON", errProtocol)
 	}
 	out := make(map[string]string, len(m.Entities))
-	for _, src := range sortedKeys(m.Entities) {
+	for _, src := range slices.Sorted(maps.Keys(m.Entities)) {
 		t, ok := schema.Entities[src]
 		switch {
 		case !ok:

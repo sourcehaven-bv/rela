@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/records"
@@ -84,6 +85,13 @@ func (o *owners) Writable(_ context.Context, id string) (records.Owner, error) {
 
 func newService(t *testing.T) (*records.Service, *owners) {
 	t.Helper()
+	s, o, _ := newAuditedService(t)
+	return s, o
+}
+
+// newAuditedService is [newService] that also returns the audit sink.
+func newAuditedService(t *testing.T) (*records.Service, *owners, *audit.Memory) {
+	t.Helper()
 	meta, err := metamodel.Parse([]byte(schema))
 	require.NoError(t, err)
 	st, err := filerecords.New(storage.NewMemFS(), "/records", filelock.ProcessPrivate{})
@@ -95,9 +103,11 @@ func newService(t *testing.T) (*records.Service, *owners) {
 		hidden:   map[string]bool{},
 		readOnly: map[string]bool{},
 	}
-	s, err := records.NewService(records.Deps{Store: st, Owners: o, Meta: meta, Now: func() time.Time { return t0 }})
+	sink := audit.NewMemory()
+	s, err := records.NewService(records.Deps{Store: st, Owners: o, Meta: meta, Audit: sink,
+		Now: func() time.Time { return t0 }})
 	require.NoError(t, err)
-	return s, o
+	return s, o, sink
 }
 
 func TestNewServiceRejectsNil(t *testing.T) {

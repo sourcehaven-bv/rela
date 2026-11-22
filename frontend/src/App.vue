@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { navigationPending } from '@/router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { provideMessages } from 'rela-components/composables/useMessages'
 import { localeMessages } from 'rela-components/composables/localeMessages'
-import { resolvedLanguage, setProjectLanguage } from '@/i18n'
+import { resolvedLanguage } from '@/i18n'
 import { getErrorMessage } from '@/api'
 import { tenantProvisioning } from '@/api/tenantProvisioning'
+import { REFUSAL, accessRefusal, loginUrl, refusalDetail } from '@/api/workspaceAccess'
+import { loadWorkspaceReadOnly, workspaceReadOnly } from '@/api/workspaceReadOnly'
 import {
   useKeyboardShortcuts,
   useShellCommands,
@@ -20,9 +22,16 @@ import {
 import { useConfirmHost } from '@/composables/useConfirm'
 import { useDetailPanelOutlet } from '@/composables/useDetailPanel'
 import { usePageHeaderOutlet } from '@/composables/usePageHeader'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
+import { useShellAppConfig } from '@/composables/useShellAppConfig'
+import { bootMeta } from '@/i18n/bootMeta'
 import { usePresentationOutlet } from '@/composables/usePresentation'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { unknownWorldQuery } from '@/composables/useWorld'
+import { isPageHidden } from '@/composables/visibleRefetch'
+import AsOfBanner from '@/components/common/AsOfBanner.vue'
+import ReadOnlyBanner from '@/components/common/ReadOnlyBanner.vue'
+import WorkspaceAccessScreen from '@/components/common/WorkspaceAccessScreen.vue'
 import ActivityBar from '@/components/common/ActivityBar.vue'
 import RlAppShell from 'rela-components/components/layout/RlAppShell.vue'
 import NextActionCard from '@/components/NextActionCard.vue'
@@ -87,14 +96,22 @@ const showHamburger = computed(
 
 const schemaStore = useSchemaStore()
 
-// The library's own strings follow the interface language (TKT-ZL1QAO),
-// and the project default from app.language feeds the resolution.
+/*
+ * The title in the hamburger bar on a phone. A list or a dashboard puts its
+ * own title beside the toggle; an entity page has its heading below the bar,
+ * so the bar names the kind of page instead: the entity type.
+ */
+const menuBarTitle = computed(() => {
+  if (route.name !== 'entity') return ''
+  const type = String(route.params.type ?? '')
+  return type ? schemaStore.entityTypes.get(type)?.label || type : ''
+})
+// Also feeds app.language to the language resolution.
+const { appName } = useShellAppConfig(schemaStore)
+useDocumentTitle(appName)
+
+// The library's own strings follow the interface language (TKT-ZL1QAO).
 provideMessages(localeMessages(() => resolvedLanguage.value.language))
-watch(
-  () => schemaStore.app?.language,
-  (language) => setProjectLanguage(language),
-  { immediate: true }
-)
 const uiStore = useUIStore()
 // The Configure space has its own sidebar and no space create menu.
 const configuring = computed(() => isConfigurePath(route.path))
@@ -167,6 +184,22 @@ onMounted(async () => {
   }
 })
 
+// Whether the workspace is read-only, once the app is up (also after the boot
+// screen's Retry) and again whenever the tab comes back into view, so a state
+// an operator changed meanwhile shows without a reload.
+watch(
+  () => schemaStore.loaded,
+  (loaded) => {
+    if (loaded) void loadWorkspaceReadOnly()
+  },
+  { immediate: true }
+)
+function refreshReadOnlyOnReturn() {
+  if (!isPageHidden() && schemaStore.loaded) void loadWorkspaceReadOnly()
+}
+onMounted(() => document.addEventListener('visibilitychange', refreshReadOnlyOnReturn))
+onBeforeUnmount(() => document.removeEventListener('visibilitychange', refreshReadOnlyOnReturn))
+
 // A `?world=` naming no served world is a 400 on every API route, so drop
 // it and land in the default world. See unknownWorldQuery.
 const router = useRouter()
@@ -235,8 +268,27 @@ watch(
     full-viewport wrapper: RlStatusRegion grows to fill its parent, and at boot
     there is no parent pane for it to fill.
   -->
+  <!--
+    The workspace is suspended, archived or unknown, or the server cannot tell
+    who the user is: nothing below can work, so this replaces the app. An
+    ended session is a dialog over the app instead; see the end of the file.
+  -->
+  <WorkspaceAccessScreen
+    v-if="accessRefusal && accessRefusal !== REFUSAL.sessionEnded"
+    :refusal="accessRefusal"
+    :detail="refusalDetail"
+    :app-name="appName()"
+    :logo="bootMeta('rela-app-logo')"
+    :sign-out-url="bootMeta('rela-sign-out')"
+    :account-url="bootMeta('rela-account-url')"
+    :contact="bootMeta('rela-contact')"
+    :contact-email="bootMeta('rela-contact-email')"
+    :suspended-text="bootMeta('rela-suspended-text')"
+    :archived-text="bootMeta('rela-archived-text')"
+  />
+
   <!-- A multi-tenant server is still creating this organization's tenant. -->
-  <div v-if="tenantProvisioning !== 'idle'" class="boot-screen">
+  <div v-else-if="tenantProvisioning !== 'idle'" class="boot-screen">
     <RlStatusRegion :tone="tenantProvisioning === 'failed' ? 'error' : undefined">
       {{ tenantProvisioning === 'failed' ? t('shell.provisioningFailed') : t('shell.provisioning') }}
     </RlStatusRegion>
@@ -322,6 +374,13 @@ watch(
         </RlPageHeader>
       </template>
 
+      <!-- Full width below the header, over the content and the panel both:
+           in the content pane a sticky table header covered it, and an open
+           panel squeezed it. -->
+      <template v-if="workspaceReadOnly && !presentation.presenting.value" #banner>
+        <ReadOnlyBanner />
+      </template>
+
       <template v-if="detailPanel.content.value" #panel>
         <component
           :is="detailPanel.content.value.component"
@@ -331,21 +390,36 @@ watch(
       <!--
         The hamburger sits inside the shell's main pane rather than fixed to the
         viewport: the shell owns the drawer, so the trigger belongs to the pane
-        the drawer covers.
+        the drawer covers. It sits in a bar of its own, so content scrolls
+        under the bar rather than past a floating button. Not `raised`: the
+        bar or the page's topbar is the surface, and a raised border and
+        shadow drew a box around the button that crossed the topbar's rule.
       -->
-      <RlIconButton
+      <div
         v-if="showHamburger && !navOpen && !presentation.presenting.value"
-        class="mobile-menu-btn"
-        icon="menu"
-        :label="t('shell.toggleNav')"
-        :aria-expanded="navOpen"
-        aria-controls="main-sidebar"
-        @click="navOpen = !navOpen"
-      />
+        class="mobile-menu-bar"
+      >
+        <RlIconButton
+          class="mobile-menu-btn"
+          icon="menu"
+          :label="t('shell.toggleNav')"
+          :aria-expanded="navOpen"
+          aria-controls="main-sidebar"
+          @click="navOpen = !navOpen"
+        />
+        <span
+          v-if="menuBarTitle"
+          class="mobile-menu-bar__title"
+          data-testid="mobile-menu-bar-title"
+        >
+          {{ menuBarTitle }}
+        </span>
+      </div>
       <!-- One suggestion slot for every page, above the routed view. The
            server applies the operator's placement for the page, so the card
            is always mounted and simply renders nothing where none is owed. -->
       <NextActionCard v-if="!presentation.presenting.value" />
+      <AsOfBanner v-if="!presentation.presenting.value" />
       <RouterView />
       <RlToastHost :toasts="toasts" @dismiss="dismissToast" />
       <ScriptErrorDialog />
@@ -378,6 +452,13 @@ watch(
     :danger="confirmState.danger"
     @confirm="handleConfirm"
     @cancel="onCancelEvent"
+  />
+
+  <!-- Over the app, so a half-filled form keeps its input until the user signs in again. -->
+  <WorkspaceAccessScreen
+    v-if="accessRefusal === REFUSAL.sessionEnded"
+    refusal="session_ended"
+    :login-url="loginUrl"
   />
 </template>
 
@@ -425,7 +506,10 @@ body {
      title above it. The token already carries its own breakpoints and the
      iOS safe-area inset. */
   --page-padding-x: var(--rl-page-gutter-left);
-  padding: var(--rl-space-5) var(--rl-page-gutter-right) var(--rl-space-5) var(--rl-page-gutter-left);
+  /* The top padding as a variable, so the hamburger bar can pull itself up
+     over it and stick at the pane's edge (see .mobile-menu-bar). */
+  --pane-padding-top: var(--rl-space-5);
+  padding: var(--pane-padding-top) var(--rl-page-gutter-right) var(--rl-space-5) var(--rl-page-gutter-left);
   padding-bottom: 48px; /* Account for status bar */
   /* The pane is the scroll container, so PageLayout's sticky bars stick
      against it rather than against the document. */
@@ -469,33 +553,72 @@ body {
 /* Placement only: RlIconButton draws the control. The shell owns the drawer,
    so its trigger belongs to the pane the drawer covers rather than to the
    viewport. This is the fallback for views that do not yet fill the header
-   slot — RlPageHeader renders its own toggle for those that do.
+   slot; RlPageHeader renders its own toggle for those that do.
 
-   Three classes so the hiding outranks RlIconButton's scoped
-   `.rl-icon-button[data-v]` `display: flex` on specificity alone. A bare
-   class lost to it, which left an invisible full-width button over the top
-   of every desktop page; two classes would tie and depend on bundle order. */
-.app-layout .mobile-menu-btn.rl-icon-button {
+   The button sits in a full-width bar with the page's own background. A
+   floating button let content scroll past under it: headings and table
+   headers showed around the button and under its corner. */
+.app-layout .mobile-menu-bar {
   /* The shell sets this token whenever its sidebar is off-canvas: below
      768px, and up to 1079px while a detail panel is open. Following it
-     keeps this button in step with the shell's own breakpoints. */
+     keeps the bar in step with the shell's own breakpoints. */
   display: var(--rl-nav-toggle-display, none);
+  flex: none;
+  /* Sticky, not fixed: the bar scrolls with its pane and stays put as the
+     content moves under it. Fixed would pin it to the viewport, where it
+     would sit over the drawer the shell slides in.
+
+     A sticky box stops at the pane's padding edge, not its border, so the
+     bar is pulled up over the top padding (margin) and sticks there (top).
+     Without both, content would show through the padding above the bar. */
+  position: sticky;
+  top: calc(0px - var(--pane-padding-top, 0px));
+  z-index: 101;
+  /* Full width: out to the pane's edges on both sides. The button keeps
+     its 8px inset from the left edge. No safe-area term: the shell pads
+     the frame, so the pane already starts below the notch. */
+  margin: calc(0px - var(--pane-padding-top, 0px)) calc(0px - var(--rl-page-gutter-right, 16px))
+    var(--rl-space-2, 8px) calc(0px - var(--page-padding-x, 16px));
+  padding: 8px;
+  background: var(--rl-color-bg);
+}
+
+.app-layout .mobile-menu-bar {
   align-items: center;
-  justify-content: center;
-  align-self: flex-start;
-  flex: 0 0 44px;
+  gap: var(--rl-space-2, 8px);
+}
+
+/* Like a list's title in its header band. */
+.app-layout .mobile-menu-bar__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--rl-font-size-lg);
+  font-weight: 600;
+  color: var(--rl-color-text);
+}
+
+/* A 44px touch target. Two classes so the size outranks RlIconButton's own
+   scoped rule on specificity alone.
+
+   The button is flat, in the page's background: no border, no shadow. Where
+   the bar is see-through (below) it still covers what scrolls under it. The
+   hover fill applies only where a pointer can hover: a phone keeps :hover
+   after a tap, which left a grey box around the button once the drawer
+   closed. Three classes, so this outranks the library's scoped :hover. */
+.app-layout .mobile-menu-bar .mobile-menu-btn.rl-icon-button {
   width: 44px;
   height: 44px;
-  /* Sticky, not fixed: the button scrolls with its pane's padding box and
-     stays put as the content moves under it. Fixed would pin it to the
-     viewport, where it would sit over the drawer the shell slides in. */
-  position: sticky;
-  float: left;
-  /* No safe-area term: the shell pads the frame, so this button's containing
-     block already starts below the notch. */
-  top: 8px;
-  margin-left: calc(0px - var(--page-padding-x, 16px) + 8px);
-  z-index: 101;
+  align-items: center;
+  justify-content: center;
+  background: var(--rl-color-bg);
+}
+
+@media (hover: hover) {
+  .app-layout .mobile-menu-bar .mobile-menu-btn.rl-icon-button:hover {
+    background: var(--rl-color-bg-hover);
+  }
 }
 
 @media (max-width: 768px) {
@@ -511,21 +634,61 @@ body {
        Space for the hamburger button (only present on top-level screens).
        On detail/edit screens the hamburger is hidden, but we still need
        breathing room, so keep the same top padding regardless. */
-    padding-top: 60px;
+    --pane-padding-top: 60px;
     /* Extra bottom padding so the last card's rounded corners aren't flush
        against the screen edge. */
     padding-bottom: 24px;
+  }
+
+  /* A screen that fills the shell's header slot (a list, a board) has the
+     drawer toggle in that header, and App.vue renders no hamburger bar.
+     The 60px reservation would be an empty band under the header, so the
+     pane keeps a small gap instead. */
+  .app-layout .rl-app-shell__frame:has(> .rl-app-shell__header) .rl-app-shell__main {
+    --pane-padding-top: var(--rl-space-3);
   }
 
   /* A sticky topbar has its own safe-area and top spacing. Keep the shell's
      60px reservation only on pages without one; otherwise the sticky bar
      starts a full header-slot below the viewport edge. */
   .app-layout .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky) {
-    padding-top: 0;
+    --pane-padding-top: 0px;
   }
 
-  .app-layout .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky) > .mobile-menu-btn {
-    margin-bottom: -44px;
+  /* A sticky topbar leaves 64px on its left for the button, so there the bar
+     is see-through and lies over the topbar instead of taking a row. Only
+     the button takes taps. */
+  .app-layout .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky) > .mobile-menu-bar {
+    /* 2px rather than 8px at the top: the button then sits inside the
+       topbar, level with its title, instead of hanging over the topbar's
+       bottom rule. The negative margin is the bar's own height (2px + 44px +
+       8px), so the topbar starts at the top of the pane. */
+    padding-top: 2px;
+    margin-bottom: -54px;
+    background: none;
+    pointer-events: none;
+  }
+
+  .app-layout .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky) > .mobile-menu-bar > * {
+    pointer-events: auto;
+  }
+
+  /* The topbar under the see-through bar has its own title. */
+  .app-layout
+    .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky)
+    > .mobile-menu-bar
+    .mobile-menu-bar__title {
+    display: none;
+  }
+
+  /* Except when a next-action card or the as-of banner comes first: they
+     sit above the topbar, so the bar keeps its row and they start below
+     the button rather than under it. */
+  .app-layout
+    .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky):has(> .na, > .as-of-banner)
+    > .mobile-menu-bar {
+    margin-bottom: var(--rl-space-2, 8px);
+    padding-top: 8px;
   }
 
   /* Hide keyboard shortcut hints on mobile: a touch device has no keys to
@@ -545,12 +708,10 @@ body {
 @media (max-width: 480px) {
   .app-layout .rl-app-shell__main {
     /* Same as above: the gutter token owns the horizontal padding. */
-    padding-top: 56px;
+    --pane-padding-top: 56px;
     padding-bottom: 24px;
   }
 }
-
-
 
 /* `.page-header` and `.header-actions` are gone — RlPageHeader owns the page
    header now and the app shell renders it. */

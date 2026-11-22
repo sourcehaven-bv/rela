@@ -57,8 +57,8 @@ type WriteLock interface {
 	Locked(ctx context.Context, fn func(ctx context.Context, st Store) error) error
 }
 
-// Deps are the collaborators of a [Service]. Store, Owners and Meta are
-// required.
+// Deps are the collaborators of a [Service]. Store, Owners, Meta and Audit
+// are required.
 type Deps struct {
 	Store  Store
 	Owners Owners
@@ -70,10 +70,8 @@ type Deps struct {
 	// seen. The file backend of the fs and memory tiers has no transaction
 	// in common with the entity store and is wired this way.
 	Lock WriteLock
-	// Audit receives a line for every change to a mutable row.
-	//
-	// Nil: rejected when the schema declares a mutable record type, so no
-	// change goes unrecorded; accepted otherwise.
+	// Audit receives a line for every append and every change to a mutable
+	// row, and for every such write the owner gate refuses.
 	Audit audit.Audit
 	// Now is the clock. Nil means time.Now.
 	Now func() time.Time
@@ -100,12 +98,12 @@ type Service struct {
 }
 
 // NewService returns a service over d. A schema with a mutable record type
-// needs a Store that is a [Mutator] and an Audit.
+// needs a Store that is a [Mutator].
 //
-// Nil: Store, Owners and Meta are rejected.
+// Nil: Store, Owners, Meta and Audit are rejected.
 func NewService(d Deps) (*Service, error) {
-	if d.Store == nil || d.Owners == nil || d.Meta == nil {
-		return nil, errors.New("records: NewService requires Store, Owners and Meta")
+	if d.Store == nil || d.Owners == nil || d.Meta == nil || d.Audit == nil {
+		return nil, errors.New("records: NewService requires Store, Owners, Meta and Audit")
 	}
 	for _, k := range d.Meta.RecordKeys() {
 		if !d.Meta.Records[k].Mutable {
@@ -113,9 +111,6 @@ func NewService(d Deps) (*Service, error) {
 		}
 		if _, ok := d.Store.(Mutator); !ok {
 			return nil, fmt.Errorf("records: record type %s is mutable, and the record store cannot change rows", k)
-		}
-		if d.Audit == nil {
-			return nil, fmt.Errorf("records: record type %s is mutable, and NewService has no Audit", k)
 		}
 	}
 	if d.Now == nil {
@@ -229,8 +224,10 @@ func (s *Service) Append(ctx context.Context, typ string, in []Input) ([]Record,
 		return lockedErr
 	})
 	if err != nil {
+		s.deniedAppend(ctx, err, typ, "")
 		return nil, err
 	}
+	s.appended(ctx, typ, out, "")
 	return out, nil
 }
 
@@ -290,6 +287,9 @@ func (s *Service) writableOwners(ctx context.Context, d metamodel.RecordTypeDef,
 			return nil, fmt.Errorf("row %d: %w: owner is required", i+1, ErrInvalid)
 		}
 		o, err := s.owners.Writable(ctx, r.Owner)
+		if errors.Is(err, ErrForbidden) {
+			return nil, forbiddenOwnerError{owner: r.Owner, err: err}
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -470,8 +470,10 @@ func (s *Service) Reverse(ctx context.Context, typ, group string) ([]Record, err
 		return lockedErr
 	})
 	if err != nil {
+		s.deniedAppend(ctx, err, typ, group)
 		return nil, err
 	}
+	s.appended(ctx, typ, out, group)
 	return out, nil
 }
 

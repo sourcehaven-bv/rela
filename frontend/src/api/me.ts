@@ -45,12 +45,28 @@ export interface MeResponse {
    * means no. It only decides whether the Remotes link is shown.
    */
   can_remote_sync?: boolean
+  /**
+   * The principal is verified but has no person entity yet, and a POST to
+   * `/_me` creates it (`unmatched_principal: provision`). Absent means no.
+   */
+  provisionable?: boolean
 }
 
 /**
  * Fetches the current principal. Display only: nothing in the SPA may decide
  * access from it, since the server authorizes every request on its own.
+ *
+ * When the server says the principal is `provisionable`, a POST creates its
+ * person now, so a member who has only looked around is listed among the
+ * people too (BUG-WS7QF2K). If the POST fails, for example in a read-only
+ * workspace, the GET's answer stands.
  */
 export async function getMe(): Promise<MeResponse> {
-  return api.get<MeResponse>('/_me')
+  const me = await api.get<MeResponse>('/_me')
+  if (!me.provisionable) return me
+  try {
+    return await api.post<MeResponse>('/_me')
+  } catch {
+    return me
+  }
 }

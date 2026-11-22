@@ -160,9 +160,19 @@ export class KanbanPage extends BasePage {
   /** Pick a value in the filter control labelled `label`. The board renders
    *  the list's FilterBar, so it is found the way the list page finds it. */
   async setFilter(label: string, value: string) {
-    const control = this.filterBar.locator('.filter-item').filter({ hasText: new RegExp(label, 'i') });
+    await this.openFilterMenu();
+    const control = this.filterPanel.locator('.filter-item').filter({ hasText: new RegExp(label, 'i') });
     await this.pickFilterOption(control, value);
     await this.waitForSpinnerToDisappear();
+  }
+
+  /** Sort the board and wait for the read that carries the sort. */
+  async sortByAndWaitForRead(property: string, direction: 'Ascending' | 'Descending', sortParam: string) {
+    const read = this.page.waitForRequest(
+      (r) => r.url().includes('/api/v1/') && r.url().includes(`sort=${encodeURIComponent(sortParam)}`),
+    );
+    await this.sortBy(property, direction);
+    await read;
   }
 
   /** The create dialog New opens over the board. */
@@ -170,9 +180,21 @@ export class KanbanPage extends BasePage {
     return this.page.getByRole('dialog');
   }
 
+  /** Opens the create dialog from the first column's Add. */
   async clickCreate() {
-    await this.createButton.click();
+    await this.columnAddButtons.first().click();
     await expect(this.createDialog).toBeVisible();
+  }
+
+  /** The per-column "+" buttons of a board whose columns offer create. */
+  get columnAddButtons(): Locator {
+    return this.page.locator('.rl-board-column__add');
+  }
+
+  /** The board's columns offer Add, so the header carries no New button. */
+  async expectColumnAddWithoutHeaderNew() {
+    await expect(this.columnAddButtons.first()).toBeVisible();
+    await expect(this.page.getByRole('button', { name: 'New', exact: true })).toHaveCount(0);
   }
 
   /** Press the dialog's Create, not "Create & add another". */
@@ -272,6 +294,23 @@ export class KanbanPage extends BasePage {
   /** The text of a card's field lines. */
   async expectCardFieldText(cardTitle: string, text: RegExp) {
     await expect(this.cards.filter({ hasText: cardTitle }).locator('.card-field')).toHaveText(text);
+  }
+
+  /** A url-widget card field; `href` null means plain text. */
+  async expectCardUrl(cardTitle: string, text: string, href: string | null) {
+    await this.expectUrlValue(this.cards.filter({ hasText: cardTitle }).locator('.card-field'), text, href);
+  }
+
+  /** Clicks the url-widget link on a card and returns the URL of the tab it
+   *  opened. The card itself must not open: the page URL stays the same. */
+  async clickCardUrl(cardTitle: string, text: string): Promise<string> {
+    const before = this.page.url();
+    const link = this.cards.filter({ hasText: cardTitle }).locator('.card-field a', { hasText: text });
+    const [popup] = await Promise.all([this.page.context().waitForEvent('page'), link.click()]);
+    const url = popup.url();
+    await popup.close();
+    await expect(this.page).toHaveURL(before);
+    return url;
   }
 
   /** The enum badges on a card's field lines, in order, with their colours

@@ -89,6 +89,10 @@ func TestBuildDefaultViewConfig_PropertiesAndContent(t *testing.T) {
 	if view.Sections[1].Display != "content" {
 		t.Errorf("section[1].display: want content, got %q", view.Sections[1].Display)
 	}
+	// The generated properties section has no heading of its own.
+	if h := view.Sections[0].Heading; h != "" {
+		t.Errorf("section[0].heading: want empty, got %q", h)
+	}
 }
 
 func TestBuildDefaultViewConfig_NoPropertiesOmitsSection(t *testing.T) {

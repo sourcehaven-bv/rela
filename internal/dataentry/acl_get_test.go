@@ -282,6 +282,8 @@ func (g fakeGate) SearchScope(context.Context, []string) map[string]search.TypeS
 
 func (g fakeGate) HoldsPermission(context.Context, string) bool { return g.holdsPermission }
 
+func (g fakeGate) HoldsPermissionOnAnyEntity(context.Context, string) bool { return g.holdsPermission }
+
 // PermitsWorld defaults to permitting every world so existing tests, which
 // never select one, are unaffected. Tests that exercise world denial set
 // denyWorlds.

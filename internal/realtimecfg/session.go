@@ -3,6 +3,7 @@ package realtimecfg
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -220,7 +221,7 @@ func (st SessionState) Transitions() []Transition {
 		n += len(list)
 	}
 	out := make([]Transition, 0, n)
-	for _, mt := range sortedKeys(st.on) {
+	for _, mt := range slices.Sorted(maps.Keys(st.on)) {
 		out = append(out, cloneTransitions(st.on[mt])...)
 	}
 	return out
@@ -316,13 +317,13 @@ func (v *validator) session(
 		v.add(statesKey, fmt.Sprintf("at most %d states", flow.MaxStates))
 	}
 	if len(order) != len(raw.States) {
-		order = sortedKeys(raw.States)
+		order = slices.Sorted(maps.Keys(raw.States))
 	}
 	if _, ok := ct.MessageTypes[SessionNoticeType]; ok {
 		v.add(ct.messageTypesKey()+"."+SessionNoticeType, fmt.Sprintf("%q is reserved in a channel type with "+
 			"a session: transitions post notices of that type; choose another message type name", SessionNoticeType))
 	}
-	for _, mn := range sortedKeys(ct.MessageTypes) {
+	for _, mn := range slices.Sorted(maps.Keys(ct.MessageTypes)) {
 		if _, ok := ct.MessageTypes[mn].Actions[OutputsActionName]; ok {
 			v.add(ct.messageTypesKey()+"."+mn+".actions."+OutputsActionName, fmt.Sprintf("%q is reserved for "+
 				"the session's output marks; choose another action name", OutputsActionName))
@@ -376,7 +377,7 @@ func (v *validator) session(
 			st.timers[j].outputs = writeChecker{v}.outputs(tk, rs.After[st.timers[j].Name].Outputs,
 				outputCause{kind: causeTimer}, ct)
 		}
-		for _, mn := range sortedKeys(rs.On) {
+		for _, mn := range slices.Sorted(maps.Keys(rs.On)) {
 			if ts := (branchCompiler{validator: v, state: st.Name, limits: limits}).
 				compile(sk+".on."+mn, mn, rs.On[mn], s, ct); len(ts) > 0 {
 				st.on[mn] = ts
@@ -404,7 +405,7 @@ func compileTimers(add problemSink, key string, raw map[string]rawSessionTimer, 
 		add(key, fmt.Sprintf("at most %d timers per state", flow.MaxTimers))
 	}
 	var out []SessionTimer
-	for _, name := range sortedKeys(raw) {
+	for _, name := range slices.Sorted(maps.Keys(raw)) {
 		if t, ok := compileTimer(add, key+"."+name, name, raw[name], s); ok {
 			out = append(out, t)
 		}
@@ -538,7 +539,7 @@ func jobEdges(statesKey string, s *Session) []jobEdge {
 					key: statesKey + "." + st.Name + ".after." + t.Name})
 			}
 		}
-		for _, mn := range sortedKeys(st.on) {
+		for _, mn := range slices.Sorted(maps.Keys(st.on)) {
 			for _, t := range st.on[mn] {
 				if j, ok := s.index[t.To]; ok && t.job {
 					edges = append(edges, jobEdge{from: i, to: j, outputs: len(t.outputs) > 0, key: t.key})

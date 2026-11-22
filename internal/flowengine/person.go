@@ -114,6 +114,12 @@ type Changed struct {
 	State string
 	// Finished reports that the run ended.
 	Finished bool
+	// Blocked reports that the state has change branches the caller may
+	// take, but none of their guards holds: the run stays. A caller who
+	// may take no branch gets Blocked false; through FlowControl that
+	// cannot happen, since the flow check makes every waiting_for role
+	// admit some change branch.
+	Blocked bool
 }
 
 // Change fires the `change` event on run id at generation gen, caused by
@@ -172,8 +178,13 @@ func (e *Engine) change(ctx context.Context, id flow.RunID, gen int64, by string
 	}
 	ctx = audit.WithFlowStep(ctx, audit.FlowStep{Flow: f.Name(), Run: string(id), Step: cur.State, By: by})
 	var subj *entity.Entity
+	admitted := false
 	d := flow.Decide(cur.State, f.Branches(cur.State, flowcfg.EventChange), flow.Rules[flowcfg.Branch]{
-		Admits: func(b flowcfg.Branch) bool { return len(b.Roles) == 0 || slices.ContainsFunc(b.Roles, holds) },
+		Admits: func(b flowcfg.Branch) bool {
+			ok := len(b.Roles) == 0 || slices.ContainsFunc(b.Roles, holds)
+			admitted = admitted || ok
+			return ok
+		},
 		Holds: func(b flowcfg.Branch) (bool, error) {
 			if b.When == nil {
 				return true, nil
@@ -196,7 +207,7 @@ func (e *Engine) change(ctx context.Context, id flow.RunID, gen int64, by string
 		return Changed{State: cur.State}, ErrGuard
 	default:
 		e.release(ctx, run, tok)
-		return Changed{State: cur.State}, nil
+		return Changed{State: cur.State, Blocked: d.Outcome == flow.NoMove && admitted}, nil
 	}
 	moved, err := e.take(ctx, f, run, tok, cur, d.Branch.Targets(), flowrun.Step{Via: flowrun.ViaChange, By: by},
 		e.now())
@@ -370,6 +381,9 @@ type BranchCheck struct {
 	// Failed is set when the guard could not be evaluated. The error is
 	// not reported, since it can quote subject values (RR-RKBBA7H).
 	Failed bool
+	// Reads are the properties the guard reads. The caller keeps those
+	// the step's form sends, which the step form marks required.
+	Reads []string
 }
 
 // PendingStep is a run that has not settled in its state.
@@ -390,6 +404,10 @@ type JobStep struct {
 	Attempts int
 	// FailKind is set once the job failed for good.
 	FailKind flowrun.JobFailKind
+	// Error is the error of the last attempt that failed
+	// ([flowrun.JobAttempt.Error]). A view shows it only to a reader who
+	// manages the run.
+	Error string
 }
 
 // Explain reads why each run waits, in the order given. It evaluates the
@@ -526,15 +544,9 @@ func (ex *explainer) place(ctx context.Context, f *flowcfg.Flow, run flowrun.Run
 		x.Timers = append(x.Timers, td)
 	}
 	for _, b := range st.Branches(flowcfg.EventChange) {
-		bc := BranchCheck{To: b.To, Fork: b.Fork, Label: b.Label, Roles: b.Roles, Holds: true}
-		if b.When != nil {
-			bc.Guard = b.When.Source()
-			subj, err := ex.subject(ctx, run.Subject)
-			if err != nil {
-				return Explanation{}, err
-			}
-			ok, gerr := e.g.holds(ctx, b.When, subj)
-			bc.Holds, bc.Failed = ok && gerr == nil, gerr != nil
+		bc, err := ex.branch(ctx, run, b)
+		if err != nil {
+			return Explanation{}, err
 		}
 		x.Branches = append(x.Branches, bc)
 	}
@@ -542,8 +554,8 @@ func (ex *explainer) place(ctx context.Context, f *flowcfg.Flow, run flowrun.Run
 		x.Pending = &PendingStep{Failures: p.Failures, NextAttempt: inst.NextDueAt}
 		if job, ok := st.Job(); ok && p.Job != nil && p.State == cur.State && p.Generation == cur.Generation {
 			x.Pending.Job = &JobStep{Phase: p.Job.Phase, Failed: p.Job.Failed, Attempts: job.Retry.Attempts,
-				FailKind: p.Job.FailKind}
-			if p.Job.Phase == flowrun.JobFailed {
+				FailKind: p.Job.FailKind, Error: p.Job.Error}
+			if jobFailed(st, cur, p) {
 				// The run waits for an operator: it reads as failed, though its
 				// header does not, since a retry can still move it on.
 				x.Status = flow.StatusFailed
@@ -555,4 +567,87 @@ func (ex *explainer) place(ctx context.Context, f *flowcfg.Flow, run flowrun.Run
 		x.Claim = &cp
 	}
 	return x, nil
+}
+
+// branch explains change branch b of a state: its guard's verdict and the
+// properties the guard reads. The subject is read only when the branch has
+// a guard.
+func (ex *explainer) branch(ctx context.Context, run flowrun.Run, b flowcfg.Branch) (BranchCheck, error) {
+	bc := BranchCheck{To: b.To, Fork: b.Fork, Label: b.Label, Roles: b.Roles, Holds: true}
+	if b.When == nil {
+		return bc, nil
+	}
+	bc.Guard = b.When.Source()
+	subj, err := ex.subject(ctx, run.Subject)
+	if err != nil {
+		return BranchCheck{}, err
+	}
+	ok, gerr := ex.e.g.holds(ctx, b.When, subj)
+	bc.Holds, bc.Failed = ok && gerr == nil, gerr != nil
+	bc.Reads = b.When.Fields()
+	return bc, nil
+}
+
+// jobFailed reports whether the place at cur, in state st, waits for an
+// operator: st has a job step and mark p records that it failed for good
+// on this entry of the state.
+func jobFailed(st flowcfg.State, cur flow.Current, p *flowrun.Pending) bool {
+	_, hasJob := st.Job()
+	return hasJob && p != nil && p.Job != nil && p.Job.Phase == flowrun.JobFailed &&
+		p.State == cur.State && p.Generation == cur.Generation
+}
+
+// FailedJobs returns the runs among runs that [Engine.Explain] reads as
+// failed because a job step failed for good: on the run, or for a forked
+// run on one of its branches. Their headers still say working, since a
+// retry can move them on. It applies Explain's rule without reading
+// subjects or guards, so a list can ask it of every run on a page. A run
+// whose flow version cannot be read, or whose state is gone, is left out,
+// as Explain reads it as stranded.
+func (c *FlowCache) FailedJobs(ctx context.Context, runs []flowrun.Run) map[flow.RunID]bool {
+	out := map[flow.RunID]bool{}
+	for id := range c.FailedJobPlaces(ctx, runs) {
+		out[id] = true
+	}
+	return out
+}
+
+// FailedPlace is where a run waits on a failed job step: the state and,
+// in a forked run, the branch; empty for the run itself.
+type FailedPlace struct {
+	State  string
+	Branch string
+}
+
+// FailedJobPlaces is [FlowCache.FailedJobs] with the place of each failed
+// job: the first branch in fork order whose job failed, in a forked run.
+func (c *FlowCache) FailedJobPlaces(ctx context.Context, runs []flowrun.Run) map[flow.RunID]FailedPlace {
+	out := map[flow.RunID]FailedPlace{}
+	for _, run := range runs {
+		f, err := c.Of(ctx, run)
+		if err != nil {
+			continue
+		}
+		at := func(inst flow.Instance, p *flowrun.Pending) (string, bool) {
+			cur := flow.Read(f.Definition(), inst, run.CreatedAt)
+			if cur.Stranded {
+				return "", false
+			}
+			st, _ := f.State(cur.State)
+			return cur.State, jobFailed(st, cur, p)
+		}
+		if !forked(run) {
+			if state, ok := at(run.Instance, run.Pending); ok {
+				out[run.ID] = FailedPlace{State: state}
+			}
+			continue
+		}
+		for _, b := range run.Branches {
+			if state, ok := at(b.Instance, b.Pending); ok {
+				out[run.ID] = FailedPlace{State: state, Branch: b.Name}
+				break
+			}
+		}
+	}
+	return out
 }

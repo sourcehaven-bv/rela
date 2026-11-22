@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
+import { accessRefusal } from '@/api/workspaceAccess'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRouter, type RouteLocationRaw } from 'vue-router'
 import { api } from '@/api/client'
@@ -103,6 +104,8 @@ onMounted(() => loadSidePanel())
   <aside v-if="hasSections || loading" class="side-panel">
     <RlStatusRegion v-if="loading" size="sm">{{ t('form.sidePanel.loading') }}</RlStatusRegion>
 
+    <!-- The session or workspace screen says why (BUG-ZL4K7QW). -->
+    <div v-else-if="error && accessRefusal" />
     <RlStatusRegion v-else-if="error" tone="error" size="sm">{{ error }}</RlStatusRegion>
 
     <template v-else>

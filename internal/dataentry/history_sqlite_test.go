@@ -114,7 +114,7 @@ func TestConfigHistoryEnabledOnSQLite(t *testing.T) {
 	app.versions = svc
 
 	rec := httptest.NewRecorder()
-	app.handleV1Config(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody))
+	app.schemaAPI.handleV1Config(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody))
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	var cfg struct {

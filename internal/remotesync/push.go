@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
@@ -57,7 +58,7 @@ func (r pusher) push(ctx context.Context) error {
 	// stopped early did not look at every row, so it cannot tell which
 	// rows left the share scope.
 	seen := map[string]bool{}
-	for _, src := range sortedKeys(r.m.Entities) {
+	for _, src := range slices.Sorted(maps.Keys(r.m.Entities)) {
 		em := r.m.Entities[src]
 		rows, err := r.localRows(ctx, em, seen)
 		if err != nil {

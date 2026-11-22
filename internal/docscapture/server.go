@@ -213,17 +213,11 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp, needSPA
 	// and answers a null suggestion to every request, so a manual figure of
 	// the suggestion card would photograph an empty page and a page{} claim
 	// about it would fail for a reason that has nothing to do with worlds.
-	if err := app.SetUserState(svc.UserState()); err != nil {
+	if err := app.SetNextActions(svc.UserState(), appbuild.NextActionMatchers); err != nil {
 		svc.Close()
 		scratchCleanup()
 		_ = os.RemoveAll(tmp)
-		return nil, fmt.Errorf("wire next-action state: %w", err)
-	}
-	if err := app.SetNextActionMatchers(appbuild.NextActionMatchers); err != nil {
-		svc.Close()
-		scratchCleanup()
-		_ = os.RemoveAll(tmp)
-		return nil, fmt.Errorf("wire next-action matchers: %w", err)
+		return nil, fmt.Errorf("wire next actions: %w", err)
 	}
 
 	// Per-request resolver: map the role header to a principal assigned that role.

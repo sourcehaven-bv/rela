@@ -27,6 +27,9 @@ const props = defineProps<{
   help?: string
   hint?: string
   error?: string
+  // A soft finding on the saved value, such as a failed pattern: shown
+  // below the field, but the value is kept and the field is not invalid.
+  warning?: string
   labelPosition?: 'before' | 'after'
   // Authored width on the 12-column form grid (TKT-5V8704); undefined = full
   // width. FieldShell owns the .form-field element, so it is the only place
@@ -47,11 +50,17 @@ const spanStyle = computed(() => fieldSpanStyle(props.span))
 const uid = useId()
 const helpId = computed(() => `${uid}-help`)
 const errorId = computed(() => `${uid}-error`)
+const warningId = computed(() => `${uid}-warning`)
 
 // Error first: a user who has just been told what went wrong should hear that
 // before the original guidance.
 const describedBy = computed(() => {
-  const ids = [props.error ? errorId.value : null, props.help ? helpId.value : null]
+  const ids = [
+    props.error ? errorId.value : null,
+    // The warning shows only without an error.
+    props.warning && !props.error ? warningId.value : null,
+    props.help ? helpId.value : null,
+  ]
   return ids.filter(Boolean).join(' ') || undefined
 })
 
@@ -91,6 +100,7 @@ const control = computed(() => ({
       announced without them having to go back and look for it.
     -->
     <p v-if="error" :id="errorId" class="field-error" role="alert">{{ error }}</p>
+    <p v-else-if="warning" :id="warningId" class="field-warning" role="status">{{ warning }}</p>
   </div>
 </template>
 
@@ -143,6 +153,12 @@ const control = computed(() => ({
 .field-error {
   font-size: 13px;
   color: var(--rl-color-danger, #ef4444);
+  margin: 0;
+}
+
+.field-warning {
+  font-size: 13px;
+  color: var(--rl-color-warning-fg);
   margin: 0;
 }
 </style>

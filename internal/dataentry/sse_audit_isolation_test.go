@@ -11,7 +11,7 @@ import (
 )
 
 // TestSSE_DoesNotFlowAuditEvents pins the audit-isolation invariant
-// documented on [startStoreEventBridge]: a write rejected by ACL must
+// documented on [sseHandler.startStoreEventBridge]: a write rejected by ACL must
 // not produce any SSE event. The SSE broker is for live-reload of
 // committed entity state — never for audit records. Leaking the
 // principal-to-entity topology of denies to every subscriber would
@@ -32,7 +32,7 @@ func TestSSE_DoesNotFlowAuditEvents(t *testing.T) {
 	// started on the real store, as StartWatching does.
 	ch := app.broker.subscribe()
 	defer app.broker.unsubscribe(ch)
-	app.startStoreEventBridge()
+	app.sse.startStoreEventBridge()
 	t.Cleanup(app.StopWatching)
 	sub := app.feed.Subscribe("")
 	defer sub.Close()
@@ -78,7 +78,7 @@ func TestSSE_DoesNotFlowAuditEvents(t *testing.T) {
 // (runSSELoop) gates the type per-connection before rendering it.
 func TestSSE_FeedCarriesTypeOnly(t *testing.T) {
 	app := buildAppWithACLAndAudit(t, acl.NopACL{}, nil)
-	app.startStoreEventBridge()
+	app.sse.startStoreEventBridge()
 	t.Cleanup(app.StopWatching)
 	sub := app.feed.Subscribe("")
 	defer sub.Close()

@@ -18,3 +18,6 @@ func ProvisionRunning(h *Host, orgID string) bool {
 	_, ok := h.prov.runs[orgID]
 	return ok
 }
+
+// SuccessHold is how long a successful run is remembered.
+const SuccessHold = successHold

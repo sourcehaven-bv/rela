@@ -2571,6 +2571,18 @@
       "at": "2026-11-04T04:59:34Z",
       "title": "api/views.ts in api has most of its links to web/components/entity (weighted links: 3.2 to web/components/entity, 0.1 to api)."
     },
+    "concepts.data_clump-5a64215ee778": {
+      "state": "accepted",
+      "reason": "Design: the wire Config mirrors data-entry.yaml on purpose. TKT-UP0AYVN added list_buttons to both, which made the shared fields a new clump.",
+      "at": "2026-11-19T12:00:00Z",
+      "title": "The fields actions, app, builtins, calendars, channels, … and views appear together in 2 types across 2 components."
+    },
+    "concepts.data_clump-aa284ee842d3": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose. Accepted before under other ids; the id moved when TKT-14FBF1R embedded SectionVisibility in ViewSection.",
+      "at": "2026-11-19T00:10:00Z",
+      "title": "The fields columns, display, empty_message, fields, heading, … and totals appear together in 3 types across 3 components."
+    },
     "concepts.data_clump-bc995f935e51": {
       "state": "accepted",
       "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
@@ -2774,6 +2786,84 @@
       "reason": "By design: records.TypeInfo is the wire shape the records API serves for a record type. It adds the key, a default label and the field order to metamodel.RecordTypeDef and keeps the YAML-only parts out of the JSON. TKT-J7Q9C4K.",
       "at": "2026-11-14T12:00:00Z",
       "title": "RecordTypeDef (metamodel) and TypeInfo (records) share most of their fields."
+    },
+    "concepts.data_clump-cda0a05425a8": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose. TKT-3VLKP3D added primary to ListColumn, which renamed this clump.",
+      "at": "2026-11-21T12:30:00Z",
+      "title": "The fields busy, face, link, property, relation and sortable appear together in 3 types across 3 components."
+    },
+    "structure.repeated_orchestration-545a7d43c1f7": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-11-21T13:30:00Z",
+      "title": "3 entry points make the same 4 calls: acl.RequestFrom → acl.UnmatchedVerified → dataentry.readAddressedOr → dataentry.familyReadableOr404."
+    },
+    "structure.repeated_orchestration-fa66fb12dc42": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-11-21T13:30:00Z",
+      "title": "4 entry points make the same 3 calls: acl.RequestFrom → acl.UnmatchedVerified → dataentry.readAddressedOr."
+    },
+    "data.orphan_table-ca9379cde700": {
+      "state": "accepted",
+      "reason": "Design: SQLite FTS5 shadow table of entity_search, created and maintained by the FTS5 module, not by rela code.",
+      "at": "2026-11-21T13:30:00Z",
+      "title": "Table entity_search_config has no use in the code."
+    },
+    "data.orphan_table-74442ea88723": {
+      "state": "accepted",
+      "reason": "Design: SQLite FTS5 shadow table of entity_search, created and maintained by the FTS5 module, not by rela code.",
+      "at": "2026-11-21T13:30:00Z",
+      "title": "Table entity_search_content has no use in the code."
+    },
+    "data.orphan_table-43603d905d67": {
+      "state": "accepted",
+      "reason": "Design: SQLite FTS5 shadow table of entity_search, created and maintained by the FTS5 module, not by rela code.",
+      "at": "2026-11-21T13:30:00Z",
+      "title": "Table entity_search_data has no use in the code."
+    },
+    "data.orphan_table-18305e9eec63": {
+      "state": "accepted",
+      "reason": "Design: SQLite FTS5 shadow table of entity_search, created and maintained by the FTS5 module, not by rela code.",
+      "at": "2026-11-21T13:30:00Z",
+      "title": "Table entity_search_docsize has no use in the code."
+    },
+    "data.orphan_table-f6683a0021ce": {
+      "state": "accepted",
+      "reason": "Design: SQLite FTS5 shadow table of entity_search, created and maintained by the FTS5 module, not by rela code.",
+      "at": "2026-11-21T13:30:00Z",
+      "title": "Table entity_search_idx has no use in the code."
+    },
+    "concepts.data_clump-d7d6b811fa2b": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose. BUG-ST02A0S added empty_message to lists, which renamed this clump.",
+      "at": "2026-11-21T21:00:00Z",
+      "title": "The fields columns, create_form, description, edit_form, empty_message, … and title appear together in 3 types across 3 components."
+    },
+    "concepts.data_clump-6e9ca12b6029": {
+      "state": "accepted",
+      "reason": "Design: the wire EntityType mirrors the schema entity definition on purpose. BUG-ST02A0S added label_plural, which renamed this clump.",
+      "at": "2026-11-21T21:00:00Z",
+      "title": "The fields description, extends, faces, id_prefix, id_prefixes, … and properties appear together in 3 types across 3 components."
+    },
+    "concepts.data_clump-5c8c800bec51": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose. BUG-ST02A0S added empty_message to lists, which renamed this clump.",
+      "at": "2026-11-21T21:00:00Z",
+      "title": "The fields columns, condition, create_form, description, detail_view, … and title appear together in 2 types across 2 components."
+    },
+    "security.untested_denial-9a0cc89b9dbb": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test. Id changed when TKT-3KUIROC moved the handler to a new receiver.",
+      "at": "2026-11-21T16:00:00Z",
+      "title": "No test shows handleGitStatus refusing a caller."
+    },
+    "security.untested_denial-bccda73173fa": {
+      "state": "accepted",
+      "reason": "Detector gap: the refusal is tested in internal/dataentry/sse_acl_test.go. Id changed when TKT-3KUIROC moved the handler to a new receiver.",
+      "at": "2026-11-21T16:00:00Z",
+      "title": "No test shows handleSSE refusing a caller."
     }
   },
   "labels": {},

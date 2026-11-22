@@ -172,6 +172,33 @@ GET /api/v1/_search?q=type:ticket,feature sort:modified:desc&limit=8
 
 The editor's `@` mention menu uses this form to list recently modified entities.
 
+## Reading a past instant (`as_of`)
+
+A read can name an instant with `?as_of=`, an RFC 3339 timestamp with an
+explicit zone. The response shows the data as it stood then, gated by
+today's ACL. It combines with `world`. Only the PostgreSQL and SQLite
+backends support it.
+
+```text
+GET /api/v1/controls?world=published&as_of=2025-12-31T23:59:59Z
+```
+
+Lists, entity detail and its relations, views, dashboard cards, search,
+gantt charts and documents accept it. The caller needs the `history:read`
+permission. Under `as_of` every `_actions` verb is
+`false`, and `_schema` reports `capabilities.as_of`.
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| 400 | `as_of_invalid` | Not an RFC 3339 timestamp with a zone. |
+| 400 | `as_of_duplicated` | `as_of` given more than once. |
+| 403 | `as_of_forbidden` | The caller lacks the `history:read` permission. |
+| 422 | `as_of_read_only` | The request writes. |
+| 422 | `as_of_unsupported` | This endpoint cannot read a past state. |
+| 501 | `as_of_backend_unsupported` | The backend keeps no version history. |
+
+The guide `docs/point-in-time-reads.md` covers the behaviour in full.
+
 ## Relation context on collection reads
 
 A relation picker can ask `GET /api/v1/_search` or `GET /api/v1/{plural}`
@@ -2256,3 +2283,32 @@ Each POST is written to the audit log as `remote-resolve`, `remote-dismiss` or
 The routes are a browser surface. Like the git routes, they are not exempt
 from the same-origin check and are not in the OpenAPI spec. Use the `rela
 remote` commands from a script.
+
+## Audit reads: `_changes` and `_audit`
+
+Both routes exist only on the database builds. On the filesystem build they
+answer 404, and `GET /api/v1/_sidebar` reports `audit.changes` and
+`audit.global` as false. Both page newest first with `?limit=` (1 to 200,
+default 50; otherwise 400 `invalid_limit`) and `?before=`, the `next_before`
+of the previous page (otherwise 400 `invalid_cursor`). `next_before` is
+absent on the last page.
+
+`GET /api/v1/_changes/{type}/{id}` returns
+`{changes: [...], next_before?, world_face_absent?, titles?}`. The address resolves
+as `_history` does: the uniform 404 for an entity the caller cannot read, a
+wrong type, or a deleted entity without `history:read`. Each entry is
+`{seq, time, op, subject?, before?, after?, user?, tool?, summary?, trigger?}`.
+Records that name another entity the caller cannot read are left out, and so
+are records of `_` relation types and updates of only hidden or `_`
+properties, so a page can be shorter than `limit` while `next_before` is set.
+`titles` maps the ids of the other entities a page names, and each record's
+`user` when it is an entity id, to their titles as the caller sees them; an
+id it leaves out shows as the id. Reserved (`system:`, `integration:`) and
+webhook users are never looked up.
+`audit.changes` is true whenever the route exists.
+
+`GET /api/v1/_audit` returns `{records: [{seq, record}], next_before?}`,
+where `record` is the stored audit record, unredacted. It needs `audit:read`
+under an ACL policy; otherwise it answers 403 `permission_required`.
+`audit.global` reports whether the caller holds it. Each page served writes
+an `audit-read` audit record.

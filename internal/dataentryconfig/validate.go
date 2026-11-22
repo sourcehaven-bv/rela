@@ -42,6 +42,7 @@ var validTopLevelKeys = map[string]bool{
 	"webhooks":     true,
 	"navigation":   true,
 	"spaces":       true,
+	"builtins":     true,
 	"pages":        true,
 	"palette":      true,
 
@@ -51,6 +52,9 @@ var validTopLevelKeys = map[string]bool{
 	"account":              true,
 	"piles":                true,
 	"channels":             true,
+	"header_buttons":       true,
+	"entity_panels":        true,
+	"list_buttons":         true,
 }
 
 // Known typos with suggestions
@@ -177,6 +181,7 @@ var sectionFieldWidgetTypes = map[string][]string{
 	WidgetRrule:       {metamodel.PropertyTypeRrule},
 	WidgetFile:        {metamodel.PropertyTypeFile},
 	WidgetExternalRef: {metamodel.PropertyTypeExternalRef},
+	WidgetURL:         {metamodel.PropertyTypeString},
 }
 
 // widgetAcceptsProperty reports whether a widget can render a property, and if
@@ -267,7 +272,7 @@ func validateSectionFieldWidget(
 		if _, known := sectionFieldWidgetTypes[f.Widget]; !known {
 			errs = append(errs, fmt.Sprintf(
 				"view %q: section[%d] field[%d] has invalid widget %q (valid: %s)",
-				viewID, i, j, f.Widget, strings.Join(sortedMapKeys(sectionFieldWidgetTypes), ", ")))
+				viewID, i, j, f.Widget, strings.Join(slices.Sorted(maps.Keys(sectionFieldWidgetTypes)), ", ")))
 			continue
 		}
 		// Property compatibility BEFORE the display-mode rule: a field can
@@ -516,6 +521,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateNavigation(cfg)...)
 	errs = append(errs, validateNavItemsFrom(cfg, meta)...)
 	errs = append(errs, validateSpaces(cfg, meta)...)
+	errs = append(errs, validateAllBuiltins(cfg)...)
 	errs = append(errs, validatePages(cfg, meta)...)
 	errs = append(errs, validateForms(cfg, meta)...)
 	errs = append(errs, validateLists(cfg, meta)...)
@@ -541,6 +547,9 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateAccount(data, cfg, meta)...)
 	errs = append(errs, llmUnknownKeys(data)...)
 	errs = append(errs, validatePiles(data, cfg, meta)...)
+	errs = append(errs, headerButtonsUnknownKeys(data)...)
+	errs = append(errs, entityPanelsUnknownKeys(data)...)
+	errs = append(errs, listButtonsUnknownKeys(data)...)
 	errs = append(errs, validateChannelsShape(data, cfg)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
@@ -581,7 +590,7 @@ func checkUnknownKeys(data []byte) []string {
 		if suggestion, ok := knownTypos[key]; ok {
 			errs = append(errs, fmt.Sprintf("unknown key %q (did you mean %q?)", key, suggestion))
 		} else {
-			keys := sortedMapKeys(validTopLevelKeys)
+			keys := slices.Sorted(maps.Keys(validTopLevelKeys))
 			errs = append(errs, fmt.Sprintf("unknown key %q (valid keys: %s)", key, strings.Join(keys, ", ")))
 		}
 	}
@@ -844,6 +853,11 @@ func validateSidePanelSections(formID string, panel *SidePanelConfig) []string {
 				"form %q: side_panel section[%d] sets hide_empty, which a side panel does not support",
 				formID, i))
 		}
+		if sec.Permission != "" {
+			errs = append(errs, fmt.Sprintf(
+				"form %q: side_panel section[%d] sets permission, which a side panel does not support",
+				formID, i))
+		}
 		errs = append(errs, refuseSidePanelTableKeys(formID, i, sec)...)
 		for j, f := range sec.Fields {
 			errs = append(errs, validateSpan(f.Span,
@@ -943,7 +957,7 @@ func validateFormField(
 		errs = append(errs, fmt.Sprintf(
 			"form %q: %sfield[%d] property %q has invalid clear_when_hidden %q (valid: %s)",
 			formID, ctx, i, f.Property, f.ClearWhenHidden,
-			strings.Join(sortedMapKeys(ValidClearWhenHidden), ", ")))
+			strings.Join(slices.Sorted(maps.Keys(ValidClearWhenHidden)), ", ")))
 	}
 	// A field can be hidden by its own `visible_when` OR by its enclosing
 	// wizard step's. With neither, `clear_when_hidden` could never fire — that
@@ -1781,7 +1795,7 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			// Validate from
 			if t.From != "*" {
 				if _, ok := collections[t.From]; !ok {
-					validCollections := sortedMapKeys(collections)
+					validCollections := slices.Sorted(maps.Keys(collections))
 					validCollections = append(validCollections, "*")
 					errs = append(errs, fmt.Sprintf(
 						"view %q: traverse[%d] references unknown collection %q in from (valid: %s)",
@@ -1861,7 +1875,7 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 				if entityType, ok := collections[s.Source]; ok {
 					sourceType = entityType
 				} else {
-					validSources := sortedMapKeys(collections)
+					validSources := slices.Sorted(maps.Keys(collections))
 					errs = append(errs, fmt.Sprintf(
 						"view %q: section[%d] references unknown collection %q in source (valid: %s)",
 						viewID, i, s.Source, strings.Join(validSources, ", ")))
@@ -2099,7 +2113,7 @@ func validateLevelColumns(
 	for _, t := range allowed {
 		allowedSet[t] = true
 	}
-	for _, entityType := range sortedMapKeys(byType) {
+	for _, entityType := range slices.Sorted(maps.Keys(byType)) {
 		if len(allowed) > 0 && !allowedSet[entityType] {
 			errs = append(errs, fmt.Sprintf(
 				"view %q: section[%d] %s declares columns for %q, which this level never holds (valid: %s)",
@@ -2208,7 +2222,7 @@ func validateNestedSection(
 	if _, ok := collections[s.Children]; !ok {
 		return []string{fmt.Sprintf(
 			"view %q: section[%d] references unknown collection %q in children (valid: %s)",
-			viewID, i, s.Children, strings.Join(sortedMapKeys(collections), ", "))}
+			viewID, i, s.Children, strings.Join(slices.Sorted(maps.Keys(collections)), ", "))}
 	}
 
 	// Find the rule that collected the children and check it nests under the
@@ -2667,6 +2681,7 @@ func validateDashboard(cfg *Config, meta *metamodel.Metamodel) []string {
 			errs = append(errs, validateDashboardCardSource(cfg, meta, prefix, i, card)...)
 		}
 		errs = append(errs, validateEntityDashboard(cfg, meta, prefix, d)...)
+		errs = append(errs, validateDashboardValidation(prefix, d.Config)...)
 	}
 
 	return errs
@@ -2733,6 +2748,10 @@ func validateDashboardCards(prefix string, cards []DashboardCard) []string {
 				prefix, i, card.Title, card.Display, joinMapKeys(validDashboardDisplayModes)))
 		}
 		errs = append(errs, validateDashboardCardWidth(prefix, i, card)...)
+		if card.HideEmpty && (card.Records != nil || card.Display == DisplayLine) {
+			errs = append(errs, fmt.Sprintf("%s: card[%d] %q sets hide_empty, which a line card does not take: it has no rows",
+				prefix, i, card.Title))
+		}
 		// Busy columns are list-only (TKT-TU3XH4). Every card is checked
 		// here, whatever its source or display.
 		for j, c := range card.Columns {
@@ -2809,6 +2828,16 @@ func validateActionKey(id, key string) []string {
 	return nil
 }
 
+// validateActionStyle refuses a `style:` other than empty or danger.
+func validateActionStyle(id string, style ActionStyle) []string {
+	switch style {
+	case "", ActionStyleDanger:
+		return nil
+	}
+	return []string{fmt.Sprintf("actions: %q style %q is not known (use %q or leave it out)",
+		id, style, ActionStyleDanger)}
+}
+
 // validateActions checks action definitions: ID format, set/script exclusivity,
 // script path safety, and key shortcut validity.
 //
@@ -2822,6 +2851,8 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 				"actions: invalid action ID %q (must match ^[a-z0-9_-]{1,64}$)", id))
 			continue
 		}
+
+		errs = append(errs, validateActionStyle(id, action.Style)...)
 
 		hasScript := action.Script != ""
 		hasSet := len(action.Set) > 0
@@ -3010,7 +3041,8 @@ func validateKanbanActions(kanbanID string, kanban Kanban, cfg *Config) []string
 }
 
 // validateActionScope checks the detail-page keys of one action
-// (TKT-VVS16W): available_on, and when, which only means something with it.
+// (TKT-VVS16W): available_on, and when, style and order, which only mean
+// something with it.
 // The when expression itself is compiled by conditionlint, which knows the
 // predicate language; this checks only the structure.
 func validateActionScope(id string, action Action, hasScript bool, meta *metamodel.Metamodel) []string {
@@ -3021,6 +3053,11 @@ func validateActionScope(id string, action Action, hasScript bool, meta *metamod
 			errs = append(errs, fmt.Sprintf(
 				"actions: %q has when but no available_on (when decides which detail pages "+
 					"offer the action, so it needs available_on to apply to)", id))
+		}
+		if action.Style != "" || action.Order != 0 {
+			errs = append(errs, fmt.Sprintf(
+				"actions: %q has style or order but no available_on (both only change "+
+					"the buttons on a detail page, so they need available_on to apply to)", id))
 		}
 		return errs
 	}
@@ -3236,6 +3273,11 @@ func validateApp(cfg *Config, meta *metamodel.Metamodel) []string {
 	errs := validateDefaultWorldAlias(cfg.App.DefaultWorld, meta)
 	errs = append(errs, validateAppLanguage(cfg.App.Language)...)
 	errs = append(errs, validateWorldSwitcher(cfg.App.WorldSwitcher)...)
+	if logo := cfg.App.Logo; logo != "" {
+		if err := validAccountLink(logo); err != nil {
+			errs = append(errs, fmt.Sprintf("app.logo: %q %v", logo, err))
+		}
+	}
 	return append(errs, validatePlantUMLURL(cfg.App.PlantUMLServerURL)...)
 }
 
@@ -3493,8 +3535,8 @@ func validateDocuments(cfg *Config) []string {
 func validateStyles(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
 
-	for _, typeName := range sortedMapKeys(cfg.Styles) {
-		for _, val := range sortedMapKeys(cfg.Styles[typeName]) {
+	for _, typeName := range slices.Sorted(maps.Keys(cfg.Styles)) {
+		for _, val := range slices.Sorted(maps.Keys(cfg.Styles[typeName])) {
 			if _, err := ParseColor(cfg.Styles[typeName][val], cfg.OperatorColors()); err != nil {
 				errs = append(errs, fmt.Sprintf("styles.%s.%s: %v", typeName, val, err))
 			}
@@ -3614,15 +3656,6 @@ func suggestView(name string, cfg *Config) string {
 
 // Helper functions
 
-func sortedMapKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	natsort.Strings(keys)
-	return keys
-}
-
 func joinMapKeys(m map[string]bool) string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -3695,11 +3728,11 @@ func validateQueryScopes(cfg *Config, meta *metamodel.Metamodel) []string {
 		return nil
 	}
 	var errs []string
-	for _, id := range sortedMapKeys(cfg.Lists) {
+	for _, id := range slices.Sorted(maps.Keys(cfg.Lists)) {
 		list := cfg.Lists[id]
 		errs = append(errs, checkQueryScopeRef(meta, "list", id, list.EntityType, list.QueryScope)...)
 	}
-	for _, id := range sortedMapKeys(cfg.Kanbans) {
+	for _, id := range slices.Sorted(maps.Keys(cfg.Kanbans)) {
 		kanban := cfg.Kanbans[id]
 		errs = append(errs, checkQueryScopeRef(meta, "kanban", id, kanban.EntityType, kanban.QueryScope)...)
 	}
@@ -3726,7 +3759,7 @@ func checkQueryScopeRef(
 	if _, ok := def.QueryScopes[scope]; ok {
 		return nil
 	}
-	declared := sortedMapKeys(def.QueryScopes)
+	declared := slices.Sorted(maps.Keys(def.QueryScopes))
 	if len(declared) == 0 {
 		return []string{fmt.Sprintf(
 			"%s %q: query_scope %q is not declared — entity type %q declares no query_scopes:",

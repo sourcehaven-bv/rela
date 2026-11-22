@@ -125,6 +125,11 @@ func TestParse_Refused(t *testing.T) {
 			"action 1 set: unknown placeholder {{ new.title }}"},
 		{"unknown placeholder in add_to_pile.owner", oneTrigger(created,
 			`{add_to_pile: {pile: Inbox, owner: "{{owner}}"}}`), "action 1 add_to_pile.owner: unknown placeholder"},
+		{"current_user without a field", oneTrigger(created, `{relate: {type: blocks, to: "{{current_user}}"}}`),
+			"action 1 relate.to: unknown placeholder {{current_user}}"},
+		{"current_user field other than id", oneTrigger(created,
+			`{relate: {type: blocks, to: "{{current_user.name}}"}}`),
+			"action 1 relate.to: unknown placeholder {{current_user.name}}"},
 		{"unknown placeholder in a check message", oneTrigger(created,
 			`{check: {where: "title=x", message: "{{entity.title}}"}}`),
 			"check 1 message: unknown placeholder {{entity.title}}"},
@@ -360,10 +365,10 @@ triggers:
 			name: "known placeholders",
 			flows: oneTrigger(`{entity: task, created: true}`,
 				`{set: {properties: {title: "{{new.title}} {{old.title}} {{entity.id}} {{entity.type}} `+
-					`{{user.name}} {{user.email}} {{today}} {{now}} {{unclosed"}}}`),
+					`{{user.name}} {{user.email}} {{current_user.id}} {{today}} {{now}} {{unclosed"}}}`),
 			want: Rule{Name: "a", On: Trigger{Entity: []string{"task"}, Created: true}, Do: []Action{
 				{Set: "title", Value: "{{new.title}} {{old.title}} {{entity.id}} {{entity.type}} " +
-					"{{user.name}} {{user.email}} {{today}} {{now}} {{unclosed"},
+					"{{user.name}} {{user.email}} {{current_user.id}} {{today}} {{now}} {{unclosed"},
 			}},
 		},
 	}

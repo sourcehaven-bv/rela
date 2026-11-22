@@ -1,7 +1,12 @@
 import axios, { type AxiosInstance, type AxiosResponse } from 'axios'
-import { toApiError } from './errors'
+import { ApiError, toApiError } from './errors'
 import { apiUrl } from './base'
 import { isProvisioningResponse, startProvisioningPoll } from './tenantProvisioning'
+import { trackWorkspaceReadOnly } from './workspaceReadOnly'
+import { probeSessionEnded, trackAccess } from './workspaceAccess'
+import { carriesAsOf, currentAsOf } from './asOf'
+import { htmlResponseError, isHtmlResponse } from './htmlResponse'
+import { t } from '@/i18n'
 
 // The error types and helpers live in errors.ts; re-export so existing
 // `from '@/api'` / `from '@/api/client'` importers keep working.
@@ -18,6 +23,29 @@ class ApiClient {
       },
     })
 
+    // A page reading at a past instant sends the instant with every read
+    // the server can answer at it, and writes nothing (see asOf.ts).
+    this.client.interceptors.request.use((config) => {
+      const at = currentAsOf()
+      if (!at) return config
+      const method = (config.method ?? 'get').toLowerCase()
+      if (method !== 'get' && method !== 'head') {
+        const message = t('asOf.readOnly')
+        return Promise.reject(
+          new ApiError(message, {
+            kind: 'http',
+            status: 422,
+            problem: { type: 'as_of_read_only', title: message, status: 422 },
+            original: null,
+          }),
+        )
+      }
+      if (carriesAsOf(config.url ?? '')) {
+        config.params = { ...(config.params ?? {}), as_of: at }
+      }
+      return config
+    })
+
     // Every failure is normalized to a single ApiError (BUG-X9VNE1):
     // catch sites read .message / .validationErrors / getScriptError()
     // instead of branching on the rejection shape.
@@ -30,6 +58,15 @@ class ApiClient {
           void startProvisioningPoll()
           return Promise.reject(toApiError(new Error('tenant_provisioning')))
         }
+        // An HTML page in place of JSON is not data: reject it rather than
+        // hand a string to the caller. It may be the edge's sign-in page,
+        // reached through a redirect the browser followed, so ask once
+        // whether the session ended, as for a request with no response.
+        if (isHtmlResponse(response)) {
+          void probeSessionEnded()
+          return Promise.reject(htmlResponseError(response))
+        }
+        trackWorkspaceReadOnly(response.config, response.status, response.data)
         return response
       },
       (error: unknown) => {
@@ -43,7 +80,17 @@ class ApiClient {
         ) {
           void startProvisioningPoll()
         }
-        return Promise.reject(toApiError(error))
+        if (axios.isAxiosError(error) && error.response) {
+          trackWorkspaceReadOnly(error.config ?? {}, error.response.status, error.response.data)
+          trackAccess(error.response.status, error.response.data)
+        }
+        const normalized = toApiError(error)
+        // No response at all: perhaps the edge sent an ended session to its
+        // sign-in page and the browser refused the redirect. Ask once.
+        if (normalized instanceof ApiError && normalized.kind === 'network') {
+          void probeSessionEnded()
+        }
+        return Promise.reject(normalized)
       },
     )
   }

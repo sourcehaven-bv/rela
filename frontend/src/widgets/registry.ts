@@ -19,7 +19,9 @@ import MultiSelectWidget from './MultiSelectWidget.vue'
 import RruleWidget from './RruleWidget.vue'
 import FileWidget from './FileWidget.vue'
 import FileCellWidget from './FileCellWidget.vue'
+import ImageCellWidget from './ImageCellWidget.vue'
 import ExternalRefWidget from './ExternalRefWidget.vue'
+import UrlWidget from './UrlWidget.vue'
 
 // defaultWidgetFor reproduces FieldRenderer's historical dispatch order
 // exactly (RR-0Z1P6). Order matters: `list` wins over `values`, which
@@ -35,6 +37,9 @@ export function defaultWidgetFor(propertyDef?: PropertyDef): string {
   if (propertyDef?.type === 'rrule') return 'rrule'
   if (propertyDef?.type === 'file') return 'file'
   if (propertyDef?.type === 'external_ref') return 'external-ref'
+  // The schema admits a link format only on a single-valued string without
+  // values, so the list and values rules above never shadow it.
+  if (propertyDef?.display?.link === true) return 'url'
   return 'text'
 }
 
@@ -51,6 +56,7 @@ const hintKindToWidgetName: Record<WidgetHintKind, string> = {
   datetime: 'datetime',
   integer: 'number',
   rrule: 'rrule',
+  url: 'url',
 }
 
 // Hint kinds served by a dense-only component. These are NOT registered
@@ -59,6 +65,7 @@ const hintKindToWidgetName: Record<WidgetHintKind, string> = {
 // no edit mode, so it must not be selectable there.
 const DENSE_HINT_WIDGETS: Record<Exclude<DenseHintKind, WidgetHintKind>, Component> = {
   file: FileCellWidget,
+  image: ImageCellWidget,
 }
 
 export function defineWidgetRegistry(): WidgetRegistry {
@@ -103,8 +110,15 @@ export function defineWidgetRegistry(): WidgetRegistry {
         throw new Error('[widget-registry] no widget could be resolved (text widget missing)')
       }
 
+      // The type default picked this widget itself, so there is nothing to
+      // warn about. This covers a schema `types:` entry without values,
+      // such as a pattern-checked vat_number: its property type is the
+      // custom name, which no widget lists, and the text widget is right
+      // for it. Warning there logged once per rendered field.
+      const chosenByDefault = !requested && entries.get(resolvedName) === entry
       const ptype = propertyDef?.type
       if (
+        !chosenByDefault &&
         ptype &&
         entry.supportedPropertyTypes &&
         !entry.supportedPropertyTypes.includes(ptype)
@@ -120,7 +134,7 @@ export function defineWidgetRegistry(): WidgetRegistry {
     resolveFromHint,
 
     resolveDense(hint) {
-      if (hint.kind === 'file') return DENSE_HINT_WIDGETS.file
+      if (hint.kind === 'file' || hint.kind === 'image') return DENSE_HINT_WIDGETS[hint.kind]
       return resolveFromHint({ kind: hint.kind, propertyName: hint.propertyName })
     },
   }
@@ -158,6 +172,7 @@ export const WIDGET_REGISTRATIONS: ReadonlyArray<{
     component: ExternalRefWidget,
     supportedPropertyTypes: ['external_ref'],
   },
+  { name: 'url', component: UrlWidget, supportedPropertyTypes: ['string'] },
 ]
 
 function buildDefaultRegistry(): WidgetRegistry {

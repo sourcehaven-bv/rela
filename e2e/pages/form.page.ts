@@ -188,6 +188,13 @@ export class FormPage extends BasePage {
     // blank title so the caller types record N+1 into a settled form rather
     // than racing the reset that is about to clear it.
     await expect(this.titleInput).toHaveValue("", { timeout: 15000 });
+    // The success toast sits in the bottom-right corner, over this button
+    // when the form is scrolled to its end. Only the pane scrolls, so the
+    // next click cannot scroll clear of it: close it, as a user would. In the
+    // New dialog the toast is behind the modal and covers nothing.
+    if ((await this.page.locator(".rl-modal__scrim").count()) === 0) {
+      await this.dismissToasts();
+    }
     return response.json() as Promise<{ id: string }>;
   }
 
@@ -331,6 +338,11 @@ export class FormPage extends BasePage {
     await expect(
       this.page.locator("h1, h2, .form-title").filter({ hasText: title }),
     ).toBeVisible();
+  }
+
+  /** The field's input shows the URL keyboard (`inputmode="url"`). */
+  async expectUrlInput(name: string) {
+    await expect(this.page.locator(`#field-${name}`)).toHaveAttribute("inputmode", "url");
   }
 
   async getFieldValue(name: string): Promise<string> {
@@ -1116,6 +1128,23 @@ export class FormPage extends BasePage {
       mimeType,
       buffer: Buffer.from(contents),
     });
+  }
+
+  /** Attach binary bytes, such as an image, to a `file` property. */
+  async attachBinaryFile(property: string, name: string, buffer: Buffer, mimeType: string) {
+    await this.waitForFileWidget(property);
+    await this.fileInput(property).setInputFiles({ name, mimeType, buffer });
+  }
+
+  /** The preview `<img>` an image property shows (staged or uploaded). */
+  imagePreview(property: string): Locator {
+    return this.fileWidget(property).locator("img.image-preview-img");
+  }
+
+  /** Click the image widget's remove button and confirm the dialog. */
+  async removeImage(property: string) {
+    await this.fileWidget(property).locator(".image-remove").click();
+    await this.page.getByRole("button", { name: "Delete", exact: true }).click();
   }
 
   /** Edit mode only: attach a file and wait for its upload to succeed, so a

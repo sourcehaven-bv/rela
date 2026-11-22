@@ -21,6 +21,11 @@ vi.mock('@/stores', () => ({
   }),
 }))
 
+const mockProbeSessionEnded = vi.fn().mockResolvedValue(undefined)
+vi.mock('@/api/workspaceAccess', () => ({
+  probeSessionEnded: () => mockProbeSessionEnded(),
+}))
+
 // Wrap the MockEventSource from test/setup.ts so tests can grab the
 // instance the composable connected to and drive server-sent events
 // through its _emit helper.
@@ -340,6 +345,13 @@ describe('useEvents', () => {
 
       expect(sourceUrl()).toContain('?last_event_id=a%26b%3Dc')
     })
+  })
+
+  it('asks whether the session ended when the stream fails', async () => {
+    await mountConnected()
+    const source = lastSource as unknown as EventSource
+    source.onerror?.(new Event('error'))
+    expect(mockProbeSessionEnded).toHaveBeenCalledTimes(1)
   })
 
   describe('disconnect', () => {

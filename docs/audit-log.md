@@ -123,7 +123,9 @@ serialized.
 
 Other records describe an event that is not a stored write, such as a
 refused write (`denied-write`) or the use of elevated access
-(`acl-bypass`). These go through a background writer that appends
+(`acl-bypass`). Writes to record rows (`append-records`,
+`update-record`, `delete-record`) are also recorded this way, after the
+write has committed. These go through a background writer that appends
 queued records in batches. A failed batch is retried for about 20
 seconds and then logged as `audit.write_failed` and dropped. The queue
 holds at most 100,000 records; records that arrive when it is full are
@@ -205,12 +207,15 @@ Every record is one line of JSON:
 | `create-entity`, `update-entity`, `delete-entity`, `rename-entity`, `convert-entity` | Entity writes, including type conversion |
 | `restore-entity`, `purge-deleted-entity` | Undo of a web-app delete, and the final removal once the undo window has passed. See "Undoable deletes" below |
 | `create-relation`, `update-relation`, `delete-relation` | Relation writes |
+| `append-records` | One append of record rows, a ledger reversal included. Subject has kind `record`, the record type and the first row id; the summary names the row count, the last row id, the owners and any ledger transactions. See [Records](records.md) |
+| `update-record`, `delete-record` | A change to or delete of one row of a mutable record type. The summary names the changed fields, never their values |
 | `denied-write` | A write the ACL refused, or an upload the attachment policy refused. Subject names the would-be target; the summary carries the rule that fired |
 | `acl-bypass`, `acl-bypass-read` | A write or read that skipped the ACL through an elevated script handle (`rela.bypass_acl`). The principal is the REAL triggering identity |
 | `acl-query` | An effective-access query (`rela acl who-can`) — who asked, when, and about which entity. **The answer is deliberately not recorded**: it is a list of principals and their access routes, so logging it would duplicate the disclosure rather than record it |
 | `purge-version` | An operator hard-delete of version history for compliance redaction. Never contains the purged content |
 | `data-migration`, `data-gc` | Schema-driven data migration and garbage collection |
 | `audit-prune`, `audit-import` | Maintenance of the database audit log: `rela audit prune` and `rela audit import`. The summary carries the counts and, for a prune, the last deleted `seq` and the cutoff |
+| `audit-read` | A page of the global audit view (`GET /api/v1/_audit`) was served. The summary carries the cursor, the page size and the number of records served; the records themselves are not copied |
 | `idp-roles-set` | The IdP webhook stored or cleared the asserted roles of one principal, for background jobs (see [ACL security](acl-security.md) "Stored asserted roles"), or the stored roles were erased with the person (delete, rename, `rela acl forget-idp-roles`); an erasure records `roles=0`. Subject is the bound user entity, absent when the subject resolved to none; the summary is `roles=<count>`. The IdP subject and the role names are not recorded |
 
 ### Conversion records
@@ -252,8 +257,11 @@ For relation writes the `subject` carries `relation_type` instead of
 
 ### Subject shape
 
-- **Entity ops:** `{"kind":"entity", "type":..., "id":...}`
-- **Relation ops:** `{"kind":"relation", "relation_type":..., "from_id":..., "to_id":...}`
+- **Entity ops:** `{"kind":"entity", "type":..., "id":..., "face":...}`
+- **Relation ops:** `{"kind":"relation", "relation_type":..., "from_id":..., "from_face":..., "to_id":...}`
+- `face` and `from_face` are present only on a type with faces. A relation's
+  far end has no face, because a relation leads to the entity, not to one of
+  its faces.
 - **Rename and conversion:** `subject` is absent from the JSON; `before` and
   `after` carry the old and new entity identities. A conversion preserves the
   entity's history lineage under its new id.
@@ -493,6 +501,61 @@ find .rela/audit -name '*.jsonl' -mtime +1095 -delete
 
 ## Reading the log
 
+### In the web app
+
+On the database builds (PostgreSQL and SQLite), the data-entry app reads
+the audit log in two places. The filesystem build keeps JSONL files, which
+cannot be paged, so it offers neither.
+
+- **The Changes tab** on an entity page lists the writes to that entity and
+  its relations, newest first (`GET /api/v1/_changes/<type>/<id>`). It is
+  gated like the entity's [version history](acl-security.md#version-history-read-gating-historyread):
+  a live entity needs read access, a deleted one needs `history:read`. On a
+  type with faces the list is per face. The list starts at the entity's
+  latest creation, so a new entity that reuses a deleted entity's id does not
+  show the old one's records. A record that names another entity the reader
+  cannot read now (a relation's far end, a rename's other id) is left out.
+  The record's summary is kept only when it names no entity, and names only
+  the properties the reader sees on every row of the type. An update that
+  changed only properties the reader does not see on every row is left out,
+  so the list does not tell when a hidden value changed. Records of
+  relations rela manages itself (types starting with `_`), changes to `_`
+  properties, and the renumbering of siblings after a drag are left out too.
+  Only the kind of `triggered_by` is shown, plus the automation or schedule
+  name.
+
+  The tab names relations, properties and entity types by their labels, and
+  other entities by their title as the reader sees it (the response's
+  `titles` map). A relation seen from its target uses the relation's
+  `inverse.label`; without one it reads "Label, from Other". The person who
+  made a change shows by title when their principal is an entity id the
+  reader may read (the same `titles` map), and as sent otherwise. The
+  identity provider webhook shows as "Identity provider (event)", a
+  `system:webhook:<id>` principal as "Webhook id", and an `integration:<name>`
+  principal as "Integration name". Any other `system:` principal shows as
+  "System", and a trigger shows only as "By an automation", "By a
+  schedule" or "Automatically". The labels are applied in the browser: the
+  response still carries the raw names, which are configuration, not data.
+  The global audit view keeps the raw values.
+
+  The tab follows `header_buttons.history` in `data-entry.yaml`: where that
+  hides the History button, it hides the Changes tab as well. Use it to keep
+  the list from customers, for example with
+  `history: {permission: staff.manage}`. Like the button, this is a UX
+  filter; the route keeps its own gate.
+- **The global audit view** (`/audit`, `GET /api/v1/_audit`) pages through the
+  whole log, newest first, including deleted entities and `denied-write`
+  records. It needs the `audit:read` permission under an ACL policy; without
+  a policy, and under `--read-only`, it is refused. Records are served whole
+  and ungated, so treat `audit:read` like `history:read`: grant it only to
+  audit and compliance roles. Every page served writes an `audit-read`
+  record.
+
+Both routes page with `?limit=` (1 to 200, default 50) and `?before=`, the
+`next_before` value of the previous page.
+
+### With SQL
+
 On the database builds, query the tables directly. For example, every
 record that names `TKT-001`:
 
@@ -501,6 +564,12 @@ SELECT l.seq, l.doc FROM audit_log l
 JOIN audit_subjects s ON s.seq = l.seq
 WHERE s.entity_id = 'TKT-001' ORDER BY l.seq;
 ```
+
+`audit_subjects` also has `face` (empty when the record names every face)
+and `starts`, which marks the record that created the id or renamed or
+converted an entity into it.
+
+### With jq
 
 On the filesystem build, `jq` is the easiest tool for reading JSONL streams. Common queries:
 

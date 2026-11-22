@@ -138,15 +138,37 @@ is_current_user(entity.assignee)
 has_current_user(entity.watchers)
 ```
 
-The store answers equalities, `~=`, `related(...)`, the `current_user`
-comparisons, `and`, `or` and `not`, and `<`, `<=`, `>`, `>=` on a string or
-integer property, so such a filter costs one page. The sqlite backend is the
-exception for integers: it checks an ordered comparison on an integer property
-against every readable entity of the type. An ordered comparison on a string or
-integer property that is not set is false. A filter with a date or
-decimal comparison, a comparison of two properties, or a property the caller
-cannot see on every entity is checked against every readable entity of the
-type, which costs more on a large type.
+The store answers every filter, so a filtered list costs one page, whatever
+the size of the type. A filter may use:
+
+- `==`, `~=`, `<`, `<=`, `>` and `>=` between a string, enum or integer
+  property and a value;
+- a test whether a list of strings holds a value;
+- `related(...)`;
+- the `current_user` comparisons above;
+- `and`, `or` and `not`, to combine these.
+
+An ordered comparison on a property that is not set is false. A property the
+caller cannot see on an entity counts as not set there. The sqlite backend
+checks an ordered comparison on an integer property against every readable
+entity of the type, inside the database.
+
+Any other filter is refused with an error that names the part the store
+cannot answer. Refused shapes include:
+
+- a comparison on a date, decimal, boolean or id property;
+- a comparison of two properties, such as `entity.title == entity.owner`;
+- a function call other than the `current_user` ones, such as `today()`;
+- `current_user.tool`;
+- a roll-up property;
+- an equality with an empty value, such as `entity.status == ''`;
+- a filter too large for the store to run;
+- a filter on a property that the caller's `visible:` grants show on some
+  content states (faces) of the type only, when the call reads several
+  faces.
+
+A filter of a supported shape can still be refused for one caller: the
+error then says the filter cannot be answered for you, and why.
 
 In `update_entity`, a `null` property value removes the property, and an empty
 string is ignored.
@@ -549,14 +571,15 @@ the project has `flows.yaml`. Both servers offer them. See
 | `complete_flow_step` | Write the step's properties on the subject as you, then move the run on | `run`, `generation`, `properties?` |
 
 `show_flow_run` answers the same reason the web app shows: the roles the
-state waits for and whether you hold one, the properties a step writes,
+state waits for and whether you hold one, the step's form and its fields,
 the timers and when each fires, each `change` branch and whether its guard
 holds now, and a failing output step. Its `_actions.complete` says whether
 `complete_flow_step` would be accepted.
 
 Pass `complete_flow_step` the `generation` that `show_flow_run` returned.
 A run that moved on since is refused; call `show_flow_run` again and
-decide anew. Every property must be one the state writes.
+decide anew. Every property must be in `waiting.fields`, the fields of
+the state's form.
 
 A run in [parallel branches](flows.md#parallel-branches) waits at its
 join. `show_flow_run` lists each branch under `parallel`, with its own
@@ -569,8 +592,10 @@ the properties it wrote, whether the run moved, the run's state after the
 step, and whether the run ended. `problem` is set when the properties were
 written but the run did not follow cleanly: `guard` (a branch guard could
 not be evaluated, so the run stays), `moved` (the run had already moved
-on, for example by a timer) or `settling` (an output step failed after the
-move and is retried while `rela-server` or the desktop app runs).
+on, for example by a timer), `settling` (an output step failed after the
+move and is retried while `rela-server` or the desktop app runs) or
+`blocked` (a branch is open to the caller, but no branch guard holds, so the
+run stays).
 
 ### Channel Tools
 

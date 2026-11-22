@@ -2,6 +2,8 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -76,11 +78,11 @@ func validateCalendarShell(cfg *Config, calID string, cal Calendar) []string {
 
 	if cal.DefaultView != "" && !validCalendarViews[cal.DefaultView] {
 		errs = append(errs, fmt.Sprintf("%s: default_view %q is not valid (valid: %s)",
-			prefix, cal.DefaultView, strings.Join(sortedMapKeys(validCalendarViews), ", ")))
+			prefix, cal.DefaultView, strings.Join(slices.Sorted(maps.Keys(validCalendarViews)), ", ")))
 	}
 	if cal.WeekStart != "" && !validCalendarWeekStarts[cal.WeekStart] {
 		errs = append(errs, fmt.Sprintf("%s: week_start %q is not valid (valid: %s)",
-			prefix, cal.WeekStart, strings.Join(sortedMapKeys(validCalendarWeekStarts), ", ")))
+			prefix, cal.WeekStart, strings.Join(slices.Sorted(maps.Keys(validCalendarWeekStarts)), ", ")))
 	}
 
 	startMin, startOK := parseClockMinutes(cal.DayStart)

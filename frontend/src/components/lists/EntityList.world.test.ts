@@ -8,6 +8,8 @@ import { withPageHeader } from '@/composables/pageHeaderTestHost'
 import { useSchemaStore } from '@/stores/schema'
 import { _setEntityPluralForTest } from '@/api/entities'
 import type { Entity, ListResponse } from '@/types'
+import { ApiError } from '@/api/errors'
+import { REFUSAL, accessRefusal, resetAccessForTest } from '@/api/workspaceAccess'
 
 // World-bound list surface (TKT-F2D5U5).
 //
@@ -413,6 +415,41 @@ describe('EntityList world binding', () => {
       // says "Showing the nonexistent world" directly above an error saying
       // no such world exists.
       expect(wrapper.find('.world-banner').exists()).toBe(false)
+    })
+  })
+
+  // BUG-ZL4K7QW: once the session has ended, the session screen says why the
+  // read failed; "Request failed (401)" and a Retry under it cannot help.
+  describe('when the session has ended', () => {
+    afterEach(() => resetAccessForTest())
+
+    async function mountFailing(status: number) {
+      seedSchema()
+      listEntitiesMock.mockRejectedValue(
+        new ApiError(`Request failed (${status})`, { kind: 'http', status, original: null }),
+      )
+      const wrapper = mount(EntityList, {
+        props: { listId },
+        attachTo: document.body,
+        global: { plugins: [pinia, PiniaColada] },
+      })
+      mounted.push(wrapper)
+      await flushPromises()
+      expect(listEntitiesMock).toHaveBeenCalled()
+      return wrapper
+    }
+
+    it('shows no error or Retry under the session screen', async () => {
+      accessRefusal.value = REFUSAL.sessionEnded
+      const wrapper = await mountFailing(401)
+      expect(wrapper.find('[data-testid="load-refused"]').exists()).toBe(true)
+      expect(wrapper.find('.load-error').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('401')
+    })
+
+    it('still shows other errors without a session screen', async () => {
+      const wrapper = await mountFailing(500)
+      expect(wrapper.find('.load-error').text()).toContain('500')
     })
   })
 

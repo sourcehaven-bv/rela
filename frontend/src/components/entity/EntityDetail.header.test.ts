@@ -6,8 +6,13 @@ import EntityDetail from './EntityDetail.vue'
 import EntityActionsMenu from './EntityActionsMenu.vue'
 import type { EntityAction } from './entityActions'
 import { useSchemaStore } from '@/stores/schema'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
+import { defineComponent } from 'vue'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import type { Entity } from '@/types'
 import type { ViewResponse } from '@/api'
+import { ApiError } from '@/api/errors'
+import { REFUSAL, accessRefusal, resetAccessForTest } from '@/api/workspaceAccess'
 
 // The desktop header row: conversions share one menu, and a row that does not
 // fit beside the title moves its secondary actions into the "⋯" menu.
@@ -81,6 +86,7 @@ describe('EntityDetail header actions', () => {
   })
 
   afterEach(() => {
+    workspaceReadOnly.value = false
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     document.body.innerHTML = ''
@@ -99,6 +105,30 @@ describe('EntityDetail header actions', () => {
   function desktopLabels(w: Awaited<ReturnType<typeof mountDetail>>) {
     return w.findAll('.desktop-actions button, .desktop-actions a').map((b) => b.text().trim())
   }
+
+  // BUG-ZL4K7QW: once the session has ended, the session screen says why the
+  // read failed, so no error and no Retry show under it.
+  it('shows no load error under the session screen', async () => {
+    fetchViewMock.mockReset().mockRejectedValue(
+      new ApiError('Request failed (401)', { kind: 'http', status: 401, original: null })
+    )
+    accessRefusal.value = REFUSAL.sessionEnded
+    try {
+      const w = await mountDetail()
+      expect(fetchViewMock).toHaveBeenCalled()
+      expect(w.text()).not.toContain('401')
+    } finally {
+      resetAccessForTest()
+    }
+  })
+
+  it('shows the load error without a session screen', async () => {
+    fetchViewMock.mockReset().mockRejectedValue(
+      new ApiError('Request failed (500)', { kind: 'http', status: 500, original: null })
+    )
+    const w = await mountDetail()
+    expect(w.text()).toContain('500')
+  })
 
   it('offers all conversions in one Convert menu', async () => {
     const w = await mountDetail()
@@ -130,5 +160,58 @@ describe('EntityDetail header actions', () => {
     expect(ids).toContain('delete')
     expect(ids).toContain('convert:topic-naar-opdracht')
     expect(ids).not.toContain('edit')
+  })
+
+  it('offers no edit, duplicate, delete or conversion in a read-only workspace', async () => {
+    useSchemaStore().setInlineCreate({ topic: 'create_topic' })
+    const ids = async () => {
+      const w = await mountDetail()
+      const events = w.emitted('actions') as EntityAction[][][]
+      return events[events.length - 1][0].map((a) => a.id)
+    }
+    expect(await ids()).toEqual(
+      expect.arrayContaining(['duplicate', 'delete', 'convert:topic-naar-opdracht'])
+    )
+
+    workspaceReadOnly.value = true
+    const readOnly = await ids()
+    expect(readOnly.filter((id) => /^(edit|duplicate|delete|convert:)/.test(id))).toEqual([])
+  })
+
+  // Only the entity route names the tab; a panel or preview must not.
+  describe('tab title', () => {
+    function shell() {
+      return mount(
+        defineComponent({
+          setup() {
+            useDocumentTitle('Portal')
+            return () => null
+          },
+        })
+      )
+    }
+
+    it('names the tab after the entity with names-tab', async () => {
+      const s = shell()
+      const w = mount(EntityDetail, {
+        props: { entityType: 'topic', entityId: 'TOPIC-1', namesTab: true },
+        global: { plugins: [pinia, PiniaColada] },
+      })
+      await flushPromises()
+      expect(document.title).toBe('Een topic · Portal')
+      w.unmount()
+      s.unmount()
+    })
+
+    it('leaves the tab alone without names-tab', async () => {
+      // With no page title the tab keeps its title for TITLE_HOLD_MS, so
+      // start from the shell's title: a page title would replace it.
+      document.title = 'Portal'
+      const s = shell()
+      const w = await mountDetail()
+      expect(document.title).toBe('Portal')
+      w.unmount()
+      s.unmount()
+    })
   })
 })

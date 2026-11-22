@@ -44,11 +44,18 @@ describe('flow requests', () => {
   })
 
   it('reads the runs of one subject', async () => {
-    vi.mocked(api.get).mockResolvedValueOnce({ runs: [{ id: 'R1' }], total: 1 })
-    expect(await listSubjectRuns('PER-1@draft')).toEqual([{ id: 'R1' }])
+    vi.mocked(api.get).mockResolvedValueOnce({
+      runs: [{ id: 'R1' }],
+      total: 1,
+      startable: ['onboarding'],
+    })
+    expect(await listSubjectRuns('PER-1@draft')).toEqual({
+      runs: [{ id: 'R1' }],
+      startable: ['onboarding'],
+    })
     expect(api.get).toHaveBeenCalledWith('/_flows/runs', { subject: 'PER-1@draft' }, undefined)
     vi.mocked(api.get).mockResolvedValueOnce({})
-    expect(await listSubjectRuns('PER-1')).toEqual([])
+    expect(await listSubjectRuns('PER-1')).toEqual({ runs: [], startable: [] })
   })
 
   it('escapes the run id in the path', async () => {

@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/flowview"
@@ -23,6 +25,8 @@ import (
 type fakeFlows struct {
 	err   error
 	calls []string
+	// startErr fails Startable alone.
+	startErr error
 }
 
 func (f *fakeFlows) rec(format string, args ...any) {
@@ -42,6 +46,14 @@ func (f *fakeFlows) RunList(_ context.Context, name, status string, page, perPag
 func (f *fakeFlows) SubjectRuns(_ context.Context, addr string) ([]flowview.Run, error) {
 	f.rec("subject %s", addr)
 	return nil, f.err
+}
+
+func (f *fakeFlows) Startable(_ context.Context, addr string) ([]string, error) {
+	f.rec("startable %s", addr)
+	if err := cmp.Or(f.startErr, f.err); err != nil {
+		return nil, err
+	}
+	return []string{"onboarding"}, nil
 }
 
 func (f *fakeFlows) Run(_ context.Context, id flow.RunID) (flowview.Run, error) {
@@ -75,6 +87,11 @@ func (f *fakeFlows) Tasks(_ context.Context, name string, page, perPage int) (fl
 	return flowview.Tasks{}, f.err
 }
 
+func (f *fakeFlows) FailedTasks(_ context.Context, name string) ([]flowview.Task, bool, error) {
+	f.rec("failed %s", name)
+	return nil, false, f.err
+}
+
 func flowRequest(t *testing.T, app *App, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -92,10 +109,11 @@ func TestFlowsAPI_Routes(t *testing.T) {
 	}{
 		{"flows", http.MethodGet, "/api/v1/_flows", "", http.StatusOK, "flows"},
 		{"tasks", http.MethodGet, "/api/v1/_flows/tasks?flow=onboarding&page=2&per_page=10", "", http.StatusOK,
-			"tasks onboarding 2 10"},
+			"tasks onboarding 2 10; failed onboarding"},
 		{"run list", http.MethodGet, "/api/v1/_flows/runs?flow=f&status=running", "", http.StatusOK,
 			"list f running 1 25"},
-		{"subject runs", http.MethodGet, "/api/v1/_flows/runs?subject=PER-1", "", http.StatusOK, "subject PER-1"},
+		{"subject runs", http.MethodGet, "/api/v1/_flows/runs?subject=PER-1", "", http.StatusOK,
+			"subject PER-1; startable PER-1"},
 		{"start", http.MethodPost, "/api/v1/_flows/runs", `{"flow":"onboarding","subject":"PER-1"}`,
 			http.StatusCreated, "start onboarding PER-1"},
 		{"start without subject", http.MethodPost, "/api/v1/_flows/runs", `{"flow":"onboarding"}`,
@@ -123,9 +141,27 @@ func TestFlowsAPI_Routes(t *testing.T) {
 				require.Empty(t, fake.calls)
 				return
 			}
-			require.Equal(t, []string{tc.call}, fake.calls)
+			require.Equal(t, tc.call, strings.Join(fake.calls, "; "))
 		})
 	}
+}
+
+// TestFlowsAPI_SubjectRunsStartable pins that the runs on one entity carry
+// the flows the caller may start on it.
+func TestFlowsAPI_SubjectRunsStartable(t *testing.T) {
+	app := newHandlerTestApp(t)
+	require.NoError(t, SetFlows(app, &fakeFlows{}))
+	w := flowRequest(t, app, http.MethodGet, "/api/v1/_flows/runs?subject=PER-1", "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var got flowview.SubjectRuns
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.Equal(t, []string{"onboarding"}, got.Startable)
+	require.Equal(t, []flowview.Run{}, got.Runs.Runs)
+
+	// A failed Startable fails the answer; it never sends the runs alone.
+	require.NoError(t, SetFlows(app, &fakeFlows{startErr: flowview.ErrNotFound}))
+	w = flowRequest(t, app, http.MethodGet, "/api/v1/_flows/runs?subject=PER-1", "")
+	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
 }
 
 // TestFlowsAPI_ErrorStatus pins the status each kind of flow error maps to.
@@ -171,6 +207,32 @@ func TestFlowsAPI_NotWired(t *testing.T) {
 	require.Error(t, SetFlows(app, nil))
 }
 
+// TestSchemaCapabilities_Flows pins capabilities.flows: the SPA asks for
+// GET /_flows only when the schema says the project has flows, so a project
+// without them gets no 404 on every page.
+func TestSchemaCapabilities_Flows(t *testing.T) {
+	flowsCapability := func(app *App) bool {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		app.schemaAPI.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var got struct {
+			Capabilities struct {
+				Flows *bool `json:"flows"`
+			} `json:"capabilities"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		require.NotNil(t, got.Capabilities.Flows, "capabilities.flows is always present")
+		return *got.Capabilities.Flows
+	}
+
+	app := newHandlerTestApp(t)
+	require.False(t, flowsCapability(app), "no flows declared")
+
+	require.NoError(t, SetFlows(app, &fakeFlows{}))
+	require.True(t, flowsCapability(app), "flows declared")
+}
+
 // TestFlowsAPI_BodyLimit pins the 413 for a body past the limit.
 func TestFlowsAPI_BodyLimit(t *testing.T) {
 	app := newHandlerTestApp(t)
@@ -180,4 +242,83 @@ func TestFlowsAPI_BodyLimit(t *testing.T) {
 	w := flowRequest(t, app, http.MethodPost, "/api/v1/_flows/runs/RUN-1/_complete", body)
 	require.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
 	require.Empty(t, fake.calls)
+}
+
+// TestFlowsAPI_SubjectRunsHiddenPanel pins that `entity_panels.flow_runs`
+// withholds the runs and startable flows on the server, per space and per
+// permission, and leaves the run list alone.
+func TestFlowsAPI_SubjectRunsHiddenPanel(t *testing.T) {
+	cases := []struct {
+		name, path string
+		wantCalls  string
+	}{
+		{"hidden in the space", "/api/v1/_flows/runs?subject=PER-1&space=portal", ""},
+		{"shown in another space", "/api/v1/_flows/runs?subject=PER-1&space=office", "subject PER-1; startable PER-1"},
+		{"run list unaffected", "/api/v1/_flows/runs?space=portal", "list   1 25"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newHandlerTestApp(t)
+			cur := app.State()
+			next := *cur
+			cfg := *cur.Cfg
+			cfg.Spaces = []dataentryconfig.Space{
+				{ID: "portal", Label: "Portal",
+					EntityPanels: dataentryconfig.EntityPanelsConfig{FlowRuns: dataentryconfig.ChromeToggle{Off: true}}},
+				{ID: "office", Label: "Office"},
+			}
+			next.Cfg = &cfg
+			app.schema.Publish(&next)
+			fake := &fakeFlows{}
+			require.NoError(t, SetFlows(app, fake))
+			w := flowRequest(t, app, http.MethodGet, tc.path, "")
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			require.Equal(t, tc.wantCalls, strings.Join(fake.calls, "; "))
+			if tc.wantCalls == "" {
+				require.JSONEq(t, `{"runs":[],"total":0,"truncated":false,"startable":[]}`, w.Body.String())
+			}
+		})
+	}
+}
+
+// TestFlowsAPI_SubjectRunsPanelPermission pins the permission form against a
+// real policy: the holder gets the runs, a principal without the permission
+// gets none, and with no acl.yaml the gated panel shows.
+func TestFlowsAPI_SubjectRunsPanelPermission(t *testing.T) {
+	cases := []struct {
+		name      string
+		policy    bool
+		principal string // with policy: alice holds admin:read, bob does not
+		wantCalls string
+	}{
+		{"holder", true, "alice", "subject PER-1; startable PER-1"},
+		{"non-holder", true, "bob", ""},
+		{"no acl.yaml", false, "", "subject PER-1; startable PER-1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newTestAppV1(t)
+			cur := app.State()
+			next := *cur
+			cfg := *cur.Cfg
+			cfg.EntityPanels.FlowRuns = dataentryconfig.ChromeToggle{Permission: "admin:read"}
+			next.Cfg = &cfg
+			app.schema.Publish(&next)
+			ctx := t.Context()
+			if tc.policy {
+				d := mustNewACL(t, gatedNavPolicy(), app.store)
+				setTestACL(t, app, d)
+				ctx = gateCtxFor(principalCtx(tc.principal), t, d)
+			} else {
+				setTestACL(t, app, acl.NopACL{})
+			}
+			fake := &fakeFlows{}
+			require.NoError(t, SetFlows(app, fake))
+			r := httptest.NewRequest(http.MethodGet, "/api/v1/_flows/runs?subject=PER-1", http.NoBody).WithContext(ctx)
+			w := httptest.NewRecorder()
+			app.flows.handleV1Flows(w, r)
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			require.Equal(t, tc.wantCalls, strings.Join(fake.calls, "; "))
+		})
+	}
 }

@@ -42,24 +42,6 @@ func CreateDir(t *testing.T, path string) {
 	}
 }
 
-// AssertFileExists checks that a file exists at the given path.
-func AssertFileExists(t *testing.T, path string) {
-	t.Helper()
-
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		t.Errorf("expected file to exist: %s", path)
-	}
-}
-
-// AssertFileNotExists checks that a file does not exist at the given path.
-func AssertFileNotExists(t *testing.T, path string) {
-	t.Helper()
-
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Errorf("expected file to not exist: %s", path)
-	}
-}
-
 // AssertNoError checks that an error is nil.
 func AssertNoError(t *testing.T, err error) {
 	t.Helper()
@@ -89,15 +71,6 @@ func AssertEqual(t *testing.T, got, want any) {
 	}
 }
 
-// AssertNotEqual checks that two values are not deeply equal.
-func AssertNotEqual(t *testing.T, got, notWant any) {
-	t.Helper()
-
-	if reflect.DeepEqual(got, notWant) {
-		t.Errorf("got %#v, expected different value", got)
-	}
-}
-
 // AssertStringContains checks that a string contains a substring.
 func AssertStringContains(t *testing.T, s, substr string) {
 	t.Helper()
@@ -105,52 +78,6 @@ func AssertStringContains(t *testing.T, s, substr string) {
 	if !strings.Contains(s, substr) {
 		t.Errorf("string %q does not contain %q", s, substr)
 	}
-}
-
-// AssertStringNotContains checks that a string does not contain a substring.
-func AssertStringNotContains(t *testing.T, s, substr string) {
-	t.Helper()
-
-	if strings.Contains(s, substr) {
-		t.Errorf("string %q unexpectedly contains %q", s, substr)
-	}
-}
-
-// AssertLengthEqual checks that a slice or map has the expected length.
-func AssertLengthEqual(t *testing.T, slice any, expectedLen int) {
-	t.Helper()
-
-	var actualLen int
-	switch v := slice.(type) {
-	case []string:
-		actualLen = len(v)
-	case []any:
-		actualLen = len(v)
-	case []error:
-		actualLen = len(v)
-	case map[string]bool:
-		actualLen = len(v)
-	case map[string]any:
-		actualLen = len(v)
-	default:
-		t.Fatalf("unsupported type for length check: %T", slice)
-	}
-
-	if actualLen != expectedLen {
-		t.Errorf("length = %d, want %d", actualLen, expectedLen)
-	}
-}
-
-// ReadFile reads a file and returns its contents as a string.
-func ReadFile(t *testing.T, path string) string {
-	t.Helper()
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read file %s: %v", path, err)
-	}
-
-	return string(content)
 }
 
 // ChangeDir changes the current directory and returns a cleanup function

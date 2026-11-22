@@ -276,7 +276,7 @@ describe('DashboardView', () => {
 
       const wrapper = await mountView()
 
-      const cells = wrapper.findAll('tbody td').map((td) => td.text())
+      const cells = wrapper.findAll('tbody td .cell-value').map((td) => td.text())
       expect(cells).toEqual(['a', 'b', 'c'])
 
       // Sorting reads each row's property, then rendering reads it once per
@@ -746,7 +746,7 @@ describe('DashboardView', () => {
     ]
 
     function expectDealRow(wrapper: Awaited<ReturnType<typeof mountView>>) {
-      const cells = wrapper.findAll('tbody td')
+      const cells = wrapper.findAll('tbody td .cell-value')
       expect(cells[0].find('a').attributes('data-to')).toBe('/entity/deal/D-1')
       expect(cells[0].text()).toBe('Big deal')
       const badge = cells[1].find('.badge')
@@ -795,6 +795,23 @@ describe('DashboardView', () => {
       expectDealRow(await mountView())
     })
 
+    it('heads a column without a label with the schema label', async () => {
+      seedDeals()
+      const store = useSchemaStore()
+      const def = store.getEntityType('deal')!
+      def.properties.stage.label = 'Sales stage'
+      searchReturns([deal('D-1', { title: 'Big deal', stage: 'contact' })])
+      seedDashboard([
+        card({
+          display: 'table',
+          columns: [{ property: 'stage' }, { property: 'title', label: 'Deal' }, { property: 'sector' }],
+        }),
+      ])
+
+      const heads = (await mountView()).findAll('thead th').map((th) => th.text())
+      expect(heads).toEqual([def.properties.stage.label, 'Deal', 'sector'])
+    })
+
     it('leaves empty cells and unknown properties as plain text', async () => {
       seedDeals()
       searchReturns([deal('D-1', { title: 'Bare', note: 'kept' })])
@@ -802,10 +819,62 @@ describe('DashboardView', () => {
         card({ display: 'table', columns: [{ property: 'stage' }, { property: 'note' }] }),
       ])
 
-      const cells = (await mountView()).findAll('tbody td')
+      const cells = (await mountView()).findAll('tbody td .cell-value')
       expect(cells[0].text()).toBe('')
       expect(cells[0].find('.badge').exists()).toBe(false)
       expect(cells[1].text()).toBe('kept')
+    })
+
+    // On a phone each row stacks, and each value shows its column name.
+    it('labels each cell with its column header for the stacked layout', async () => {
+      seedDeals()
+      searchReturns([deal('D-1', { title: 'Bare', note: 'kept' })])
+      seedDashboard([
+        card({
+          display: 'table',
+          columns: [{ property: 'title' }, { property: 'note', label: 'Note' }],
+        }),
+      ])
+
+      const wrapper = await mountView()
+      const headers = wrapper.findAll('thead th').map((th) => th.text())
+      const labels = wrapper.findAll('tbody td .cell-label')
+      expect(labels.map((l) => l.text())).toEqual(headers)
+      expect(labels.every((l) => l.attributes('aria-hidden') === 'true')).toBe(true)
+      expect(wrapper.find('table').attributes('role')).toBe('table')
+      expect(wrapper.find('tbody td').attributes('role')).toBe('cell')
+    })
+  })
+
+  describe('hide_empty', () => {
+    const titles = (w: Awaited<ReturnType<typeof mountView>>) =>
+      w.findAll('.dashboard-card h3').map((h) => h.text())
+
+    it('leaves out a hide_empty card whose list or query has no rows', async () => {
+      seedDashboard([
+        card({ title: 'Empty list', query: undefined, list: 'open', index: 0, hide_empty: true }),
+        card({ title: 'Full list', query: undefined, list: 'open', index: 1, hide_empty: true }),
+        card({ title: 'Empty query', query: 'type:none', index: 2, hide_empty: true }),
+        card({ title: 'Shown anyway', query: 'type:none', index: 3 }),
+      ])
+      getDashboardCardMock.mockImplementation(async (_name, index) =>
+        index === 0
+          ? { title: 'Empty list', display: 'count', list: 'open', total: 0 }
+          : { title: 'Full list', display: 'count', list: 'open', total: 3 }
+      )
+
+      const wrapper = await mountView()
+      expect(titles(wrapper)).toEqual(['Full list', 'Shown anyway'])
+    })
+
+    it('keeps a hide_empty card that failed to load, so the error shows', async () => {
+      seedDashboard([card({ title: 'Broken', query: undefined, list: 'open', hide_empty: true })])
+      getDashboardCardMock.mockRejectedValue(new Error('boom'))
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      const wrapper = await mountView()
+      expect(titles(wrapper)).toEqual(['Broken'])
+      expect(wrapper.find('[data-testid="card-failed"]').exists()).toBe(true)
     })
   })
 
@@ -840,6 +909,39 @@ describe('DashboardView', () => {
     it('never packs the grid densely', () => {
       const source = readFileSync(resolve(__dirname, 'DashboardView.vue'), 'utf8')
       expect(source).not.toMatch(/(grid-auto-flow|grid):[^;]*\bdense\b[^;`]*;/)
+    })
+  })
+
+  // The validation card follows the server's per-principal `validation`
+  // (TKT-31822PN); the view never evaluates the configured toggle itself.
+  describe('validation card', () => {
+    it.each([
+      ['absent (older server)', undefined, true],
+      ['true', true, true],
+      ['false', false, false],
+    ])('with validation %s shown is %s', async (_name, validation, shown) => {
+      const store = seedDashboard([card()])
+      store.dashboard = { ...store.dashboard!, validation }
+
+      const wrapper = await mountView()
+
+      expect(wrapper.find('[data-testid="dashboard-validation"]').exists()).toBe(shown)
+      // A hidden card loads nothing.
+      expect(analyzeMock).toHaveBeenCalledTimes(shown ? 1 : 0)
+    })
+
+    it('hides the card on a named dashboard that turns it off', async () => {
+      seedDashboard([card()])
+      getDashboardMock.mockResolvedValue({ title: 'Portal', cards: [card()], validation: false })
+
+      const wrapper = mount(DashboardView, {
+        props: { name: 'portal' },
+        global: { stubs: { RouterLink: RouterLinkStub, 'router-link': RouterLinkStub } },
+      })
+      await flushPromises()
+
+      expect(wrapper.find('.validation-card').exists()).toBe(false)
+      expect(analyzeMock).not.toHaveBeenCalled()
     })
   })
 

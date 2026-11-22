@@ -203,7 +203,7 @@ func parseDiagramFlags(args []string) (diagramFlags, error) {
 	keep := fs.String("keep", "", "regexp of function names drawn even inside one package, such as access checks")
 	fs.IntVar(&f.opt.MaxDepth, "depth", 0, "maximum arrow nesting; 0 for no limit")
 	fs.IntVar(&f.minArrows, "min", 2, "skip diagrams with fewer arrows than this")
-	title := fs.String("title", `\.handle`, "regexp on Fn; the deepest matching call names each diagram")
+	title := fs.String("title", defaultTitle, "regexp on Fn; the deepest matching call names each diagram")
 	fs.BoolVar(&f.opt.Values, "values", true, "label arrows with argument and result summaries")
 	_ = fs.Parse(args)
 
@@ -452,6 +452,12 @@ func readNames(path string) ([]string, error) {
 // defaultCollapse names value and helper packages. Their calls add many
 // arrows to every diagram without showing a handoff between components.
 const defaultCollapse = `^internal/(entity|metamodel|principal|frontmatter|storage|store/storeutil|markdown|cache|computed)$`
+
+// defaultTitle matches the handler that names a diagram. A method handler's
+// Fn is "(*T).handleX" and a function handler's is "handleX", so both forms
+// match. The function form needs a capital after "handle", so a method of a
+// type named handle ("handle.Transact") does not match.
+const defaultTitle = `\.handle|^handle[A-Z]`
 
 func fileSafe(s string) string {
 	return strings.Map(func(r rune) rune {

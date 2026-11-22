@@ -2,7 +2,9 @@ package mapimport
 
 import (
 	"fmt"
+	"maps"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -44,7 +46,7 @@ func derive(
 	em *EntityMapping, def *metamodel.EntityDef, rec, root *Node, hook *hookRunner,
 ) (*draft, *recordError) {
 	d := &draft{em: em, loc: rec.Location(), props: map[string]any{}, rels: map[string][]string{}}
-	for _, name := range sortedKeys(em.Properties) {
+	for _, name := range slices.Sorted(maps.Keys(em.Properties)) {
 		v, present, err := em.Properties[name].property(def.Properties[name], rec, root)
 		if err != nil {
 			return nil, recErr(em, d.loc, "%s: %v", name, err)

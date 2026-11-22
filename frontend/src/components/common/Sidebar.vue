@@ -6,7 +6,7 @@ import { getSidebar, runAction } from '@/api'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { useActionFeedback } from '@/composables/useActionFeedback'
 import { useEvents } from '@/composables/useEvents'
-import type { Entity, SidebarCreate, SidebarGroup, SidebarItem } from '@/types'
+import type { BuiltinRow, Entity, SidebarCreate, SidebarGroup, SidebarItem } from '@/types'
 import type { NavGroup, NavItem } from 'rela-components/types'
 import type { ThemeChoice } from 'rela-components/components/layout/RlThemeToggle.vue'
 import RlThemeToggle from 'rela-components/components/layout/RlThemeToggle.vue'
@@ -17,6 +17,7 @@ import RlSidebarGroup from 'rela-components/components/layout/RlSidebarGroup.vue
 import ProjectSwitcher from './ProjectSwitcher.vue'
 import SpaceSwitcher from './SpaceSwitcher.vue'
 import WorldSwitcher from './WorldSwitcher.vue'
+import AsOfPicker from './AsOfPicker.vue'
 import AccountMenu from './AccountMenu.vue'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { spaceOf, stripSpace, useSpaceStore, withSpace } from '@/stores/space'
@@ -47,9 +48,11 @@ import { useFlyout } from '@/composables/useFlyout'
 import { useInboxNotifications } from '@/composables/useInboxNotifications'
 import { useTabTitleBadge } from '@/composables/useTabTitleBadge'
 import { shouldDeferToBrowser } from '@/utils/openIntent'
+import { usePhoneScreen } from '@/composables/usePhoneScreen'
 import { useI18n } from 'vue-i18n'
 import { apiUrl } from '@/api/base'
 import { createPile } from '@/api/piles'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 
 const { t } = useI18n()
 const schemaStore = useSchemaStore()
@@ -184,20 +187,36 @@ const configNavGroupsWithPiles = computed(() =>
  * space's own pinned rows. The declared piles that no `pile:` entry places
  * come just before it, in a group of their own.
  */
-const navGroups = computed(() => {
+const allNavGroups = computed(() => {
+  if (!navLoaded.value) return []
   const groups = configNavGroupsWithPiles.value
   if (!piles.available.value) return groups
   const unpinned = (p: { id: string }) => !pinnedPileIds.value.has(p.id)
   const declaredGroup = declaredPilesNavGroup(piles.declared.value.filter(unpinned))
-  const pilesGroup = pilesNavGroup(piles.collected.value.filter(unpinned))
+  // An empty Piles heading reads as broken, so the group waits for the first
+  // pile, which "Add to pile" makes. A pile a `pile:` entry places still
+  // counts, so the group keeps its "+" when every pile is placed.
+  const pilesGroup =
+    piles.collected.value.length > 0 ? pilesNavGroup(piles.collected.value.filter(unpinned)) : null
   const lead = groups[0] && !groups[0].label ? 1 : 0
   return [
     ...groups.slice(0, lead),
     ...(declaredGroup ? [declaredGroup] : []),
-    pilesGroup,
+    ...(pilesGroup ? [pilesGroup] : []),
     ...groups.slice(lead),
   ]
 })
+
+// A read-only workspace refuses every create, so no group offers its "+".
+// An empty generated group stays only for its "+", so without it the group
+// goes too: a heading over nothing reads as a fault.
+const navGroups = computed(() =>
+  workspaceReadOnly.value
+    ? allNavGroups.value
+        .map(({ addLabel: _addLabel, ...group }) => group)
+        .filter((group) => group.items.length > 0)
+    : allNavGroups.value
+)
 
 /*
  * The "+" on a generated group's heading: the create dialog for the group's
@@ -247,30 +266,73 @@ const inboxStatusFor = (key: string | undefined) =>
  */
 const { hasFlows } = useFlowList()
 
-const pinnedGroups = computed(() =>
-  toNavGroups(
-    inSpace([
-      {
-        items: [
-          { label: t('nav.search'), href: '/search', icon: 'search' },
-          ...(hasChannels.value && !inbox.hidden.value
-            ? [{ label: t('nav.inbox'), href: '/inbox', icon: 'inbox', status_key: 'inbox' }]
-            : []),
-          ...(hasFlows.value
-            ? [
-                { label: t('nav.flowTasks'), href: '/flows/tasks', icon: 'checklist' },
-                { label: t('nav.flowRuns'), href: '/flows/runs', icon: 'workflow' },
-              ]
-            : []),
-          { label: t('nav.analysis'), href: '/analyze', icon: 'warning' },
-        ],
-      },
-    ]),
+/*
+ * The built-in rows that `builtins:` leaves out for this principal, in the
+ * current space (or the top-level sidebar). The server decides, from the
+ * row's `hidden:` or `permission:`; like a navigation entry's `permission:`
+ * it is a UX filter, and the pages behind the rows stay reachable by URL.
+ */
+const hiddenBuiltins = ref<ReadonlySet<BuiltinRow>>(new Set())
+// The rows `hidden_on_phone:` leaves out on a phone-sized screen. The server
+// names them; only the browser knows the screen width.
+const phoneHiddenBuiltins = ref<ReadonlySet<BuiltinRow>>(new Set())
+const phoneScreen = usePhoneScreen()
+const showsBuiltin = (row: BuiltinRow) =>
+  !hiddenBuiltins.value.has(row) && !(phoneScreen.value && phoneHiddenBuiltins.value.has(row))
+// The as-of picker waits for the first answer, so a space that hides it does
+// not show it for a moment first.
+const builtinsKnown = ref(false)
+/*
+ * Whether the first sidebar answer is in, or has failed. Until then the
+ * sidebar draws its frame without nav rows: the built-in rows alone would
+ * show the generic Search, Flow tasks, Flow runs and Analysis for a moment
+ * before the space's own navigation replaced them (BUG-UZGMHIK). A failed
+ * load still shows the built-in rows, so the app stays navigable.
+ */
+const navLoaded = ref(false)
+
+const pinnedGroups = computed(() => {
+  if (!navLoaded.value) return []
+  const rows: { row: BuiltinRow; item: SidebarItem; when: boolean }[] = [
+    {
+      row: 'search',
+      item: { label: t('nav.search'), href: '/search', icon: 'search' },
+      when: true,
+    },
+    {
+      row: 'inbox',
+      item: { label: t('nav.inbox'), href: '/inbox', icon: 'inbox', status_key: 'inbox' },
+      when: hasChannels.value && !inbox.hidden.value,
+    },
+    {
+      row: 'flow_tasks',
+      item: { label: t('nav.flowTasks'), href: '/flows/tasks', icon: 'checklist' },
+      when: hasFlows.value,
+    },
+    {
+      row: 'flow_runs',
+      item: { label: t('nav.flowRuns'), href: '/flows/runs', icon: 'workflow' },
+      when: hasFlows.value,
+    },
+    {
+      row: 'analysis',
+      item: { label: t('nav.analysis'), href: '/analyze', icon: 'warning' },
+      when: true,
+    },
+  ]
+  const items = rows.filter((r) => r.when && showsBuiltin(r.row)).map((r) => r.item)
+  // The audit view is not a `builtins:` row: the server offers it only to a
+  // holder of audit:read on a database backend.
+  if (schemaStore.auditGlobal) {
+    items.push({ label: t('nav.audit'), href: '/audit', icon: 'history' })
+  }
+  return toNavGroups(
+    inSpace(items.length ? [{ items }] : []),
     RouterLink,
     undefined,
     inboxStatusFor
   )
-)
+})
 
 /*
  * The highlighted row, resolved across the pinned entries as well as the nav.
@@ -317,15 +379,26 @@ async function loadSidebar() {
     }
     sidebarAppName.value = data.app.name
     sidebarGroups.value = data.navigation
+    hiddenBuiltins.value = new Set(data.hidden_builtins ?? [])
+    phoneHiddenBuiltins.value = new Set(data.phone_hidden_builtins ?? [])
+    builtinsKnown.value = true
+    navLoaded.value = true
     schemaStore.setLogoUrl(data.logoUrl ?? null)
     // Principal-scoped inline-create offers ride on this payload; see
     // SidebarData.inline_create for why the sidebar carries them.
     schemaStore.setInlineCreate(data.inline_create ?? {})
     // So is whether this principal may use piles (TKT-K3RJLH).
     schemaStore.setPiles(data)
+    schemaStore.setAudit(data.audit)
+    // And which entity header buttons it is shown (TKT-31822PN).
+    schemaStore.setHeaderButtons(data.header_buttons)
+    schemaStore.setListButtons(data.list_buttons)
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
     // (see BUG-6C3V and src/composables/usePageData.ts).
+    // A failed or cancelled current request still ends the wait, so the
+    // built-in rows show instead of an empty sidebar.
+    if (request === sidebarRequest) navLoaded.value = true
     if (isCancelledFetch(err)) return
     console.error('Failed to load sidebar:', err)
   }
@@ -347,6 +420,8 @@ function handleKeydown(e: KeyboardEvent) {
   if (isInputFocused()) return
   if (hasVisibleSearchBox()) return
   if (document.querySelector('.rl-sidebar .rl-search-box input')) return
+  // A sidebar without its Search row has no shortcut to it either.
+  if (!showsBuiltin('search')) return
   e.preventDefault()
   router.push('/search')
 }
@@ -501,13 +576,15 @@ async function handleAction(item: SidebarItem, ev?: Event) {
         </template>
       </SpaceSwitcher>
       <WorldSwitcher />
+      <AsOfPicker v-if="builtinsKnown && showsBuiltin('as_of')" />
     </template>
 
     <!--
       Search, Inbox and Analysis sit above the config-driven nav and never scroll out
       of reach, which is why they are a slot rather than a first group.
     -->
-    <template #pinned>
+    <!-- Without a pinned row the band and its gap are left out too. -->
+    <template v-if="pinnedGroups.length" #pinned>
       <RlSidebarGroup
         v-for="group in pinnedGroups"
         :key="group.id"
@@ -523,7 +600,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
       the whole band, toggle included.
     -->
     <template #footer>
-      <SidebarFooter />
+      <SidebarFooter :show-shortcuts="showsBuiltin('shortcuts')" />
       <AccountMenu />
       <RlThemeToggle v-if="!schemaStore.darkDisabled" v-model="theme" class="sidebar-theme" />
     </template>
@@ -555,6 +632,30 @@ async function handleAction(item: SidebarItem, ev?: Event) {
  */
 .sidebar.collapsed {
   --rl-sidebar-width: 60px;
+}
+
+/*
+ * The as-of picker takes a row of its own below the switchers (it sets its
+ * own flex-basis), so the header has to wrap. In the collapsed rail it is
+ * left out: a date does not fit, and AsOfBanner says a date is picked.
+ */
+.sidebar :deep(.rl-sidebar__header) {
+  flex-wrap: wrap;
+}
+
+/*
+ * The app or space name takes the room left beside the close and collapse
+ * buttons, and wraps within it. Without a zero basis the wrapping header
+ * would move a button to a row of its own whenever the name is longer than
+ * one line.
+ */
+.sidebar :deep(.space-switcher) {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.sidebar.collapsed :deep(.as-of-picker) {
+  display: none;
 }
 
 .logo-img {

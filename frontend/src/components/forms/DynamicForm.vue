@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, shallowRef, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { usePageTitle } from '@/composables/useDocumentTitle'
 import {
   RouterLink,
   useRouter,
@@ -48,6 +49,7 @@ import type {
 } from '@/types'
 import { getTemplates, createRelation, dryRunCreateEntity, ApiError, getErrorMessage } from '@/api'
 import { uploadAttachment, attachmentErrorReason } from '@/api/attachments'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 import type { RelationCardState } from './RelationCards.vue'
 import type { RelationPickerIncomingState } from './RelationPicker.vue'
 import {
@@ -426,6 +428,7 @@ const title = computed(() => {
   const label = entityType.value?.label || formConfig.value.entity
   return isEdit.value ? t('form.editOfType', { type: label }) : t('form.newOfType', { type: label })
 })
+if (!props.embedded) usePageTitle(title)
 
 const allFields = computed((): FormFieldOrRelation[] => {
   if (!formConfig.value) return []
@@ -459,6 +462,9 @@ const conditionBindings = (): Bindings => ({
 
 // An embedded wizard keeps its step in memory: `?step=` is a single global key
 // that the host form already owns (see FormWizardOptions.syncUrl).
+// A create form is short unless it asks for the body with `body: true`; the
+// type's template body is still applied on save. Edit forms keep the editor.
+const showBodyEditor = computed(() => isEdit.value || !!formConfig.value?.body)
 const wizard = useFormWizard(formConfig, conditionBindings, { syncUrl: !props.embedded })
 
 // Field lookup by property, for reading per-field config (clear_when_hidden)
@@ -1042,16 +1048,18 @@ async function refreshStagedAffordances() {
     if (isCancelledFetch(err)) return // superseded / unmounted — not an error
     if (stagedUnmounted) return // post-unmount; don't write to dead refs
     // Fail open: leave whatever affordances we have (possibly none) and
-    // let the form render. The commit gate is the real boundary.
+    // let the form render. The commit gate is the real boundary. Ready
+    // stays as it was: set without a visible set, it hid every field the
+    // dry-run would have listed, the title included.
     console.warn('Dry-run affordance check failed; create form left unfiltered:', err)
-    stagedAffordancesReady.value = true
   }
 }
 
 // scheduleStagedAffordances debounces refreshStagedAffordances so a
 // burst of keystrokes collapses to one dry-run.
 function scheduleStagedAffordances() {
-  if (isEdit.value) return
+  // A read-only workspace refuses every dry-run; the one on mount is enough.
+  if (isEdit.value || workspaceReadOnly.value) return
   if (stagedDryRunTimer) clearTimeout(stagedDryRunTimer)
   stagedDryRunTimer = setTimeout(() => {
     void refreshStagedAffordances()
@@ -1784,6 +1792,8 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
   flushEditor()
   await nextTick()
   if (!formConfig.value) return
+  // The keyboard shortcut reaches here without the hidden Create button.
+  if (!isEdit.value && workspaceReadOnly.value) return
   // RR-HJLLUF: re-entrancy guard. RlButton suppresses its own repeat
   // clicks, but handleKeydown calls handleSubmit() directly, so Cmd+Enter
   // twice would run the whole create path twice — two entities, and (since
@@ -2141,7 +2151,10 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     } else {
       uiStore.error(getErrorMessage(err, t('form.saveEntityFailed')))
     }
-    console.error(err)
+    // A refusal (4xx) is an answer, shown to the user; only an unexpected
+    // failure (no response, or 5xx) is logged (BUG-UZGMHIK).
+    const status = err instanceof ApiError ? err.status : undefined
+    if (status === undefined || status >= 500) console.error(err)
   } finally {
     saving.value = false
   }
@@ -2883,6 +2896,11 @@ defineExpose({
       <!-- `handleSubmit('navigate')`, not a bare reference: the DOM passes the
            SubmitEvent as the first argument, which would land in `mode`. -->
       <form v-else @submit.prevent="handleSubmit('navigate')">
+        <!-- A read-only workspace refuses the create, so the form says so
+             and offers no Create button (BUG-RO4WSP1). -->
+        <RlStatusRegion v-if="!isEdit && workspaceReadOnly" tone="info" class="workspace-read-only">
+          {{ t('form.workspaceReadOnly') }}
+        </RlStatusRegion>
         <div v-if="showReadOnlyID" class="form-field id-field">
           <label>{{ t('form.id.label') }}</label>
           <div class="id-display">{{ entityId }}</div>
@@ -2993,7 +3011,7 @@ defineExpose({
         <p v-else class="section-description">{{ t('form.noFields') }}</p>
 
         <!-- Content field (markdown body). Shown on the final (or only) step. -->
-        <div v-if="wizard.isLastStep.value" class="form-field content-field">
+        <div v-if="wizard.isLastStep.value && showBodyEditor" class="form-field content-field">
           <label for="content">{{ t('form.content') }}</label>
           <MarkdownEditor
             ref="markdownEditorRef"
@@ -3061,7 +3079,7 @@ defineExpose({
 
           <!-- Create only: the commit button, on the last (or only) step. -->
           <RlButton
-            v-if="!isEdit && wizard.isLastStep.value"
+            v-if="!isEdit && !workspaceReadOnly && wizard.isLastStep.value"
             type="submit"
             variant="primary"
             :loading="saving"
@@ -3081,7 +3099,12 @@ defineExpose({
             `embeddedAddAnother` (see the prop).
           -->
           <RlButton
-            v-if="!isEdit && (!embedded || embeddedAddAnother) && wizard.isLastStep.value"
+            v-if="
+              !isEdit &&
+              !workspaceReadOnly &&
+              (!embedded || embeddedAddAnother) &&
+              wizard.isLastStep.value
+            "
             variant="secondary"
             :loading="saving"
             :pending-label="t('common.saving')"

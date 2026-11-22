@@ -108,7 +108,7 @@ func (h *viewsHandler) buildNestedTree(
 		parentRel := indexed(relValues, columnIndex, parentCols)
 		node := SectionTreeNode{
 			SectionEntityData: h.buildNestedEntityData(ctx, sec, row.parent, result),
-			Columns:           parentCols,
+			Columns:           withSchemaLabels(s.Meta, []string{row.parent.Type}, parentCols),
 			Row:               buildSectionRow(s, parentCols, row.parent, parentRel),
 			ChildCount:        row.childCount,
 			HasMoreChildren:   len(row.children) < row.childCount,
@@ -118,7 +118,7 @@ func (h *viewsHandler) buildNestedTree(
 			childRel := indexed(relValues, columnIndex, childCols)
 			node.Children = append(node.Children, SectionTreeNode{
 				SectionEntityData: h.buildNestedEntityData(ctx, sec, child, result),
-				Columns:           childCols,
+				Columns:           withSchemaLabels(s.Meta, []string{child.Type}, childCols),
 				Row:               buildSectionRow(s, childCols, child, childRel),
 			})
 		}

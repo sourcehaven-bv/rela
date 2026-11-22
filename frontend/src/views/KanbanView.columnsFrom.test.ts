@@ -157,14 +157,9 @@ describe('KanbanView with columns_from', () => {
     expect(modal.props('addAnother')).toBe(false)
   })
 
-  it('opens New without a prefill', async () => {
+  it('hides the header New button because every column offers Add', async () => {
     const wrapper = await mountBoard()
-    const newButton = wrapper.findAll('button').find((b) => b.text() === 'New')
-    await newButton?.trigger('click')
-    await flushPromises()
-    const modal = wrapper.findComponent(ModalStub)
-    expect(modal.props('prefill')).toBeUndefined()
-    expect(modal.props('addAnother')).toBe(true)
+    expect(wrapper.findAll('button').find((b) => b.text() === 'New')).toBeUndefined()
   })
 
   it('re-points a dropped card with a full linkage', async () => {

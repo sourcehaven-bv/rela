@@ -127,11 +127,12 @@ func flowRunBackend(fsys storage.FS, paths *project.Context, st store.Store,
 }
 
 // buildFlowEngine builds the engine over s, or returns nil when the base
-// declares no flows.
-func buildFlowEngine(s *Services, runs flowrun.Store) (*flowengine.Engine, error) {
+// declares no flows. It also returns the binder the engine writes its
+// identities with, for the create starts.
+func buildFlowEngine(s *Services, runs flowrun.Store) (*flowengine.Engine, asIdentity, error) {
 	flows := s.base.flows
 	if flows == nil || runs == nil {
-		return nil, nil //nolint:nilnil // no flows: no engine
+		return nil, nil, nil
 	}
 	d := s.aclDeclarative
 	reader, _, _ := scriptReads(s.store, d, s.fieldReads, s.worlds)
@@ -147,13 +148,13 @@ func buildFlowEngine(s *Services, runs flowrun.Store) (*flowengine.Engine, error
 	meta := s.meta
 	if s.cfgLoader != nil {
 		if err := checkFlowActions(context.Background(), flows, s.cfgLoader); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if err := checkFlowForms(context.Background(), flows, s.cfgLoader, meta); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	} else if namesForm(flows) {
-		return nil, errors.New("flows: a state names a form:, and there is no data-entry.yaml to read it from")
+		return nil, nil, errors.New("flows: a state names a form:, and there is no data-entry.yaml to read it from")
 	}
 	// Only a long-running process queues attempts: a one-shot one would
 	// exit before its queue ran them.
@@ -178,12 +179,12 @@ func buildFlowEngine(s *Services, runs flowrun.Store) (*flowengine.Engine, error
 		Now: s.base.clock(),
 	})
 	if err != nil || q == nil {
-		return eng, err
+		return eng, as, err
 	}
 	if err := registerFlowJobs(q, eng); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return eng, nil
+	return eng, as, nil
 }
 
 // openFlowEdits opens the run store into overrides.flowRuns and builds the
@@ -312,7 +313,14 @@ type flowHeaders struct {
 	as  asIdentity
 }
 
+// engine returns ctx as system:flow. A create that starts a run binds
+// system:flow before its transaction opens ([flowCreateStarts.PrepareCreate]),
+// and the header write inside that transaction reuses that Request rather
+// than read the store again.
 func (h flowHeaders) engine(ctx context.Context) (context.Context, error) {
+	if req := preboundFlow(ctx); req != nil {
+		return acl.WithRequest(principal.With(ctx, flowPrincipal), req), nil
+	}
 	return h.as(ctx, principal.UserFlow)
 }
 
@@ -365,6 +373,15 @@ func (h flowHeaders) PatchHeader(ctx context.Context, id flow.RunID, props map[s
 		return err
 	}
 	_, err = h.mgr.PatchEntity(ctx, string(id), entity.Patch{Properties: props})
+	return err
+}
+
+func (h flowHeaders) EndHeader(ctx context.Context, id flow.RunID, props map[string]any, body string) error {
+	ctx, err := h.engine(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = h.mgr.PatchEntity(ctx, string(id), entity.Patch{Properties: props, Content: &body})
 	return err
 }
 

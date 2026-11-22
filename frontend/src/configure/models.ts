@@ -631,6 +631,8 @@ export interface ListModel {
   description: string
   header: string
   footer: string
+  /** The list's own text when it is empty, or ''. */
+  emptyMessage: string
   pageSize?: number
   columns: ColumnModel[]
   sort: SortKeyModel[]
@@ -865,6 +867,7 @@ export function listModel(dataEntry: TreeValue | undefined, name: string): ListM
     description: str(get(list, 'description')) ?? '',
     header: str(get(list, 'header')) ?? '',
     footer: str(get(list, 'footer')) ?? '',
+    emptyMessage: str(get(list, 'empty_message')) ?? '',
     pageSize: num(get(list, 'page_size')),
     columns: columnsOf(get(list, 'columns')),
     sort: sortKeysOf(get(list, 'sort')),

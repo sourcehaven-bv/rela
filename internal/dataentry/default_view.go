@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"slices"
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -25,7 +26,8 @@ func findViewByEntityType(views map[string]ViewConfig, entityType string) (ViewC
 //
 // Sections in order:
 //  1. properties — every property in EntityDef.PropertyOrder, editable in
-//     place. The operator wrote no view, so there is no display choice to
+//     place, with no heading: it is the only section the generator makes
+//     for the entity itself, so a label would only repeat the type. The operator wrote no view, so there is no display choice to
 //     honor; the ACL verdict still decides which fields are writable. The
 //     title property is left out: the page heading shows and edits it.
 //  2. content   — the entity's markdown body
@@ -56,7 +58,6 @@ func buildDefaultViewConfig(meta *metamodel.Metamodel, entityType string) (ViewC
 	}
 	if len(fields) > 0 {
 		view.Sections = append(view.Sections, ViewSection{
-			Heading: "Properties",
 			Source:  "entry",
 			Display: "properties",
 			Render:  dataentryconfig.RenderInput,
@@ -81,7 +82,7 @@ func buildDefaultViewConfig(meta *metamodel.Metamodel, entityType string) (ViewC
 	// Outgoing first, then incoming.
 	for _, name := range relationNames {
 		def := meta.Relations[name]
-		if !containsString(def.From, entityType) {
+		if !slices.Contains(def.From, entityType) {
 			continue
 		}
 		collectAs := "out_" + name
@@ -108,7 +109,7 @@ func buildDefaultViewConfig(meta *metamodel.Metamodel, entityType string) (ViewC
 		// for the inverse direction is the right behavior here, since the
 		// edges visible to the inverse are different from the outgoing
 		// ones. Allow through.
-		if !containsString(def.To, entityType) {
+		if !slices.Contains(def.To, entityType) {
 			continue
 		}
 		collectAs := "in_" + name

@@ -520,13 +520,14 @@ func (svc analyzeService) analyzeProperties(ctx context.Context, meta *metamodel
 		if err != nil {
 			break
 		}
-		for _, verr := range metaValidator.ValidateEntity(h.ID, h.Type, h.Properties) {
+		// The row is redacted: findings on hidden fields are dropped.
+		for _, verr := range metaValidator.ValidateReadable(h.ID, h.Type, h.Properties, h.Redacted) {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   h.ID,
 				Face:       h.Face,
 				EntityType: h.Type,
 				Title:      safeHeaderTitle(meta, h),
-				Message:    verr.Error(),
+				Message:    verr.Message,
 				Severity:   "error",
 			})
 		}
@@ -734,14 +735,7 @@ func sortStoreEntitiesByID(entities []*entity.Entity) {
 // follow-up / tschmits review on TKT-3FL2S6). e.Properties is the redacted map,
 // so a hidden display property is simply absent here.
 func safeDisplayTitle(meta *metamodel.Metamodel, e *entity.Entity) string {
-	if def, ok := meta.GetEntityDef(e.Type); ok {
-		for _, prop := range def.DisplayProperties() {
-			if _, present := e.Properties[prop]; !present {
-				return e.ID // a display-title source was redacted → don't leak a partial title
-			}
-		}
-	}
-	return meta.DisplayTitle(e.ID, e.Type, e.Properties)
+	return meta.WholeDisplayTitle(e.ID, e.Type, e.Properties)
 }
 
 // sortHeadersByID is [sortStoreEntitiesByID] for content-free headers.
@@ -774,14 +768,7 @@ func sortIssuesByEntityID(issues []AnalysisIssue) {
 // agree by construction; this exists because the metamodel helpers take the
 // fields individually and a header is not an *entity.Entity.
 func safeHeaderTitle(meta *metamodel.Metamodel, h store.EntityHeader) string {
-	if def, ok := meta.GetEntityDef(h.Type); ok {
-		for _, prop := range def.DisplayProperties() {
-			if _, present := h.Properties[prop]; !present {
-				return h.ID // a display-title source was redacted → don't leak a partial title
-			}
-		}
-	}
-	return meta.DisplayTitle(h.ID, h.Type, h.Properties)
+	return meta.WholeDisplayTitle(h.ID, h.Type, h.Properties)
 }
 
 // normalizeTitle normalizes a title for duplicate comparison.

@@ -30,6 +30,7 @@ describe('list and board settings', () => {
         condition: "entity.status ~= 'done'",
         query_scope: 'open_work',
         detail_view: 'ticket_page',
+        empty_message: 'No open work.',
       },
     },
     kanbans: { board: { entity_type: 'ticket', query_scope: 'open_work' } },
@@ -55,11 +56,12 @@ describe('list and board settings', () => {
     ])
   })
 
-  it('reads the condition, query scope and detail view', () => {
+  it('reads the condition, query scope, detail view and empty text', () => {
     expect(listModel(dataEntry, 'all')).toMatchObject({
       condition: "entity.status ~= 'done'",
       queryScope: 'open_work',
       detailView: 'ticket_page',
+      emptyMessage: 'No open work.',
     })
     expect(boardModel(dataEntry, 'board')?.queryScope).toBe('open_work')
   })

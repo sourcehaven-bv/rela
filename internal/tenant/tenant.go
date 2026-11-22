@@ -79,6 +79,17 @@ var ErrUnknownTenant = errors.New("tenant: unknown organization")
 // events have nothing to apply to.
 var ErrTenantInactive = errors.New("tenant: organization is not served now")
 
+// ErrTenantSuspended marks an [ErrTenantInactive] for an org whose tenant is
+// suspended and not archived: it is not served until it is resumed. A host
+// tells it apart from an archive so the refusal can say which one it is.
+var ErrTenantSuspended = errors.New("tenant: organization is suspended")
+
+// ErrTenantArchived marks an [ErrTenantInactive] for an org whose tenant the
+// tenant API archived: it is not served, and its data stays until an operator
+// erases it. A host tells it apart from a suspension so the refusal can say
+// which one it is.
+var ErrTenantArchived = errors.New("tenant: organization is archived")
+
 // ErrTenantProvisioning marks an [ErrTenantInactive] for an org whose create
 // has not finished. Running [Provisioner.Create] again finishes it, so a host
 // that provisions may treat it like [ErrTenantAbsent].
@@ -163,6 +174,17 @@ type Tenant struct {
 	// It carries a password, so it must never reach a command line — the
 	// invariant TKT-1J5KEV established for every DSN in rela.
 	DSN string
+
+	// ReadOnly is set when the tenant API put the tenant in the read_only
+	// state: it is served, but the host refuses its writes. Read on every
+	// resolve, so a change applies to the next request.
+	ReadOnly bool
+
+	// Plan and Entitlements are the tenant's stored commercial plan, as the
+	// tenant API set them. The host exposes them to the tenant's users; it
+	// enforces none of the entitlements.
+	Plan         string
+	Entitlements Entitlements
 }
 
 // validate rejects a tenant record that could not safely be used.

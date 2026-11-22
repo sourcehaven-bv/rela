@@ -105,6 +105,30 @@ describe('EntityList: Add to pile', () => {
     wrapper.unmount()
   })
 
+  // A customer portal hides Add to pile on lists with `list_buttons`. With no
+  // other bulk action left, the rows must not offer checkboxes.
+  it('offers no selection for read-only rows when list_buttons hides Add to pile', async () => {
+    useSchemaStore().setListButtons({ add_to_pile: false })
+    const wrapper = await mountList(true, [row('POL-1'), row('POL-2')])
+    expect(wrapper.find('.rl-table-row').exists()).toBe(true)
+    expect(wrapper.find('.rl-table-row input[type="checkbox"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="add-to-pile"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('keeps selection for a deletable row but leaves out a hidden Add to pile', async () => {
+    useSchemaStore().setListButtons({ add_to_pile: false })
+    const deletable = { ...row('POL-1'), _actions: { update: false, delete: true } } as Entity
+    const wrapper = await mountList(true, [deletable])
+    const box = wrapper.find('.rl-table-row[data-entity-id="POL-1"] input[type="checkbox"]')
+    expect(box.exists()).toBe(true)
+    await box.setValue(true)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="bulk-delete"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="add-to-pile"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('adds the selected rows by address to the chosen pile', async () => {
     const wrapper = await mountList(true, [row('POL-1', 'draft'), row('POL-2'), row('POL-3')])
 

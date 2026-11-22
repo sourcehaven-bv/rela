@@ -1556,6 +1556,8 @@ deps:
     mayDependOn:
       - acl
       - affordances
+      # visibility.EntityChanges gates the per-entity audit read (TKT-X1ZFO04).
+      - audit
       # visibility.Elements hashes the reader's view of a row (the ETag's
       # canonical digest) into a reconciliation element (FEAT-CMVZQFI).
       - canonical

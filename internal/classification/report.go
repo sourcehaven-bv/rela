@@ -1,5 +1,10 @@
 package classification
 
+import (
+	"maps"
+	"slices"
+)
+
 // Field states as the report names them.
 const (
 	reportLabeled = "labeled"
@@ -60,7 +65,7 @@ func BuildReport(f *File, shape Shape) Report {
 		subjects[s.Type] = s.Reason
 	}
 	rep := Report{Types: []TypeReport{}, Relations: []RelationReport{}, Subjects: []SubjectReport{}}
-	for _, name := range sortedKeys(shape.Entities) {
+	for _, name := range slices.Sorted(maps.Keys(shape.Entities)) {
 		t := shape.Entities[name]
 		reason, isSubject := subjects[name]
 		rep.Types = append(rep.Types, TypeReport{
@@ -75,7 +80,7 @@ func BuildReport(f *File, shape Shape) Report {
 	for name, r := range shape.Relations {
 		links[name] = f.isSubjectLink(name, r, boolSet(subjects))
 	}
-	for _, name := range sortedKeys(shape.Relations) {
+	for _, name := range slices.Sorted(maps.Keys(shape.Relations)) {
 		r := shape.Relations[name]
 		rep.Relations = append(rep.Relations, RelationReport{
 			Relation:    name,

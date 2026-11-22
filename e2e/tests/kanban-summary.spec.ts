@@ -22,17 +22,17 @@ test.describe('Kanban column summaries', () => {
     await kanban.expectColumnColor('Fixed', 'green');
 
     // The seed bug in New has no estimate: it counts, but adds nothing.
-    await kanban.expectColumnSummary('New', [/^Bugs: 3$/, /^Totaal: €\s11\.500$/, /^Grootste: €\s8\.000$/]);
+    await kanban.expectColumnSummary('New', [/^Bugs: 3$/, /^Totaal: €\s11\.500,00$/, /^Grootste: €\s8\.000,00$/]);
     // An empty column: count and sum are 0, max has no value.
-    await kanban.expectColumnSummary('Fixed', [/^Bugs: 0$/, /^Totaal: €\s0$/, /^Grootste: –$/]);
+    await kanban.expectColumnSummary('Fixed', [/^Bugs: 0$/, /^Totaal: €\s0,00$/, /^Grootste: –$/]);
     // In Progress starts collapsed (one seed bug, no estimate); its rail shows
     // the summaries on one line.
-    await kanban.expectCollapsedColumnSummary('In Progress', /^Bugs: 2 · Totaal: €\s1\.200 · Grootste: €\s1\.200$/);
+    await kanban.expectCollapsedColumnSummary('In Progress', /^Bugs: 2 · Totaal: €\s1\.200,00 · Grootste: €\s1\.200,00$/);
 
-    await kanban.expectCardFieldText('Pipeline small', /^€\s3\.500$/);
+    await kanban.expectCardFieldText('Pipeline small', /^€\s3\.500,00$/);
 
     const entity = new EntityPage(appPage);
     await entity.navigateToEntity('bug', small.id);
-    await entity.expectPropertyValue(/^€\s3\.500$/);
+    await entity.expectPropertyValue(/^€\s3\.500,00$/);
   });
 });

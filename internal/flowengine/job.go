@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -220,6 +222,7 @@ func (e jobSteps) jobStep(ctx context.Context, f *flowcfg.Flow, run flowrun.Run,
 		}
 		slog.WarnContext(ctx, "flowengine: the worker of a job attempt stopped without an outcome",
 			"run", run.ID, "state", cur.State, "seq", j.Seq)
+		j.Error = errAttemptLost
 		j = e.decide(j, flowrun.JobTimeout, flowrun.JobLost, job, now)
 	case flowrun.JobFinished:
 		if j.Outcome == flowrun.JobOK {
@@ -232,11 +235,24 @@ func (e jobSteps) jobStep(ctx context.Context, f *flowcfg.Flow, run flowrun.Run,
 	if j.Phase == flowrun.JobWaiting && !now.Before(j.NextAt) {
 		return e.enqueue(ctx, f, run, tok, cur, job, j)
 	}
-	if j.Phase == flowrun.JobFailed {
+	if j.Phase == flowrun.JobFailed && (p.Job == nil || p.Job.Phase != flowrun.JobFailed) {
 		slog.WarnContext(ctx, "flowengine: a job step failed", "run", run.ID, "flow", f.Name(),
 			"state", cur.State, "kind", j.FailKind)
+		return e.parkFailed(ctx, run, tok, cur.State, j, now)
 	}
 	return e.park(ctx, run, tok, j)
+}
+
+// parkFailed stores j, which has just failed for good, with a timeline
+// entry for the failure, so the timeline says where the run stopped.
+func (e jobSteps) parkFailed(ctx context.Context, run flowrun.Run, tok, state string, j flowrun.JobAttempt,
+	now time.Time) (flowrun.Run, error) {
+	step := flowrun.Step{At: now, State: state, Via: flowrun.ViaFailed, Branch: tok}
+	saved, err := e.storeJobStep(ctx, run, tok, j, &step, now)
+	if err != nil || saved.ID == "" {
+		return saved, err
+	}
+	return saved, errParked
 }
 
 // unsent returns j, which never started, waiting again after a backoff by
@@ -245,7 +261,7 @@ func unsent(j flowrun.JobAttempt, now time.Time) flowrun.JobAttempt {
 	delay := backoffDelay(j.Unsent)
 	j.Unsent = min(j.Unsent+1, flowrun.MaxPendingFailures)
 	return flowrun.JobAttempt{Seq: j.Seq, Failed: j.Failed, Unsent: j.Unsent, Phase: flowrun.JobWaiting,
-		NextAt: now.Add(delay)}
+		NextAt: now.Add(delay), Error: j.Error}
 }
 
 // decide acts on an attempt that ended with outcome: wait for the next
@@ -253,7 +269,7 @@ func unsent(j flowrun.JobAttempt, now time.Time) flowrun.JobAttempt {
 // timeout, or lost for a worker that stopped.
 func (e jobSteps) decide(j flowrun.JobAttempt, outcome flowrun.JobOutcome, unknown flowrun.JobFailKind,
 	job flowcfg.Job, now time.Time) flowrun.JobAttempt {
-	next := flowrun.JobAttempt{Seq: j.Seq, Failed: min(j.Failed+1, flowrun.MaxPendingFailures)}
+	next := flowrun.JobAttempt{Seq: j.Seq, Failed: min(j.Failed+1, flowrun.MaxPendingFailures), Error: j.Error}
 	if unknown == "" {
 		unknown = flowrun.JobFailedTimeout
 	}
@@ -282,11 +298,11 @@ func (e jobSteps) enqueue(ctx context.Context, f *flowcfg.Flow, run flowrun.Run,
 	now := e.now()
 	if j.Seq >= flowrun.MaxJobSeq {
 		j = flowrun.JobAttempt{Seq: j.Seq, Failed: j.Failed, Phase: flowrun.JobFailed,
-			FailKind: flowrun.JobExhausted}
-		return e.park(ctx, run, tok, j)
+			FailKind: flowrun.JobExhausted, Error: j.Error}
+		return e.parkFailed(ctx, run, tok, cur.State, j, now)
 	}
 	q := flowrun.JobAttempt{Seq: j.Seq + 1, Failed: j.Failed, Unsent: j.Unsent, Phase: flowrun.JobQueued,
-		QueuedAt: now, Deadline: now.Add(job.Retry.Timeout)}
+		QueuedAt: now, Deadline: now.Add(job.Retry.Timeout), Error: j.Error}
 	saved, err := e.storeJob(ctx, run, tok, q)
 	if err != nil || saved.ID == "" {
 		return saved, err
@@ -325,11 +341,18 @@ func (e jobSteps) park(ctx context.Context, run flowrun.Run, tok string, j flowr
 // zero run.
 func (e jobSteps) storeJob(ctx context.Context, run flowrun.Run, tok string, j flowrun.JobAttempt) (flowrun.Run,
 	error) {
+	return e.storeJobStep(ctx, run, tok, j, nil, e.now())
+}
+
+// storeJobStep is [jobSteps.storeJob] with step, when not nil, appended to
+// the run log.
+func (e jobSteps) storeJobStep(ctx context.Context, run flowrun.Run, tok string, j flowrun.JobAttempt,
+	step *flowrun.Step, now time.Time) (flowrun.Run, error) {
 	p := *pendingOf(run, tok)
 	p.Job = &j
 	inst := instOf(run, tok)
 	inst.NextDueAt, _ = jobDue(&j)
-	next, err := e.save(ctx, run, tok, inst, &p, nil, e.now())
+	next, err := e.save(ctx, run, tok, inst, &p, step, now)
 	if isLost(err) {
 		return flowrun.Run{}, nil
 	}
@@ -379,7 +402,7 @@ func (e jobSteps) HandleAttempt(ctx context.Context, ref AttemptRef) error {
 	}
 	sctx, scancel := context.WithTimeout(context.WithoutCancel(ctx), attemptSettleTimeout)
 	defer scancel()
-	run, ok, err := e.finishAttempt(sctx, ref, outcome)
+	run, ok, err := e.finishAttempt(sctx, ref, outcome, jobErrorText(rerr))
 	if err != nil || !ok {
 		return err
 	}
@@ -450,9 +473,10 @@ func (e jobSteps) startAttempt(ctx context.Context, ref AttemptRef) (call JobCal
 }
 
 // finishAttempt stores the outcome of the started attempt ref names, due
-// at once. ok is false when the run no longer carries it.
-func (e jobSteps) finishAttempt(ctx context.Context, ref AttemptRef, outcome flowrun.JobOutcome) (flowrun.Run,
-	bool, error) {
+// at once, with the error text of a failed attempt. ok is false when the
+// run no longer carries it.
+func (e jobSteps) finishAttempt(ctx context.Context, ref AttemptRef, outcome flowrun.JobOutcome,
+	errText string) (flowrun.Run, bool, error) {
 	for range maxAttemptTries {
 		run, err := e.d.Runs.Get(ctx, ref.Run)
 		if errors.Is(err, flowrun.ErrNotFound) {
@@ -466,7 +490,8 @@ func (e jobSteps) finishAttempt(ctx context.Context, ref AttemptRef, outcome flo
 			return flowrun.Run{}, false, nil
 		}
 		j := *p.Job
-		j.Phase, j.Outcome = flowrun.JobFinished, outcome
+		// A successful attempt clears the error of the one before.
+		j.Phase, j.Outcome, j.Error = flowrun.JobFinished, outcome, errText
 		saved, err := e.storeJob(ctx, run, ref.Branch, j)
 		if err != nil {
 			return flowrun.Run{}, false, err
@@ -477,6 +502,32 @@ func (e jobSteps) finishAttempt(ctx context.Context, ref AttemptRef, outcome flo
 	}
 	return flowrun.Run{}, false, fmt.Errorf("flowengine: run %s kept changing; the outcome of attempt %d is lost",
 		ref.Run, ref.Seq)
+}
+
+// errAttemptLost is the error of an attempt whose worker stopped without
+// an outcome.
+const errAttemptLost = "the worker stopped without an outcome"
+
+// jobErrorText is err as [flowrun.JobAttempt.Error]: on one line, cut to
+// [flowrun.MaxJobError] bytes at a rune boundary.
+//
+// Nil: accepted, returns "".
+func jobErrorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	// Valid UTF-8 first: the run state is stored as JSON, which would
+	// widen each invalid byte to U+FFFD past the cap.
+	text := strings.Join(strings.Fields(strings.ToValidUTF8(err.Error(), "\uFFFD")), " ")
+	if len(text) <= flowrun.MaxJobError {
+		return text
+	}
+	const ellipsis = "…"
+	cut := flowrun.MaxJobError - len(ellipsis)
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut] + ellipsis
 }
 
 // retryJobs returns run's state with every failed job of the run waiting
@@ -492,7 +543,7 @@ func retryJobs(run flowrun.Run, now time.Time) (st flowrun.State, changed, runni
 		j := *cp.Job
 		switch j.Phase {
 		case flowrun.JobFailed:
-			j = flowrun.JobAttempt{Seq: j.Seq, Phase: flowrun.JobWaiting, NextAt: now}
+			j = flowrun.JobAttempt{Seq: j.Seq, Phase: flowrun.JobWaiting, NextAt: now, Error: j.Error}
 		case flowrun.JobWaiting:
 			j.NextAt = now
 		case flowrun.JobQueued, flowrun.JobStarted:
