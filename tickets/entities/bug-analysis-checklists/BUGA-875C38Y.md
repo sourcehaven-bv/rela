@@ -23,6 +23,6 @@ status: done
 
 ## Fix Planning
 
-- [x] Fix approach determined (overflow-wrap: anywhere on the shared property value and row classes in properties-list.css; the client response interceptor rejects a non-empty string body without a JSON content type on a JSON call)
-- [x] Regression test planned (mobile-layout.spec.ts for the wrap; nonJsonResponse.test.ts through the real axios instance)
+- [x] Fix approach determined (overflow-wrap: anywhere on the shared property value and row classes in properties-list.css; the client response interceptor rejects an HTML body on a JSON call)
+- [x] Regression test planned (mobile-layout.spec.ts for the wrap; htmlResponse.test.ts through the real axios instance)
 - [x] Related areas checked for similar issues (SidePanel shares .property-item and gets the same rule; long values in property-long already wrapped; blob downloads through getAxios are left alone by responseType)
