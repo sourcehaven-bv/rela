@@ -369,3 +369,68 @@ func (a recordAppender) AppendRecords(
 	}
 	return out, nil
 }
+
+// luaRecordReads adapts svc to [lua.RecordReader]. A nil svc is a nil
+// interface, not a typed nil, so the bindings are absent rather than broken.
+func luaRecordReads(svc *records.Service) lua.RecordReader {
+	if svc == nil {
+		return nil
+	}
+	return recordReader{svc: svc}
+}
+
+// recordReader is [lua.RecordReader] over the record service. The service
+// runs the owner gate of GET /api/v1/_records/{type}.
+type recordReader struct{ svc *records.Service }
+
+// ListRecords lists one owner's rows as the principal on ctx.
+func (r recordReader) ListRecords(ctx context.Context, q lua.RecordListQuery) (lua.RecordPageView, error) {
+	page, err := r.svc.List(ctx, q.Type, q.Owner, records.ListQuery{
+		From: q.From, To: q.To, After: q.After, Limit: q.Limit,
+	})
+	if err != nil {
+		return lua.RecordPageView{}, scriptRecordError(err)
+	}
+	out := lua.RecordPageView{Next: page.Next, Records: make([]lua.RecordView, len(page.Records))}
+	for i, rec := range page.Records {
+		out.Records[i] = lua.RecordView{
+			ID: rec.ID, Type: rec.Type, Owner: rec.Owner, TS: rec.TS, RecordedAt: rec.RecordedAt,
+			RecordedBy: rec.RecordedBy, Group: rec.Group, Reverses: rec.Reverses, Revision: rec.Revision,
+			Fields: rec.Fields,
+		}
+	}
+	return out, nil
+}
+
+// AggregateRecords folds rows as the principal on ctx.
+func (r recordReader) AggregateRecords(ctx context.Context, q lua.RecordAggregateQuery) ([]lua.RecordPoint, error) {
+	bucket, err := records.ParseBucket(q.Bucket)
+	if err != nil {
+		return nil, scriptRecordError(err)
+	}
+	pts, err := r.svc.Aggregate(ctx, records.AggregateQuery{
+		Type: q.Type, Owners: q.Owners, From: q.From, To: q.To, Field: q.Field, Bucket: bucket,
+		PerOwner: q.PerOwner,
+	})
+	if err != nil {
+		return nil, scriptRecordError(err)
+	}
+	out := make([]lua.RecordPoint, len(pts))
+	for i, p := range pts {
+		out[i] = lua.RecordPoint{
+			Owner: p.Owner, Start: p.Start, Count: p.Count, Sum: p.Sum, Min: p.Min, Max: p.Max, Avg: p.Avg,
+			Latest: p.Latest,
+		}
+	}
+	return out, nil
+}
+
+// scriptRecordError words a failed read for the script author. A failure the
+// caller did not cause (a backend error) keeps its text out of the script.
+func scriptRecordError(err error) error {
+	if text, ok := records.UserText(err); ok {
+		return errors.New(text)
+	}
+	slog.Warn("records: script read failed", "err", err)
+	return errors.New("records request failed; check the server log")
+}
