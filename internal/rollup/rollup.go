@@ -414,7 +414,7 @@ func compileRecordsColumn(
 		problems = append(problems, fmt.Sprintf("%s: %s %q has type %q; it needs integer or decimal", at, fn, field, fp.Type))
 	case fp.Type == metamodel.PropertyTypeDecimal && fp.Scale == nil:
 		// Without a declared scale a fold shows the most places any owner
-		// on the page has, so a value would change with its neighbours.
+		// on the page has, so a value would change with its neighbors.
 		problems = append(problems, fmt.Sprintf("%s: %s %q needs a declared scale on record type %q",
 			at, fn, field, r.Records))
 	case fn == metamodel.RollupAvg && pd.Type != metamodel.PropertyTypeDecimal:
