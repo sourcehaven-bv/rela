@@ -551,7 +551,7 @@ type AbstractType struct {
 }
 
 // Capabilities lists optional API surfaces whose availability depends on
-// the deployment's storage, decided once when the server is wired.
+// the deployment, decided once when the server is wired.
 type Capabilities struct {
 	// AtomicBatch reports that POST /api/v1/_batch is served: the store
 	// rolls a failed transaction back. False on the markdown-file and
@@ -561,6 +561,14 @@ type Capabilities struct {
 	// with the state at that instant. False on the markdown-file and memory
 	// stores, which keep no version history and answer such a read with 501.
 	AsOf bool `json:"as_of"`
+	// Git reports that the server keeps the project in git and serves
+	// GET /api/v1/_git/status with a status. False on a deployment without
+	// git, such as a database backend, where the SPA then skips the call.
+	Git bool `json:"git"`
+	// Flows reports that the project declares flows and serves the routes
+	// under /api/v1/_flows. False on a project without flows.yaml, where
+	// those routes answer 404 and the SPA then skips them.
+	Flows bool `json:"flows"`
 }
 
 // World is the JSON representation of one declared world — a named
@@ -673,7 +681,12 @@ type World struct {
 
 // EntityType is the JSON representation of an entity type.
 type EntityType struct {
-	Label       string                 `json:"label"`
+	Label string `json:"label"`
+	// LabelPlural is the schema's `label_plural:`, the plural display name
+	// ("People"). Absent when the schema sets none: the SPA then uses a
+	// wording without the type rather than a guessed plural such as
+	// "Persons".
+	LabelPlural string                 `json:"label_plural,omitempty"`
 	Plural      string                 `json:"plural"`
 	Description string                 `json:"description,omitempty"`
 	Primary     string                 `json:"primary,omitempty"`
@@ -804,7 +817,16 @@ type PropertyDef struct {
 // PropertyDisplay is the wire form of metamodel.PropertyDisplay.
 type PropertyDisplay struct {
 	Currency string `json:"currency,omitempty"`
-	Link     bool   `json:"link,omitempty"`
+	// Image marks a file property as an image (TKT-WG1410D).
+	Image bool `json:"image,omitempty"`
+	// LinkDisplay carries the link format; its fields sit at the top level
+	// of the JSON object.
+	LinkDisplay
+}
+
+// LinkDisplay is the link part of a property display (TKT-0101IO4).
+type LinkDisplay struct {
+	Link bool `json:"link,omitempty"`
 	// LinkText replaces the URL as the text of a link (TKT-IO9PTLD).
 	LinkText string `json:"link_text,omitempty"`
 }
@@ -1016,6 +1038,11 @@ type FieldError struct {
 	Source ErrorSource `json:"source"`
 	Code   string      `json:"code"`
 	Detail string      `json:"detail"`
+	// Fields and Message are set for a failed validation rule, which names
+	// no one property: the properties the rule reads, so a form can show
+	// it at one, and the rule's description without its name.
+	Fields  []string `json:"fields,omitempty"`
+	Message string   `json:"message,omitempty"`
 }
 
 // ErrorSource points to the location of an error: an RFC 6901 JSON pointer
@@ -1459,11 +1486,16 @@ type SidebarResponse struct {
 	// hint, like InlineCreate; the create endpoint re-authorizes.
 	Create []SidebarCreate `json:"create,omitempty"`
 	// HiddenBuiltins names the built-in sidebar rows ("search", "inbox",
-	// "flow_tasks", "flow_runs", "analysis") the current space, or the
+	// "flow_tasks", "flow_runs", "analysis"), the as-of picker ("as_of") and
+	// the footer Shortcuts button ("shortcuts") that the current space, or the
 	// top-level sidebar without spaces, leaves out for this principal
 	// ([dataentryconfig.Builtins]). Absent when every row is shown. A UX
 	// filter: the pages behind the rows stay reachable by URL.
 	HiddenBuiltins []dataentryconfig.BuiltinRow `json:"hidden_builtins,omitempty"`
+	// PhoneHiddenBuiltins names the rows the same sidebar leaves out on a
+	// phone-sized screen (`hidden_on_phone:`). The SPA applies it. Absent
+	// when no row sets it.
+	PhoneHiddenBuiltins []dataentryconfig.BuiltinRow `json:"phone_hidden_builtins,omitempty"`
 
 	// Pages are the config's `pages:`, keyed by page id, each with the tabs
 	// this principal may see. Absent when the config declares no pages.
@@ -1856,6 +1888,10 @@ type ViewColumn struct {
 	// (TKT-4Q2EIVZ), empty otherwise. A cell is an input only when its row's
 	// `_fields` verdict also allows the write.
 	Render string `json:"render,omitempty"`
+	// Primary is the column's `primary:` (BUG-6WQ1U8S). A table section
+	// stacks its rows on a phone and leaves out a column set to false there.
+	// Nil when the config does not set it.
+	Primary *bool `json:"primary,omitempty"`
 }
 
 // ViewRow represents a table row.

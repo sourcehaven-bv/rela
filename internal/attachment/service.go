@@ -232,6 +232,10 @@ func (s *Service) WriteAttachment(
 	// (when it needs the full file), reject the upload (wrapping
 	// ErrRejected), or rewrite the stream and the file name.
 	pc := ProcessContext{EntityID: e.ID, EntityType: e.Type, Property: propName, FileName: fileName}
+	if propDef.IsImage() {
+		// An image property has its own, smaller cap than the store backstop.
+		r = store.CapAttachmentReader(r, metamodel.ImageMaxBytes)
+	}
 	r, fileName, err = runProcessor(ctx, s.deps.Processor, pc, r, store.MaxAttachmentBytes)
 	if err != nil {
 		return nil, err

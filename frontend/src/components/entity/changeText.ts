@@ -3,6 +3,7 @@
 // the labels and titles the rest of the page shows. The global audit log
 // (AuditView) keeps the raw values for operators.
 import { t } from '@/i18n'
+import { actorLabel } from '@/utils/actorLabel'
 import type { AuditSubject, ChangeRecord } from '@/api/audit'
 import type { EntityType, RelationType } from '@/types'
 
@@ -34,20 +35,15 @@ export function opText(op: string): string {
 }
 
 /**
- * Who made the change. A `system:` or `integration:` principal, and a write
- * with no known user, is "System".
+ * Who made the change (BUG-9WCZYOX). A user the server named in `titles` (a
+ * person's entity id the reader may read) shows by title. A webhook or an
+ * integration shows by kind and name: the names are configuration, not data.
+ * Any other `system:` principal, and a write with no known user, is "System".
+ * `webhook:<event>` is the identity provider webhook's user
+ * (`idpWebhookUserPrefix` in internal/dataentry/audit_handler.go).
  */
-export function actorText(c: ChangeRecord): string {
-  const user = c.user ?? ''
-  if (
-    !user ||
-    user === 'unknown' ||
-    user.startsWith('system:') ||
-    user.startsWith('integration:')
-  ) {
-    return t('audit.changes.system')
-  }
-  return user
+export function actorText(c: ChangeRecord, titles: Record<string, string> = {}): string {
+  return actorLabel(c.user, titles)
 }
 
 function typeLabel(schema: ChangeSchema, name: string | undefined): string {
@@ -62,9 +58,12 @@ function entityText(titles: Record<string, string>, id: string | undefined): str
 
 /**
  * What the change is about, seen from the entity on screen (`self`, its bare
- * id). A relation names its label and the title of the other end; a
- * conversion names the types; a rename names the ids, since the id is what
- * changed. A change of the entity itself needs no subject.
+ * id). A relation names its label and the title of the other end. Seen from
+ * its target it takes the inverse label where the schema defines one, as the
+ * relation cards do, and otherwise names the other end as the source of the
+ * forward label (BUG-9WCZYOX). A conversion names the types; a rename names
+ * the ids, since the id is what changed. A change of the entity itself needs
+ * no subject.
  */
 export function subjectText(
   c: ChangeRecord,
@@ -83,9 +82,10 @@ export function subjectText(
   const rel = schema.relationType(s.relation_type)
   const label = rel?.label || s.relation_type
   if (s.from_id === self) return `${label} → ${entityText(titles, s.to_id)}`
-  const inverse = rel?.inverse?.label || rel?.inverse?.id
-  if (inverse) return `${inverse} → ${entityText(titles, s.from_id)}`
-  return `${label} ← ${entityText(titles, s.from_id)}`
+  const source = entityText(titles, s.from_id)
+  const inverse = rel?.inverse?.label
+  if (inverse) return `${inverse} → ${source}`
+  return t('audit.changes.incoming', { label, source })
 }
 
 /**

@@ -1,6 +1,10 @@
 package classification
 
-import "fmt"
+import (
+	"fmt"
+	"maps"
+	"slices"
+)
 
 // Lint checks a parsed file against the schema: every field has an entry,
 // no entry is still needs-review, no entry or override names something the
@@ -31,7 +35,7 @@ func (f *File) lintHops(shape Shape) []Issue {
 		subjects[s.Type] = true
 	}
 	var issues []Issue
-	for _, name := range sortedKeys(f.Overrides.SubjectHops) {
+	for _, name := range slices.Sorted(maps.Keys(f.Overrides.SubjectHops)) {
 		r, ok := shape.Relations[name]
 		if !ok || f.isSubjectLink(name, r, subjects) {
 			continue
@@ -48,7 +52,7 @@ func (f *File) lintHops(shape Shape) []Issue {
 
 func lintSection(section, kind string, assigned map[string]TypeAssignments, schema map[string][]string) []Issue {
 	var issues []Issue
-	for _, typeName := range sortedKeys(schema) {
+	for _, typeName := range slices.Sorted(maps.Keys(schema)) {
 		fields := schema[typeName]
 		if len(fields) == 0 {
 			continue
@@ -79,7 +83,7 @@ func lintSection(section, kind string, assigned map[string]TypeAssignments, sche
 			}
 		}
 	}
-	for _, typeName := range sortedKeys(assigned) {
+	for _, typeName := range slices.Sorted(maps.Keys(assigned)) {
 		ta := assigned[typeName]
 		fields, ok := schema[typeName]
 		if !ok {
@@ -94,7 +98,7 @@ func lintSection(section, kind string, assigned map[string]TypeAssignments, sche
 		for _, field := range fields {
 			known[field] = true
 		}
-		for _, field := range sortedKeys(ta.Fields) {
+		for _, field := range slices.Sorted(maps.Keys(ta.Fields)) {
 			if !known[field] {
 				issues = append(issues, Issue{
 					Code: CodeStaleEntry, Path: section + "." + typeName + "." + field, Line: ta.Fields[field].Line,
@@ -121,8 +125,8 @@ func lintOverrides(o Overrides, shape Shape) []Issue {
 	}
 	hasEntity := func(n string) bool { _, ok := shape.Entities[n]; return ok }
 	hasRelation := func(n string) bool { _, ok := shape.Relations[n]; return ok }
-	check("subject", sortedKeys(o.Subject), hasEntity, "entity type")
-	check("subject_link", sortedKeys(o.SubjectLink), hasRelation, "relation type")
-	check("subject_hops", sortedKeys(o.SubjectHops), hasRelation, "relation type")
+	check("subject", slices.Sorted(maps.Keys(o.Subject)), hasEntity, "entity type")
+	check("subject_link", slices.Sorted(maps.Keys(o.SubjectLink)), hasRelation, "relation type")
+	check("subject_hops", slices.Sorted(maps.Keys(o.SubjectHops)), hasRelation, "relation type")
 	return issues
 }

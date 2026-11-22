@@ -24,8 +24,8 @@ const (
 	// webhook acknowledges and drops events for it.
 	ProvisionOff ProvisionMode = "off"
 	// ProvisionWebhook creates a tenant from a verified
-	// `organization.created` webhook only. Requests for an unknown org stay
-	// a 403.
+	// `organization.created` webhook or a tenant API call ([TenantsPath])
+	// only. Requests for an unknown org stay a 403.
 	ProvisionWebhook ProvisionMode = "webhook"
 	// ProvisionLazy does what ProvisionWebhook does, and also creates a
 	// tenant when a request with a verified but unknown org arrives. That
@@ -258,21 +258,25 @@ func orDefault[T int | time.Duration](v, def T) T {
 }
 
 // validateProvision refuses a provisioning config the host cannot act on.
-// webhook is whether the host receives the IdP webhook.
-func validateProvision(cfg ProvisionConfig, webhook bool) error {
+// webhook is whether the host receives the IdP webhook, api whether it
+// serves the tenant API ([TenantsPath]).
+func validateProvision(cfg ProvisionConfig, webhook, api bool) error {
 	mode, err := ParseProvisionMode(string(cfg.Mode))
 	if err != nil {
 		return err
 	}
 	if mode == ProvisionOff {
+		if api {
+			return errors.New("tenanthost: the tenant API needs provisioning mode webhook or lazy")
+		}
 		return nil
 	}
 	if cfg.Provisioner == nil {
 		return fmt.Errorf("tenanthost: provisioning mode %s needs a provisioner", mode)
 	}
-	if mode == ProvisionWebhook && !webhook {
+	if mode == ProvisionWebhook && !webhook && !api {
 		return errors.New("tenanthost: provisioning mode webhook needs the IdP webhook " +
-			"(-webhook-audience and -webhook-action)")
+			"(-webhook-audience and -webhook-action) or the tenant API (-tenant-api-audience)")
 	}
 	if cfg.PerMinute < 0 || cfg.MaxRunning < 0 {
 		return errors.New("tenanthost: provisioning limits must not be negative")
@@ -331,6 +335,27 @@ func (p *provisioning) start(ctx context.Context, orgID string) (*run, error) {
 	return r, nil
 }
 
+// logProvisioned logs how a provisioning run for orgID ended.
+func logProvisioned(ctx context.Context, orgID string, err error) {
+	level, msg := slog.LevelInfo, "tenant host: tenant provisioned"
+	attrs := []any{"org_id", orgID}
+	switch {
+	case err == nil:
+	case errors.Is(err, tenant.ErrTenantInUse):
+		msg = "tenant host: tenant is being provisioned by another process"
+	case errors.Is(err, tenant.ErrTenantExists):
+		msg = "tenant host: tenant exists but is not active; not provisioned"
+		attrs = append(attrs, "error", err)
+	case errors.Is(err, ErrNeedsOperator):
+		level, msg = slog.LevelError, "tenant host: provisioning needs an operator; not retried for an hour"
+		attrs = append(attrs, "error", err, "fix", operatorHint(err))
+	default:
+		level, msg = slog.LevelError, "tenant host: provisioning failed"
+		attrs = append(attrs, "error", err)
+	}
+	slog.Log(ctx, level, msg, attrs...)
+}
+
 func (p *provisioning) execute(ctx context.Context, orgID string, r *run) {
 	defer p.wg.Done()
 	ctx, cancel := context.WithTimeout(ctx, p.timeout)
@@ -343,19 +368,7 @@ func (p *provisioning) execute(ctx context.Context, orgID string, r *run) {
 	}()
 	err := p.p.Provision(ctx, orgID)
 	cancel()
-	switch {
-	case err == nil:
-		slog.Info("tenant host: tenant provisioned", "org_id", orgID)
-	case errors.Is(err, tenant.ErrTenantInUse):
-		slog.Info("tenant host: tenant is being provisioned by another process", "org_id", orgID)
-	case errors.Is(err, tenant.ErrTenantExists):
-		slog.Info("tenant host: tenant exists but is not active; not provisioned", "org_id", orgID, "error", err)
-	case errors.Is(err, ErrNeedsOperator):
-		slog.Error("tenant host: provisioning needs an operator; not retried for an hour",
-			"org_id", orgID, "error", err, "fix", operatorHint(err))
-	default:
-		slog.Error("tenant host: provisioning failed", "org_id", orgID, "error", err)
-	}
+	logProvisioned(ctx, orgID, err)
 	p.mu.Lock()
 	delete(p.runs, orgID)
 	switch {
@@ -409,6 +422,14 @@ func (p *provisioning) noteStuck(ctx context.Context, orgID string) {
 			"stopped, finish it with `rela-server tenant create <org_id>` or another organization.created webhook",
 			"org_id", orgID)
 	}
+}
+
+// running reports whether a run for orgID is in progress on this host.
+func (p *provisioning) running(orgID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, ok := p.runs[orgID]
+	return ok
 }
 
 // close stops new runs, cancels the ones in progress and waits for them.

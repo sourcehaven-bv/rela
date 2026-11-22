@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -73,7 +74,7 @@ func (mt *MessageType) normalize(in map[string]any, maxBytes int, requireAll boo
 	}
 	out := make(map[string]any, len(in))
 	var refs []string
-	for _, name := range sortedKeys(in) {
+	for _, name := range slices.Sorted(maps.Keys(in)) {
 		raw := in[name]
 		if raw == nil {
 			continue
@@ -100,7 +101,7 @@ func (mt *MessageType) normalize(in map[string]any, maxBytes int, requireAll boo
 			refs = append(refs, id)
 		}
 	}
-	for _, name := range sortedKeys(mt.Properties) {
+	for _, name := range slices.Sorted(maps.Keys(mt.Properties)) {
 		// A required file property is checked against the files of the
 		// post, which the props do not hold.
 		if p := mt.Properties[name]; p.Type == PropertyFile {
@@ -273,7 +274,7 @@ func normalizeObject(p Property, item any) (map[string]any, error) {
 		return nil, errors.New("must be an object")
 	}
 	out := make(map[string]any, len(in))
-	for _, name := range sortedKeys(in) {
+	for _, name := range slices.Sorted(maps.Keys(in)) {
 		raw := in[name]
 		if raw == nil {
 			continue
@@ -300,7 +301,7 @@ func normalizeObject(p Property, item any) (map[string]any, error) {
 	if len(out) == 0 {
 		return nil, errors.New("is empty")
 	}
-	for _, name := range sortedKeys(p.Fields) {
+	for _, name := range slices.Sorted(maps.Keys(p.Fields)) {
 		if _, set := out[name]; !set && p.Fields[name].Required {
 			return nil, fmt.Errorf("needs field %q", name)
 		}

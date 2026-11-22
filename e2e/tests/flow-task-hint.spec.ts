@@ -91,6 +91,9 @@ test.describe("flow task hint", () => {
     const card = flows.runs().first();
     await expect(card).toBeFocused({ timeout: 15_000 });
     await expect(card).toBeInViewport();
+    // The step form itself is in view, not left at the bottom edge while
+    // the page renders above it (BUG-UZGMHIK).
+    await flows.expectStepFormTopInView();
 
     await flows.completeStepWithCheckbox(writes);
     await flows.expectOneRunIn(states.finished);

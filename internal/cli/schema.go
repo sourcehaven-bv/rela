@@ -371,8 +371,8 @@ func propertyRange(prop metamodel.PropertyDef) string {
 func writeEntityRelations(meta *metamodel.Metamodel, resolved string) {
 	hasRelations := false
 	for relName, relDef := range meta.Relations {
-		isSource := sliceContains(relDef.From, resolved)
-		isTarget := sliceContains(relDef.To, resolved)
+		isSource := slices.Contains(relDef.From, resolved)
+		isTarget := slices.Contains(relDef.To, resolved)
 		if isSource {
 			hasRelations = true
 			out.WriteMessage("  -> %s -> [%s]", relName, strings.Join(relDef.To, ", "))
@@ -870,10 +870,6 @@ func getSortedTypeNames(m *metamodel.Metamodel) []string {
 	}
 	natsort.Strings(names)
 	return names
-}
-
-func sliceContains(slice []string, item string) bool {
-	return slices.Contains(slice, item)
 }
 
 // runSchemaAbstract describes an abstract type: it stores no entities, so

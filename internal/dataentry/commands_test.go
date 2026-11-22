@@ -928,18 +928,6 @@ func TestMatchesPage(t *testing.T) {
 
 // --- contains ---
 
-func TestContains(t *testing.T) {
-	if !contains([]string{"a", "b", "c"}, "b") {
-		t.Error("expected true")
-	}
-	if contains([]string{"a", "b", "c"}, "d") {
-		t.Error("expected false")
-	}
-	if contains(nil, "a") {
-		t.Error("expected false for nil")
-	}
-}
-
 // --- Helpers ---
 
 type testSSEEvent struct {

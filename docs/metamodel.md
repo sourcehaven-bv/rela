@@ -590,7 +590,7 @@ Each entity type defines:
 | Field              | Description                                                                     |
 | ------------------ | ------------------------------------------------------------------------------- |
 | `label`            | Display name                                                                    |
-| `label_plural`     | Plural display name (defaults to label + "s")                                   |
+| `label_plural`     | Plural display name. See [Plural label](#plural-label) below.                   |
 | `description`      | Documentation explaining intent and usage (optional)                            |
 | `aliases`          | Alternative names for CLI (e.g., `req` for `requirement`)                       |
 | `id_type`          | `short` (default), `sequential`, or `manual` - controls ID generation           |
@@ -601,6 +601,18 @@ Each entity type defines:
 | `color`            | Fill color for graph visualizations (hex or named)                              |
 | `border_color`     | Border color for graph visualizations                                           |
 | `display_property` | Property whose value names the entity. See [Display name](#display-name) below. |
+
+### Plural label
+
+Set `label_plural` when the plural is not the label plus "s", for example
+`label: Person` with `label_plural: People`. Navigation groups and the API
+reference fall back to the label plus "s".
+
+The data-entry app uses `label_plural` only when it is set. An empty list then
+says "No People found." and the search box reads "Search People...". Without
+it, an empty list says "Nothing found." and the search box reads "Search...",
+so these never show a wrong plural such as "Persons". A list's own
+`empty_message:` replaces the empty list text.
 
 ### Display name
 
@@ -852,7 +864,7 @@ entities:
 | `default`        | Default value for the property                                                        |
 | `format`         | Date format (Go layout string, e.g., `2006-01-02`)                                    |
 | `description`    | Documentation for the property                                                        |
-| `display`        | How the value is shown, such as `{currency: EUR}`, `{link: true}` or `{link: true, link_text: Website}` (see [Display formats](#display-formats)) |
+| `display`        | How the value is shown, such as `{currency: EUR}`, `{link: true}`, `{link: true, link_text: Website}` or `{image: true}` (see [Display formats](#display-formats)) |
 | `list: true`     | Allow multiple values (multi-select for enum types)                                   |
 | `computed`       | Pure entity-local expression materialized on every write; the property is read-only   |
 | `rollup`         | Summary of related entities, computed on read per reader; see [Roll-up properties](#roll-up-properties) |
@@ -860,7 +872,7 @@ entities:
 | `min` / `max`    | For `integer` and `decimal` properties: the lowest and highest allowed value, inclusive (see [Integer ranges](#integer-ranges-min-and-max)) |
 | `scale`          | For `decimal` properties: the most digits allowed after the point (see [Decimal numbers](#decimal-numbers)) |
 | `max`            | For `file` properties: max attachments (default 1)                                    |
-| `accept`         | For `file` properties: narrow the MIME allowlist (e.g. `[application/pdf]`)           |
+| `accept`         | For `file` properties: narrow the MIME allowlist (e.g. `[application/pdf]`); an image property accepts only image types |
 | `scan_cmd`       | For `file` properties: the scan command (array args); configuring it enables scanning |
 | `scan: off`      | For `file` properties: opt out of scanning despite a global `scan_cmd`                |
 | `transform`      | For `file` properties: ordered byte transforms, each `{cmd: [...]}` or `{image: {...}}` |
@@ -1347,15 +1359,17 @@ properties:
       currency: EUR
 ```
 
-The value 3500 then shows as "€ 3.500" in a Dutch browser and "€3,500" in an
-American one. A whole amount shows no decimals. The format applies wherever
-the value is shown: kanban cards and column summaries, list cells, and the
-entity page. Form inputs stay plain numbers.
+The value 3500 then shows as "€ 3.500,00" in a Dutch browser and
+"€3,500.00" in an American one. An amount always shows the currency's minor
+unit: two digits for EUR and USD, none for JPY. So amounts on one page line
+up, whole or not. The format applies wherever the value is shown: kanban
+cards and column summaries, list cells, and the entity page. Form inputs stay
+plain numbers.
 
-A decimal shows the digits it was written with, and at least two when it has
-any, so `12.5` shows as "€ 12,50". With `scale:` it always shows that many
-digits. The amount is formatted from the stored text, not from a binary
-number, so it stays exact.
+A decimal shows at least the currency's minor unit, and more when it was
+written with more, so `12.5` shows as "€ 12,50" and `0.125` as "€ 0,125".
+With `scale:` it always shows that many digits. The amount is formatted from
+the stored text, not from a binary number, so it stays exact.
 
 `currency` needs a single-valued `integer` or `decimal` property, and an
 ISO 4217 code:
@@ -1398,7 +1412,8 @@ properties:
       link_text: Website
 ```
 
-Every value of `website` then shows as a link named "Website". A value that
+Every value of `website` then shows as a link named "Website". Screen readers
+read that name, and the link has no tooltip with the address. A value that
 does not become a link shows as itself, not as the link text. When a list or
 board column shows a property that several types declare, it uses the
 `link_text` only if all those types set the same one; otherwise it shows the
@@ -1409,6 +1424,51 @@ checked: a value that is not a web address still saves, and shows as text.
 
 `link` needs a single-valued `string` property without `values:`, and
 `link_text` needs `link: true` and may not be blank. Config load checks this.
+
+#### Image
+
+```yaml
+properties:
+  logo:
+    type: file
+    display:
+      image: true
+```
+
+A `file` property marked `image: true` holds one image. The server refuses
+anything else:
+
+- The content must be a PNG, JPEG, GIF or WebP image. The server judges the
+  bytes, not the file name or the type the browser reports, so a script
+  renamed to `logo.png` is refused.
+- SVG is refused, as are HTML and every other type. An SVG can carry script.
+- The file may be at most 5 MiB. A larger upload gets a 413 answer.
+- `accept:` may narrow the image types, for example `[image/png]`. It cannot
+  add a type that is not an image.
+
+The upload uses the same storage, permissions, scan and `transform:` steps as
+any `file` property. These checks run on the upload before any `transform:`
+step; a step is written by the operator and its output is not checked again.
+An `image:` transform step re-encodes the upload and drops its metadata.
+
+The image shows as follows:
+
+- The form shows an upload control with a preview, and replace and remove
+  actions. A create form stages the pick and uploads it after the entity is
+  saved.
+- The entity page shows the image as a preview.
+- A list column for the property (`columns: [{property: logo}]`) shows a
+  32 px thumbnail. The address of the image is built from the row's own value
+  and id, so the list asks the server for nothing extra. The browser loads
+  each image lazily, one request per visible row.
+
+Downloads are served with `Content-Disposition: attachment`,
+`X-Content-Type-Options: nosniff` and a sandboxing `Content-Security-Policy`,
+as for every attachment.
+
+`image` needs a `file` property that holds one file: no `list: true` and no
+`max` above 1. It cannot be combined with `currency` or `link`. Config load
+checks this.
 
 `display` is a map so that more formats can join later, such as a
 percentage or a unit.
@@ -1909,6 +1969,11 @@ tell the user's rows apart.
 An ACL `when:` in `acl.yaml` refuses `current_user.id` in `related(...)` at
 load. A grant must not depend on a second derivation of who is calling. Use
 `role_relations:` to grant access through a relation to the user.
+
+To create such a relation to the user when an entity is created, such as a
+note's author, use the trigger placeholder `{{current_user.id}}` in a `relate`
+output. See [relate](flows.md#relate). Unlike the condition variable, it is
+empty rather than the raw login when no user entity was resolved.
 
 #### Where `related(...)` works
 

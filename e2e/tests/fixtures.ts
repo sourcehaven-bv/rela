@@ -1086,6 +1086,21 @@ entities:
         type: file
         required: true
 
+  # image-field.spec.ts (TKT-WG1410D): a dedicated type with an image property,
+  # so no other test's entity gains a field.
+  brand:
+    label: Brand
+    id_type: sequential
+    id_prefix: BRAND
+    properties:
+      title:
+        type: string
+        required: true
+      logo:
+        type: file
+        display:
+          image: true
+
   task:
     label: Task
     id_type: sequential
@@ -1163,6 +1178,10 @@ entities:
         type: date
       end:
         type: date
+      # view-toolbar.spec.ts: the property the gantt and calendar filter on.
+      phase:
+        type: enum
+        values: [draft, active]
 
   step:
     label: Step
@@ -1445,6 +1464,14 @@ forms:
       - property: title
       - property: document
 
+  # image-field.spec.ts (TKT-WG1410D): an image upload with preview.
+  brand:
+    entity_type: brand
+    title: "Brand"
+    fields:
+      - property: title
+      - property: logo
+
   task:
     entity_type: task
     title: "Task"
@@ -1630,6 +1657,14 @@ lists:
     columns:
       - property: title
       - property: doc_url
+
+  # image-field.spec.ts (TKT-WG1410D): a thumbnail column. Not in the sidebar.
+  brand_logos:
+    entity_type: brand
+    title: "Brands"
+    columns:
+      - property: title
+      - property: logo
 
   tasks:
     entity_type: task
@@ -2113,6 +2148,20 @@ gantts:
     sources:
       plan: { start: start, end: end, where: ["start!="] }
       step: { start: start, end: end, where: ["start!="] }
+    filter_controls:
+      - property: phase
+
+# view-toolbar.spec.ts: a calendar of the plans, with the search box and filters.
+calendars:
+  plan-calendar:
+    title: "Plan calendar"
+    sources:
+      - entity_type: plan
+        date: start
+        summary: title
+        color: blue
+    filter_controls:
+      - property: phase
 `;
 
 /** Custom-app HTML used by apps.spec.ts. Exercises the rela bridge end-to-end:

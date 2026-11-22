@@ -214,6 +214,11 @@ func decodeNode(n *yaml.Node, out any) error {
 }
 
 // loader collects the problems of one load.
+//
+// It has a method per checked key, so each new key adds one. 40 → 42
+// (BUG-53GP5F5): `title:` and `failed_message:`.
+//
+//plimsoll:max-methods=42
 type loader struct {
 	meta     *metamodel.Metamodel
 	policy   *acl.Policy
@@ -310,6 +315,8 @@ func (l *loader) flow(key, name string, n *yaml.Node) *Flow {
 	f.starts = l.starts(key+".start", raw.Start, f.subject, f.perSubject)
 	f.manage = l.manage(key+".manage", raw.Manage)
 	f.runAs = l.runAs(key+".run_as", raw.RunAs, f)
+	f.title = l.title(key+".title", raw.Title, f)
+	f.failedMessage = l.failedMessage(key+".failed_message", raw.FailedMessage)
 	if len(l.problems) > before {
 		return nil
 	}
@@ -470,7 +477,7 @@ func (l *loader) starts(key string, raw []rawStart, subject string, per PerSubje
 				l.add(sk+".when", "is required for on: predicate")
 			}
 		case StartManual:
-			l.noKeys(sk, r, "when", "every")
+			l.noKeys(sk, r, "every")
 			s.Permission = l.permission(sk+".permission", r.Permission)
 		case StartSchedule:
 			l.noKeys(sk, r, "permission")

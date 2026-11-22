@@ -4,8 +4,10 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 
 	"gopkg.in/yaml.v3"
@@ -121,7 +123,7 @@ func auditWebhooks(svc *readServices, policy *acl.Policy, gate bool) ([]aclaudit
 			dataentryconfig.ConfigFile, err)
 		return nil, nil
 	}
-	return aclaudit.CheckWebhooks(policy, sortedKeys(loaded.cfg.Webhooks)), nil
+	return aclaudit.CheckWebhooks(policy, slices.Sorted(maps.Keys(loaded.cfg.Webhooks))), nil
 }
 
 // resolveFailOn computes the exit-code gate from --fail-on / --exit-code.

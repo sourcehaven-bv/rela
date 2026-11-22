@@ -26,33 +26,56 @@ func checkListBusyColumn(listID string, i int, c ListColumn, earlierBusy bool) [
 }
 
 // refuseListOnlyColumn rejects the list-only column keys on the other
-// surfaces that share [ListColumn]: dashboard card columns and view section
-// columns. Those surfaces do not request busy state, so a busy column there
-// would render nothing. It mirrors [refuseKanbanOnlyFields].
+// surfaces that share [ListColumn]: dashboard card columns and the columns
+// of a view section that is not a table. Those surfaces do not request busy
+// state, so a busy column there would render nothing, and they never drop
+// columns to fit, so primary would do nothing. It mirrors
+// [refuseKanbanOnlyFields].
 func refuseListOnlyColumn(prefix string, c ListColumn) []string {
+	errs := refuseBusyColumn(prefix, c)
+	if c.Primary != nil {
+		errs = append(errs, prefix+": primary is only supported on list columns and view display: table section columns")
+	}
+	return errs
+}
+
+// refuseBusyColumn rejects a busy column outside a list.
+func refuseBusyColumn(prefix string, c ListColumn) []string {
 	if c.Busy != "" {
 		return []string{prefix + ": busy is only supported on list columns"}
 	}
 	return nil
 }
 
-// refuseSectionBusyColumns applies [refuseListOnlyColumn] to every column
-// list of a view section: columns, parent_columns, child_columns and
-// columns_by_type. It needs no metamodel, so the caller runs it whether or
-// not the section's source resolves, and each column is reported once.
+// refuseSectionBusyColumns checks the list-only keys on every column list of
+// a view section: columns, parent_columns, child_columns and columns_by_type.
+// A busy column is refused on all of them. `primary` is allowed on the
+// columns of a `display: table` section (columns and columns_by_type),
+// which stacks its rows on a phone and drops a `primary: false` column there
+// (BUG-6WQ1U8S); it is refused on every other column list. It needs no
+// metamodel, so the caller runs it whether or not the section's source
+// resolves, and each column is reported once.
 func refuseSectionBusyColumns(viewID string, i int, s ViewSection) []string {
 	prefix := fmt.Sprintf("view %q: section[%d]", viewID, i)
+	table := s.Display == "table"
+	check := func(at string, c ListColumn, primaryOK bool) []string {
+		if primaryOK {
+			return refuseBusyColumn(at, c)
+		}
+		return refuseListOnlyColumn(at, c)
+	}
 	var errs []string
 	for j, c := range s.Columns {
-		errs = append(errs, refuseListOnlyColumn(fmt.Sprintf("%s column[%d]", prefix, j), c)...)
+		errs = append(errs, check(fmt.Sprintf("%s column[%d]", prefix, j), c, table)...)
 	}
 	for _, group := range []struct {
-		key  string
-		cols map[string][]ListColumn
+		key       string
+		cols      map[string][]ListColumn
+		primaryOK bool
 	}{
-		{"parent_columns", s.ParentColumns},
-		{"child_columns", s.ChildColumns},
-		{"columns_by_type", s.ColumnsByType},
+		{"parent_columns", s.ParentColumns, false},
+		{"child_columns", s.ChildColumns, false},
+		{"columns_by_type", s.ColumnsByType, table},
 	} {
 		types := make([]string, 0, len(group.cols))
 		for t := range group.cols {
@@ -61,7 +84,7 @@ func refuseSectionBusyColumns(viewID string, i int, s ViewSection) []string {
 		sort.Strings(types)
 		for _, t := range types {
 			for j, c := range group.cols[t] {
-				errs = append(errs, refuseListOnlyColumn(fmt.Sprintf("%s %s.%s[%d]", prefix, group.key, t, j), c)...)
+				errs = append(errs, check(fmt.Sprintf("%s %s.%s[%d]", prefix, group.key, t, j), c, group.primaryOK)...)
 			}
 		}
 	}

@@ -29,7 +29,7 @@ func parseStitchFlags(args []string) (stitchFlags, error) {
 	fs.StringVar(&f.out, "out", ".ignored/seqtrace-e2e/diagrams", "output directory")
 	fs.StringVar(&f.static, "static", "internal/dataentry/static/v2", "built SPA, with source maps")
 	collapse := fs.String("collapse", defaultCollapse, "regexp of packages drawn as part of their caller; empty to draw all")
-	title := fs.String("title", `\.handle`, "regexp on Fn; the deepest matching call names the server handler")
+	title := fs.String("title", defaultTitle, "regexp on Fn; the deepest matching call names the server handler")
 	keep := fs.String("keep", "", "regexp of function names drawn even inside one package, such as access checks")
 	fs.BoolVar(&f.opt.Values, "values", true, "label server arrows with argument and result summaries")
 	_ = fs.Parse(args)

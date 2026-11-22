@@ -1,5 +1,6 @@
 import { computed, inject, provide, type ComputedRef, type Ref } from 'vue'
 import { useSchemaStore } from '@/stores'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 
 /**
  * Injection key for the inline-create nesting depth. 0 (the default when
@@ -51,16 +52,17 @@ export function provideInlineCreateDepth(): void {
  * `SidebarData.inline_create`).
  *
  * Returns an empty list when the current form is itself nested (see
- * MAX_INLINE_CREATE_DEPTH), or before the sidebar payload has landed.
+ * MAX_INLINE_CREATE_DEPTH), before the sidebar payload has landed, or while
+ * the workspace is read-only.
  */
 export function useInlineCreate(
-  targetTypes: Ref<string[]> | ComputedRef<string[]>,
+  targetTypes: Ref<string[]> | ComputedRef<string[]>
 ): ComputedRef<InlineCreateTarget[]> {
   const schemaStore = useSchemaStore()
   const depth = inject<number>(INLINE_CREATE_DEPTH, 0)
 
   return computed(() => {
-    if (depth > MAX_INLINE_CREATE_DEPTH) return []
+    if (depth > MAX_INLINE_CREATE_DEPTH || workspaceReadOnly.value) return []
 
     const out: InlineCreateTarget[] = []
     for (const entityType of targetTypes.value) {

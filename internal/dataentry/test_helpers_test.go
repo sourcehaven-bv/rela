@@ -166,8 +166,12 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		panic(err.Error())
 	}
 	app.validator = val
-	app.analyze = analyzeService{reads: gatedReader, tracer: lateGatedTracer{app: app}, validator: app.validator}
-	app.templater = svc.Templater()
+	// Built here as well as in the constructors: some tests assemble an App
+	// literal and call rebindApp directly.
+	app.analyzeAPI = newAnalyzeHandler(app)
+	app.analyzeAPI.svc = analyzeService{reads: gatedReader, tracer: lateGatedTracer{app: app}, validator: app.validator}
+	app.schemaAPI = newSchemaHandler(app, svc.Templater())
+	app.conflictsAPI = newConflictsHandler(app)
 	app.cfgLoader = svc.Config()
 	app.assets = rootfs.New(paths.Root)
 	app.kv = svc.State()
@@ -310,6 +314,10 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		panic(pilesErr)
 	}
 
+	// Next-action handler (mirrors NewApp). Its state backend and condition
+	// compiler stay unset until a test installs them.
+	app.nextActions = newNextActionHandler(app)
+
 	// writeHandler mirrors production wiring (see NewApp): closures for the
 	// swappable acl/audit collaborators, values for the fixed service handles,
 	// and App's shared read/write helpers so both paths stay identical.
@@ -406,9 +414,13 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture, opts ..
 		fieldResolver: NopFieldVerdictResolver{},
 		auditSink:     audit.Nop{},
 		feed:          testFeed(),
-		sseTiming:     defaultSSETimings,
 	}
 	app.live = testLiveHub(app)
+	app.sse = newSSEHandler(app)
+	app.gitAPI = newGitHandler(app)
+	app.schemaAPI = newSchemaHandler(app, nil)
+	app.conflictsAPI = newConflictsHandler(app)
+	app.analyzeAPI = newAnalyzeHandler(app)
 	if meta != nil {
 		// Use an in-memory FS + project context so the workspace's
 		// templater has paths it can dereference. Without this,
@@ -528,8 +540,13 @@ func newHandlerTestApp(t *testing.T) *App {
 	// NewApp (which rejects a nil resolver). Without it, any handler that
 	// serializes entities for the wire panics — caught by the router walk
 	// test driving _search through the full router (TKT-TLQ94B).
-	app := &App{fieldResolver: NopFieldVerdictResolver{}, feed: testFeed(), sseTiming: defaultSSETimings}
+	app := &App{fieldResolver: NopFieldVerdictResolver{}, feed: testFeed()}
 	app.live = testLiveHub(app)
+	app.sse = newSSEHandler(app)
+	app.gitAPI = newGitHandler(app)
+	app.schemaAPI = newSchemaHandler(app, nil)
+	app.conflictsAPI = newConflictsHandler(app)
+	app.analyzeAPI = newAnalyzeHandler(app)
 	rebindApp(app, fs, ctx, svc)
 	// Make sure kv hits the real filesystem through state.KV, matching production.
 	kvRoot, err := storage.NewRootedFS(fs, ctx.CacheDir)

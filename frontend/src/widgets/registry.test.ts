@@ -98,6 +98,15 @@ describe('defineWidgetRegistry', () => {
     )
   })
 
+  it('does not warn when the type default picks the widget, as for a custom type', () => {
+    const r = defineWidgetRegistry()
+    r.register('text', { component: TextWidget, supportedPropertyTypes: ['string'] })
+    // A schema `types:` entry reaches the SPA as its own name.
+    const custom = { type: 'vat_number' } as unknown as PropertyDef
+    expect(r.resolve(undefined, custom)).toBe(TextWidget)
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
   it('does not warn when the property type is supported', () => {
     const r = defineWidgetRegistry()
     r.register('checkbox', { component: Stub, supportedPropertyTypes: ['boolean'] })

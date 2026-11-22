@@ -54,7 +54,7 @@ func getNextActionOn(
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_next_action?"+q.Encode(), http.NoBody).WithContext(ctx)
-	app.handleV1NextAction(rec, req)
+	app.nextActions.handleV1NextAction(rec, req)
 	return rec
 }
 
@@ -157,7 +157,7 @@ func TestNextAction_ContextConditionUsesTheRealMatcher(t *testing.T) {
 	withNextActions(t, app, oneBand, map[string]dataentryconfig.NextActionSource{
 		"open-only": {Band: "b", Context: "ticket", Condition: `entity.status == "open"`, Suggest: "{id}"},
 	})
-	require.NoError(t, app.SetNextActionMatchers(appbuild.NextActionMatchers))
+	require.NoError(t, app.nextActions.setMatchers(appbuild.NextActionMatchers))
 
 	open := decodeNextAction(t, getNextActionOn(aliceCtx(), t, app, entityPage("TKT-001")))
 	require.NotNil(t, open.Suggestion)

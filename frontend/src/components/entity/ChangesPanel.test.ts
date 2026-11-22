@@ -112,11 +112,11 @@ describe('ChangesPanel', () => {
           time: '2026-01-01T08:00:00Z',
           op: 'create-entity',
           subject: { kind: 'entity', type: 'ticket', id: 'TKT-1' },
-          user: 'carol',
+          user: 'PSN-19',
           summary: 'created',
         },
       ],
-      titles: { 'CON-7': 'Login' },
+      titles: { 'CON-7': 'Login', 'PSN-19': 'Carol' },
     })
     const wrapper = mountPanel()
     await flushPromises()
@@ -138,6 +138,9 @@ describe('ChangesPanel', () => {
     expect(rows[2]).not.toContain('updated')
     expect(rows[3]).toContain('Created')
     expect(rows[3]).not.toContain('created')
+    // A person who made a change reads by their title (BUG-9WCZYOX).
+    expect(rows[3]).toContain('Carol')
+    expect(rows[3]).not.toContain('PSN-19')
     // Text interpolation, never markup.
     expect(rows[2]).toContain('<b>bob</b>')
     expect(wrapper.find('b').exists()).toBe(false)
@@ -221,5 +224,33 @@ describe('ChangesPanel', () => {
       expect(wrapper.findAll('[data-testid="change-row"]')).toHaveLength(1)
       expect(wrapper.find('.panel-error').exists()).toBe(true)
     })
+  })
+  // BUG-UZGMHIK: an action on the page bumps `revision`, and the list is read
+  // again in place, with the rows on screen kept until the answer lands.
+  it('reads the list again in place when the revision changes', async () => {
+    useSchemaStore().setAudit({ changes: true, global: false })
+    getChangesMock.mockResolvedValue({
+      changes: [{ seq: 1, time: '2026-01-01T10:00:00Z', op: 'create-entity', user: 'a' }],
+    })
+    const wrapper = mount(ChangesPanel, {
+      props: { entityType: 'ticket', entityId: 'TKT-1', revision: 0 },
+    })
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="change-row"]')).toHaveLength(1)
+
+    let answer: (p: ChangesPage) => void = () => {}
+    getChangesMock.mockReturnValueOnce(new Promise((r) => (answer = r)))
+    await wrapper.setProps({ revision: 1 })
+    expect(getChangesMock).toHaveBeenCalledTimes(2)
+    expect(wrapper.findAll('[data-testid="change-row"]')).toHaveLength(1)
+
+    answer({
+      changes: [
+        { seq: 2, time: '2026-01-01T11:00:00Z', op: 'update-entity', user: 'a' },
+        { seq: 1, time: '2026-01-01T10:00:00Z', op: 'create-entity', user: 'a' },
+      ],
+    })
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="change-row"]')).toHaveLength(2)
   })
 })

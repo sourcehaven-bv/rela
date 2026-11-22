@@ -77,3 +77,60 @@ func TestChangeTitles_ServesOnlyWholeTitles(t *testing.T) {
 		t.Errorf("titles = %v, want %v", got, want)
 	}
 }
+
+// TestChangeTitles_NamesActorsByTitle: a record's user that is an entity id
+// the reader may read is served by its title, the entity on screen included,
+// in the same batch as the relation ends (BUG-9WCZYOX). A user the reader
+// cannot read, and reserved, integration and webhook identities, get none.
+func TestChangeTitles_NamesActorsByTitle(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"person": {
+				Label: "Person", IDPrefix: "PSN-",
+				Properties:    map[string]metamodel.PropertyDef{"title": {Type: "string", Required: true}},
+				PropertyOrder: []string{"title"},
+			},
+			"memo": {
+				Label: "Memo", IDPrefix: "MEMO-",
+				Properties:    map[string]metamodel.PropertyDef{"title": {Type: "string", Required: true}},
+				PropertyOrder: []string{"title"},
+			},
+		},
+	}
+	app := newAppFromParts(&Config{}, meta, newFixture())
+	app.broker = newEventBroker()
+	setTestResolver(t, app, fakeResolver{})
+	seedEntity(app, &entity.Entity{ID: "PSN-1", Type: "person", Properties: map[string]any{"title": "Ada"}})
+	seedEntity(app, &entity.Entity{ID: "PSN-2", Type: "person", Properties: map[string]any{"title": "Self"}})
+	seedEntity(app, &entity.Entity{ID: "MEMO-1", Type: "memo", Properties: map[string]any{"title": "SECRET-MEMO"}})
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"person"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	setTestACL(t, app, d)
+
+	by := func(user string) visibility.ChangeRecord {
+		return visibility.ChangeRecord{Op: audit.OpUpdateEntity, User: user}
+	}
+	page := []visibility.ChangeRecord{
+		by("PSN-1"), by("PSN-2"), by("MEMO-1"), by("system:scheduler"),
+		by("integration:hub"), by("webhook:membership.created"), by("unknown"), by(""),
+	}
+	got := changeTitles(gateCtxFor(aliceCtx(), t, d), app, "PSN-2", page)
+	if want := map[string]string{"PSN-1": "Ada", "PSN-2": "Self"}; !maps.Equal(got, want) {
+		t.Errorf("titles = %v, want %v", got, want)
+	}
+}
+
+func TestActorMayBeEntity(t *testing.T) {
+	cases := map[string]bool{
+		"PSN-1": true, "alice": true, "": false, "unknown": false,
+		"system:scheduler": false, "system:webhook:hub": false,
+		"integration:hub": false, "webhook:membership.created": false,
+	}
+	for user, want := range cases {
+		if got := actorMayBeEntity(user); got != want {
+			t.Errorf("actorMayBeEntity(%q) = %v, want %v", user, got, want)
+		}
+	}
+}

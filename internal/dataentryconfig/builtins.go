@@ -7,7 +7,9 @@ import (
 )
 
 // BuiltinRow names one of the rows the sidebar pins above the configured
-// navigation. The names are the keys of a `builtins:` block.
+// navigation, the as-of date picker in the sidebar header, or the Shortcuts
+// button in the sidebar footer. The names are the keys of a `builtins:`
+// block.
 type BuiltinRow string
 
 // The built-in sidebar rows, in the order the sidebar shows them.
@@ -17,17 +19,28 @@ const (
 	BuiltinFlowTasks BuiltinRow = "flow_tasks"
 	BuiltinFlowRuns  BuiltinRow = "flow_runs"
 	BuiltinAnalysis  BuiltinRow = "analysis"
+	// BuiltinAsOf is the date picker in the sidebar header, not a row. It
+	// shows only where the storage keeps version history.
+	BuiltinAsOf BuiltinRow = "as_of"
+	// BuiltinShortcuts is the Shortcuts button in the sidebar footer, which
+	// opens the keyboard shortcuts help. Not a row either.
+	BuiltinShortcuts BuiltinRow = "shortcuts"
 )
 
-// BuiltinRows lists every built-in row in sidebar order.
-var BuiltinRows = []BuiltinRow{BuiltinSearch, BuiltinInbox, BuiltinFlowTasks, BuiltinFlowRuns, BuiltinAnalysis}
+// BuiltinRows lists every built-in row in sidebar order, then the as-of
+// picker and the Shortcuts button.
+var BuiltinRows = []BuiltinRow{
+	BuiltinSearch, BuiltinInbox, BuiltinFlowTasks, BuiltinFlowRuns, BuiltinAnalysis, BuiltinAsOf,
+	BuiltinShortcuts,
+}
 
 // BuiltinConfig says whether one built-in sidebar row is shown.
 //
 // Without an entry a row is shown as before; the inbox and flow rows still
-// appear only when the project has channels or flows. Set exactly one field.
+// appear only when the project has channels or flows. Set Hidden alone, or
+// Permission, HiddenOnPhone or both.
 //
-// Both fields are a UX filter, the same as [NavigationEntry.Permission]: they
+// Every field is a UX filter, the same as [NavigationEntry.Permission]: they
 // keep a row out of the sidebar and protect nothing. The page behind the row
 // stays reachable by URL and applies the normal ACL to what it shows. The
 // configuration is not a secret, so `/api/v1/_config` serves this block to
@@ -39,6 +52,10 @@ type BuiltinConfig struct {
 	// Permission shows the row only to principals who hold the named global
 	// ACL permission.
 	Permission string `yaml:"permission,omitempty" json:"permission,omitempty"`
+	// HiddenOnPhone removes the row on a phone-sized screen for every
+	// principal and keeps it on wider screens. The SPA applies it, since only
+	// the browser knows the screen width.
+	HiddenOnPhone bool `yaml:"hidden_on_phone,omitempty" json:"hidden_on_phone,omitempty"`
 }
 
 // Builtins configures the built-in sidebar rows, keyed by row name. Nil:
@@ -56,6 +73,18 @@ func (b Builtins) Hidden(permits func(permission string) bool) []BuiltinRow {
 			continue
 		}
 		if c.Hidden || (c.Permission != "" && !permits(c.Permission)) {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+// HiddenOnPhone returns the rows to leave out on a phone-sized screen, in
+// sidebar order. A row Hidden for everyone is not listed: Hidden returns it.
+func (b Builtins) HiddenOnPhone() []BuiltinRow {
+	var out []BuiltinRow
+	for _, row := range BuiltinRows {
+		if c, ok := b[row]; ok && c.HiddenOnPhone && !c.Hidden {
 			out = append(out, row)
 		}
 	}
@@ -90,9 +119,12 @@ func validateBuiltins(b Builtins, name string) []string {
 		case c.Hidden && strings.TrimSpace(c.Permission) != "":
 			errs = append(errs, fmt.Sprintf("%s.%s: set hidden or permission, not both "+
 				"(a hidden row is hidden from every principal)", name, key))
-		case !c.Hidden && strings.TrimSpace(c.Permission) == "":
-			errs = append(errs, fmt.Sprintf("%s.%s: set hidden: true or a permission "+
-				"(without either the row is shown, so leave the entry out)", name, key))
+		case c.Hidden && c.HiddenOnPhone:
+			errs = append(errs, fmt.Sprintf("%s.%s: set hidden or hidden_on_phone, not both "+
+				"(a hidden row is hidden on every screen)", name, key))
+		case !c.Hidden && !c.HiddenOnPhone && strings.TrimSpace(c.Permission) == "":
+			errs = append(errs, fmt.Sprintf("%s.%s: set hidden: true, hidden_on_phone: true or a permission "+
+				"(without any of them the row is shown, so leave the entry out)", name, key))
 		case c.Permission != strings.TrimSpace(c.Permission):
 			errs = append(errs, fmt.Sprintf("%s.%s: permission %q has leading or trailing spaces",
 				name, key, c.Permission))

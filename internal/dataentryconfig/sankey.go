@@ -2,6 +2,7 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -95,7 +96,7 @@ const (
 // validateSankeys checks each sankey against the metamodel, at config load.
 func validateSankeys(cfg *Config, meta *metamodel.Metamodel) []string {
 	errs := make([]string, 0, len(cfg.Sankeys))
-	for _, id := range sortedMapKeys(cfg.Sankeys) {
+	for _, id := range slices.Sorted(maps.Keys(cfg.Sankeys)) {
 		errs = append(errs, validateSankey(id, cfg.Sankeys[id], meta)...)
 	}
 	return errs
@@ -138,7 +139,7 @@ func validateSankey(id string, s Sankey, meta *metamodel.Metamodel) []string {
 		}
 		seen[rel] = true
 	}
-	for _, typeName := range sortedMapKeys(s.Types) {
+	for _, typeName := range slices.Sorted(maps.Keys(s.Types)) {
 		if !inColumns[typeName] {
 			errs = append(errs, fmt.Sprintf("%s: types.%s is not in columns", prefix, typeName))
 			continue

@@ -596,6 +596,13 @@ unmatched_principal: reject   # anonymous (default) | reject | provision
   `system:provisioner` identity — see the operator-responsibility notes
   below.
 
+  The web app also provisions when it opens. `GET /api/v1/_me` answers
+  `"provisionable": true` for such a principal, and the web app then sends
+  `POST /api/v1/_me`, which runs the same provisioning and answers with the
+  new person. A member who has only looked around is then listed among the
+  people too, and not only after a first change. The POST is a write like
+  any other: a read-only workspace refuses it, and a GET never provisions.
+
 Load-bearing details:
 
 - **Scope is the verified-JWT data-entry write path only.** `reject`

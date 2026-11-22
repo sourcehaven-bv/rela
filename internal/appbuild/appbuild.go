@@ -2454,9 +2454,23 @@ func (b *SharedBase) Config() Config { return b.cfg }
 // Paths returns the project context this base was built from.
 func (b *SharedBase) Paths() *project.Context { return b.cfg.Paths }
 
+// ProjectConfig returns the loader this base reads project config files
+// through, the same one every Services assembled from it uses.
+func (b *SharedBase) ProjectConfig() config.Loader { return b.cfg.configLoader() }
+
 // CacheDir returns the cache directory of the project this base was built
 // from, where a tenant host keeps each tenant's audit log.
 func (b *SharedBase) CacheDir() string { return b.cfg.Paths.CacheDir }
+
+// UserEntityType returns the entity type acl.yaml names for the people who
+// use the project, which a tenant host counts for usage. It is empty when
+// the project has no policy or the policy names none.
+func (b *SharedBase) UserEntityType() string {
+	if b.aclPolicy == nil {
+		return ""
+	}
+	return strings.TrimSpace(b.aclPolicy.UserEntityType)
+}
 
 // NewSharedBase builds the tenant-independent half of construction once:
 // validate config, apply options, parse `acl.yaml`, load and validate the

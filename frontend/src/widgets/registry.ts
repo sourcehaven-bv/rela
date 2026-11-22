@@ -19,6 +19,7 @@ import MultiSelectWidget from './MultiSelectWidget.vue'
 import RruleWidget from './RruleWidget.vue'
 import FileWidget from './FileWidget.vue'
 import FileCellWidget from './FileCellWidget.vue'
+import ImageCellWidget from './ImageCellWidget.vue'
 import ExternalRefWidget from './ExternalRefWidget.vue'
 import UrlWidget from './UrlWidget.vue'
 
@@ -64,6 +65,7 @@ const hintKindToWidgetName: Record<WidgetHintKind, string> = {
 // no edit mode, so it must not be selectable there.
 const DENSE_HINT_WIDGETS: Record<Exclude<DenseHintKind, WidgetHintKind>, Component> = {
   file: FileCellWidget,
+  image: ImageCellWidget,
 }
 
 export function defineWidgetRegistry(): WidgetRegistry {
@@ -108,8 +110,15 @@ export function defineWidgetRegistry(): WidgetRegistry {
         throw new Error('[widget-registry] no widget could be resolved (text widget missing)')
       }
 
+      // The type default picked this widget itself, so there is nothing to
+      // warn about. This covers a schema `types:` entry without values,
+      // such as a pattern-checked vat_number: its property type is the
+      // custom name, which no widget lists, and the text widget is right
+      // for it. Warning there logged once per rendered field.
+      const chosenByDefault = !requested && entries.get(resolvedName) === entry
       const ptype = propertyDef?.type
       if (
+        !chosenByDefault &&
         ptype &&
         entry.supportedPropertyTypes &&
         !entry.supportedPropertyTypes.includes(ptype)
@@ -125,7 +134,7 @@ export function defineWidgetRegistry(): WidgetRegistry {
     resolveFromHint,
 
     resolveDense(hint) {
-      if (hint.kind === 'file') return DENSE_HINT_WIDGETS.file
+      if (hint.kind === 'file' || hint.kind === 'image') return DENSE_HINT_WIDGETS[hint.kind]
       return resolveFromHint({ kind: hint.kind, propertyName: hint.propertyName })
     },
   }

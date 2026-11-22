@@ -68,7 +68,7 @@ func getNextActionAt(
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, path, http.NoBody).WithContext(ctx)
 
-	attachWorld(http.HandlerFunc(app.handleV1NextAction), app).ServeHTTP(rec, req)
+	attachWorld(http.HandlerFunc(app.nextActions.handleV1NextAction), app).ServeHTTP(rec, req)
 	if rec.Code == http.StatusOK {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	}
@@ -331,7 +331,7 @@ func TestNextActionRoute_FeedbackRefusesWorldParam(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/v1/_next_action?world=published", http.NoBody).WithContext(aliceCtx())
-	attachWorld(http.HandlerFunc(app.handleV1NextAction), app).ServeHTTP(rec, req)
+	attachWorld(http.HandlerFunc(app.nextActions.handleV1NextAction), app).ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	require.Contains(t, rec.Body.String(), "world_read_only")

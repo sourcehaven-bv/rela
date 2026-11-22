@@ -13,6 +13,8 @@ import { i18n } from './i18n'
 import './styles/rl.css'
 import './styles/tokens.css'
 import './styles/scales.css'
+// After tokens.css, which carries the library's z-values: see stacking.css.
+import './styles/stacking.css'
 import '@fontsource/open-sans/400.css'
 import '@fontsource/open-sans/500.css'
 import '@fontsource/open-sans/600.css'

@@ -3,6 +3,7 @@ package visibility
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -96,13 +97,13 @@ func (h *HolderLookup) Headers(ctx context.Context, q HeaderQuery) (rows []store
 
 // headerBase stamps q's predicates and face selection onto base.
 func headerBase(base store.GraphQuery, q HeaderQuery) store.GraphQuery {
-	for _, k := range sortedKeys(q.Equal) {
+	for _, k := range slices.Sorted(maps.Keys(q.Equal)) {
 		base.Props = append(base.Props, store.PropPredicate{Property: k, Op: store.PropEqual, Value: q.Equal[k],
 			Scalar: true})
 	}
 	for _, g := range q.AnyOf {
 		var br store.NarrowBranch
-		for _, k := range sortedKeys(g) {
+		for _, k := range slices.Sorted(maps.Keys(g)) {
 			br.Props = append(br.Props, store.PropPredicate{Property: k, Op: store.PropEqual, Value: g[k],
 				Scalar: true})
 		}
@@ -110,15 +111,6 @@ func headerBase(base store.GraphQuery, q HeaderQuery) store.GraphQuery {
 	}
 	base.Faces = q.Faces
 	return base
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	return keys
 }
 
 // pageHeaders runs base in bounded pages of q.Limit+1 header rows until

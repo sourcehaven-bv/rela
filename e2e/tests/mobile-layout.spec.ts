@@ -132,23 +132,102 @@ test.describe("Mobile app shell", () => {
   });
 
   /*
-   * Safe-area insets moved from the shell onto the pane, because the shell
-   * clips its overflow and padding there would not scroll with the content.
-   * Pixel 7 reports no inset, so `env()` resolves to its fallback — which is
-   * exactly the arithmetic under test: the fallback must leave the hamburger's
-   * 60px of headroom rather than collapsing to zero.
+   * A list puts its title and the drawer toggle in the shell's header, so
+   * App.vue renders no hamburger row. The pane must not keep the 60px it
+   * reserves for that row: it showed as an empty band under the header.
    */
-  test("the pane reserves headroom for the hamburger and the notch", async ({
+  test("a list leaves no empty band under its header", async ({ appPage }) => {
+    const mobile = new MobileLayoutPage(appPage);
+    await mobile.openList("features");
+
+    const padding = await mobile.panePadding();
+    expect(parseFloat(padding.top)).toBeLessThanOrEqual(20);
+    // Room for the home indicator below the last card.
+    expect(parseFloat(padding.bottom)).toBeGreaterThanOrEqual(24);
+  });
+
+  /*
+   * The list's table starts right under the header band. The pane's top
+   * padding and the table's own top padding used to add up to an empty band
+   * between the toolbar and the rows (BUG-6WQ1U8S).
+   */
+  test("a list's table starts right under the header", async ({ appPage }) => {
+    const mobile = new MobileLayoutPage(appPage);
+    await mobile.openList("features");
+
+    const gap = await mobile.headerToTableGap();
+    expect(gap).toBeLessThanOrEqual(2);
+    // Not pulled up under the header band either.
+    expect(gap).toBeGreaterThanOrEqual(-1);
+  });
+
+  /*
+   * A view section table stacks each row on a phone, as a list does: the
+   * first column heads the row and every other column is a labelled line.
+   * It used to scroll sideways, with its last columns off screen
+   * (BUG-6WQ1U8S). TASK-001 implements FEAT-001 in the seed, so the task
+   * view's "Linked features" table has a row.
+   */
+  test("a view section table stacks its rows instead of scrolling", async ({ appPage }) => {
+    const mobile = new MobileLayoutPage(appPage);
+    await mobile.openEntityTable("task", SEED.tasks.writeUnitTests, "Linked features");
+
+    expect(await mobile.sectionTableScrolls("Linked features")).toBe(false);
+    // Each value carries its own column label.
+    const labels = mobile.sectionCellLabels("Linked features");
+    // The heading cell shows no label; the status line does.
+    await expect(labels.nth(0)).toBeHidden();
+    await expect(labels.nth(1)).toBeVisible();
+    await expect(labels.nth(1)).toHaveText(/status/i);
+  });
+
+  /*
+   * A long value without spaces, such as an ID, wraps inside its properties
+   * row. It used to run past the screen and scroll the pane sideways. The
+   * task view shows the assignee in a display section ("Task") and in an
+   * inline-edit section ("Narrow fields"), so both renderings are covered.
+   */
+  test("a long unbroken property value wraps instead of scrolling", async ({ appPage, api }) => {
+    const longId = "org_01J9ZQ7K3M5N8P2R4T6V8X0Y1A3C5E7G9H2K4M6P8R0T2V4X6Z8B";
+    await api.updateEntity("tasks", SEED.tasks.writeUnitTests, { assignee: longId });
+    const mobile = new MobileLayoutPage(appPage);
+    await mobile.openEntitySection("task", SEED.tasks.writeUnitTests, "Task");
+
+    for (const heading of ["Task", "Narrow fields"]) {
+      const value = mobile.sectionValue(heading, longId);
+      await expect(value).toBeVisible();
+      // Wrapped onto more lines, not clipped to one.
+      expect(await mobile.lineCount(value)).toBeGreaterThan(1);
+    }
+    expect(await mobile.sectionValueOverflows("Task")).toBe(false);
+    expect(await mobile.sectionValueOverflows("Narrow fields")).toBe(false);
+    expect(await mobile.paneScrollsSideways()).toBe(false);
+  });
+
+  // The header's tools hold the list's search, sort and filter. A phone
+  // needs them as much as a desktop does.
+  test("a list keeps its search box on a phone", async ({ appPage }) => {
+    const mobile = new MobileLayoutPage(appPage);
+    await mobile.openList("features");
+
+    await expect(mobile.listSearch).toBeVisible();
+    await expect(mobile.listSearch).toBeInViewport();
+  });
+
+  // A closed drawer sits just off the left edge. Its shadow fell onto the
+  // content as a grey strip.
+  test("the closed drawer casts no shadow onto the content", async ({
     appPage,
   }) => {
     const mobile = new MobileLayoutPage(appPage);
     await mobile.openList("features");
 
-    const padding = await mobile.panePadding();
-    // 60px at <=768px, 56px at <=480px; both leave the hamburger its row.
-    expect(parseFloat(padding.top)).toBeGreaterThanOrEqual(56);
-    // Room for the home indicator below the last card.
-    expect(parseFloat(padding.bottom)).toBeGreaterThanOrEqual(24);
+    await mobile.expectDrawerOffScreen();
+    expect(await mobile.drawerShadow()).toBe("none");
+
+    await mobile.openDrawer();
+    await mobile.expectDrawerOnScreen();
+    expect(await mobile.drawerShadow()).not.toBe("none");
   });
 
   test("the hamburger clears the notch and stays reachable while scrolling", async ({

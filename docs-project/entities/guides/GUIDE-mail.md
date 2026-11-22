@@ -356,11 +356,18 @@ than being something you remember to write.
 | `subject` | Required. Also rendered as the message heading. |
 | `lang` | BCP-47 tag for this message (`"nl"`, `"en-GB"`). Optional. |
 | `intro`, `footer` | Markdown, rendered above and below the sections. |
+| `button` | Optional call to action below the intro: `{label = "...", url = "..."}`. |
 | `sections` | Array. Each has `title`, `body` (markdown), and/or `columns` + `rows`. |
 | `links` | Per-section, one href per row. Only the first column links. |
 
 Notes worth knowing:
 
+- **A `button` is a link styled as a button.** It is an `<a>` in a colored
+  table cell, so it keeps its shape in Outlook, and screen readers announce it
+  as a link. The label is plain text. The URL follows the row link rules
+  (`http(s)`, or a `/` path resolved against `base_url`), but a URL that fails
+  them raises instead of being dropped, because a button that leads nowhere is
+  a bug. The text part shows it as `label: URL`.
 - **`intro`, `body` and `footer` are markdown; `rows` cells are not.** A cell is
   a value, so it is escaped rather than parsed — a title containing `*` stays a
   literal asterisk.

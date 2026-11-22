@@ -70,7 +70,7 @@ on('entity:changed', (data) => {
 <template>
   <PageLayout :data-testid="run ? 'flow-run-loaded' : 'flow-run-loading'">
     <template #topbar>
-      <PageTitle :title="run ? run.flow_label || run.flow : t('flows.run.title')" />
+      <PageTitle :title="run ? run.title || run.flow_label || run.flow : t('flows.run.title')" />
     </template>
 
     <RlCallout v-if="error" tone="danger" class="flow-run-view__error">{{ error }}</RlCallout>

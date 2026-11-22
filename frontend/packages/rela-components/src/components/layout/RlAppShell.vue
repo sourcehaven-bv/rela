@@ -4,7 +4,9 @@
  *
  * The `header` slot spans the full width above both the content and the
  * panel, so the panel reads as a sibling of the view rather than as part of
- * it. `panelMode` decides how the panel sits against the content:
+ * it. The `banner` slot sits below the header, as wide: a notice about the
+ * whole app, such as a read-only workspace, belongs to neither pane, and in
+ * the content pane a sticky table header would cover it. `panelMode` decides how the panel sits against the content:
  *
  * - `inline`  — beside the content, sharing the row.
  * - `overlay` — above the content, anchored right, with a shadow.
@@ -162,6 +164,10 @@ onBeforeUnmount(() => {
         <slot name="header" />
       </div>
 
+      <div v-if="$slots.banner" class="rl-app-shell__banner">
+        <slot name="banner" />
+      </div>
+
       <div class="rl-app-shell__row">
         <main class="rl-app-shell__main">
           <slot />
@@ -230,6 +236,8 @@ onBeforeUnmount(() => {
 .rl-app-shell__frame:not(:has(> .rl-app-shell__header)) {
   padding-top: var(--rl-safe-inset-top);
 }
+
+.rl-app-shell__banner { flex: none; }
 
 .rl-app-shell__row {
   position: relative;
@@ -329,11 +337,15 @@ onBeforeUnmount(() => {
     inset: 0 auto 0 0;
     z-index: var(--rl-z-shell-nav);
     transform: translateX(-100%);
-    transition: transform var(--rl-duration-slow) var(--rl-ease);
-    box-shadow: var(--rl-shadow-lg);
+    transition: transform var(--rl-duration-slow) var(--rl-ease), box-shadow var(--rl-duration-slow) var(--rl-ease);
   }
 
-  .rl-app-shell--panel-open .rl-app-shell__sidebar--open { transform: translateX(0); }
+  /* The shadow only on the open drawer: a closed one sits just off the left
+   * edge, and its shadow fell onto the content as a grey strip. */
+  .rl-app-shell--panel-open .rl-app-shell__sidebar--open {
+    transform: translateX(0);
+    box-shadow: var(--rl-shadow-lg);
+  }
 
   /* A drawer here too, so it carries the same insets. */
   .rl-app-shell--panel-open .rl-app-shell__sidebar {
@@ -364,11 +376,14 @@ onBeforeUnmount(() => {
     inset: 0 auto 0 0;
     z-index: var(--rl-z-shell-nav);
     transform: translateX(-100%);
-    transition: transform var(--rl-duration-slow) var(--rl-ease);
-    box-shadow: var(--rl-shadow-lg);
+    transition: transform var(--rl-duration-slow) var(--rl-ease), box-shadow var(--rl-duration-slow) var(--rl-ease);
   }
 
-  .rl-app-shell__sidebar--open { transform: translateX(0); }
+  /* Shadow on the open drawer only; see the medium breakpoint above. */
+  .rl-app-shell__sidebar--open {
+    transform: translateX(0);
+    box-shadow: var(--rl-shadow-lg);
+  }
 
   /*
    * As a drawer the sidebar stands against the screen edge itself, so the

@@ -13,8 +13,10 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/flowview"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -45,7 +47,18 @@ func stepProjectEdit(t *testing.T, display string, edit func(string) string) (*a
 func stepProjectSchema(t *testing.T, display string, editSchema, edit func(string) string) (*appbuild.Services,
 	*appbuild.FlowControl) {
 	t.Helper()
+	return stepProjectFlows(t, display, editSchema, edit, func(s string) string { return s })
+}
+
+// stepProjectFlows is stepProjectSchema with flows.yaml passed through
+// editFlows too.
+func stepProjectFlows(t *testing.T, display string, editSchema, edit, editFlows func(string) string) (
+	*appbuild.Services, *appbuild.FlowControl) {
+	t.Helper()
 	root := writeFlowProject(t)
+	flows, err := os.ReadFile(filepath.Join(root, "flows.yaml"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "flows.yaml"), []byte(editFlows(string(flows))), 0o600))
 	schema, err := os.ReadFile(filepath.Join("..", "flowcfg", "testdata", "schema.yaml"))
 	require.NoError(t, err)
 	named := strings.Replace(editSchema(string(schema)), "    label: Person\n",
@@ -360,6 +373,38 @@ func TestFlowControl_Startable(t *testing.T) {
 	}
 }
 
+// TestFlowControl_ManualStartWhen pins that a manual start's `when:`
+// decides whether the flow is offered and started on a subject: Startable
+// leaves the flow out and Start refuses it as a conflict while the
+// condition does not hold (finding 15).
+func TestFlowControl_ManualStartWhen(t *testing.T) {
+	id := func(s string) string { return s }
+	svc, ctl := stepProjectFlows(t, "name", id, id, func(s string) string {
+		return strings.Replace(s, "permission: onboarding.start",
+			"permission: onboarding.start\n        when: \"entity.status ~= 'left'\"", 1)
+	})
+	addFlowPerson(t, svc, "PER-1", map[string]any{"name": "Ada", "status": "left"})
+	addFlowPerson(t, svc, "PER-2", map[string]any{"name": "Bea", "status": "new"})
+	alice := flowUser(t, svc, "alice")
+
+	got, err := ctl.Startable(alice, "PER-1")
+	require.NoError(t, err)
+	require.Empty(t, got, "the condition does not hold, so the flow is not offered")
+	_, err = ctl.Start(alice, "onboarding", "PER-1")
+	require.ErrorIs(t, err, flowview.ErrConflict)
+
+	got, err = ctl.Startable(alice, "PER-2")
+	require.NoError(t, err)
+	require.Equal(t, []string{"onboarding"}, got)
+	_, err = ctl.Start(alice, "onboarding", "PER-2")
+	require.NoError(t, err)
+
+	// A caller without the permission is still refused as forbidden, not
+	// told whether the condition holds.
+	_, err = ctl.Start(flowUser(t, svc, "bob"), "onboarding", "PER-1")
+	require.ErrorIs(t, err, flowview.ErrForbidden)
+}
+
 // TestFlowControl_SubjectTitle pins that the run list, the tasks, the run
 // detail and the subject's runs name the subject by its title; the list
 // does so for an active and a finished run.
@@ -640,4 +685,50 @@ func markedStates(diagram string) []string {
 		}
 	}
 	return marked
+}
+
+// TestFlowControl_CompleteStepFieldFeedback pins BUG-53GP5F5: a step that
+// writes a value breaking its type's pattern is written and answers the
+// pattern's message as a warning at that field, and a step a write rule
+// refuses fails with the rule's fields and description, so the form can
+// show it at a field.
+func TestFlowControl_CompleteStepFieldFeedback(t *testing.T) {
+	editSchema := func(s string) string {
+		s = strings.Replace(s, "entities:\n", "types:\n  initials:\n    validations:\n"+
+			"      - pattern: '^[A-Z]+$'\n        error: Write capitals only.\n"+"entities:\n", 1)
+		s = strings.Replace(s, "      name:\n        type: string\n", "      name:\n        type: initials\n", 1)
+		return strings.Replace(s, "relations:\n", "validations:\n  - name: documents-need-stage\n"+
+			"    description: Check the documents first.\n    entity_type: person\n"+
+			"    enforce: write\n    when_condition: \"entity.documents == true\"\n    then: [\"stage=checked\"]\n"+"relations:\n", 1)
+	}
+	editFlows := func(s string) string {
+		return strings.Replace(s, "writes: [documents]", "writes: [documents, name, stage]", 1)
+	}
+	keep := func(s string) string { return s }
+	svc, ctl := stepProjectFlows(t, "name", editSchema, keep, editFlows)
+	addFlowPerson(t, svc, "PER-1", map[string]any{"name": "ADA", "status": "hired"})
+	alice := flowUser(t, svc, "alice")
+	id, err := ctl.Start(alice, "onboarding", "PER-1")
+	require.NoError(t, err)
+	run, err := ctl.Run(alice, id)
+	require.NoError(t, err)
+	require.Equal(t, "Onboarding: ADA", run.Title, "the view titles the run by the flow label and the subject title")
+	h, err := svc.Store().GetEntity(context.Background(), entity.Ref{ID: string(id)})
+	require.NoError(t, err)
+	require.Equal(t, "Onboarding", h.Properties[metamodel.FlowRunPropTitle], "the stored title copies nothing of the subject")
+	require.Empty(t, run.FailedMessage, "only a failed job step carries the flow's text")
+	require.Equal(t, []string{"documents"}, run.Waiting.Branches[0].Fields,
+		"the guard reads documents, which the step writes")
+
+	got, err := ctl.Complete(alice, id, run.Generation, map[string]any{"name": "ada"})
+	require.NoError(t, err)
+	require.Equal(t, flowview.ProblemBlocked, got.Problem)
+	require.Equal(t, []flowview.FieldNote{{Field: "name", Message: "Write capitals only."}}, got.Warnings)
+
+	_, err = ctl.Complete(alice, id, run.Generation, map[string]any{"documents": true})
+	var invalid *entitymanager.ValidationError
+	require.ErrorAs(t, err, &invalid)
+	require.Len(t, invalid.Errors, 1)
+	require.Equal(t, []string{"stage"}, invalid.Errors[0].Fields)
+	require.Equal(t, "Check the documents first.", invalid.Errors[0].Description)
 }

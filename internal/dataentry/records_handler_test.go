@@ -60,7 +60,7 @@ records:
 	require.NoError(t, err)
 	st, err := filerecords.New(storage.NewMemFS(), "/records", filelock.ProcessPrivate{})
 	require.NoError(t, err)
-	svc, err := records.NewService(records.Deps{Store: st, Owners: recordOwnersStub{}, Meta: meta})
+	svc, err := records.NewService(records.Deps{Store: st, Owners: recordOwnersStub{}, Meta: meta, Audit: audit.Nop{}})
 	require.NoError(t, err)
 	return &recordsHandler{svc: svc}
 }

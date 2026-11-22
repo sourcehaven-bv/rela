@@ -271,10 +271,12 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 			resp.Navigation = sidebarNavigation(ctx, aclImpl, s.Cfg, s.Meta, sp.Navigation, sp.ID)
 			resp.Create = h.spaceCreate(ctx, sp)
 			resp.HiddenBuiltins = hiddenBuiltins(ctx, aclImpl, sp.Builtins)
+			resp.PhoneHiddenBuiltins = sp.Builtins.HiddenOnPhone()
 		}
 	} else {
 		resp.Navigation = sidebarNavigation(ctx, aclImpl, s.Cfg, s.Meta, s.Cfg.Navigation, "")
 		resp.HiddenBuiltins = hiddenBuiltins(ctx, aclImpl, s.Cfg.Builtins)
+		resp.PhoneHiddenBuiltins = s.Cfg.Builtins.HiddenOnPhone()
 	}
 	h.setItemsCreate(ctx, resp.Navigation)
 	resp.Pages = sidebarPages(ctx, aclImpl, s.Cfg, s.Meta)
@@ -1112,6 +1114,7 @@ func viewColumnsToV1(cols []ListColumn) []v1.ViewColumn {
 			Relation: col.Relation,
 			Link:     col.Link,
 			Render:   col.Render,
+			Primary:  col.Primary,
 		})
 	}
 	return out

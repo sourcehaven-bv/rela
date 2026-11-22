@@ -67,6 +67,16 @@ export class MobileLayoutPage extends BasePage {
     return this.page.locator(".rl-kbd");
   }
 
+  /** The list's search box, in the header's tools row. */
+  get listSearch(): Locator {
+    return this.page.locator(".rl-page-header__tools .search-box input");
+  }
+
+  /** The drawer's computed box-shadow. */
+  async drawerShadow(): Promise<string> {
+    return this.drawer.evaluate((el) => getComputedStyle(el).boxShadow);
+  }
+
   /** Whether this screen renders a sticky topbar at all. */
   async hasTopbar(): Promise<boolean> {
     return (await this.topbar.count()) > 0;
@@ -212,5 +222,95 @@ export class MobileLayoutPage extends BasePage {
         right: s.paddingRight,
       };
     });
+  }
+
+  /**
+   * The empty space between the bottom of the shell's header band and the
+   * top of the list's table, in pixels. The table is the first thing under
+   * the header, so anything above a few pixels is a band (BUG-6WQ1U8S).
+   */
+  async headerToTableGap(): Promise<number> {
+    const header = await this.page.locator(".rl-app-shell__header").boundingBox();
+    const table = await this.page.locator(".entity-list .rl-table").first().boundingBox();
+    if (!header || !table) throw new Error("header or table not laid out");
+    const firstRow = await this.page.locator(".rl-table-row").first().boundingBox();
+    if (!firstRow) throw new Error("no table row laid out");
+    // On a phone the column headers are hidden, so the first row is the
+    // first thing in the table; the table's own top is where it starts.
+    return Math.min(table.y, firstRow.y) - (header.y + header.height);
+  }
+
+  /** Open an entity page and wait for its `display: table` section. */
+  async openEntityTable(type: string, id: string, heading: string) {
+    await this.navigateTo(`/entity/${type}/${id}`);
+    await expect(this.sectionTable(heading)).toBeVisible();
+  }
+
+  /** The table of the view section with this heading. */
+  sectionTable(heading: string): Locator {
+    return this.page
+      .locator(".view-section", {
+        has: this.page.getByRole("heading", { name: heading, exact: true }),
+      })
+      .locator(".data-table")
+      .first();
+  }
+
+  /** Whether the section's table is wider than its wrapper (scrolls sideways). */
+  async sectionTableScrolls(heading: string): Promise<boolean> {
+    return this.sectionTable(heading).evaluate((table) => {
+      const wrapper = table.closest(".table-wrapper");
+      return !!wrapper && wrapper.scrollWidth > wrapper.clientWidth + 1;
+    });
+  }
+
+  /** Open an entity page and wait for the properties section with this heading. */
+  async openEntitySection(type: string, id: string, heading: string) {
+    await this.navigateTo(`/entity/${type}/${id}`);
+    await expect(this.section(heading)).toBeVisible();
+  }
+
+  /** The view section with this heading. */
+  section(heading: string): Locator {
+    return this.page.locator(".view-section", {
+      has: this.page.getByRole("heading", { name: heading, exact: true }),
+    });
+  }
+
+  /** Whether the main pane is wider than the screen (scrolls sideways). */
+  async paneScrollsSideways(): Promise<boolean> {
+    return this.mainPane.evaluate((pane) => pane.scrollWidth > pane.clientWidth + 1);
+  }
+
+  /** The value in the section that shows exactly this text. */
+  sectionValue(heading: string, text: string): Locator {
+    return this.section(heading).locator(".display-value", { hasText: text });
+  }
+
+  /**
+   * Whether any value in the section reaches past the section's right edge.
+   * Throws when the section shows no value, so a selector that matches
+   * nothing cannot pass as "no overflow".
+   */
+  async sectionValueOverflows(heading: string): Promise<boolean> {
+    return this.section(heading).evaluate((section) => {
+      const values = [...section.querySelectorAll(".display-value")];
+      if (values.length === 0) throw new Error("section shows no .display-value");
+      const right = section.getBoundingClientRect().right;
+      return values.some((el) => el.getBoundingClientRect().right > right + 1);
+    });
+  }
+
+  /** The number of lines the element's text takes. */
+  async lineCount(locator: Locator): Promise<number> {
+    return locator.evaluate((el) => {
+      const lineHeight = parseFloat(getComputedStyle(el).lineHeight);
+      return Math.round(el.getBoundingClientRect().height / lineHeight);
+    });
+  }
+
+  /** The column-name labels a stacked section row shows beside its values. */
+  sectionCellLabels(heading: string): Locator {
+    return this.sectionTable(heading).locator("tbody td .section-cell__label");
   }
 }

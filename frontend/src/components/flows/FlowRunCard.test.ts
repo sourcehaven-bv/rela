@@ -79,6 +79,25 @@ describe('FlowRunCard', () => {
     } as unknown as EntityType)
   })
 
+  it('links the title to the run page only for a reader who manages the run', async () => {
+    const mountLinked = (r: FlowRun) =>
+      mount(FlowRunCard, {
+        props: { run: r, subjectType: 'person', linkTitle: true },
+        global: { stubs: { RouterLink: RouterLinkStub } },
+      })
+    const managed = mountLinked(run())
+    await flushPromises()
+    expect(managed.findComponent(RouterLinkStub).props('to')).toBe('/flows/runs/R1')
+
+    const other = mountLinked(
+      run({ _actions: { complete: true, manage: false, cancel: false, retry: false } })
+    )
+    await flushPromises()
+    expect(other.find('.flow-run-card__title').text()).toBe('Onboarding')
+    expect(other.findComponent(RouterLinkStub).exists()).toBe(false)
+    expect(other.find('[data-testid="flow-run-status"]').exists()).toBe(true)
+  })
+
   it('leaves the flow label out when the page already names the flow', async () => {
     const wrapper = mount(FlowRunCard, {
       props: { run: run(), subjectType: 'person', hideTitle: true },
@@ -110,7 +129,7 @@ describe('FlowRunCard', () => {
     expect(line.text()).toContain('attempt 2 of 3')
     expect(line.attributes('role')).toBeUndefined()
     expect(wrapper.find('[data-testid="flow-waiting-pending"]').exists()).toBe(false)
-    expect(wrapper.text()).toContain('Waits for no one')
+    expect(wrapper.text()).not.toContain('Waits for no one')
 
     wrapper = mountCard(
       run({ waiting: waiting({ phase: 'failed', failed: 1, attempts: 3, fail_kind: 'permanent' }) })
@@ -172,14 +191,163 @@ describe('FlowRunCard', () => {
     getFlowRunMock.mockResolvedValue(run())
     const wrapper = mountCard(run())
     await flushPromises()
+    expect(wrapper.find('[data-testid="flow-step-blocked"]').exists()).toBe(false)
 
     await wrapper.find('[data-testid="flow-step-form"]').trigger('submit')
     await flushPromises()
 
-    const toasts = useUIStore().toasts
-    expect(toasts).toHaveLength(1)
-    expect(toasts[0]).toMatchObject({ type: 'warning' })
-    expect(toasts[0].message).toContain('no condition of the next step holds')
+    // The form says it where the reader is, not in a toast.
+    expect(useUIStore().toasts).toHaveLength(0)
+    expect(wrapper.find('[data-testid="flow-step-blocked"]').text()).toContain(
+      'no condition of the next step holds'
+    )
+    // The fields stay on screen, and the run's reload does not read them again.
+    expect(wrapper.findAll('[data-testid="flow-step-field"]')).toHaveLength(1)
+    expect(getEntityMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('marks the fields the condition reads as required, and keeps feedback at the fields', async () => {
+    const card = () =>
+      run({
+        waiting: {
+          roles: ['hr'],
+          you_hold: true,
+          writes: ['documents', 'name'],
+          branches: [
+            {
+              to: 'review',
+              guard: 'entity.documents == true',
+              holds: false,
+              fields: ['documents'],
+            },
+          ],
+        },
+      })
+    completeFlowStepMock.mockResolvedValue({
+      written: ['name'],
+      moved: false,
+      state: 'collect',
+      finished: false,
+      problem: 'blocked',
+      warnings: [{ field: 'name', message: 'Write capitals only.' }],
+    })
+    // The run as read after the step: a fresh object.
+    getFlowRunMock.mockResolvedValue(card())
+    // Attached, so focus can move.
+    const wrapper = mount(FlowRunCard, {
+      props: { run: card(), subjectType: 'person' },
+      global: { stubs: { RouterLink: RouterLinkStub } },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    const [docs, name] = wrapper.findAll('[data-testid="flow-step-field"]')
+    expect(docs.find('.required').exists()).toBe(true)
+    expect(name.find('.required').exists()).toBe(false)
+    // The browser does not hold a marked field back: the server decides.
+    expect(wrapper.find('form').attributes('novalidate')).toBeDefined()
+
+    await name.find('input').setValue('Bo')
+    await wrapper.find('[data-testid="flow-step-form"]').trigger('submit')
+    await flushPromises()
+
+    // A pattern warning shows at its field, and the blocked notice points
+    // at the marked fields; the first flagged field gets focus.
+    let after = wrapper.findAll('[data-testid="flow-step-field"]')
+    expect(after[1].text()).toContain('Write capitals only.')
+    expect(after[0].text()).not.toContain('Write capitals only.')
+    expect(wrapper.find('[data-testid="flow-step-blocked"]').text()).toContain('marked *')
+    expect(after[0].element.contains(document.activeElement)).toBe(true)
+    expect(useUIStore().toasts).toHaveLength(0)
+
+    // Editing the field takes its warning away.
+    await after[1].find('input').setValue('BO')
+    expect(wrapper.text()).not.toContain('Write capitals only.')
+
+    // A refused write: a rule shows at the first field of the form it
+    // reads, a failure without a field of the form above the button.
+    completeFlowStepMock.mockRejectedValue(
+      new ApiError('HTTP 422', {
+        kind: 'http',
+        status: 422,
+        problem: {
+          type: 'about:blank',
+          title: 'Unprocessable',
+          status: 422,
+          errors: [
+            {
+              source: { pointer: '/properties' },
+              code: 'rule',
+              fields: ['stage', 'documents'],
+              message: 'Check the documents first.',
+              detail: 'validation rule "r" is not satisfied: Check the documents first.',
+            },
+            { source: { pointer: '/properties' }, code: 'rule', detail: 'Something else.' },
+          ],
+        },
+        original: null,
+      })
+    )
+    await after[0].find('input').setValue(true)
+    // An expected refusal is not an application error (BUG-UZGMHIK).
+    const logged = vi.spyOn(console, 'error')
+    await wrapper.find('[data-testid="flow-step-form"]').trigger('submit')
+    await flushPromises()
+    expect(logged).not.toHaveBeenCalled()
+    logged.mockRestore()
+    after = wrapper.findAll('[data-testid="flow-step-field"]')
+    expect(after[0].text()).toContain('Check the documents first.')
+    expect(after[0].text()).not.toContain('validation rule')
+    expect(wrapper.find('[data-testid="flow-step-refused"]').text()).toBe('Something else.')
+    expect(wrapper.find('[data-testid="flow-step-blocked"]').exists()).toBe(false)
+    expect(useUIStore().toasts).toHaveLength(0)
+  })
+
+  it("says the flow's own text to a reader of a failed step who does not manage it", async () => {
+    const failed = (failed_message?: string) =>
+      run({
+        failed_message,
+        waiting: {
+          you_hold: false,
+          pending: { failures: 0, job: { phase: 'failed', failed: 3, attempts: 3 } },
+        },
+        _actions: { complete: false, manage: false, cancel: false, retry: false },
+      })
+    let wrapper = mountCard(failed('Mail support@example.com.'))
+    await flushPromises()
+    expect(wrapper.find('[data-testid="flow-waiting-plain"]').text()).toBe(
+      'Mail support@example.com.'
+    )
+
+    wrapper = mountCard(failed())
+    await flushPromises()
+    const line = wrapper.find('[data-testid="flow-waiting-plain"]').text()
+    expect(line).toContain('Something went wrong at this step')
+    expect(line).not.toContain('retry')
+  })
+
+  it('shows the last job error and the retry state to a manager', async () => {
+    const wrapper = mountCard(
+      run({
+        waiting: {
+          you_hold: false,
+          pending: {
+            failures: 0,
+            next_attempt: '2026-02-01T10:00:00Z',
+            job: { phase: 'waiting', failed: 1, attempts: 5, error: 'webhook answered 503' },
+          },
+        },
+      })
+    )
+    await flushPromises()
+    expect(wrapper.find('[data-testid="flow-waiting-job"]').text()).toContain(
+      'is retried: attempt 2 of 5'
+    )
+    expect(wrapper.find('[data-testid="flow-waiting-job-error"]').text()).toContain(
+      'webhook answered 503'
+    )
+    // A step that retries does not claim to wait for no one.
+    expect(wrapper.text()).not.toContain('Waits for no one')
   })
 
   it('reloads the run when the step answers that the run moved on', async () => {
@@ -388,7 +556,7 @@ describe('FlowRunCard for a reader who does not manage the flow', () => {
           you_hold: false,
           pending: { failures: 3, job: { phase: 'failed', failed: 3, attempts: 3 } },
         },
-        'could not be completed',
+        'Something went wrong at this step',
         'alert',
       ],
     ]

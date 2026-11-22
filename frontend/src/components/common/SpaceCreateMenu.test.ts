@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada, useQueryCache } from '@pinia/colada'
@@ -216,6 +217,15 @@ describe('SpaceCreateMenu rows', () => {
     await button.trigger('keydown', { key: 'ArrowDown' })
     expect(button.attributes('aria-expanded')).toBe('true')
     wrapper.unmount()
+  })
+
+  it('hides the button while the workspace is read-only', () => {
+    workspaceReadOnly.value = true
+    try {
+      expect(mountMenu().find('[data-testid="space-create"]').exists()).toBe(false)
+    } finally {
+      workspaceReadOnly.value = false
+    }
   })
 
   it('hides the button on an entity page that can link none of the types', () => {

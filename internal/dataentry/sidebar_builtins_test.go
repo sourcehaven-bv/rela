@@ -14,7 +14,7 @@ import (
 )
 
 // The built-in sidebar rows (Search, Inbox, Flow tasks, Flow runs, Analysis)
-// follow `builtins:`: per space with `spaces:`, else at the top level. A row's
+// and the as-of picker follow `builtins:`: per space with `spaces:`, else at the top level. A row's
 // `permission:` is the same UX filter as a navigation entry's.
 
 // portalBuiltins hides four rows in a portal space and gates Analysis on
@@ -33,6 +33,7 @@ func portalBuiltins() []dataentryconfig.Space {
 				dataentryconfig.BuiltinFlowRuns:  {Hidden: true},
 				dataentryconfig.BuiltinSearch:    {Hidden: true},
 				dataentryconfig.BuiltinFlowTasks: {Hidden: true},
+				dataentryconfig.BuiltinAsOf:      {Hidden: true},
 			}},
 	}
 }
@@ -46,6 +47,7 @@ func TestSidebarBuiltins_Spaces(t *testing.T) {
 	all := []dataentryconfig.BuiltinRow{
 		dataentryconfig.BuiltinSearch, dataentryconfig.BuiltinFlowTasks,
 		dataentryconfig.BuiltinFlowRuns, dataentryconfig.BuiltinAnalysis,
+		dataentryconfig.BuiltinAsOf,
 	}
 	cases := []struct {
 		name  string
@@ -150,11 +152,73 @@ func TestSidebarBuiltins_ConfigUnfiltered(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody).
 				WithContext(gateCtxFor(principalCtx("bob"), t, d))
 			rec := httptest.NewRecorder()
-			app.handleV1Config(rec, req)
+			app.schemaAPI.handleV1Config(rec, req)
 			require.Equal(t, http.StatusOK, rec.Code)
 			var resp v1.Config
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 			require.Equal(t, gated, tc.get(resp), "a non-holder sees the gate too")
 		})
 	}
+}
+
+// `hidden_on_phone:` reaches the sidebar as phone_hidden_builtins, the same
+// for every principal, and leaves hidden_builtins alone: the SPA hides the row
+// only on a phone-sized screen.
+func TestSidebarBuiltins_HiddenOnPhone(t *testing.T) {
+	phone := dataentryconfig.Builtins{
+		dataentryconfig.BuiltinShortcuts: {HiddenOnPhone: true},
+		dataentryconfig.BuiltinSearch:    {HiddenOnPhone: true, Permission: "admin:read"},
+	}
+	cases := []struct {
+		name       string
+		builtins   dataentryconfig.Builtins
+		user       string
+		wantHidden []dataentryconfig.BuiltinRow
+		wantPhone  []dataentryconfig.BuiltinRow
+	}{
+		{"no block", nil, "alice", nil, nil},
+		{"holder", phone, "alice", nil,
+			[]dataentryconfig.BuiltinRow{dataentryconfig.BuiltinSearch, dataentryconfig.BuiltinShortcuts}},
+		{"non-holder", phone, "bob", []dataentryconfig.BuiltinRow{dataentryconfig.BuiltinSearch},
+			[]dataentryconfig.BuiltinRow{dataentryconfig.BuiltinSearch, dataentryconfig.BuiltinShortcuts}},
+		{"shortcuts hidden everywhere",
+			dataentryconfig.Builtins{dataentryconfig.BuiltinShortcuts: {Hidden: true}}, "alice",
+			[]dataentryconfig.BuiltinRow{dataentryconfig.BuiltinShortcuts}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newTestAppV1(t)
+			installTopLevelBuiltins(app, tc.builtins)
+			d := mustNewACL(t, gatedNavPolicy(), app.store)
+			setTestACL(t, app, d)
+
+			resp, raw := sidebarFor(gateCtxFor(principalCtx(tc.user), t, d), t, app, "")
+			require.Equal(t, tc.wantHidden, resp.HiddenBuiltins)
+			require.Equal(t, tc.wantPhone, resp.PhoneHiddenBuiltins)
+			if tc.wantPhone == nil {
+				require.NotContains(t, raw, "phone_hidden_builtins")
+			}
+		})
+	}
+}
+
+// With spaces, phone_hidden_builtins follows the space's own block.
+func TestSidebarBuiltins_HiddenOnPhoneInSpace(t *testing.T) {
+	app := newTestAppV1(t)
+	installSpacesConfig(app, map[string]dataentryconfig.List{"all": {EntityType: "ticket"}}, nil,
+		[]dataentryconfig.Space{
+			{ID: "staff", Label: "Staff", Navigation: []dataentryconfig.NavigationEntry{{Label: "All", List: "all"}}},
+			{ID: "portal", Label: "Portal",
+				Navigation: []dataentryconfig.NavigationEntry{{Label: "Mine", List: "all"}},
+				Builtins: dataentryconfig.Builtins{
+					dataentryconfig.BuiltinShortcuts: {HiddenOnPhone: true},
+				}},
+		})
+	d := mustNewACL(t, gatedNavPolicy(), app.store)
+	setTestACL(t, app, d)
+
+	staff, _ := sidebarFor(gateCtxFor(principalCtx("alice"), t, d), t, app, "staff")
+	require.Empty(t, staff.PhoneHiddenBuiltins)
+	portal, _ := sidebarFor(gateCtxFor(principalCtx("alice"), t, d), t, app, "portal")
+	require.Equal(t, []dataentryconfig.BuiltinRow{dataentryconfig.BuiltinShortcuts}, portal.PhoneHiddenBuiltins)
 }

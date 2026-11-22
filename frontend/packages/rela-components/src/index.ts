@@ -156,6 +156,7 @@ export { default as RlCalendarLegend } from './components/calendar/RlCalendarLeg
 
 export { default as RlDocEditor } from './components/doc/RlDocEditor.vue'
 export { default as RlDocToolbar } from './components/doc/RlDocToolbar.vue'
+export { default as RlRenderedDiff } from './components/doc/RlRenderedDiff.vue'
 
 export { default as RlMarkdownEditor } from './components/editor/RlMarkdownEditor.vue'
 export { default as RlEditorToolbar } from './components/editor/RlEditorToolbar.vue'

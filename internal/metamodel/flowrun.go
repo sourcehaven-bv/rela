@@ -26,6 +26,10 @@ const (
 	FlowRunPropCompleted = "completed"
 	FlowRunPropDeadline  = "deadline"
 	FlowRunPropDepth     = "depth"
+	// FlowRunPropTitle is the run's display title, from the flow's
+	// `title:` or its label when the run started (BUG-53GP5F5). Without
+	// `title:` it copies nothing of the subject.
+	FlowRunPropTitle = "title"
 )
 
 // FlowRunStatuses are the values of the status property: the statuses of
@@ -116,7 +120,7 @@ func (m *Metamodel) HasFlowRuns() bool { return m != nil && m.flowRuns }
 // flowRunTargets returns the faceless operator types of m, sorted.
 func flowRunTargets(m *Metamodel) []string {
 	var out []string
-	for _, name := range sortedKeys(m.Entities) {
+	for _, name := range slices.Sorted(maps.Keys(m.Entities)) {
 		if IsReservedName(name) || len(m.Entities[name].Faces) > 0 {
 			continue
 		}
@@ -152,6 +156,10 @@ func flowRunEntityDef() EntityDef {
 		Plural:      "_flow-runs",
 		IDPrefix:    FlowRunIDPrefix,
 		Properties: map[string]PropertyDef{
+			FlowRunPropTitle: {
+				Label: "Title", Type: PropertyTypeString,
+				Description: "The run's title, set when the run started.",
+			},
 			FlowRunPropFlow: {
 				Label: "Flow", Type: PropertyTypeString, Required: true,
 				Description: "The name of the flow in flows.yaml.",
@@ -178,9 +186,10 @@ func flowRunEntityDef() EntityDef {
 			},
 		},
 		PropertyOrder: []string{
-			FlowRunPropFlow, FlowRunPropVersion, FlowRunPropStatus, FlowRunPropState,
+			FlowRunPropTitle, FlowRunPropFlow, FlowRunPropVersion, FlowRunPropStatus, FlowRunPropState,
 			FlowRunPropStarted, FlowRunPropCompleted, FlowRunPropDeadline, FlowRunPropDepth,
 		},
-		DisplayProperty: FlowRunPropFlow,
+		// A run started before titles existed has none and shows its id.
+		DisplayProperty: FlowRunPropTitle,
 	}
 }

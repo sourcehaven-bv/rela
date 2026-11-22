@@ -38,7 +38,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
-	"github.com/Sourcehaven-BV/rela/internal/userstate"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -153,7 +152,7 @@ type appEntityWriter interface {
 // handler as a parameter and `toolForPath` is a package function, so the
 // mount cost one method rather than three.
 //
-// TKT-N8XQ2R adds [App.SetNextActionMatchers] on the same terms (103 -> 104):
+// TKT-N8XQ2R adds SetNextActionMatchers on the same terms (103 -> 104):
 // the predicate compiler backing a source's `condition:` lives above this
 // package, so it arrives through the same setter idiom rather than a 13th
 // positional NewApp parameter. The compiling and matching themselves stay OFF
@@ -226,8 +225,29 @@ type appEntityWriter interface {
 // terms as SetComments: one wiring setter, with the routes on pilesHandler.
 // Ratchet target, as above.
 //
-//plimsoll:max-methods=92
-//plimsoll:max-exported-methods=24
+// The next-action cluster (the /_next_action handlers, the engine builder,
+// the candidate and pick_one reads, and the userState / nextActionMatchers
+// fields) moved to nextActionHandler, and redactedForSuggestion became a
+// package function (92 -> 80). SetUserState and SetNextActionMatchers merged
+// into one wiring setter, [App.SetNextActions] (23 -> 22 exported; the
+// exported pin had lagged at 24).
+//
+// The SSE cluster (handleSSE, runSSELoop, freshReadGate, the store-event
+// bridge and the sseTiming field) moved to sseHandler, with the per-type
+// verdict cache on sseStream; the git status and sync handlers moved to
+// gitHandler, and StartGitFetch now delegates to it (80 -> 72).
+//
+// The configuration endpoints (/_schema, /_schema/..., /_config, the OpenAPI
+// spec, /_templates) and scanAppsOrLog moved to schemaHandler, which also
+// took the templater field; the conflict list and detail moved to
+// conflictsHandler; /_analyze moved to analyzeHandler with the analyze field;
+// and /_commands moved onto commandHandler (72 -> 62). /_search and
+// /_documents stay: search shares the list pipeline's owner and linkable
+// passes, which take *App, and the document routes dispatch to package
+// functions that take *App.
+//
+//plimsoll:max-methods=62
+//plimsoll:max-exported-methods=22
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -322,30 +342,13 @@ type App struct {
 	// the regular searcher on fs/memory builds, pgstore-native on the
 	// postgres build.
 	visibleSearcher search.VisibleSearcher
-	// userState backs the next-action layer's per-user snooze / mute /
-	// cooldown records. NOT graph content: a snooze is a fact about one
-	// person's relationship to a suggestion, and storing it as an entity
-	// would flood the audit log and the postgres version sweep (cooldown
-	// alone writes on every render). Nil when the deployment wires no
-	// backend — the next-action endpoints then report "not configured"
-	// rather than silently forgetting what users asked to hide.
-	userState userstate.Store
-
-	// nextActionMatchers compiles a source's `condition:` into a predicate
-	// matcher. Injected because the compiler lives above this package (it
-	// needs predicatefns + the metamodel), the same way the composition root
-	// picks the userstate backend while consumers take the seam.
-	//
-	// Takes the live config + metamodel rather than a prebuilt lookup: both
-	// reload at runtime, and a lookup captured at boot would evaluate a stale
-	// condition after an operator edits data-entry.yaml. Nil when no
-	// deployment wired it — sources declaring a condition then fail engine
-	// construction rather than silently matching everything.
-	nextActionMatchers NextActionMatcherFunc
+	// nextActions owns /_next_action, its per-user state and its condition
+	// compiler. Always non-nil after NewApp; see [App.SetNextActions].
+	nextActions *nextActionHandler
 
 	// viewConditions resolves a list's or kanban's compiled `condition:`.
-	// Injected for the same reason nextActionMatchers is: the compiler lives
-	// above this package, and arch-lint forbids dataentry importing
+	// Injected for the same reason the next-action condition compiler is: the
+	// compiler lives above this package, and arch-lint forbids dataentry importing
 	// conditionlint or predicate.
 	//
 	// Nil when no deployment wired it, which means every view behaves as it
@@ -380,10 +383,9 @@ type App struct {
 	viewReader visibility.Reader
 	tracer     tracer.Tracer
 	validator  validator.Validator
-	// analyze runs the read-only graph-analysis checks. Extracted from App
-	// (TKT-N26KLB M5.1); holds its own {store, tracer, validator} and takes
-	// the metamodel snapshot per call.
-	analyze analyzeService
+	// analyzeAPI owns /_analyze and the analysis service behind it.
+	// Always non-nil after NewApp.
+	analyzeAPI *analyzeHandler
 	// affordances computes the _actions/field/relation affordance maps and runs
 	// write-time affordance validation. Extracted from App (TKT-N26KLB M5.2);
 	// shares the same acl.ACL as the write path (contract-test invariant).
@@ -446,10 +448,16 @@ type App struct {
 	queries *queryService
 	// gantt owns the read-only gantt tree endpoint (TKT-MW28U5). Like views,
 	// it never mutates.
-	gantt     *ganttHandler
-	sankey    *sankeyHandler
-	templater templating.Templater
-	cfgLoader config.Loader
+	gantt  *ganttHandler
+	sankey *sankeyHandler
+	// schemaAPI owns the configuration endpoints (/_schema, /_config, the
+	// OpenAPI spec, /_templates) and the templater behind /_templates.
+	// Always non-nil after NewApp.
+	schemaAPI *schemaHandler
+	// conflictsAPI owns the merge-conflict list and detail routes. Always
+	// non-nil after NewApp.
+	conflictsAPI *conflictsHandler
+	cfgLoader    config.Loader
 	// assets is cfgLoader seen as the custom/ and apps/ reader; NewApp
 	// requires the loader to support it.
 	assets projectAssets
@@ -518,8 +526,12 @@ type App struct {
 	// StopWatching closes it.
 	feed *changefeed.Bus
 
-	// sseTiming holds the SSE flush and ping intervals.
-	sseTiming sseTimings
+	// sse owns the live-reload event stream and the store-event bridge.
+	// Always non-nil after NewApp.
+	sse *sseHandler
+	// gitAPI owns the git status and sync routes and the background fetch.
+	// Always non-nil after NewApp.
+	gitAPI *gitHandler
 	// live holds the live-view subscriptions and their replay worker
 	// (TKT-HJ5Z9Y). Built in NewApp; the worker runs between StartWatching
 	// and StopWatching.
@@ -1330,14 +1342,12 @@ func NewApp(
 		visibleReader:   visible,
 		reader:          entityReader{store: st},
 		tracer:          trc,
-		templater:       templater,
 		cfgLoader:       cfgLoader,
 		assets:          assets,
 		kv:              kv,
 		acl:             aclImpl,
 		broker:          newEventBroker(),
 		feed:            feed,
-		sseTiming:       defaultSSETimings,
 		scriptEngine:    scriptEngine,
 		fieldResolver:   fieldResolver,
 		auditSink:       auditSink,
@@ -1348,6 +1358,13 @@ func NewApp(
 	}
 	families.app = app
 	app.live = newLiveHub(func() *metamodel.Metamodel { return app.State().Meta })
+	// sseHandler and gitHandler own the event stream and the git routes,
+	// extracted on the same terms as nextActionHandler below.
+	app.sse = newSSEHandler(app)
+	app.gitAPI = newGitHandler(app)
+	app.schemaAPI = newSchemaHandler(app, templater)
+	app.conflictsAPI = newConflictsHandler(app)
+	app.analyzeAPI = newAnalyzeHandler(app)
 	app.faceEdges = faceEdgesOf(app)
 	// documentService needs scriptEngine (for Lua renders) and a closure
 	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).
@@ -1578,6 +1595,10 @@ func NewApp(
 		return nil, pilesErr
 	}
 	app.piles = pilesH
+
+	// nextActionHandler owns /_next_action, extracted on the same terms. Its
+	// state backend and condition compiler are installed by SetNextActions.
+	app.nextActions = newNextActionHandler(app)
 
 	// attachmentHandler owns the entity-attachment routes. Constructed after
 	// the runner wiring above so it captures the resolved runner. The acl/
@@ -1900,7 +1921,7 @@ func wireValidation(app *App, meta *metamodel.Metamodel, world store.WorldScope)
 	app.validator = val
 	// analyzeService reads, relation counts included, route through the same
 	// gated reader.
-	app.analyze = analyzeService{
+	app.analyzeAPI.svc = analyzeService{
 		reads:     gatedReader,
 		tracer:    lateGatedTracer{app: app},
 		validator: val,

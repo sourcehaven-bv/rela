@@ -147,7 +147,7 @@ func nextActionCurrent(r *http.Request) *userstate.Key {
 // contextCandidates yields the viewed entity as the one candidate of a
 // context-aware source.
 //
-// The read runs in ctx, which nextActionCandidates has already rebound to the
+// The read runs in ctx, which nextActionHandler.candidates has already rebound to the
 // source's world, through the row gate. A missing entity, a hidden one and
 // one of another type are all the same empty answer, so the endpoint is no
 // oracle on which ids exist. A gate fault is an error, as on every read path:
@@ -156,19 +156,19 @@ func nextActionCurrent(r *http.Request) *userstate.Key {
 // The entity is then field-redacted like a query candidate, with verdicts
 // primed first, so the message template and the condition see only what this
 // principal may see.
-func (a *App) contextCandidates(
+func (h *nextActionHandler) contextCandidates(
 	ctx context.Context, src dataentryconfig.NextActionSource, entityID string,
 ) ([]nextaction.Candidate, error) {
 	if entityID == "" {
 		return nil, nil
 	}
-	e, ok, err := a.visibleReader.inWorld(ctx, src.Context, entityID)
+	e, ok, err := h.inWorld(ctx, src.Context, entityID)
 	if err != nil {
 		return nil, fmt.Errorf("next-action context %q: %w", src.Context, err)
 	}
 	if !ok || e.Type != src.Context {
 		return nil, nil
 	}
-	ctx = primeVerdicts(ctx, a.fieldResolver, []*entityPkg.Entity{e})
-	return []nextaction.Candidate{{Entity: a.redactedForSuggestion(ctx, e)}}, nil
+	ctx = primeVerdicts(ctx, h.fields(), []*entityPkg.Entity{e})
+	return []nextaction.Candidate{{Entity: redactedForSuggestion(ctx, h.affordances(), e)}}, nil
 }

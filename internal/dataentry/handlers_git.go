@@ -3,12 +3,48 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/git"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
+
+// gitHandler owns the git status and sync routes and the background fetch.
+// Extracted from App to take that cluster off the god-object.
+//
+// The collaborators are closures over App rather than captured values: tests
+// and the Configure wiring reassign App.gitOps, App.acl, App.broker and
+// App.visibleReader after construction, and a captured copy would go stale
+// (the attachmentHandler idiom).
+type gitHandler struct {
+	// ops is the git working tree; nil when git is not configured.
+	ops func() *git.Ops
+	// schema is the reloadable snapshot. Each request takes it once.
+	schema func() *Schema
+	acl    func() acl.ACL
+	// broker tells browsers the git status changed.
+	broker func() *eventBroker
+	// conflictPaths keeps the conflicting files whose rows the request's
+	// principal may read; see readableConflictPaths.
+	conflictPaths func(ctx context.Context, meta *metamodel.Metamodel, files []string) ([]string, error)
+}
+
+// newGitHandler wires the handler to app's live collaborators.
+func newGitHandler(app *App) *gitHandler {
+	return &gitHandler{
+		ops:    func() *git.Ops { return app.gitOps },
+		schema: app.State,
+		acl:    func() acl.ACL { return app.acl },
+		broker: func() *eventBroker { return app.broker },
+		conflictPaths: func(ctx context.Context, meta *metamodel.Metamodel, files []string) ([]string, error) {
+			return readableConflictPaths(ctx, app.visibleReader, app.paths, meta, files)
+		},
+	}
+}
 
 // GitStatusResponse is the JSON response for /api/git/status.
 type GitStatusResponse struct {
@@ -59,7 +95,9 @@ func writeGitSyncForbidden(w http.ResponseWriter, r *http.Request, action string
 // conflict list lists: a file naming a row the principal may not read is
 // left out (BUG-197XPAU). A gate failure is returned, never folded into
 // "no conflict files".
-func (a *App) gitStatusResponse(ctx context.Context, status *git.Status, canSync bool) (GitStatusResponse, error) {
+func (h *gitHandler) gitStatusResponse(
+	ctx context.Context, status *git.Status, canSync bool,
+) (GitStatusResponse, error) {
 	resp := GitStatusResponse{
 		Available:    status.Available,
 		Branch:       status.Branch,
@@ -72,7 +110,7 @@ func (a *App) gitStatusResponse(ctx context.Context, status *git.Status, canSync
 	if !canSync || len(status.ConflictFiles) == 0 {
 		return resp, nil
 	}
-	files, err := readableConflictPaths(ctx, a.visibleReader, a.paths, a.State().Meta, status.ConflictFiles)
+	files, err := h.conflictPaths(ctx, h.schema().Meta, status.ConflictFiles)
 	if err != nil {
 		return GitStatusResponse{}, err
 	}
@@ -81,14 +119,14 @@ func (a *App) gitStatusResponse(ctx context.Context, status *git.Status, canSync
 }
 
 //archplan:auth=required
-func (a *App) handleGitStatus(w http.ResponseWriter, r *http.Request) {
+func (h *gitHandler) handleGitStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	resp := GitStatusResponse{Available: false}
-	gitOps := a.gitOps
+	gitOps := h.ops()
 
 	if gitOps == nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -103,7 +141,7 @@ func (a *App) handleGitStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err = a.gitStatusResponse(r.Context(), status, permitsGitSync(a.acl, r))
+	resp, err = h.gitStatusResponse(r.Context(), status, permitsGitSync(h.acl(), r))
 	if err != nil {
 		writeGateError(w, r, err)
 		return
@@ -117,18 +155,18 @@ func (a *App) handleGitStatus(w http.ResponseWriter, r *http.Request) {
 // without [acl.PermGitSync] gets the 403 of [writeGitSyncForbidden].
 //
 //archplan:auth=authz
-func (a *App) handleGitSync(w http.ResponseWriter, r *http.Request) {
+func (h *gitHandler) handleGitSync(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !permitsGitSync(a.acl, r) {
+	if !permitsGitSync(h.acl(), r) {
 		writeGitSyncForbidden(w, r, "Syncing with git")
 		return
 	}
 
 	resp := GitSyncResponse{}
-	gitOps := a.gitOps
+	gitOps := h.ops()
 
 	if gitOps == nil {
 		resp.Error = "git not configured"
@@ -155,8 +193,7 @@ func (a *App) handleGitSync(w http.ResponseWriter, r *http.Request) {
 		status, _ := gitOps.GetStatus()
 		if status != nil && status.Conflict {
 			// The same paths the status lists (BUG-197XPAU).
-			files, gerr := readableConflictPaths(r.Context(), a.visibleReader, a.paths, a.State().Meta,
-				status.ConflictFiles)
+			files, gerr := h.conflictPaths(r.Context(), h.schema().Meta, status.ConflictFiles)
 			if gerr != nil {
 				writeGateError(w, r, gerr)
 				return
@@ -171,8 +208,51 @@ func (a *App) handleGitSync(w http.ResponseWriter, r *http.Request) {
 	resp.Success = true
 
 	// Broadcast git status update
-	a.broker.broadcastGitStatus()
+	h.broker().broadcastGitStatus()
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// startFetch begins periodic git fetch in the background and returns a stop
+// function. It is a no-op when git is not configured or the fetch interval
+// is zero.
+//
+// coverage-ignore-func: background goroutine with timer
+func (h *gitHandler) startFetch() (stop func()) {
+	gitOps := h.ops()
+	cfg := h.schema().Cfg.Git
+
+	if gitOps == nil || cfg == nil || cfg.FetchInterval <= 0 {
+		return func() {} // no-op if git not configured or fetch disabled
+	}
+
+	// coverage-ignore-start: os-fs-event: background goroutine driven by a real time.Ticker running git fetch (project
+	// marks it coverage-ignore)
+	interval := time.Duration(cfg.FetchInterval) * time.Second
+	ticker := time.NewTicker(interval)
+	done := make(chan struct{})
+
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				if err := gitOps.Fetch(); err != nil {
+					slog.Warn("git fetch error", "error", err)
+				} else {
+					// Broadcast git status update so UI can refresh
+					h.broker().broadcast("git")
+				}
+			case <-done:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+
+	slog.Info("git background fetch started", "interval", interval)
+	return func() {
+		close(done)
+	}
+	// coverage-ignore-end
 }

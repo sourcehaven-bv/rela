@@ -335,11 +335,6 @@ func coalesce(vals ...string) string {
 	return ""
 }
 
-// containsString returns true if slice contains the given string.
-func containsString(slice []string, s string) bool {
-	return slices.Contains(slice, s)
-}
-
 // slugify converts a string to a URL-safe slug (lowercase, hyphens, no special chars).
 func slugify(s string) string {
 	s = strings.ToLower(s)

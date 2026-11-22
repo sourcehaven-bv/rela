@@ -47,16 +47,37 @@ export function formatDate(value: string, locale?: string): string | null {
 
 /**
  * An amount in the reader's locale, as money when `currency` (an ISO 4217
- * code such as EUR) is given: 3500 with EUR reads "€ 3.500" in nl-NL. A
- * whole number shows no decimals; any other shows two.
+ * code such as EUR) is given. Money always shows the currency's minor unit,
+ * so amounts on one page line up: 3500 with EUR reads "€ 3.500,00" in nl-NL,
+ * and 3500 with JPY reads "¥3,500". Without a currency a whole number shows
+ * no decimals and any other shows two.
  *
  * `locale` defaults to the interface locale (`intlLocale`), as every
  * formatter here does. Tests pass one.
  */
 export function formatAmount(value: number, currency?: string, locale?: string): string {
-  return amountFormatter(Number.isInteger(value) ? 0 : 2, currency, locale ?? intlLocale()).format(
-    value
-  )
+  const digits = currency ? currencyDigits(currency) : Number.isInteger(value) ? 0 : 2
+  return amountFormatter(digits, currency, locale ?? intlLocale()).format(value)
+}
+
+const currencyDigitCache = new Map<string, number>()
+
+/**
+ * The number of minor-unit digits of an ISO 4217 currency: 2 for EUR, 0 for
+ * JPY, 3 for KWD. Intl knows the table; the locale does not change it.
+ */
+export function currencyDigits(currency: string): number {
+  let d = currencyDigitCache.get(currency)
+  if (d === undefined) {
+    try {
+      d = new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions()
+        .maximumFractionDigits
+    } catch {
+      d = 2
+    }
+    currencyDigitCache.set(currency, d ?? 2)
+  }
+  return d ?? 2
 }
 
 // Building an Intl.NumberFormat is the expensive part, and a board formats an
@@ -99,7 +120,7 @@ export function numericValue(value: unknown): number | undefined {
  * A property value in the property's display format, or undefined when the
  * property has none or the value is not a number. Today the only format is
  * `display: {currency}` on an integer or decimal property (TKT-SVLQQ6,
- * TKT-DTUAG3U), so 3500 reads "€ 3.500" for EUR in nl-NL. Every surface that
+ * TKT-DTUAG3U), so 3500 reads "€ 3.500,00" for EUR in nl-NL. Every surface that
  * renders a value for reading goes through this; inputs stay plain numbers.
  */
 export function formatDisplayNumber(
@@ -121,8 +142,10 @@ export function formatDisplayNumber(
  * number, so "0.10" cannot turn into 0.1000000000000000055.
  *
  * It shows `scale` digits after the point when the property declares one.
- * Otherwise a whole value shows none, and any other value shows at least two
- * when it is money and the digits it was written with when it is not.
+ * Otherwise money shows at least the currency's minor unit (two for EUR),
+ * whole or not, so "49" and "59.29" read "€49.00" and "€59.29" side by side.
+ * A value that is not money shows the digits it was written with, and none
+ * when it is whole.
  */
 export function formatDecimal(
   value: unknown,
@@ -133,13 +156,21 @@ export function formatDecimal(
   const d = parseDecimal(value)
   if (!d) return undefined
   let digits = scale ?? d.scale
-  if (scale === undefined && currency && d.scale > 0) digits = Math.max(2, d.scale)
-  if (scale === undefined && d.units % 10n ** BigInt(d.scale) === 0n) digits = 0
+  if (scale === undefined) {
+    if (currency) digits = Math.max(currencyDigits(currency), wholeDigits(d))
+    else digits = wholeDigits(d)
+  }
   // Intl.NumberFormat formats a decimal string exactly (ES2023); the ES2020
   // lib this project compiles against types the argument as a number.
   return amountFormatter(digits, currency, locale ?? intlLocale()).format(
     decimalText(d) as unknown as number
   )
+}
+
+// The digits a decimal needs to show its value: none when it is whole,
+// otherwise the digits it was written with.
+function wholeDigits(d: { units: bigint; scale: number }): number {
+  return d.units % 10n ** BigInt(d.scale) === 0n ? 0 : d.scale
 }
 
 const DATETIME_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {

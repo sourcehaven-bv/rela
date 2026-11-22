@@ -34,6 +34,18 @@ import { renderMarkdown } from '@/utils/markdown'
 import { stripSpace } from '@/stores/space'
 import { useMe } from '@/queries/me'
 
+const props = withDefaults(
+  defineProps<{
+    /**
+     * Whether to show the Shortcuts button. The sidebar resolves it from
+     * `builtins.shortcuts` (hidden, permission, hidden_on_phone). The `?` key
+     * opens the help either way.
+     */
+    showShortcuts?: boolean
+  }>(),
+  { showShortcuts: true }
+)
+
 const gitStore = useGitStore()
 const schemaStore = useSchemaStore()
 const route = useRoute()
@@ -68,11 +80,17 @@ const appDescription = computed(() => schemaStore.aboutDescription?.trim() || ''
 // render it so *emphasis*, lists, etc. display. renderMarkdown sanitizes.
 const appDescriptionHtml = computed(() => renderMarkdown(appDescription.value))
 
-// Initial fetch - SSE handles subsequent updates
+// The first status once the schema says the server has git; SSE handles
+// later updates.
+watch(
+  () => schemaStore.gitEnabled,
+  (on) => {
+    if (on) gitStore.fetchStatus().catch(() => {})
+  },
+  { immediate: true }
+)
+
 onMounted(() => {
-  gitStore.fetchStatus().catch(() => {
-    // Errors are already handled by the store
-  })
   // Resolve once per session. The composable is a singleton, so this and the
   // page-level card share one suggestion rather than racing for two.
   void naLoadOnce()
@@ -88,7 +106,7 @@ watch(
   (shown) => {
     if (shown) void naMarkShown()
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 /*
@@ -210,8 +228,19 @@ async function handleSync() {
       :class="{ active: stripSpace(route.path).startsWith('/remotes') }"
       @click="router.push('/remotes')"
     />
-    <RlSidebarFooterLink v-if="appDescription" :label="t('footer.about')" icon="help" @click="aboutOpen = true" />
-    <button type="button" class="footer-row shortcuts-btn status-item" :title="t('footer.keyboardShortcuts')" @click="shortcutsModalOpen = true">
+    <RlSidebarFooterLink
+      v-if="appDescription"
+      :label="t('footer.about')"
+      icon="help"
+      @click="aboutOpen = true"
+    />
+    <button
+      v-if="props.showShortcuts"
+      type="button"
+      class="footer-row shortcuts-btn status-item"
+      :title="t('footer.keyboardShortcuts')"
+      @click="shortcutsModalOpen = true"
+    >
       <RlKbd keys="?" />
       <span class="shortcuts-text">{{ t('footer.shortcuts') }}</span>
     </button>
@@ -323,11 +352,6 @@ async function handleSync() {
 .na-message {
   margin: 0 0 var(--rl-space-3);
 }
-
-
-
-
-
 
 /* Only the prose rhythm is rela's; the panel, header and close button are
    RlModal's. `md-body` carries the shared markdown typography. */

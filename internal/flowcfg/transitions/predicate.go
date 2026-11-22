@@ -2,7 +2,6 @@ package transitions
 
 import (
 	"context"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -161,16 +160,6 @@ func stringArg(args []predicate.Value, i int) string {
 	// predicate.String at
 	// runtime
 	return ""
-}
-
-// sortedKeys returns the map keys sorted, for deterministic iteration.
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func joinLines(ss []string) string { return strings.Join(ss, "\n  ") }

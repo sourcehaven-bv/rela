@@ -30,6 +30,7 @@ body:
     },
     "policy": {
       "label": "Policy",
+      "label_plural": "Policies",
       "plural": "policies",
       "primary": "title",
       "id_type": "manual",
@@ -186,6 +187,8 @@ body:
   ],
   "capabilities": {
     "atomic_batch": false,
-    "as_of": false
+    "as_of": false,
+    "git": false,
+    "flows": false
   }
 }

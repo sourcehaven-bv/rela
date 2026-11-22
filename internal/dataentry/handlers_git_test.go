@@ -96,7 +96,7 @@ func TestHandleGitSync_Gate(t *testing.T) {
 			ctx := withReadGate(context.Background(), fakeGate{holdsPermission: tc.holds})
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/_git/sync", http.NoBody).WithContext(ctx)
 			rec := httptest.NewRecorder()
-			app.handleGitSync(rec, req)
+			app.gitAPI.handleGitSync(rec, req)
 
 			require.Equal(t, tc.want, rec.Code, rec.Body.String())
 			committed := gitCommitCount(t, dir) - before
@@ -143,7 +143,7 @@ func TestHandleGitStatus_CanSync(t *testing.T) {
 			ctx := withReadGate(context.Background(), fakeGate{holdsPermission: tc.holds})
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/_git/status", http.NoBody).WithContext(ctx)
 			rec := httptest.NewRecorder()
-			app.handleGitStatus(rec, req)
+			app.gitAPI.handleGitStatus(rec, req)
 
 			require.Equal(t, http.StatusOK, rec.Code)
 			var resp GitStatusResponse
@@ -181,12 +181,12 @@ func TestGitStatusResponse_ConflictFiles(t *testing.T) {
 	}}
 	ctx := asAlice(t, d, httptest.NewRequest(http.MethodGet, "/api/v1/_git/status", http.NoBody)).Context()
 
-	hidden, err := app.gitStatusResponse(ctx, status, false)
+	hidden, err := app.gitAPI.gitStatusResponse(ctx, status, false)
 	require.NoError(t, err)
 	require.True(t, hidden.Conflict)
 	require.Empty(t, hidden.ConflictFiles)
 
-	shown, err := app.gitStatusResponse(ctx, status, true)
+	shown, err := app.gitAPI.gitStatusResponse(ctx, status, true)
 	require.NoError(t, err)
 	require.True(t, shown.Conflict)
 	require.Equal(t, []string{
@@ -210,7 +210,7 @@ func TestDisableGitSync(t *testing.T) {
 
 	ctx := withReadGate(context.Background(), fakeGate{holdsPermission: true})
 	rec := httptest.NewRecorder()
-	app.handleGitSync(rec, httptest.NewRequest(http.MethodPost, "/api/v1/_git/sync", http.NoBody).WithContext(ctx))
+	app.gitAPI.handleGitSync(rec, httptest.NewRequest(http.MethodPost, "/api/v1/_git/sync", http.NoBody).WithContext(ctx))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var sync GitSyncResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sync))
@@ -218,8 +218,37 @@ func TestDisableGitSync(t *testing.T) {
 	require.Zero(t, gitCommitCount(t, dir)-before, "a disabled sync must not commit")
 
 	rec = httptest.NewRecorder()
-	app.handleGitStatus(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_git/status", http.NoBody).WithContext(ctx))
+	app.gitAPI.handleGitStatus(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_git/status", http.NoBody).WithContext(ctx))
 	var status GitStatusResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &status))
 	require.False(t, status.Available)
+}
+
+// TestSchemaCapabilities_Git pins capabilities.git: the SPA skips
+// GET /_git/status when the schema says the server has no git, so a
+// deployment without git, or with git sync disabled, gets no such calls.
+func TestSchemaCapabilities_Git(t *testing.T) {
+	gitCapability := func(app *App) bool {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		app.schemaAPI.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var got struct {
+			Capabilities struct {
+				Git *bool `json:"git"`
+			} `json:"capabilities"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		require.NotNil(t, got.Capabilities.Git, "capabilities.git is always present")
+		return *got.Capabilities.Git
+	}
+
+	app := newTestAppV1(t)
+	require.False(t, gitCapability(app), "no git configured")
+
+	app.gitOps = git.NewOps(gitSyncRepo(t), git.Config{Enabled: true, Branch: "master"})
+	require.True(t, gitCapability(app), "git configured")
+
+	DisableGitSync(app)
+	require.False(t, gitCapability(app), "git sync disabled, as in tenant mode")
 }

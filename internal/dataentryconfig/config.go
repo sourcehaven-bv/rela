@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"math"
 	"net/url"
 	"slices"
 	"sort"
@@ -341,7 +343,39 @@ type Action struct {
 	// A faced type is keyed `type@face`, one key per face. Requires
 	// AllowACLBypass.
 	ElevatedUpdates map[string][]string `yaml:"elevated_updates,omitempty" json:"-"`
+
+	// Style is how an entity page draws the action's button: empty for the
+	// normal secondary button, [ActionStyleDanger] for a destructive one.
+	// Other values are a load error. Lists, boards and the sidebar ignore it.
+	Style ActionStyle `yaml:"style,omitempty" json:"style,omitempty"`
+
+	// Order places the action among the other actions on an entity page:
+	// lower first, then by label. Zero, the value when the key is absent, is
+	// a position like any other, so an action without it sits between the
+	// negative and the positive ones. Lists, boards and the sidebar keep
+	// their own order.
+	Order ActionOrder `yaml:"order,omitempty" json:"order,omitempty"`
 }
+
+// ActionOrder is an action's `order:`, decoded strictly: yaml.v3 would
+// truncate `order: 1.5` to 1 without a word, as it would a span.
+type ActionOrder int
+
+// UnmarshalYAML decodes an order, rejecting a non-integer number.
+func (o *ActionOrder) UnmarshalYAML(value *yaml.Node) error {
+	n, err := decodeWholeNumber(value, "order must be a whole number")
+	if err != nil {
+		return err
+	}
+	*o = ActionOrder(n)
+	return nil
+}
+
+// ActionStyle is the `style:` of an action.
+type ActionStyle string
+
+// ActionStyleDanger draws the action as a destructive button.
+const ActionStyleDanger ActionStyle = "danger"
 
 // ActionScope names where an action is offered on entity detail pages.
 type ActionScope struct {
@@ -461,6 +495,11 @@ type AppConfig struct {
 	// one of [SupportedUILanguages]. A region (nl-BE) is kept for date and
 	// number formatting.
 	Language string `yaml:"language,omitempty"`
+	// Logo is an image of the app for the pages shown before a workspace
+	// loads, such as a suspended workspace, where the logo uploaded on the
+	// Settings page cannot be read. A root-relative path or an https URL,
+	// validated at load like the account links. Empty shows the app name.
+	Logo string `yaml:"logo,omitempty" json:"logo,omitempty"`
 	// DefaultWorld names the world a request lands in when the URL carries no
 	// `?world=`. Empty (the default) means the default world — the raw stored
 	// faces, which is right for an authoring tool and wrong for a reader.
@@ -700,23 +739,37 @@ type Span int
 
 // UnmarshalYAML decodes a span, rejecting non-integer numbers.
 func (s *Span) UnmarshalYAML(value *yaml.Node) error {
+	n, err := decodeWholeNumber(value, "span must be a whole number of columns")
+	if err != nil {
+		return err
+	}
+	*s = Span(n)
+	return nil
+}
+
+// decodeWholeNumber decodes a YAML number that must be whole. yaml.v3 would
+// truncate 6.5 to 6 when decoding into an int, so the value is read as a
+// float first. what starts the error message; the line is appended.
+func decodeWholeNumber(value *yaml.Node, what string) (int, error) {
 	var f float64
 	if err := value.Decode(&f); err != nil {
-		// Not a number at all — let the int decode produce the usual
+		// Not a number at all: let the int decode produce the usual
 		// "cannot unmarshal !!str into int" message rather than inventing one.
 		var i int
 		if err := value.Decode(&i); err != nil {
-			return err
+			return 0, err
 		}
-		*s = Span(i)
-		return nil
+		return i, nil
 	}
-	if f != float64(int(f)) {
-		return fmt.Errorf("span must be a whole number of columns, got %v", f)
+	if f != math.Trunc(f) || math.Abs(f) > maxWholeNumber {
+		return 0, fmt.Errorf("%s, got %v (line %d)", what, f, value.Line)
 	}
-	*s = Span(int(f))
-	return nil
+	return int(f), nil
 }
+
+// maxWholeNumber bounds decodeWholeNumber so a float64 holds the value
+// exactly and the int conversion cannot overflow.
+const maxWholeNumber = 1 << 31
 
 // ValidCalendarColors is the allowlist of palette tokens a calendar source may
 // use to distinguish its events.
@@ -744,7 +797,7 @@ func validateCalendarColor(color, context string) []string {
 		return nil
 	}
 	return []string{fmt.Sprintf("%s: unknown color %q (valid: %s)",
-		context, color, strings.Join(sortedMapKeys(ValidCalendarColors), ", "))}
+		context, color, strings.Join(slices.Sorted(maps.Keys(ValidCalendarColors)), ", "))}
 }
 
 // NoIcon is the reserved name meaning "render no icon at all".
@@ -801,7 +854,7 @@ func suggestIcon(name string) string {
 	// cares about what is legal to WRITE, not what draws a glyph. Without it,
 	// `None` — a spelling authors reach for by reflex — scored closest to
 	// "done" and the message confidently recommended a green check mark.
-	candidates := append(sortedMapKeys(ValidIconNames), NoIcon)
+	candidates := append(slices.Sorted(maps.Keys(ValidIconNames)), NoIcon)
 	sort.Strings(candidates)
 
 	best, bestDist := "", maxDistance+1
@@ -921,13 +974,16 @@ type RelationProperty struct {
 // The plimsoll directive is the format-mirror exception documented on
 // [Config]: each exported field is one key of a list in data-entry.yaml.
 //
-//plimsoll:max-fields=21
+//plimsoll:max-fields=22
 type List struct {
-	EntityType     string          `yaml:"entity_type" json:"entity"`
-	Title          string          `yaml:"title" json:"title"`
-	Header         string          `yaml:"header" json:"header,omitempty"`
-	Footer         string          `yaml:"footer" json:"footer,omitempty"`
-	Description    string          `yaml:"description" json:"description,omitempty"`
+	EntityType  string `yaml:"entity_type" json:"entity"`
+	Title       string `yaml:"title" json:"title"`
+	Header      string `yaml:"header" json:"header,omitempty"`
+	Footer      string `yaml:"footer" json:"footer,omitempty"`
+	Description string `yaml:"description" json:"description,omitempty"`
+	// EmptyMessage replaces the text an empty list shows ("No People
+	// found."). Empty: the SPA builds that text from the type's plural label.
+	EmptyMessage   string          `yaml:"empty_message,omitempty" json:"empty_message,omitempty"`
 	Columns        []ListColumn    `yaml:"columns" json:"columns"`
 	Sort           []SortSpec      `yaml:"sort,omitempty" json:"default_sort,omitempty"`
 	Filters        []FilterConfig  `yaml:"filters" json:"filters,omitempty"`
@@ -1058,6 +1114,12 @@ type ListColumn struct {
 	// `render:` stays inert on a table, so no existing config becomes
 	// editable on upgrade.
 	Render string `yaml:"render,omitempty" json:"render,omitempty"`
+	// Primary says whether the column stays in a list row that is too narrow
+	// for every column, as on a phone or beside an open detail panel. Unset
+	// keeps the default: enum badges, the face and the busy indicator stay,
+	// other columns go. The title column always stays. Lists only: dashboard
+	// card and view section columns refuse it.
+	Primary *bool `yaml:"primary,omitempty" json:"primary,omitempty"`
 }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.
@@ -2146,7 +2208,7 @@ type DashboardConfig struct {
 // The plimsoll directive is the format-mirror exception documented on
 // [Config]: each exported field is one key of a card in data-entry.yaml.
 //
-//plimsoll:max-fields=22
+//plimsoll:max-fields=23
 type DashboardCard struct {
 	Title string `yaml:"title" json:"title"`
 	// List names a `lists:` entry. The card shows exactly the rows that list
@@ -2195,6 +2257,13 @@ type DashboardCard struct {
 	// size, not a column count, because the grid's column count follows the
 	// viewport, which the operator cannot know.
 	Width string `yaml:"width,omitempty" json:"width,omitempty"`
+
+	// HideEmpty leaves the card off the dashboard when its list or query
+	// has no rows for the reader. A card that failed to load still shows,
+	// so an error is not mistaken for "nothing to show". Refused on a line
+	// card, which has no rows. A UX filter, like Permission: the card's
+	// rows are ACL-gated either way.
+	HideEmpty bool `yaml:"hide_empty,omitempty" json:"hide_empty,omitempty"`
 
 	// Permission optionally hides this card from the dashboard for principals
 	// who do not hold the named global ACL permission (TKT-53KICM). Empty —

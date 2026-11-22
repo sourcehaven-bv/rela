@@ -8,6 +8,7 @@ import RlMenuSeparator from 'rela-components/components/overlay/RlMenuSeparator.
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIcon from 'rela-components/components/common/RlIcon.vue'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 import { usePageCreateLink, type AnchorLink } from '@/composables/usePageTabScope'
 import { leadWith, useViewEntityTypes } from '@/composables/useViewEntityTypes'
 import { usePageStore } from '@/stores/pages'
@@ -75,7 +76,7 @@ function onCreatedAnother(entity: Entity) {
 
 <template>
   <!-- The dialog sits outside the menu's v-if: it stays open when a navigation empties the menu. -->
-  <template v-if="space.create.length">
+  <template v-if="space.create.length && !workspaceReadOnly">
     <RlMenu v-if="hasRows || pages.opening" align="end">
       <template #trigger="{ toggle, attrs }">
         <RlButton

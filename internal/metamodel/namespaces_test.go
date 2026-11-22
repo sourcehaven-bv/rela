@@ -120,7 +120,7 @@ func TestNamespaces_QualifyAndResolveLocally(t *testing.T) {
 		t.Fatalf("entity types = %v, want %v (the abstract task is removed)", got, wantTypes)
 	}
 	if _, ok := m.Types["isms.evidence_kind"]; !ok {
-		t.Errorf("custom type not qualified: %v", sortedKeys(m.Types))
+		t.Errorf("custom type not qualified: %v", slices.Sorted(maps.Keys(m.Types)))
 	}
 	if got := m.Entities["isms.task"].Properties["evidence"].Type; got != "isms.evidence_kind" {
 		t.Errorf("local custom type reference = %q, want isms.evidence_kind", got)
@@ -131,7 +131,7 @@ func TestNamespaces_QualifyAndResolveLocally(t *testing.T) {
 
 	addresses, ok := m.Relations["isms.addresses"]
 	if !ok {
-		t.Fatalf("relation not qualified: %v", sortedKeys(m.Relations))
+		t.Fatalf("relation not qualified: %v", slices.Sorted(maps.Keys(m.Relations)))
 	}
 	if !slices.Equal(addresses.From, []string{"isms.task"}) || !slices.Equal(addresses.To, []string{"isms.control"}) {
 		t.Errorf("isms.addresses endpoints = %v -> %v", addresses.From, addresses.To)
@@ -216,7 +216,7 @@ func TestNamespaces_GeneratedVariantConversions(t *testing.T) {
 	m := mustLoadNS(t)
 	d, ok := m.Conversions["isms.task-to-projects.task"]
 	if !ok {
-		t.Fatalf("conversions = %v", sortedKeys(m.Conversions))
+		t.Fatalf("conversions = %v", slices.Sorted(maps.Keys(m.Conversions)))
 	}
 	if _, ok := m.Conversions["projects.task-to-isms.task"]; !ok {
 		t.Error("reverse conversion missing")

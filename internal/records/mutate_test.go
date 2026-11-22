@@ -58,7 +58,8 @@ func TestUpdate_ChangesRowAndAudits(t *testing.T) {
 	})
 	require.NoError(t, err)
 	id := rows[0].ID
-	require.Empty(t, sink.Records(), "an append is not audited")
+	require.Len(t, sink.Records(), 1, "the append writes one line")
+	base := 1
 
 	got, err := s.Update(withUser("bob"), "hours", id, records.Change{
 		Revision: 0, TS: t0.Add(24 * time.Hour), Fields: map[string]any{"hours": "8", "note": nil},
@@ -74,7 +75,7 @@ func TestUpdate_ChangesRowAndAudits(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []records.Record{got}, page.Records)
 
-	lines := sink.Records()
+	lines := sink.Records()[base:]
 	require.Len(t, lines, 1)
 	require.Equal(t, audit.OpUpdateRecord, lines[0].Op)
 	require.Equal(t, &audit.Subject{Kind: "record", Type: "hours", ID: id}, lines[0].Subject)
@@ -87,7 +88,7 @@ func TestUpdate_ChangesRowAndAudits(t *testing.T) {
 	require.ErrorIs(t, err, records.ErrInvalid, "a required field cannot be cleared")
 	_, err = s.Update(ctx, "hours", id, records.Change{Revision: 1, Fields: map[string]any{"nope": "x"}})
 	require.ErrorIs(t, err, records.ErrInvalid)
-	require.Len(t, sink.Records(), 1, "a refused change is not audited")
+	require.Len(t, sink.Records(), base+1, "a refused change is not audited")
 }
 
 func TestDelete_RemovesRowAndAudits(t *testing.T) {
@@ -102,7 +103,7 @@ func TestDelete_RemovesRowAndAudits(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, page.Records)
 	require.ErrorIs(t, s.Delete(ctx, "hours", id, 0), records.ErrNotFound)
-	lines := sink.Records()
+	lines := sink.Records()[1:]
 	require.Len(t, lines, 1)
 	require.Equal(t, audit.OpDeleteRecord, lines[0].Op)
 }
@@ -145,7 +146,7 @@ func TestChange_Refuses(t *testing.T) {
 	require.ErrorIs(t, err, records.ErrNotFound)
 }
 
-func TestNewService_MutableNeedsAuditAndMutator(t *testing.T) {
+func TestNewService_NeedsAuditAndMutableNeedsMutator(t *testing.T) {
 	meta, err := metamodel.Parse([]byte(mutableSchema))
 	require.NoError(t, err)
 	st, err := filerecords.New(storage.NewMemFS(), "/records", filelock.ProcessPrivate{})
@@ -210,7 +211,7 @@ func TestUpdate_RefusesEmptyChange(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.Update(ctx, "hours", rows[0].ID, records.Change{Revision: rows[0].Revision})
 	require.ErrorIs(t, err, records.ErrInvalid)
-	require.Empty(t, sink.Records())
+	require.Len(t, sink.Records(), 1, "only the append is audited")
 }
 
 // A change refused on a readable owner is audited as denied; one on a hidden
@@ -227,10 +228,10 @@ func TestChange_AuditsDenial(t *testing.T) {
 	o.readOnly["SITE-3"] = true
 
 	require.ErrorIs(t, s.Delete(ctx, "hours", rows[0].ID, 0), records.ErrNotFound)
-	require.Empty(t, sink.Records())
+	require.Len(t, sink.Records(), 1, "only the append is audited")
 
 	require.ErrorIs(t, s.Delete(ctx, "hours", rows[1].ID, 0), records.ErrForbidden)
-	lines := sink.Records()
+	lines := sink.Records()[1:]
 	require.Len(t, lines, 1)
 	require.Equal(t, audit.OpDeniedWrite, lines[0].Op)
 	require.Equal(t, &audit.Subject{Kind: "record", Type: "hours", ID: rows[1].ID}, lines[0].Subject)

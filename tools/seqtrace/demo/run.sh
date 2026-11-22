@@ -226,7 +226,8 @@ YAML
     # both, so those gates let it through.
     # A role of its own, held by a principal outside the graph, gets it too
     # but reads only tasks, so the row gate refuses it a risk's conflict.
-    granted='permissions: [manage-roles, publish-policy, "git:sync", "remote:sync"]'
+    # The manager also gets audit:read, so the audit log route lets it in.
+    granted='permissions: [manage-roles, publish-policy, "git:sync", "remote:sync", "audit:read"]'
     awk -v granted="$granted" '
         /^    permissions: \[manage-roles, publish-policy\]$/ { print "    " granted; next }
         { print }
@@ -236,6 +237,14 @@ YAML
     grep -qF "    $granted" "$WORK/project/acl.yaml" || die "could not grant git:sync to the manager"
     grep -q '^  sync@perf.example: seqtrace-sync$' "$WORK/project/acl.yaml" ||
         die "could not assign the seqtrace-sync role"
+    # A nav entry gated on a permission, so the sidebar asks whether the
+    # principal holds it on any entity.
+    board='  - {label: "Task board", kanban: task_board}'
+    grep -qxF "$board" "$WORK/project/data-entry.yaml" || die "could not find the task board nav entry"
+    awk -v board="$board" '
+        $0 == board { print "  - {label: \"Task board\", kanban: task_board, permission: publish-policy}"; next }
+        { print }
+    ' "$WORK/project/data-entry.yaml" >"$WORK/data-entry.yaml" && mv "$WORK/data-entry.yaml" "$WORK/project/data-entry.yaml"
 fi
 RELA_DATABASE_URL="$DSN" "$WORK/rela" --project "$WORK/project" dev seed --scale "$SCALE"
 
@@ -424,6 +433,17 @@ if [[ ${SEQTRACE_SUITE:-} == routes ]]; then
         "{\"rows\":[{\"owner\":\"$TASK\",\"ts\":\"2026-01-05T10:00:00Z\",\"fields\":{\"hours\":\"1.25\"}}]}"
     EXPECT=200 req "route GET records as reader" "$CAROL" GET "$hours?owner=$TASK"
     EXPECT=200 req "route GET record aggregate as reader" "$CAROL" GET "$hours/_aggregate?owner=$TASK&field=hours&bucket=day"
+    EXPECT=403 req "route GET /api/v1/_audit as reader, denied" "$CAROL" GET "/api/v1/_audit"
+    EXPECT=200 req "route GET /api/v1/_audit as manager" "$ALICE" GET "/api/v1/_audit"
+    EXPECT=200 req "route GET task changes as reader" "$CAROL" GET "/api/v1/_changes/task/$TASK"
+    EXPECT=404 req "route GET risk changes as reader, hidden" "$CAROL" GET "/api/v1/_changes/risk/$RISK"
+    # The next-action read is an ACL-scoped list and refuses no principal;
+    # the one refusal it has is a surface that does not exist.
+    EXPECT=400 req "route GET next action, unknown surface" "$CAROL" GET "/api/v1/_next_action?surface=nowhere"
+    EXPECT=204 req "route POST next action snooze as reader" "$CAROL" POST "/api/v1/_next_action" \
+        '{"source":"overdue-critical","kind":"snooze","duration":"1d"}'
+    EXPECT=400 req "route POST next action, unknown source" "$CAROL" POST "/api/v1/_next_action" \
+        '{"source":"nowhere","kind":"snooze","duration":"1d"}'
     REQ_MAX_TIME=1 req "route GET /api/v1/_events as reader" "$CAROL" GET "/api/v1/_events"
     # Project-wide appearance: the reader should be refused.
     req "route PUT /api/v1/_palette as reader, denied" "$CAROL" PUT "/api/v1/_palette" '{}'

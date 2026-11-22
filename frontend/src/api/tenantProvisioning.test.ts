@@ -62,14 +62,17 @@ describe('tenant provisioning', () => {
     expect(reload).toHaveBeenCalledTimes(1)
   })
 
-  it('reloads when the organization turns out suspended', async () => {
-    const fetchFn = vi.fn(() => Promise.resolve(json(200, { status: 'suspended' })))
-    const wait = vi.fn(() => Promise.resolve())
-    const reload = vi.fn()
-    await startProvisioningPoll({ fetchFn: fetchFn as unknown as typeof fetch, wait, reload })
-    expect(wait).not.toHaveBeenCalled()
-    expect(reload).toHaveBeenCalledTimes(1)
-  })
+  it.each(['suspended', 'archived'])(
+    'reloads when the organization turns out %s',
+    async (status) => {
+      const fetchFn = vi.fn(() => Promise.resolve(json(200, { status })))
+      const wait = vi.fn(() => Promise.resolve())
+      const reload = vi.fn()
+      await startProvisioningPoll({ fetchFn: fetchFn as unknown as typeof fetch, wait, reload })
+      expect(wait).not.toHaveBeenCalled()
+      expect(reload).toHaveBeenCalledTimes(1)
+    }
+  )
 
   it.each([401, 403])('stops polling and reloads on %i', async (status) => {
     const fetchFn = vi.fn(() => Promise.resolve(json(status, {})))

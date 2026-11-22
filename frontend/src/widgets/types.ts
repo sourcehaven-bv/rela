@@ -117,7 +117,10 @@ export type WidgetHintKind =
 //
 // 'file': a file value as names and download links, never FileWidget's
 // <img> previews (one request per image per cell).
-export type DenseHintKind = WidgetHintKind | 'file'
+// 'image': the file of a `display: {image: true}` property as a small
+// thumbnail. The schema asked for it, so the request per row is intended;
+// the image is lazy-loaded, so only visible rows fetch it.
+export type DenseHintKind = WidgetHintKind | 'file' | 'image'
 
 export interface WidgetRoutingHint {
   kind: WidgetHintKind

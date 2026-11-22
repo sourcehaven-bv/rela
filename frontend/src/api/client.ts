@@ -2,7 +2,10 @@ import axios, { type AxiosInstance, type AxiosResponse } from 'axios'
 import { ApiError, toApiError } from './errors'
 import { apiUrl } from './base'
 import { isProvisioningResponse, startProvisioningPoll } from './tenantProvisioning'
+import { trackWorkspaceReadOnly } from './workspaceReadOnly'
+import { probeSessionEnded, trackAccess } from './workspaceAccess'
 import { carriesAsOf, currentAsOf } from './asOf'
+import { htmlResponseError, isHtmlResponse } from './htmlResponse'
 import { t } from '@/i18n'
 
 // The error types and helpers live in errors.ts; re-export so existing
@@ -55,6 +58,15 @@ class ApiClient {
           void startProvisioningPoll()
           return Promise.reject(toApiError(new Error('tenant_provisioning')))
         }
+        // An HTML page in place of JSON is not data: reject it rather than
+        // hand a string to the caller. It may be the edge's sign-in page,
+        // reached through a redirect the browser followed, so ask once
+        // whether the session ended, as for a request with no response.
+        if (isHtmlResponse(response)) {
+          void probeSessionEnded()
+          return Promise.reject(htmlResponseError(response))
+        }
+        trackWorkspaceReadOnly(response.config, response.status, response.data)
         return response
       },
       (error: unknown) => {
@@ -68,7 +80,17 @@ class ApiClient {
         ) {
           void startProvisioningPoll()
         }
-        return Promise.reject(toApiError(error))
+        if (axios.isAxiosError(error) && error.response) {
+          trackWorkspaceReadOnly(error.config ?? {}, error.response.status, error.response.data)
+          trackAccess(error.response.status, error.response.data)
+        }
+        const normalized = toApiError(error)
+        // No response at all: perhaps the edge sent an ended session to its
+        // sign-in page and the browser refused the redirect. Ask once.
+        if (normalized instanceof ApiError && normalized.kind === 'network') {
+          void probeSessionEnded()
+        }
+        return Promise.reject(normalized)
       },
     )
   }

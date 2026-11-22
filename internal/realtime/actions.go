@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
@@ -285,7 +287,7 @@ func (c *call) offeredActions(m channels.Message) []string {
 		return nil
 	}
 	var out []string
-	for _, name := range sortedKeys(mt.Actions) {
+	for _, name := range slices.Sorted(maps.Keys(mt.Actions)) {
 		if _, err := c.actionCheck(m, name); err == nil {
 			out = append(out, name)
 		}

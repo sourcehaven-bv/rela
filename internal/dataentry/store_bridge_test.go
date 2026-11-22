@@ -27,7 +27,8 @@ func bridgeApp(t *testing.T, st store.Store) *App {
 	require.NoError(t, err)
 	a := &App{store: st, broker: newEventBroker(), feed: feed}
 	a.live = testLiveHub(a)
-	a.startStoreEventBridge()
+	a.sse = newSSEHandler(a)
+	a.sse.startStoreEventBridge()
 	t.Cleanup(a.StopWatching)
 	return a
 }

@@ -109,6 +109,7 @@ func compatSample(t *testing.T) string {
 		Subject: "Weekly digest",
 		Lang:    "en",
 		Intro:   "You have **3** items. See [the board](https://app.example/board).",
+		Button:  &mailrender.Button{Label: "Open the board", URL: "/board"},
 		Sections: []mailrender.Section{{
 			Title:   "Overdue",
 			Body:    "These are _past_ due.",
@@ -458,6 +459,35 @@ func TestCompat_DarkModeDoesNotEraseTheAccentBar(t *testing.T) {
 
 	require.NotEqual(t, strings.TrimSpace(wrapRule[1]), strings.TrimSpace(barRule[1]),
 		"the accent bar is the same color as the background, so it is invisible")
+}
+
+// TestCompat_DarkModePaintsTheBody pins that the dark block paints the body,
+// not only the wrapper table. A client that honors the block but leaves a
+// margin around the table, or shows the body past a short mail, otherwise
+// frames the dark card in the light page color.
+func TestCompat_DarkModePaintsTheBody(t *testing.T) {
+	t.Parallel()
+
+	html := compatSample(t)
+	start := strings.Index(html, "@media (prefers-color-scheme: dark)")
+	require.GreaterOrEqual(t, start, 0, "dark block missing")
+	dark := html[start:strings.Index(html, "</style>")]
+	dark = dark[strings.Index(dark, "{")+1:] // the rules inside the @media block
+
+	body := regexp.MustCompile(`(?m)^([^{}]*)\{[^}]*background-color:\s*([^;!]+)\s*!important`).FindAllStringSubmatch(dark, -1)
+	var bodyColor, wrapColor string
+	for _, m := range body {
+		for sel := range strings.SplitSeq(m[1], ",") {
+			switch strings.TrimSpace(sel) {
+			case "body":
+				bodyColor = strings.TrimSpace(m[2])
+			case ".wrap":
+				wrapColor = strings.TrimSpace(m[2])
+			}
+		}
+	}
+	require.NotEmpty(t, bodyColor, "the dark block does not paint the body")
+	require.Equal(t, wrapColor, bodyColor, "the body and the wrapper differ in dark mode")
 }
 
 // staleAfter is when the vendored dataset starts drawing a log note. Twelve

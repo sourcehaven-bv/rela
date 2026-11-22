@@ -51,6 +51,16 @@ func (r *Renderer) renderText(m *Message) []byte {
 		b.WriteString("\n\n")
 	}
 
+	// Render has vetted the button before this runs.
+	if m.Button != nil {
+		if href, ok := r.safeHref(m.Button.URL); ok {
+			b.WriteString(plainText(m.Button.Label))
+			b.WriteString(": ")
+			b.WriteString(href)
+			b.WriteString("\n\n")
+		}
+	}
+
 	for i := range m.Sections {
 		r.writeTextSection(&b, &m.Sections[i])
 	}

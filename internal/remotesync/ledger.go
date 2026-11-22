@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"slices"
 	"sort"
@@ -211,7 +212,7 @@ func (l *ledger) save(ctx context.Context, kv state.KV, m *Mapping) error {
 	if len(l.held) > 0 {
 		doc.Held = l.held
 	}
-	for _, k := range sortedKeys(l.rows) {
+	for _, k := range slices.Sorted(maps.Keys(l.rows)) {
 		doc.Rows = append(doc.Rows, l.rows[k])
 	}
 	data, err := json.Marshal(doc)

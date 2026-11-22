@@ -2,6 +2,7 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -75,7 +76,7 @@ func validateListGroupBy(
 	if len(g.Labels) > 0 && g.Buckets == "" {
 		errs = append(errs, prefix+": labels only apply with buckets")
 	}
-	for _, key := range sortedMapKeys(g.Labels) {
+	for _, key := range slices.Sorted(maps.Keys(g.Labels)) {
 		if !slices.Contains(DateBucketKeys, key) {
 			errs = append(errs, fmt.Sprintf("%s: labels has unknown bucket %q (valid: %s)",
 				prefix, key, strings.Join(DateBucketKeys, ", ")))
@@ -150,7 +151,7 @@ func validateListGroups(
 		}
 		if grp.Color != "" && !ValidGroupColors[grp.Color] {
 			errs = append(errs, fmt.Sprintf("%s: groups[%d] has unknown color %q (valid: %s)",
-				prefix, i, grp.Color, strings.Join(sortedMapKeys(ValidGroupColors), ", ")))
+				prefix, i, grp.Color, strings.Join(slices.Sorted(maps.Keys(ValidGroupColors)), ", ")))
 		}
 	}
 	return errs

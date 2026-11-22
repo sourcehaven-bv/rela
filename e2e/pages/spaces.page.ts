@@ -19,6 +19,11 @@ export class SpacesPage extends BasePage {
     return this.page.locator("#main-sidebar .rl-sidebar__pinned a");
   }
 
+  /** The Shortcuts button in the sidebar footer. */
+  get shortcutsButton(): Locator {
+    return this.page.locator("#main-sidebar .shortcuts-btn");
+  }
+
   async openCreateMenu() {
     await this.page.getByTestId("space-create").click();
   }

@@ -50,6 +50,8 @@
       "jobRunning": "The job of this step runs: attempt {n} of {max}.",
       "jobWaiting": "The job of this step waits for attempt {n} of {max}.",
       "jobWaitingAt": "The job of this step waits for attempt {n} of {max}, at {at}.",
+      "jobRetrying": "The job of this step failed and is retried: attempt {n} of {max}.",
+      "jobRetryingAt": "The job of this step failed and is retried: attempt {n} of {max}, at {at}.",
       "jobFailed": "The job of this step failed after {n} failed attempt: {why}. Retry the run to start again. | The job of this step failed after {n} failed attempts: {why}. Retry the run to start again.",
       "jobFailKind": {
         "exhausted": "no attempts are left",
@@ -71,7 +73,8 @@
       "forOthers": "This step is waiting for someone else.",
       "waiting": "This step is waiting.",
       "processing": "This step is being processed.",
-      "failedPlain": "This step could not be completed. Someone who manages this flow has to retry it."
+      "failedPlain": "Something went wrong at this step. It continues once the team behind this process has solved it.",
+      "jobError": "Last error:"
     },
     "step": {
       "title": "Step",
@@ -82,6 +85,8 @@
       "completing": "Completing…",
       "done": "Step completed.",
       "finished": "Step completed. The run has finished.",
+      "blockedRequired": "The run stays at this step: the condition of the next step does not hold yet. Check the fields marked *. Your entries are kept.",
+      "movedWithWarnings": "The run moved on. Some values you entered have a warning: check them on the subject.",
       "problem": {
         "blocked": "The run stays at this step: no condition of the next step holds yet. Your entries are kept.",
         "guard": "Your values were saved, but a condition of the next step could not be checked. The run stays where it is.",
@@ -140,7 +145,11 @@
       "loadFailed": "Your tasks could not be loaded.",
       "empty": "Nothing waits for you.",
       "truncated": "Not every task could be read. Pick a flow to see the rest.",
-      "branchState": "{state} (branch {branch})"
+      "branchState": "{state} (branch {branch})",
+      "failedTitle": "Failed runs",
+      "failedHint": "The job of these runs failed for good. Retry a run once the cause is fixed.",
+      "waitingTitle": "Waiting for you",
+      "actions": "Actions"
     }
   },
   "inbox": {
@@ -223,7 +232,11 @@
     "schemaChanged": "The configuration changed. Reload and try again.",
     "stateChanged": "This changed while you were working. Try again.",
     "encryptedInaccessible": "This item is encrypted and cannot be edited here",
-    "historyUnsupported": "This installation does not keep version history"
+    "historyUnsupported": "This installation does not keep version history",
+    "tenantReadOnly": "This workspace is read-only",
+    "originNotAllowed": "This page was opened at an address this server does not accept. Open it at its usual address.",
+    "originMissing": "The browser did not say which page sent this request, so the server refused it. Reload the page and try again.",
+    "unexpectedResponse": "The server sent a page instead of data. Your session may have ended. Reload the page."
   },
   "dashboard": {
     "openList": "Open the list",
@@ -489,6 +502,7 @@
     "view": "View",
     "copyTo": "Copy to",
     "export": "Export",
+    "moreActions": "More actions",
     "convertMenu": "Convert",
     "convert": {
       "defaultFaceLower": "default face",
@@ -730,7 +744,13 @@
       "dragHint": "or drag & drop",
       "atCapacity": "Maximum of {n} files reached — remove one to add another.",
       "notPermitted": "Editing this attachment is not permitted.",
-      "unavailable": "Attachment editing unavailable."
+      "unavailable": "Attachment editing unavailable.",
+      "imageNone": "No image",
+      "imageReplace": "Replace image",
+      "imageAdd": "Add an image",
+      "imageRemove": "Remove image",
+      "imageHint": "PNG, JPEG, GIF or WebP, up to 5 MB",
+      "imageOnly": "Choose a PNG, JPEG, GIF or WebP image."
     },
     "externalRef": {
       "setBySystem": "Set by the {system} sync",
@@ -749,6 +769,7 @@
     }
   },
   "form": {
+    "workspaceReadOnly": "This workspace is read-only. New records cannot be saved.",
     "saveFailed": "Save failed",
     "allChangesSaved": "All changes saved",
     "sidePanel": {
@@ -907,13 +928,15 @@
     "item": "item",
     "actionConfirm": "Apply {label} to {n} selected entities?",
     "searchPlaceholder": "Search...",
-    "searchEntities": "Search {entity}s...",
+    "searchEntities": "Search {entity}...",
+    "searchView": "Search...",
     "clearSearch": "Clear search",
     "removeFilter": "Remove {property} filter",
     "groupTruncated": "Showing the first {shown} of {total} rows. Filter the list to see the rest.",
     "sortDropped": "Shown unsorted: {reason}",
     "noMatches": "No matches for “{query}”.",
-    "noEntities": "No {entity}s found.",
+    "noEntities": "No {entity} found.",
+    "noItems": "Nothing found.",
     "createOne": "Create one",
     "inaccessible": "inaccessible",
     "unknownList": "The list \"{id}\" does not exist in the configuration.",
@@ -926,10 +949,23 @@
       "busy": "Busy"
     },
     "filter": {
+      "title": "Filters",
       "all": "All",
       "filterBy": "Filter by {label}",
       "clear": "Clear filters",
       "optionsLoadFailed": "Could not load filter options for “{label}”."
+    },
+    "sort": {
+      "button": "Sort",
+      "buttonActive": "Sort: {property}",
+      "buttonMulti": "Sort: {property} +{count}",
+      "keysLabel": "Sort keys",
+      "keyAscending": "{property} (ascending)",
+      "keyDescending": "{property} (descending)",
+      "menuLabel": "Sort by",
+      "default": "Default order",
+      "ascending": "Ascending",
+      "descending": "Descending"
     },
     "adhoc": {
       "button": "+ Filter",
@@ -1105,8 +1141,24 @@
       "searching": "Searching...",
       "selected": "{number} selected"
     },
-    "provisioning": "Setting up your organization. This takes a moment.",
-    "provisioningFailed": "Setting up your organization did not finish. Try again later, or contact your administrator if it keeps failing."
+    "provisioning": "Setting up your workspace. This takes a moment.",
+    "provisioningFailed": "Setting up your workspace did not finish. Try again later, or contact your administrator if it keeps failing.",
+    "access": {
+      "sessionEndedTitle": "Your session has ended",
+      "sessionEndedBody": "Sign in again to continue.",
+      "signInAgain": "Sign in again",
+      "suspendedTitle": "This workspace is suspended",
+      "suspendedBody": "Nobody can open it until it is resumed. Its data is kept.",
+      "archivedTitle": "This workspace is archived",
+      "archivedBody": "It can no longer be opened. Its data is kept until it is deleted.",
+      "noIdentityTitle": "This server cannot identify you",
+      "unknownTitle": "This workspace is not available",
+      "unknownBody": "There is no workspace for your organisation here.",
+      "contact": "If you have questions, contact the person who manages your organisation's subscription.",
+      "openAccount": "Go to your account",
+      "tryAgain": "Try again",
+      "readOnlyBanner": "This workspace is read-only. Creating and editing are turned off."
+    }
   },
   "switcher": {
     "projects": "Projects",
@@ -1150,6 +1202,8 @@
     "confirmMessage": "This runs immediately and cannot be undone.",
     "done": "{label}: done",
     "notNow": "Not now",
+    "hide": "Hide",
+    "hideForNow": "Hide for now",
     "remindIn": "Remind me in {duration}",
     "notThisOne": "Not this one",
     "stop": "Stop suggesting this"
@@ -1400,6 +1454,10 @@
     "pipLabel": "{type}: {name}"
   },
   "gantt": {
+    "sortTitle": "Title",
+    "sortStart": "Start date",
+    "sortEnd": "End date",
+    "noMatches": "Nothing matches the search or filters.",
     "reloadFailed": "Could not reload the chart: {error}",
     "handle": {
       "start": "Start of {name}",
@@ -1567,6 +1625,9 @@
       "busy": "A sync is running on this remote. Try again shortly."
     }
   },
+  "configureList": {
+    "emptyMessage": "Text when empty"
+  },
   "configureAutomations": {
     "title": "Automations",
     "one": "Automation",
@@ -1615,6 +1676,12 @@
       "title": "Changes",
       "empty": "No changes recorded.",
       "system": "System",
+      "actor": {
+        "idp": "Identity provider ({event})",
+        "webhook": "Webhook {name}",
+        "integration": "Integration {name}"
+      },
+      "incoming": "{label}, from {source}",
       "changedFields": "Changed: {fields}",
       "op": {
         "created": "Created",
@@ -1641,7 +1708,13 @@
     "pickerAria": "Show the state on a date",
     "pickerTitle": "Show the data as it stood at the end of a date. Leave empty for now.",
     "banner": "Showing the state as of {when}. This view is read-only.",
+    "now": "Now",
     "backToNow": "Back to now",
     "readOnly": "This page shows a past state and is read-only. Go back to now to make changes."
+  },
+  "notFound": {
+    "title": "Page not found",
+    "description": "There is no page at this address. It may have moved, or the link may be wrong.",
+    "home": "Go to the home page"
   }
 }

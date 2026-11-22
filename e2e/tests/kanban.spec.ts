@@ -164,6 +164,42 @@ test.describe('Kanban Board', () => {
     });
   });
 
+  test.describe('Search and sort', () => {
+    test('search narrows the cards to the matches', async ({ appPage }) => {
+      const kanbanPage = new KanbanPage(appPage);
+
+      await kanbanPage.navigateToKanban('feature-board');
+      await expect(kanbanPage.cards.filter({ hasText: 'Dashboard Analytics' })).toBeVisible();
+
+      await kanbanPage.search('Authentication');
+
+      await expect(kanbanPage.cards.filter({ hasText: 'User Authentication' })).toBeVisible();
+      await expect(kanbanPage.cards.filter({ hasText: 'Dashboard Analytics' })).toHaveCount(0);
+    });
+
+    test('the sort menu sends the sort with the board read', async ({ appPage }) => {
+      const kanbanPage = new KanbanPage(appPage);
+
+      await kanbanPage.navigateToKanban('feature-board');
+
+      await kanbanPage.sortByAndWaitForRead('title', 'Descending', '-title');
+      await expect(kanbanPage.cards.filter({ hasText: 'Dashboard Analytics' })).toBeVisible();
+    });
+
+    test('the sort is kept in the URL and survives a reload', async ({ appPage }) => {
+      const kanbanPage = new KanbanPage(appPage);
+
+      await kanbanPage.navigateToKanban('feature-board');
+      await kanbanPage.sortBy('title', 'Descending');
+      await expect(appPage).toHaveURL(/sort=-title/);
+
+      await appPage.reload();
+      await kanbanPage.sortMenuButton.waitFor();
+      await expect(kanbanPage.sortMenuButton).toContainText(/title/i);
+      await expect(appPage).toHaveURL(/sort=-title/);
+    });
+  });
+
   test.describe('Create from Kanban', () => {
     test('create button opens the form in a dialog', async ({ appPage }) => {
       const kanbanPage = new KanbanPage(appPage);

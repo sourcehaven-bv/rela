@@ -108,7 +108,6 @@ test.describe('Entity CRUD Operations', () => {
       await entityPage.clickRelationLink(feature.id);
 
       await expect(appPage).toHaveURL(new RegExp(`/entity/feature/${feature.id}`));
-      await entityPage.expectTypeBadge('feature');
       await entityPage.expectHeadingText('RelationTestFeature');
     });
   });

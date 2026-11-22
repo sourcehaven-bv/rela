@@ -37,6 +37,15 @@ describe('FieldShell', () => {
     expect(w.find('.form-field').classes()).toContain('has-error')
   })
 
+  it('shows a warning without the error state, and an error over a warning', () => {
+    const w = shell({ label: 'X', warning: 'Write capitals only.' })
+    expect(w.find('.field-warning').text()).toBe('Write capitals only.')
+    expect(w.find('.form-field').classes()).not.toContain('has-error')
+    const both = shell({ label: 'X', warning: 'w', error: 'bad' })
+    expect(both.find('.field-warning').exists()).toBe(false)
+    expect(both.find('.field-error').text()).toBe('bad')
+  })
+
   it('omits help/error when absent and is not in error state', () => {
     const w = shell({ label: 'X' })
     expect(w.find('.field-help').exists()).toBe(false)

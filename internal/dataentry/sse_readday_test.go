@@ -54,7 +54,7 @@ func TestSSE_FailedNewDayRegateWithholds(t *testing.T) {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
 	st := &sseStream{
-		app: &App{acl: d}, feed: emptyFeed{}, verdicts: map[string]bool{},
+		h: newSSEHandler(&App{acl: d}), feed: emptyFeed{}, verdicts: map[string]bool{},
 		pending: map[string]struct{}{"ticket": {}}, regate: true, gateDay: "2026-12-31", cursor: 7,
 	}
 	// conn is nil: a frame would panic, so reaching the end proves nothing was sent.

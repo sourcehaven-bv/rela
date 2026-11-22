@@ -4,6 +4,7 @@ import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-rout
 import { useI18n } from 'vue-i18n'
 import { useQuery, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
+import { accessRefusal } from '@/api/workspaceAccess'
 import { useListKeyboard } from '@/composables/useListKeyboard'
 import { useListSelection } from '@/composables/useListSelection'
 import { useListActions } from '@/composables/useListActions'
@@ -39,6 +40,7 @@ import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
 import SearchBox from './SearchBox.vue'
 import AdHocFilterMenu from './AdHocFilterMenu.vue'
+import SortMenu, { type SortOption } from './SortMenu.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import AddToPileMenu from '@/components/piles/AddToPileMenu.vue'
@@ -284,8 +286,23 @@ const entityNoun = computed(() => {
   const type = listConfig.value?.entity ?? ''
   const def = schemaStore.getEntityType(type)
   const singular = def?.label || type || t('list.item')
-  return { singular, plural: def?.label_plural || def?.plural || undefined }
+  return { singular, plural: schemaStore.pluralLabel(type) || def?.plural || undefined }
 })
+
+// The empty list and the search box name the type by its plural label
+// ("No people found."), or leave it out when the schema has none.
+const typePlural = computed(() => schemaStore.pluralLabel(listConfig.value?.entity ?? ''))
+// A list's own `empty_message:` wins over both.
+const emptyTitle = computed(() => {
+  const own = listConfig.value?.empty_message?.trim()
+  if (own) return own
+  return typePlural.value ? t('list.noEntities', { entity: typePlural.value }) : t('list.noItems')
+})
+const searchPlaceholder = computed(() =>
+  typePlural.value
+    ? t('list.searchEntities', { entity: typePlural.value })
+    : t('list.searchPlaceholder')
+)
 
 const listIdRef = computed(() => props.listId)
 const batchAction = useBatchAction()
@@ -340,6 +357,7 @@ async function requestActionConfirm(
         ? action.confirm
         : t('list.actionConfirm', { label: action.label, n: selectedIds.value.size }),
     confirmLabel: action.label,
+    danger: action.style === 'danger',
   })
   if (!ok) return
   void executeAction(actionId, action, triggerEl)
@@ -740,6 +758,24 @@ function handleSort(field: string, event: MouseEvent) {
   page.value = 1
 }
 
+/** The properties the Sort menu offers: the list's own sortable columns. */
+const sortOptions = computed<SortOption[]>(() => {
+  const seen = new Set<string>()
+  const out: SortOption[] = []
+  for (const column of listConfig.value?.columns ?? []) {
+    if (!column.property || column.sortable === false || seen.has(column.property)) continue
+    seen.add(column.property)
+    out.push({ property: column.property, label: column.label || column.property })
+  }
+  return out
+})
+
+function handleSortMenu(specs: SortSpec[]) {
+  sortSpecs.value = specs
+  // Sort changed: back to page 1, as a header click does.
+  page.value = 1
+}
+
 /*
  * A column for the property the list is grouped by repeats its section's
  * heading on every row, so it is left out. Not for date buckets: a bucket
@@ -788,21 +824,28 @@ const tableColumns = computed<TableColumn[]>(() =>
     },
     /*
      * Which columns survive `compact: 'compress'`, the one-line layout the
-     * list takes beside an open detail panel.
+     * list takes on a phone and beside an open detail panel.
      *
      * An enum badge earns the space and a date does not: the badge is the
      * state you scan the list for, while the rest of the row is in the panel
      * already. A face column is that kind of state too, and so is a busy
      * column: whether someone works on a row now is what a reader scans the
      * list for. In the compressed layout an empty busy cell keeps its slot,
-     * as any empty primary cell does, so the badges stay aligned. Derived
-     * from the widget hint rather than from config, because `ListColumn` has
-     * no way to say it — an operator-facing `primary:` is the extensibility
-     * pass, not this one.
+     * as any empty primary cell does, so the badges stay aligned. That is
+     * the default, derived from the widget hint. A list column's `primary:`
+     * overrides it either way, so an operator can keep an invoice's total on
+     * a phone, or drop a badge.
      */
-    primary: !!listColumnOf(column)?.face || !!listColumnOf(column)?.busy || isEnumColumn(column),
+    primary: isPrimaryColumn(column),
   })),
 )
+
+/** Whether a column stays in the one-line compressed row. */
+function isPrimaryColumn(column: TableColumn): boolean {
+  const listColumn = listColumnOf(column)
+  if (listColumn?.primary !== undefined) return listColumn.primary
+  return !!listColumn?.face || !!listColumn?.busy || isEnumColumn(column)
+}
 
 /** Whether a column renders as an enum badge, per the widget routing. */
 function isEnumColumn(column: TableColumn): boolean {
@@ -1367,7 +1410,7 @@ watch(searchQuery, () => {
     <PageHeaderContent :title="listConfig.title || listConfig.entity">
       <template #actions>
         <BackButton v-if="backTarget" :target="backTarget" />
-        <ExportMenu :url-for="listExportUrlFor" />
+        <ExportMenu more :url-for="listExportUrlFor" />
         <RlButton
           v-for="a in toolbar.buttons.value"
           :key="`toolbar-action-${a.id}`"
@@ -1403,9 +1446,17 @@ watch(searchQuery, () => {
         <SearchBox
           ref="searchBoxRef"
           :model-value="searchQuery"
-          :placeholder="t('list.searchEntities', { entity: listConfig.entity })"
+          :placeholder="searchPlaceholder"
           @update:model-value="handleSearchUpdate"
         />
+        <FilterBar
+          v-if="listConfig.filter_controls?.length"
+          :config="listConfig"
+          :entity-type="entityType"
+          :filters="filters"
+          @filter="handleFilter"
+        />
+        <SortMenu :options="sortOptions" :model-value="sortSpecs" @update:model-value="handleSortMenu" />
         <AdHocFilterMenu
           ref="filterMenuRef"
           mode="list"
@@ -1455,13 +1506,6 @@ watch(searchQuery, () => {
     </div>
 
     <div class="list-content">
-      <FilterBar
-        v-if="listConfig.filter_controls?.length"
-        :config="listConfig"
-        :entity-type="entityType"
-        :filters="filters"
-        @filter="handleFilter"
-      />
       <!--
         A grouped list loads up to its row cap and no further, so past the cap
         the sections are a prefix of the list. Said once, above them, rather
@@ -1483,6 +1527,9 @@ watch(searchQuery, () => {
       </RlBanner>
       <RlStatusRegion v-if="loading">{{ t('list.loading') }}</RlStatusRegion>
 
+      <!-- The session or workspace screen says why the read failed; a
+           "Retry" here cannot succeed until it is resolved (BUG-ZL4K7QW). -->
+      <div v-else-if="loadError && accessRefusal" class="empty-state" data-testid="load-refused" />
       <div v-else-if="loadError" class="empty-state load-error">
         <p>{{ loadError }}</p>
         <RlButton variant="secondary" @click="listQuery.refetch()">{{ t('list.retry') }}</RlButton>
@@ -1500,7 +1547,7 @@ watch(searchQuery, () => {
         :title="
           searchQuery
             ? t('list.noMatches', { query: searchQuery })
-            : t('list.noEntities', { entity: listConfig.entity })
+            : emptyTitle
         "
       >
         <template #actions>
@@ -1552,8 +1599,8 @@ watch(searchQuery, () => {
         @collapse="onSectionCollapse"
       >
         <!--
-          The row's primary control. A plain link with no class of its own:
-          the row wraps this in a `display: contents` span and stretches ONE
+          The row's primary control. A plain link with no row-overlay class
+          of its own (its one class only sets the link colour): the row wraps this in a `display: contents` span and stretches ONE
           overlay over whatever it gets, so rela keeps cmd/middle-click and a
           hover URL preview without the `.row-link::after` it used to own.
           Two stretched overlays would fight, which is why this slot exists.
@@ -1563,6 +1610,7 @@ watch(searchQuery, () => {
           <RouterLink
             v-else-if="rowTargets.get(item.id)"
             :to="rowTargets.get(item.id)!"
+            class="entity-list__title-link"
             @click.capture="onRowClick(item as Entity, $event)"
           >
             <component
@@ -1833,6 +1881,31 @@ watch(searchQuery, () => {
  */
 .list-content > :not(.rl-table) {
   padding-inline: var(--rl-page-gutter-left) var(--rl-page-gutter-right);
+}
+
+/*
+ * The table starts right under the header band when nothing comes between
+ * them (BUG-6WQ1U8S). The pane's top padding and the table's own top padding
+ * added up to an empty band above the column headers. A banner, the filter
+ * chips or the view text keep that space, because the table is then not the
+ * first thing on the page. `--pane-padding-top` is the main pane's top
+ * padding (App.vue); a list always fills the shell's header slot, so no
+ * hamburger bar sits in that padding.
+ */
+.entity-list > .list-content:first-child > .rl-table:first-child {
+  margin-top: calc(-1 * var(--pane-padding-top, 0px));
+  padding-top: 0;
+}
+
+/*
+ * The row title links to the entity, so it reads as a link, in the theme's
+ * link colour, as dashboard cards and every other surface show it. That
+ * holds with or without `link:` on the column. The ancestor class outranks
+ * the table row's own `color: inherit` for the control in its name slot
+ * (RlTableRow).
+ */
+.rl-table-row .entity-list__title-link {
+  color: var(--rl-color-accent);
 }
 
 .empty-state {

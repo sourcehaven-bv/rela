@@ -130,6 +130,18 @@ export interface ActionConfig {
    * (TKT-I2SRNWR). Only `batch` is served; the prompt and outputs are not.
    */
   llm?: { batch?: { max: number } }
+  /**
+   * How an entity page draws the action: `danger` for a destructive button.
+   * Absent is the normal button. The action's confirm dialog takes the same
+   * style wherever the action runs; other surfaces draw their buttons as
+   * before.
+   */
+  style?: 'danger'
+  /**
+   * Position among the entity page's actions: lower first, then by label.
+   * Absent counts as 0.
+   */
+  order?: number
 }
 
 export interface AppConfig {
@@ -373,6 +385,8 @@ export interface ListConfig {
   footer?: string
   /** Fallback for `header`; the previously-unused field, used when `header` is unset. */
   description?: string
+  /** Text an empty list shows, replacing the built "No People found.". */
+  empty_message?: string
   columns: ListColumn[]
   filters?: ListFilter[]
   filter_controls?: FilterControl[]
@@ -517,6 +531,12 @@ export interface ListColumn {
   sortable?: boolean
   link?: string
   width?: string
+  /**
+   * Whether the column stays in a row too narrow for every column (a phone,
+   * or beside an open detail panel). Unset keeps the default: enum badges,
+   * the face and the busy indicator stay. Lists only.
+   */
+  primary?: boolean
 }
 
 export interface ListFilter {
@@ -987,6 +1007,12 @@ export interface DashboardCard {
    */
   width?: 'normal' | 'wide' | 'full'
   /**
+   * Leave the card out when its list or query has no rows for this reader.
+   * A card that failed to load still shows. The server refuses it on a line
+   * card.
+   */
+  hide_empty?: boolean
+  /**
    * Optional ACL permission gating this card's visibility (TKT-53KICM).
    *
    * The SPA does not act on this: the server already omits cards the principal
@@ -1385,6 +1411,11 @@ export interface SidebarData {
    */
   hidden_builtins?: BuiltinRow[]
   /**
+   * The rows the same sidebar leaves out on a phone-sized screen
+   * (`hidden_on_phone:`). Absent when no row sets it.
+   */
+  phone_hidden_builtins?: BuiltinRow[]
+  /**
    * Every page of `pages:`, keyed by page id, with the tabs this principal
    * may see (TKT-ITQ0HL). Absent when the config declares no pages.
    */
@@ -1532,8 +1563,13 @@ export interface SidebarSpace {
   home: string
 }
 
-/** A built-in sidebar row, as `builtins:` in data-entry.yaml names it. */
-export type BuiltinRow = 'search' | 'inbox' | 'flow_tasks' | 'flow_runs' | 'analysis'
+/**
+ * A built-in sidebar row, the as-of picker in the sidebar header, or the
+ * Shortcuts button in the sidebar footer, as `builtins:` in data-entry.yaml
+ * names it.
+ */
+export type BuiltinRow =
+  'search' | 'inbox' | 'flow_tasks' | 'flow_runs' | 'analysis' | 'as_of' | 'shortcuts'
 
 /** One row of a space's Create menu. */
 export interface SidebarCreate {

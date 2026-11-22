@@ -160,9 +160,19 @@ export class KanbanPage extends BasePage {
   /** Pick a value in the filter control labelled `label`. The board renders
    *  the list's FilterBar, so it is found the way the list page finds it. */
   async setFilter(label: string, value: string) {
-    const control = this.filterBar.locator('.filter-item').filter({ hasText: new RegExp(label, 'i') });
+    await this.openFilterMenu();
+    const control = this.filterPanel.locator('.filter-item').filter({ hasText: new RegExp(label, 'i') });
     await this.pickFilterOption(control, value);
     await this.waitForSpinnerToDisappear();
+  }
+
+  /** Sort the board and wait for the read that carries the sort. */
+  async sortByAndWaitForRead(property: string, direction: 'Ascending' | 'Descending', sortParam: string) {
+    const read = this.page.waitForRequest(
+      (r) => r.url().includes('/api/v1/') && r.url().includes(`sort=${encodeURIComponent(sortParam)}`),
+    );
+    await this.sortBy(property, direction);
+    await read;
   }
 
   /** The create dialog New opens over the board. */
@@ -173,6 +183,17 @@ export class KanbanPage extends BasePage {
   async clickCreate() {
     await this.createButton.click();
     await expect(this.createDialog).toBeVisible();
+  }
+
+  /** The per-column "+" buttons of a board whose columns offer create. */
+  get columnAddButtons(): Locator {
+    return this.page.locator('.rl-board-column__add');
+  }
+
+  /** The board's columns offer Add, so the header carries no New button. */
+  async expectColumnAddWithoutHeaderNew() {
+    await expect(this.columnAddButtons.first()).toBeVisible();
+    await expect(this.page.getByRole('button', { name: 'New', exact: true })).toHaveCount(0);
   }
 
   /** Press the dialog's Create, not "Create & add another". */

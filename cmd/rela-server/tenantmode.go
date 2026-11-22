@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"sync"
 	"time"
@@ -47,6 +48,9 @@ type tenantFlags struct {
 	// sharedHostConfig is -tenant-shared-host-config: share the .rela
 	// directory's secrets and ai.yaml with every tenant.
 	sharedHostConfig bool
+	// apiRole is -tenant-api-role: the role an operator principal needs to
+	// call the tenant API (TKT-59HWQ76). Empty turns the API off.
+	apiRole string
 }
 
 // withheldHostConfigReason is what a tenant's script sees when it reads a
@@ -75,6 +79,11 @@ func registerTenantFlags(t *tenantFlags) {
 			"refused. webhook: on a verified organization.created IdP webhook (needs -webhook-*). lazy: also "+
 			"on the org's first request, which is answered 202 while the tenant is created. Trusts every "+
 			"assertion the one configured issuer signs. Also RELA_TENANT_PROVISION.")
+	flag.StringVar(&t.apiRole, "tenant-api-role", envOr("RELA_TENANT_API_ROLE", ""),
+		"Tenant mode: turn on the tenant API (/api/v1/_tenants/<org_id>) for a control plane. It accepts "+
+			"the identity assertion of an operator principal (principal_type operator, no org_id) that "+
+			"holds this role, which the edge forwards after verifying the caller. Needs -tenant-provision "+
+			"webhook or lazy. Also RELA_TENANT_API_ROLE.")
 	flag.IntVar(&t.provisionRate, "tenant-provision-rate", envInt("RELA_TENANT_PROVISION_RATE"),
 		"Tenant mode: most tenant creations started per minute (default 10; at most 2 run at once). "+
 			"Also RELA_TENANT_PROVISION_RATE.")
@@ -227,6 +236,38 @@ func refuseTenantOnlyFlags(t tenantFlags) error {
 		return errors.New("-tenant-provision needs tenant mode (-tenant-mode)")
 	case t.provisionRate != 0:
 		return errors.New("-tenant-provision-rate needs tenant mode (-tenant-mode)")
+	case t.apiRole != "":
+		return errors.New("-tenant-api-role needs tenant mode (-tenant-mode)")
+	}
+	return nil
+}
+
+// validateTenantInbound refuses an IdP status-sync or tenant API
+// configuration the host cannot act on. secret is
+// $RELA_IDP_OPERATOR_SECRET.
+func validateTenantInbound(f *serverFlags, secret string) error {
+	if err := validateStatusSync(f, secret); err != nil {
+		return err
+	}
+	return validateTenantAPI(f)
+}
+
+// apiRolePattern constrains -tenant-api-role to the role names the edge
+// can put in an assertion.
+var apiRolePattern = regexp.MustCompile(`^[a-z][a-z0-9:_-]{0,63}$`)
+
+// validateTenantAPI refuses a tenant API configuration the host cannot
+// serve. The API creates tenants through the provisioning runner, so
+// provisioning must be on.
+func validateTenantAPI(f *serverFlags) error {
+	role := f.tenant.apiRole
+	switch {
+	case role == "":
+		return nil
+	case !apiRolePattern.MatchString(role):
+		return fmt.Errorf("-tenant-api-role %q must match %s", role, apiRolePattern)
+	case f.tenant.provision == "" || f.tenant.provision == string(tenanthost.ProvisionOff):
+		return errors.New("-tenant-api-role needs -tenant-provision webhook or lazy")
 	}
 	return nil
 }
@@ -369,6 +410,7 @@ func tenantWriter(t tenantFlags, baseDSN, auditRoot string, log lifecycleRecorde
 const (
 	actorProvision = "system:provision"
 	actorIDP       = "system:idp"
+	actorTenantAPI = "system:tenant-api"
 )
 
 // lifecycleRecorder writes the server's own lifecycle changes to the
@@ -385,10 +427,20 @@ type lifecycleRecorder struct {
 // is committed, so a failure to write the record is logged as an error and
 // does not undo or fail the change.
 func (l lifecycleRecorder) recordSystem(actor, action, orgID, schema string) {
+	l.recordFor(actor, "", action, orgID, schema)
+}
+
+// recordFor is recordSystem for a change a caller asked for. principal,
+// when set, is that caller's subject, such as the tenant API's operator
+// client.
+func (l lifecycleRecorder) recordFor(actor, principal, action, orgID, schema string) {
 	if l.cacheDir == "" {
 		return
 	}
 	rec := lifecycleEntry(actor, "rela-server", action, orgID, schema, nil)
+	if principal != "" {
+		rec["principal"] = principal
+	}
 	if err := writeLifecycle(l.cacheDir, rec); err != nil {
 		slog.Error("tenant lifecycle change not recorded", "file", lifecycleLog, "actor", actor,
 			"action", action, "org_id", orgID, "error", err)
@@ -527,6 +579,7 @@ type tenantOptions struct {
 	provision      tenanthost.ProvisionConfig
 	orgStatus      tenanthost.OrgStatusSource
 	idpWriter      tenanthost.IDPSuspension
+	tenantAPI      *tenantAPIOptions
 }
 
 // tenantHost is a running multi-tenant server: the front handler and the
@@ -577,7 +630,7 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 		return nil, err
 	}
 	secret := os.Getenv(envIDPOperatorSecret)
-	if verr := validateStatusSync(f, secret); verr != nil {
+	if verr := validateTenantInbound(f, secret); verr != nil {
 		return nil, verr
 	}
 	absDir, err := filepath.Abs(f.projectDir)
@@ -634,7 +687,8 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 		_ = resolver.Close()
 		return nil, err
 	}
-	opts := tenantOptions{resident: f.tenant.maxResident, open: f.tenant.maxOpen, provision: prov}
+	opts := tenantOptions{resident: f.tenant.maxResident, open: f.tenant.maxOpen, provision: prov,
+		tenantAPI: newTenantAPIOptions(f.tenant.apiRole, resolver, writer, base.UserEntityType(), lifecycle)}
 	if f.tenant.idpOrgAPI != "" {
 		if opts.orgStatus, err = statusSyncSource(f.tenant, secret); err != nil {
 			_ = resolver.Close()
@@ -653,6 +707,18 @@ func newTenantHost(f *serverFlags, accessLog *slog.Logger) (*tenantHost, error) 
 		return nil, err
 	}
 	return th, nil
+}
+
+// shellBoot reads the app name and language the tenant-free shell shows
+// from the shared data-entry.yaml. An unreadable file leaves the shell as
+// built: the tenants' own config load reports a broken file.
+func shellBoot(base *appbuild.SharedBase) dataentry.ShellBoot {
+	boot, err := dataentry.LoadShellBoot(context.Background(), base.ProjectConfig().Load)
+	if err != nil {
+		slog.Warn("tenant mode: shell reads no app name", "error", err)
+		return dataentry.ShellBoot{}
+	}
+	return boot
 }
 
 // tenantHost wires the registry and the front handler over one shared base.
@@ -681,12 +747,16 @@ func (s *server) tenantHost(
 	hcfg := tenanthost.Config{
 		Verifier:   verifier,
 		HeaderName: s.f.jwtHeader,
-		Static:     dataentry.StaticShell(),
+		Static:     dataentry.StaticShell(shellBoot(base)),
 		Provision:  limits.provision,
+		TenantAPI:  limits.tenantAPI.config(registry.RevalidateOrg),
 		Acquire: func(ctx context.Context, orgID string) (http.Handler, func(), error) {
 			lease, aerr := registry.Acquire(ctx, orgID)
 			if aerr != nil {
 				return nil, nil, aerr
+			}
+			if lease.Tenant.ReadOnly {
+				return tenanthost.ReadOnly(lease.Value().handler), lease.Release, nil
 			}
 			return lease.Value().handler, lease.Release, nil
 		},
@@ -711,7 +781,7 @@ func (s *server) tenantHost(
 		mode = tenanthost.ProvisionOff
 	}
 	slog.Info("tenant mode enabled", "max_resident", limits.resident, "max_open", limits.open,
-		"provision", string(mode), "idp_status_sync", hcfg.StatusSync != nil)
+		"provision", string(mode), "idp_status_sync", hcfg.StatusSync != nil, "tenant_api", hcfg.TenantAPI != nil)
 	return &tenantHost{addr: s.addr, handler: host, host: host, registry: registry}, nil
 }
 

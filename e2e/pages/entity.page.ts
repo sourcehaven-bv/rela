@@ -6,7 +6,6 @@ export class EntityPage extends BasePage {
   readonly heading: Locator;
   readonly editButton: Locator;
   readonly deleteButton: Locator;
-  readonly typeBadge: Locator;
   /** Rendered document body inside the documents panel (if any). */
   readonly documentBody: Locator;
   /** Document panel tab selector (only rendered when >1 doc applies). */
@@ -18,7 +17,6 @@ export class EntityPage extends BasePage {
     this.heading = page.locator('main h1').first();
     this.editButton = page.locator('a:has-text("Edit"), button:has-text("Edit")').first();
     this.deleteButton = page.locator('button:has-text("Delete")').first();
-    this.typeBadge = page.locator('.entity-type-badge');
     this.documentBody = page.locator('.document-body').first();
     this.documentSelector = page.locator('.documents-panel .doc-select');
   }
@@ -406,11 +404,6 @@ export class EntityPage extends BasePage {
     await expect(item).toBeVisible();
     const trigger = item.locator('.card-header, .list-link').first();
     await trigger.click();
-  }
-
-  async expectTypeBadge(type: string | RegExp) {
-    const matcher = type instanceof RegExp ? type : new RegExp(type, 'i');
-    await expect(this.typeBadge.filter({ hasText: matcher }).first()).toBeVisible();
   }
 
   async hasEditButton(): Promise<boolean> {
@@ -825,7 +818,9 @@ export class EntityPage extends BasePage {
 
   async expectTableCellText(heading: string, rowId: string, column: string, text: string) {
     const cell = await this.sectionTableCell(heading, rowId, column);
-    await expect(cell).toHaveText(text);
+    // innerText, not textContent: each cell also holds its column label for
+    // the stacked phone layout, hidden at this width (BUG-6WQ1U8S).
+    await expect(cell).toHaveText(text, { useInnerText: true });
   }
 
   /** Open a cell's inline editor, type `value` and keep it with Enter.
@@ -872,5 +867,10 @@ export class EntityPage extends BasePage {
     const startUrl = this.page.url();
     await this.page.locator('.scope-nav').getByRole('link', { name: /^Next/ }).click();
     await this.page.waitForURL((url) => url.href !== startUrl);
+  }
+
+  /** The image preview a file property with `display: {image: true}` shows. */
+  imagePreview(): Locator {
+    return this.page.locator("main img.image-preview-img");
   }
 }

@@ -14,7 +14,7 @@ vi.mock('vue-router', async (orig) => ({
   ...(await orig<typeof import('vue-router')>()),
   useRouter: () => ({ push: routerPush }),
 }))
-type ConfirmOpts = { title: string; message: string; confirmLabel?: string }
+type ConfirmOpts = { title: string; message: string; confirmLabel?: string; danger?: boolean }
 const confirmMock = vi.fn<(o: ConfirmOpts) => Promise<boolean>>(async () => true)
 vi.mock('@/composables/useConfirm', () => ({
   useConfirm: () => ({ confirm: (o: ConfirmOpts) => confirmMock(o) }),
@@ -102,6 +102,16 @@ describe('useToolbarActions', () => {
     mockRunAction.mockResolvedValue(null)
     await api.run(api.buttons.value[0])
     expect(mockRunAction).toHaveBeenCalledOnce()
+  })
+
+  it('draws the confirm of a style: danger action in the danger style', async () => {
+    const { api } = setup(
+      { 'action:vvt-nieuw': true },
+      { label: 'New VvT', script: 'v.lua', confirm: true, style: 'danger' }
+    )
+    confirmMock.mockResolvedValueOnce(false)
+    await api.run(api.buttons.value[0])
+    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({ danger: true }))
   })
 
   it('reports a failure and clears busy', async () => {

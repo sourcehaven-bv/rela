@@ -191,8 +191,9 @@ func (f flowTaskSource) subjects(
 		}
 	}
 	ctx = primeVerdicts(ctx, a.fieldResolver, picked)
+	aff := a.affordances
 	for addr, e := range out {
-		out[addr] = a.redactedForSuggestion(ctx, e)
+		out[addr] = redactedForSuggestion(ctx, aff, e)
 	}
 	return out, nil
 }

@@ -373,7 +373,7 @@ func TestComments_SchemaExposesCommentable(t *testing.T) {
 		app := commentsApp(t)
 
 		rec := httptest.NewRecorder()
-		app.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
+		app.schemaAPI.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
 		require.Equal(t, http.StatusOK, rec.Code)
 
 		var got struct {
@@ -389,7 +389,7 @@ func TestComments_SchemaExposesCommentable(t *testing.T) {
 		app := newTestAppV1(t) // no comments config
 
 		rec := httptest.NewRecorder()
-		app.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
+		app.schemaAPI.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
 		require.Equal(t, http.StatusOK, rec.Code)
 
 		var raw struct {

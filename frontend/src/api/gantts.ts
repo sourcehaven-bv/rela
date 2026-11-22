@@ -48,9 +48,19 @@ export interface GanttResponse {
   truncated?: boolean
 }
 
-/** getGantt fetches the folded tree for a configured gantt, optionally
- * re-rooted at one entity (server-side drill for trees past the cap). */
-export async function getGantt(id: string, root?: string): Promise<GanttResponse> {
-  const params = root ? { root } : undefined
+/**
+ * getGantt fetches the folded tree for a configured gantt, optionally
+ * re-rooted at one entity (server-side drill for trees past the cap).
+ *
+ * `narrow` is the reader's own search (`q`) and `filter[...]` params, as on a
+ * list. The server applies them before the roll-up, so a dropped entity is in
+ * no ancestor's span; the drilled root stays whether or not it matches.
+ */
+export async function getGantt(
+  id: string,
+  root?: string,
+  narrow?: Record<string, string>,
+): Promise<GanttResponse> {
+  const params = root || narrow ? { ...narrow, ...(root ? { root } : {}) } : undefined
   return api.get<GanttResponse>(`/_gantts/${id}`, params)
 }

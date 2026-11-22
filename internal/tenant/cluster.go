@@ -55,10 +55,17 @@ const (
 type SuspendCause string
 
 // The suspension causes. An IdP suspension is undone when the IdP
-// reactivates the org; an operator suspension only by an operator.
+// reactivates the org, and a tenant API suspension by the tenant API; an
+// operator suspension and an archive only by an operator.
 const (
 	SuspendedByOperator SuspendCause = "operator"
 	SuspendedByIDP      SuspendCause = "idp"
+	// SuspendedByAPI is a suspension the tenant API set, for example when
+	// the control plane reacts to an unpaid invoice.
+	SuspendedByAPI SuspendCause = "api"
+	// SuspendedByArchive marks an archived tenant: the tenant API deleted
+	// it, its data stays until an operator erases it, and it is not served.
+	SuspendedByArchive SuspendCause = "archive"
 )
 
 // schemaPrefix starts every derived schema name, so a derived name can never
@@ -123,8 +130,30 @@ type Record struct {
 	SuspendedBy SuspendCause
 	// ErasedAt is when the erasure finished. It is zero unless Status is
 	// [StatusErased].
-	ErasedAt     time.Time
+	ErasedAt time.Time
+	// ReadOnly reports that an active tenant serves reads only (see
+	// [Tenant.ReadOnly]).
+	ReadOnly bool
+	// Plan and Entitlements are what the tenant API last stored for the
+	// tenant's commercial plan. Both are empty until it stores them.
+	Plan         string
+	Entitlements Entitlements
+	// ArchivedAt is when the tenant API archived the tenant. It is zero
+	// unless SuspendedBy is [SuspendedByArchive].
+	ArchivedAt time.Time
+	// APIHold reports that the tenant API suspended the tenant and has not
+	// resumed it. It outlives an IdP suspension that takes over the cause,
+	// so the IdP's resume leaves the tenant suspended by the tenant API.
+	APIHold      bool
 	SchemaExists bool
+}
+
+// Archived reports whether the tenant API archived the tenant: it is
+// suspended and has an archive time. An archive time left on a tenant that
+// is served again (by a resume from a release before the tenant API) does
+// not count.
+func (r Record) Archived() bool {
+	return r.Status == StatusSuspended && !r.ArchivedAt.IsZero()
 }
 
 // controlReader reads the control table. The postgres build reads it over a
@@ -168,7 +197,9 @@ func newClusterResolver(base string, control controlReader, closer io.Closer) *C
 // A missing row also carries [ErrTenantAbsent], and a provisioning one
 // [ErrTenantProvisioning], so a host that provisions can tell them apart.
 // An erased row carries [ErrTenantErased] and neither of those, so a host
-// never provisions it again.
+// never provisions it again. An archived row also carries
+// [ErrTenantArchived], and a suspended one that is not archived
+// [ErrTenantSuspended].
 func (r *ClusterResolver) Resolve(ctx context.Context, orgID string) (Tenant, error) {
 	rec, err := r.Lookup(ctx, orgID)
 	if err != nil {
@@ -178,8 +209,13 @@ func (r *ClusterResolver) Resolve(ctx context.Context, orgID string) (Tenant, er
 		return Tenant{}, fmt.Errorf("%w: %w: %w: org_id %q is %s",
 			ErrUnknownTenant, ErrTenantInactive, ErrTenantProvisioning, orgID, rec.Status)
 	}
+	if rec.Archived() {
+		return Tenant{}, fmt.Errorf("%w: %w: %w: org_id %q is archived",
+			ErrUnknownTenant, ErrTenantInactive, ErrTenantArchived, orgID)
+	}
 	if rec.Status == StatusSuspended {
-		return Tenant{}, fmt.Errorf("%w: %w: org_id %q is %s", ErrUnknownTenant, ErrTenantInactive, orgID, rec.Status)
+		return Tenant{}, fmt.Errorf("%w: %w: %w: org_id %q is %s",
+			ErrUnknownTenant, ErrTenantInactive, ErrTenantSuspended, orgID, rec.Status)
 	}
 	if rec.Status == StatusErased {
 		return Tenant{}, fmt.Errorf("%w: %w: %q", ErrUnknownTenant, ErrTenantErased, orgID)
@@ -194,7 +230,10 @@ func (r *ClusterResolver) Resolve(ctx context.Context, orgID string) (Tenant, er
 	if err != nil {
 		return Tenant{}, fmt.Errorf("tenant: org_id %q: %w", orgID, err)
 	}
-	return Tenant{OrgID: orgID, Schema: rec.Schema, DSN: dsn}, nil
+	return Tenant{
+		OrgID: orgID, Schema: rec.Schema, DSN: dsn,
+		ReadOnly: rec.ReadOnly, Plan: rec.Plan, Entitlements: rec.Entitlements,
+	}, nil
 }
 
 // Lookup returns orgID's control record whatever its status, for an operator

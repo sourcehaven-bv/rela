@@ -2,6 +2,7 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -224,7 +225,7 @@ var channelWidgetTypes = map[string][]string{
 // placement value. data is the raw YAML, needed for the key checks.
 func validateChannelsShape(data []byte, cfg *Config) []string {
 	errs := channelsUnknownKeys(data)
-	for _, ctName := range sortedMapKeys(cfg.Channels) {
+	for _, ctName := range slices.Sorted(maps.Keys(cfg.Channels)) {
 		ct := cfg.Channels[ctName]
 		if ct.Placement != "" && !slices.Contains(channelPlacementValues, ct.Placement) {
 			errs = append(errs, fmt.Sprintf("channels.%s.placement: unknown value %q (valid values: %s)",
@@ -234,7 +235,7 @@ func validateChannelsShape(data []byte, cfg *Config) []string {
 			errs = append(errs, fmt.Sprintf("channels.%s.session.display: unknown value %q (valid values: %s)",
 				ctName, sp.Display, displayList(sessionDisplayValues)))
 		}
-		for _, mtName := range sortedMapKeys(ct.Messages) {
+		for _, mtName := range slices.Sorted(maps.Keys(ct.Messages)) {
 			if d := ct.Messages[mtName].Display; d != "" && !slices.Contains(messageDisplayValues, d) {
 				errs = append(errs, fmt.Sprintf("channels.%s.messages.%s.display: unknown value %q (valid values: %s)",
 					ctName, mtName, d, displayList(messageDisplayValues)))
@@ -254,7 +255,7 @@ func validateChannelsShape(data []byte, cfg *Config) []string {
 				seen[f.Property] = true
 				if _, ok := channelWidgetTypes[f.Widget]; f.Widget != "" && !ok {
 					errs = append(errs, fmt.Sprintf("%s: widget %q cannot be used in a channel (valid widgets: %s)",
-						at, f.Widget, strings.Join(sortedMapKeys(channelWidgetTypes), ", ")))
+						at, f.Widget, strings.Join(slices.Sorted(maps.Keys(channelWidgetTypes)), ", ")))
 				}
 				errs = append(errs, validateSpan(f.Span, at)...)
 			}
@@ -274,14 +275,14 @@ func channelsUnknownKeys(data []byte) []string {
 		return nil // the struct unmarshal reports malformed YAML
 	}
 	var errs []string
-	for _, ctName := range sortedMapKeys(raw.Channels) {
+	for _, ctName := range slices.Sorted(maps.Keys(raw.Channels)) {
 		ct := raw.Channels[ctName]
 		prefix := "channels." + ctName
 		errs = append(errs, unknownKeysIn(prefix, ct, channelPresentationKeys)...)
 		session, _ := ct["session"].(map[string]any)
 		errs = append(errs, unknownKeysIn(prefix+".session", session, sessionPresentationKeys)...)
 		messages, _ := ct["messages"].(map[string]any)
-		for _, mtName := range sortedMapKeys(messages) {
+		for _, mtName := range slices.Sorted(maps.Keys(messages)) {
 			mt := messages[mtName]
 			mprefix := prefix + ".messages." + mtName
 			m, _ := mt.(map[string]any)
@@ -383,7 +384,7 @@ type busyField struct {
 // index.
 func busyFields(cfg *Config) []busyField {
 	var out []busyField
-	for _, id := range sortedMapKeys(cfg.Kanbans) {
+	for _, id := range slices.Sorted(maps.Keys(cfg.Kanbans)) {
 		k := cfg.Kanbans[id]
 		for i, f := range k.Card.Fields {
 			if f.Busy != "" {
@@ -394,7 +395,7 @@ func busyFields(cfg *Config) []busyField {
 			}
 		}
 	}
-	for _, id := range sortedMapKeys(cfg.Lists) {
+	for _, id := range slices.Sorted(maps.Keys(cfg.Lists)) {
 		l := cfg.Lists[id]
 		for i, c := range l.Columns {
 			if c.Busy != "" {
@@ -437,7 +438,7 @@ func busyFieldErrors(b busyField, schema ChannelSchema) (errs, warnings []string
 // for the same reason; it has no effect.
 func checkChannelBlock(cfg *Config, schema ChannelSchema) (errs, warnings []string) {
 	ctNames := schema.ChannelTypeNames()
-	for _, ctName := range sortedMapKeys(cfg.Channels) {
+	for _, ctName := range slices.Sorted(maps.Keys(cfg.Channels)) {
 		if !slices.Contains(ctNames, ctName) {
 			errs = append(errs, fmt.Sprintf("channels.%s: realtime.yaml declares no channel type %q", ctName, ctName))
 			continue
@@ -450,7 +451,7 @@ func checkChannelBlock(cfg *Config, schema ChannelSchema) (errs, warnings []stri
 					"no session, so this has no effect", ctName, ctName))
 			}
 		}
-		for _, mtName := range sortedMapKeys(ct.Messages) {
+		for _, mtName := range slices.Sorted(maps.Keys(ct.Messages)) {
 			prefix := fmt.Sprintf("channels.%s.messages.%s", ctName, mtName)
 			facts, ok := schema.MessageType(ctName, mtName)
 			if !ok {

@@ -155,7 +155,7 @@ function denseHintKind(propertyDef: PropertyDef | undefined): DenseHintKind {
   // FileWidget's display branch renders <img> previews, one network request
   // per image per cell, so 200 rows would issue 200 image fetches.
   // FileCellWidget shows names and links only.
-  if (propertyDef.type === 'file') return 'file'
+  if (propertyDef.type === 'file') return propertyDef.display?.image === true ? 'image' : 'file'
   if (propertyDef.list === true) return 'text'
 
   switch (propertyDef.type) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -82,9 +83,37 @@ func (h *commandHandler) authorizer() commandAuthorizer {
 
 // registerCommandRoutes mounts the command-exec and command-file endpoints.
 // The command-resolution query is mounted separately under /api/v1/ by the v1
-// router (handleV1Commands delegates to h.resolve).
+// router through [commandHandler.handleV1Commands].
 func (h *commandHandler) registerCommandRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/command/", h.handleCommandExec)
 	mux.HandleFunc("/api/command-cancel/", h.handleCommandCancel)
 	mux.HandleFunc("/api/command-file/", h.handleCommandFile)
+}
+
+// handleV1Commands returns available commands for a given page context.
+// Query params:
+//   - page_type: "entity", "list", "view", or "dashboard"
+//   - qualifier: specific list ID or view ID (optional)
+//   - entity_type: the entity type shown on the page (optional)
+//
+//archplan:auth=required reason="command list; exec is gated per command"
+func (h *commandHandler) handleV1Commands(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+
+	query := r.URL.Query()
+	pageType := query.Get("page_type")
+	qualifier := query.Get("qualifier")
+	entityType := query.Get("entity_type")
+
+	resolved := h.resolveCommands(r.Context(), pageType, qualifier, entityType)
+
+	commands := make([]v1.Command, 0, len(resolved))
+	for _, cmd := range resolved {
+		commands = append(commands, v1.Command(cmd))
+	}
+
+	writeV1JSON(w, http.StatusOK, commands)
 }

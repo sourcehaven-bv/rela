@@ -107,7 +107,7 @@ test.describe("Dashboard card value rendering", () => {
     );
     await expect(dashboard.tableCellBadge(table, row, 1)).toHaveText("Bezig");
     await expect(dashboard.tableCellBadge(table, row, 1)).toHaveClass(/badge--orange/);
-    await expect(dashboard.tableCell(table, row, 2)).toHaveText(/^€\s3\.500$/);
+    await expect(dashboard.tableCell(table, row, 2)).toHaveText(/^€\s3\.500,00$/);
     await expect(dashboard.tableCell(table, row, 3)).toHaveText(/^1 mrt 2026$/);
   });
 });

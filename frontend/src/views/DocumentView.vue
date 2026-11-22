@@ -257,7 +257,7 @@ onUnmounted(() => {
         <!-- Renders nothing when no transforms are registered; the menu hides
              itself on an empty registry. Both document kinds are supported —
              entityId is undefined for a standalone document. -->
-        <ExportMenu :url-for="exportUrlFor" />
+        <ExportMenu more :url-for="exportUrlFor" />
         <RlButton
           variant="secondary"
           :loading="loading"

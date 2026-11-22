@@ -33,7 +33,7 @@ func TestV1SchemaEndpoint(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1Schema(rec, req)
+	app.schemaAPI.handleV1Schema(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
@@ -68,7 +68,7 @@ func TestV1ConfigEndpoint(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1Config(rec, req)
+	app.schemaAPI.handleV1Config(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
@@ -120,7 +120,7 @@ func TestV1ConfigEndpoint_IncludesActions(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Config(rec, req)
+	app.schemaAPI.handleV1Config(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec.Code)
@@ -821,7 +821,7 @@ func TestV1SchemaRoutes(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, tc.path, http.NoBody)
 			rec := httptest.NewRecorder()
 
-			app.handleV1SchemaRoutes(rec, req)
+			app.schemaAPI.handleV1SchemaRoutes(rec, req)
 
 			if rec.Code != tc.expectedStatus {
 				t.Errorf("expected status %d, got %d", tc.expectedStatus, rec.Code)
@@ -836,7 +836,7 @@ func TestV1SchemaTypesListReturnsNames(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_schema/types", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1SchemaRoutes(rec, req)
+	app.schemaAPI.handleV1SchemaRoutes(rec, req)
 
 	var names []string
 	if err := json.NewDecoder(rec.Body).Decode(&names); err != nil {
@@ -933,7 +933,7 @@ func TestV1Analyze(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1Analyze(rec, req)
+	app.analyzeAPI.handleV1Analyze(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
@@ -946,7 +946,7 @@ func TestV1AnalyzeMethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_analyze", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1Analyze(rec, req)
+	app.analyzeAPI.handleV1Analyze(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected status 405, got %d", rec.Code)
@@ -959,7 +959,7 @@ func TestV1SchemaMethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_schema", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1Schema(rec, req)
+	app.schemaAPI.handleV1Schema(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected status 405, got %d", rec.Code)
@@ -972,7 +972,7 @@ func TestV1ConfigMethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_config", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1Config(rec, req)
+	app.schemaAPI.handleV1Config(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected status 405, got %d", rec.Code)
@@ -1834,7 +1834,7 @@ func TestV1SchemaWithCustomTypes(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1Schema(rec, req)
+	app.schemaAPI.handleV1Schema(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
@@ -1887,7 +1887,7 @@ func TestV1SchemaEnumLabels(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Schema(rec, req)
+	app.schemaAPI.handleV1Schema(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec.Code)
 	}
@@ -1932,7 +1932,7 @@ func TestV1SchemaEnumLabelsOmittedWhenAbsent(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Schema(rec, req)
+	app.schemaAPI.handleV1Schema(rec, req)
 
 	if strings.Contains(rec.Body.String(), "\"labels\"") {
 		t.Errorf("expected no labels key for a label-less enum, body: %s", rec.Body.String())
@@ -2222,7 +2222,7 @@ func TestV1SchemaTypesSpecific(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_schema/types/ticket", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1SchemaRoutes(rec, req)
+	app.schemaAPI.handleV1SchemaRoutes(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
@@ -2357,7 +2357,7 @@ func TestV1AnalyzeWithIssues(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1Analyze(rec, req)
+	app.analyzeAPI.handleV1Analyze(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
@@ -2402,7 +2402,7 @@ func TestV1Analyze_ContentDetailPassthrough(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Analyze(rec, req)
+	app.analyzeAPI.handleV1Analyze(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -2498,7 +2498,7 @@ func TestV1Analyze_ScriptErrorEnvelope_NonLoopback(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1Analyze(rec, req)
+	app.analyzeAPI.handleV1Analyze(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -2543,7 +2543,7 @@ func TestV1Analyze_ScriptErrorEnvelope_Loopback(t *testing.T) {
 	req.RemoteAddr = "127.0.0.1:54321"
 	rec := httptest.NewRecorder()
 
-	app.handleV1Analyze(rec, req)
+	app.analyzeAPI.handleV1Analyze(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -2642,7 +2642,7 @@ func TestV1SchemaWithRelationCardinality(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1Schema(rec, req)
+	app.schemaAPI.handleV1Schema(rec, req)
 
 	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
@@ -2726,7 +2726,7 @@ func TestV1CommandsEndpoint(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodGet, url, http.NoBody)
 			rec := httptest.NewRecorder()
-			app.handleV1Commands(rec, req)
+			app.commands.handleV1Commands(rec, req)
 
 			if rec.Code != tc.expectedStatus {
 				t.Errorf("expected status %d, got %d", tc.expectedStatus, rec.Code)
@@ -2740,7 +2740,7 @@ func TestV1CommandsMethodNotAllowed(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_commands", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Commands(rec, req)
+	app.commands.handleV1Commands(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected status 405, got %d", rec.Code)
@@ -2763,7 +2763,7 @@ func TestV1TemplatesEndpointErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, tc.path, http.NoBody)
 			rec := httptest.NewRecorder()
-			app.handleV1Templates(rec, req)
+			app.schemaAPI.handleV1Templates(rec, req)
 
 			if rec.Code != tc.expectedStatus {
 				t.Errorf("expected status %d, got %d", tc.expectedStatus, rec.Code)
@@ -2777,7 +2777,7 @@ func TestV1TemplatesMethodNotAllowed(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_templates/ticket", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Templates(rec, req)
+	app.schemaAPI.handleV1Templates(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected status 405, got %d", rec.Code)
@@ -2800,13 +2800,15 @@ func newTestAppV1(t *testing.T) *App {
 					// test exercises the default-safe allowlist rejection path.
 					"screenshot": {Type: "file", Accept: []string{"text/plain"}},
 					"docs":       {Type: "file", Max: new(3), Accept: []string{"text/plain"}},
+					// An image property (TKT-WG1410D).
+					"logo": {Type: "file", Display: &metamodel.PropertyDisplay{Image: true}},
 					// A bounded integer (TKT-BRAM1A).
 					"points": {Type: "integer", Min: new(1), Max: new(5)},
 				},
 				// PropertyOrder is populated at YAML-load time in
 				// production; set it explicitly here so tests exercise
 				// the same code paths the runtime hits.
-				PropertyOrder: []string{"title", "status", "screenshot", "docs", "points"},
+				PropertyOrder: []string{"title", "status", "screenshot", "docs", "logo", "points"},
 			},
 			"feature": {
 				Label:    "Feature",
@@ -3753,7 +3755,7 @@ func TestV1Schema_MultiPrefix(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Schema(rec, req)
+	app.schemaAPI.handleV1Schema(rec, req)
 
 	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
@@ -3779,7 +3781,7 @@ func TestV1Schema_SinglePrefix_Compat(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Schema(rec, req)
+	app.schemaAPI.handleV1Schema(rec, req)
 
 	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {

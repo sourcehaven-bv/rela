@@ -67,6 +67,23 @@ export class FlowsPage extends BasePage {
     return this.runs().first().getByTestId('flow-step-form');
   }
 
+  /**
+   * The top of the step form is inside the viewport once the page has
+   * settled: `?run=` keeps the form in view while the panels above it render.
+   */
+  async expectStepFormTopInView(): Promise<void> {
+    const form = this.stepForm();
+    await expect(form).toBeVisible();
+    await expect
+      .poll(async () => {
+        const top = await form.evaluate((el) => el.getBoundingClientRect().top);
+        const height = await this.page.evaluate(() => window.innerHeight);
+        // The bug left the form at the bottom edge; allow for a short page.
+        return top >= 0 && top < height - 150;
+      })
+      .toBe(true);
+  }
+
   /** Ticks the checkbox labelled `field` in the step form and completes the step. */
   async completeStepWithCheckbox(field: string) {
     const box = this.stepForm().getByRole('checkbox', { name: field });

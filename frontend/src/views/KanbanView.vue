@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, type Component } from 'vue'
+import { accessRefusal } from '@/api/workspaceAccess'
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
 import { useEntitiesStore, useSchemaStore, useUIStore } from '@/stores'
@@ -22,6 +23,11 @@ import type {
 import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
 import type { FilterState } from '@/types/filters'
 import FilterBar from '@/components/lists/FilterBar.vue'
+import SearchBox from '@/components/lists/SearchBox.vue'
+import SortMenu, { type SortOption } from '@/components/lists/SortMenu.vue'
+import { useListKeyboard } from '@/composables/useListKeyboard'
+import { sortParam } from '@/utils/listParams'
+import { useUrlSort } from '@/composables/useUrlSort'
 import BackButton from '@/components/common/BackButton.vue'
 import PageHeaderContent from '@/components/common/PageHeaderContent'
 import EntityDetailPanel from '@/components/entity/EntityDetailPanel.vue'
@@ -148,6 +154,11 @@ const projectionNote = computed<string>(() => {
 
 // Computed
 const kanbanConfig = computed(() => schemaStore.getKanban(props.id) as KanbanConfig | undefined)
+// The search box names the type by its plural label, or leaves it out.
+const searchPlaceholder = computed(() => {
+  const plural = schemaStore.pluralLabel(kanbanConfig.value?.entity ?? '')
+  return plural ? t('list.searchEntities', { entity: plural }) : t('list.searchPlaceholder')
+})
 
 // The board's filter controls are the list's: the same FilterBar, the same
 // URL sync, and the same server-side `filter[...]` params, so a relation
@@ -157,8 +168,40 @@ const kanbanConfig = computed(() => schemaStore.getKanban(props.id) as KanbanCon
 // `relation:` control. Properties pinned by the board's static `filters:`
 // cannot be overridden from the URL, as on a list. Declared after
 // kanbanConfig: useUrlFilterSync reads staticFilterProperties during setup.
-const { filters, writeToQuery } = useUrlFilterSync({
+const { filters, q: searchQuery, writeToQuery } = useUrlFilterSync({
   staticFilterProperties: () => new Set((kanbanConfig.value?.filters ?? []).map((f) => f.property)),
+})
+
+// The reader's sort, from the Sort menu, kept in `?sort=` like the search in
+// `?q=`. The server orders the cards, so a column lists its cards in this
+// order; no sort leaves the server default. This view is reused across
+// boards, and another board's sort names properties of another entity, so a
+// key the board cannot sort on is left out.
+const sortSpecs = useUrlSort(() => new Set(sortOptions.value.map((o) => o.property)))
+
+// Every sortable property of the board's entity: a board has no column
+// headers to derive the choice from, and a card shows only some of them.
+// Read from the schema store, not `entityType`, which is declared further
+// down: the board's read depends on the sort and runs before that line.
+const sortOptions = computed<SortOption[]>(() =>
+  Object.entries(schemaStore.getEntityType(kanbanConfig.value?.entity ?? '')?.properties ?? {})
+    .filter(([, def]) => !def.list && def.type !== 'file')
+    .map(([property]) => ({ property, label: property }))
+)
+
+const searchBoxRef = ref<InstanceType<typeof SearchBox> | null>(null)
+const filterBarRef = ref<InstanceType<typeof FilterBar> | null>(null)
+
+function handleSearchUpdate(value: string) {
+  writeToQuery(filters.value, value)
+}
+
+// `/` focuses the search box and `f` opens the filters, as on a list. The
+// board has no row cursor, so it takes only these two keys.
+useListKeyboard({
+  itemCount: ref(0),
+  onFocusSearch: () => searchBoxRef.value?.focus(),
+  onOpenFilter: () => filterBarRef.value?.open(),
 })
 
 // Cards may render relation targets by ID; when any card field references a
@@ -226,6 +269,8 @@ const boardParams = computed<ListParams | undefined>(() => {
   // The user's filter controls, serialized exactly as EntityList does. They
   // are part of the params, so each filter state is its own cache entry.
   Object.assign(params, filterStateToApiParams(filters.value))
+  if (searchQuery.value) params.q = searchQuery.value
+  if (sortSpecs.value.length) params.sort = sortParam(sortSpecs.value)
   Object.assign(params, tabScope.params.value)
   return Object.keys(params).length ? params : undefined
 })
@@ -1327,13 +1372,31 @@ async function quickAdd(
           {{ b.action.label || b.id }}
         </RlButton>
         <RlButton
-          v-if="kanbanConfig?.create_form && canCreate()"
+          v-if="kanbanConfig?.create_form && canCreate() && !showColumnAdd"
           variant="primary"
           icon="plus"
           @click="createModal.show"
         >
           {{ t('common.new') }}
         </RlButton>
+      </template>
+
+      <template #tools>
+        <SearchBox
+          ref="searchBoxRef"
+          :model-value="searchQuery"
+          :placeholder="searchPlaceholder"
+          @update:model-value="handleSearchUpdate"
+        />
+        <FilterBar
+          v-if="kanbanConfig?.filter_controls?.length"
+          ref="filterBarRef"
+          :config="kanbanConfig"
+          :entity-type="entityType"
+          :filters="filters"
+          @filter="(f: FilterState) => writeToQuery(f)"
+        />
+        <SortMenu v-model="sortSpecs" :options="sortOptions" />
       </template>
     </PageHeaderContent>
 
@@ -1358,14 +1421,6 @@ async function quickAdd(
       </span>
     </div>
 
-    <FilterBar
-      v-if="kanbanConfig?.filter_controls?.length"
-      :config="kanbanConfig"
-      :entity-type="entityType"
-      :filters="filters"
-      @filter="(f: FilterState) => writeToQuery(f)"
-    />
-
     <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
     <div v-if="headerHtml" class="view-info view-info--top" v-html="headerHtml" />
 
@@ -1375,6 +1430,8 @@ async function quickAdd(
 
     <RlStatusRegion v-if="loading">{{ t('kanban.loading') }}</RlStatusRegion>
 
+    <!-- The session or workspace screen says why (BUG-ZL4K7QW). -->
+    <div v-else-if="loadError && accessRefusal" />
     <RlStatusRegion v-else-if="loadError" tone="error">{{ loadError }}</RlStatusRegion>
 
     <!-- The card is a real link, so cmd/middle-click opens a tab. The board
@@ -1685,12 +1742,6 @@ async function quickAdd(
   flex-direction: column;
   flex: 1;
   min-height: 0;
-}
-
-/* The board renders the list's FilterBar, whose bottom border separates the
-   filters from a list's table. A board has no table to separate from. */
-.filter-bar {
-  border-bottom: none;
 }
 
 .truncation-banner {

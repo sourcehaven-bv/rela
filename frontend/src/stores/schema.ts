@@ -56,6 +56,12 @@ export const useSchemaStore = defineStore('schema', () => {
   // The storage keeps version history and serves reads at a past instant
   // (`?as_of=`). Only the database backends do.
   const asOfEnabled = ref<boolean>(false)
+  // The server keeps the project in git (capabilities.git), so the git
+  // status is worth asking for. False until the schema says so.
+  const gitEnabled = ref<boolean>(false)
+  // The project declares flows (capabilities.flows), so the flow routes
+  // answer. False until the schema says so; useFlowList asks only then.
+  const flowsEnabled = ref<boolean>(false)
   // Whether this server runs the co-editing relay (TKT-CJL604; see
   // AppConfig.collab_enabled). False keeps the single-writer editor.
   const collabEnabled = ref<boolean>(false)
@@ -134,6 +140,13 @@ export const useSchemaStore = defineStore('schema', () => {
 
   // Getters
   const getEntityType = computed(() => (name: string) => entityTypes.value.get(name))
+  // The schema's `label_plural:` for a type ("People"), or undefined when it
+  // sets none. Interface text that names a type in the plural falls back to
+  // a wording without the type then: the type name with an "s" misreads for
+  // many words ("persons") and in any other language.
+  const pluralLabel = computed(
+    () => (name: string) => entityTypes.value.get(name)?.label_plural?.trim() || undefined
+  )
   // Whether this caller may select the named world (`''`/`'default'` = the
   // default world). Drives affordances that NAVIGATE to a world, so it must
   // not manufacture a denial the server would not make.
@@ -487,6 +500,8 @@ export const useSchemaStore = defineStore('schema', () => {
       worlds.value = new Map(Object.entries(schemaData.worlds || {}))
       worldOrder.value = schemaData.world_order || []
       asOfEnabled.value = schemaData.capabilities?.as_of === true
+      gitEnabled.value = schemaData.capabilities?.git === true
+      flowsEnabled.value = schemaData.capabilities?.flows === true
 
       // Feed the API layer's plural registry so it doesn't have to import
       // this store (B1a). Mirror the server's GetPlural fallback (type+'s')
@@ -653,6 +668,7 @@ export const useSchemaStore = defineStore('schema', () => {
 
     // Getters
     getEntityType,
+    pluralLabel,
     getRelationType,
     worldReadable,
     defaultWorld,
@@ -662,6 +678,8 @@ export const useSchemaStore = defineStore('schema', () => {
     historyEnabled,
     headerButtons,
     asOfEnabled,
+    gitEnabled,
+    flowsEnabled,
     collabEnabled,
     collabEpoch,
     getInverseName,

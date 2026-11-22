@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -431,5 +432,52 @@ func TestProvision_ActionProvisionsOnBothTransports(t *testing.T) {
 				t.Errorf("%d person stubs after the action, want 1", got)
 			}
 		})
+	}
+}
+
+// TestProvision_MePost provisions the principal on a POST to _me, so a
+// member who has only looked around is listed among the people (BUG-WS7QF2K).
+// A GET says the principal is provisionable and creates nothing.
+func TestProvision_MePost(t *testing.T) {
+	app, st := provisionApp(t)
+	router := app.NewRouter()
+
+	me := func(method string) v1.MeResponse {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, provReq(t, method, "/api/v1/_me", ""))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s _me: got %d, want 200; body=%s", method, rec.Code, rec.Body)
+		}
+		var out v1.MeResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	got := me(http.MethodGet)
+	if !got.Provisionable || got.Person != nil {
+		t.Fatalf("GET _me = %+v, want provisionable with no person", got)
+	}
+	if n := len(listPersonsBySub(t, st)); n != 0 {
+		t.Fatalf("GET _me provisioned %d stubs, want 0", n)
+	}
+
+	got = me(http.MethodPost)
+	persons := listPersonsBySub(t, st)
+	if len(persons) != 1 {
+		t.Fatalf("POST _me: %d stubs, want 1", len(persons))
+	}
+	if got.Provisionable || got.Person == nil || got.Person.ID != persons[0].ID {
+		t.Fatalf("POST _me = %+v, want the new person %s and not provisionable", got, persons[0].ID)
+	}
+
+	// A second POST finds the person and creates no second one.
+	if again := me(http.MethodPost); again.Person == nil || again.Person.ID != persons[0].ID {
+		t.Fatalf("second POST _me = %+v, want the same person", again)
+	}
+	if n := len(listPersonsBySub(t, st)); n != 1 {
+		t.Fatalf("second POST _me: %d stubs, want 1", n)
 	}
 }

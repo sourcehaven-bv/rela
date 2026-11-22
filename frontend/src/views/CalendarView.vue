@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
+import { accessRefusal } from '@/api/workspaceAccess'
 import { intlLocale } from '@/i18n/locale'
 /**
  * Month/week calendar over date-bearing entities.
@@ -59,6 +61,10 @@ import {
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import RlSegmentedControl from 'rela-components/components/data/RlSegmentedControl.vue'
+import PageHeaderContent from '@/components/common/PageHeaderContent'
+import SearchBox from '@/components/lists/SearchBox.vue'
+import FilterBar from '@/components/lists/FilterBar.vue'
+import { filterParamsForType, useViewToolbar } from '@/composables/useViewToolbar'
 import { I18nT, useI18n } from 'vue-i18n'
 
 const props = defineProps<{ id: string }>()
@@ -67,13 +73,30 @@ const router = useRouter()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const { t } = useI18n()
-const sourceName = (i: number) => config.value?.sources?.[i]?.label || config.value?.sources?.[i]?.entity
+const sourceName = (i: number) =>
+  config.value?.sources?.[i]?.label || config.value?.sources?.[i]?.entity
 const { worldParam } = useWorld()
 const queryCache = useQueryCache()
 
 const config = computed(() => schemaStore.getCalendar(props.id) as CalendarConfig | undefined)
 usePageTitle(() => config.value?.title || props.id)
 const timezone = computed(() => uiStore.effectiveTimezone)
+
+// Search and filters, in the URL as on a list. A source's read carries them
+// (see paramsFor); a filter applies to the sources whose type has the property.
+const {
+  filters,
+  searchQuery,
+  bindSearchBox,
+  bindFilterBar,
+  entityType: toolbarEntityType,
+  filterConfig,
+  handleSearchUpdate,
+  handleFilter,
+} = useViewToolbar({
+  entityTypes: () => (config.value?.sources ?? []).map((s) => s.entity),
+  controls: () => config.value?.filter_controls,
+})
 
 // View and anchor are URL state: without it a refresh loses your place and
 // "the week of the launch" is unlinkable.
@@ -161,7 +184,13 @@ const today = computed(() => todayIn(timezone.value))
 function paramsFor(source: CalendarSourceConfig): ListParams {
   const pad = source.end_date ? source.max_span : 0
   const b = windowBounds(view.value, anchor.value, weekStart.value, timezone.value, pad)
-  const params: ListParams = {}
+  // The reader's own search and filters go first, so the window and the
+  // source's `where:` below win on a key both set: the reader narrows the
+  // source and can never widen it.
+  const params: ListParams = {
+    ...filterParamsForType(filters.value, schemaStore.getEntityType(source.entity)),
+  }
+  if (searchQuery.value) params.q = searchQuery.value
   params[`filter[${source.date}][gte]`] = b.gte
   params[`filter[${source.date}][lt]`] = b.lt
 
@@ -342,7 +371,15 @@ async function refetchGrid() {
 
 // Refetch when the window, the calendar, or the display timezone changes.
 watch(
-  () => [props.id, view.value, dayKey(anchor.value), timezone.value].join('|'),
+  () =>
+    [
+      props.id,
+      view.value,
+      dayKey(anchor.value),
+      timezone.value,
+      searchQuery.value,
+      JSON.stringify(filters.value),
+    ].join('|'),
   () => {
     void refetchGrid()
   },
@@ -504,7 +541,7 @@ function createNew() {
  * unrelated data and hiding a button the user may legitimately use.
  */
 function canCreate(): boolean {
-  return !!config.value?.create_form
+  return !!config.value?.create_form && !workspaceReadOnly.value
 }
 
 // --- Drag to reschedule ---
@@ -617,11 +654,8 @@ function onDragEnd() {
 
 <template>
   <div class="calendar-view" :data-testid="`page-state-${pageState}`">
-    <header class="page-header">
-      <div class="header-left">
-        <h1>{{ config?.title || props.id }}</h1>
-      </div>
-      <div class="header-actions">
+    <PageHeaderContent :title="config?.title || props.id">
+      <template #actions>
         <RlButton
           v-if="config?.create_form && canCreate()"
           variant="primary"
@@ -630,8 +664,25 @@ function onDragEnd() {
         >
           {{ t('common.new') }}
         </RlButton>
-      </div>
-    </header>
+      </template>
+
+      <template #tools>
+        <SearchBox
+          :ref="bindSearchBox"
+          :model-value="searchQuery"
+          :placeholder="t('list.searchView')"
+          @update:model-value="handleSearchUpdate"
+        />
+        <FilterBar
+          v-if="filterConfig.filter_controls.length"
+          :ref="bindFilterBar"
+          :config="filterConfig"
+          :entity-type="toolbarEntityType"
+          :filters="filters"
+          @filter="handleFilter"
+        />
+      </template>
+    </PageHeaderContent>
 
     <div class="calendar-toolbar">
       <div class="calendar-nav">
@@ -646,7 +697,11 @@ function onDragEnd() {
         </span>
       </div>
       <div class="calendar-views">
-        <RlSegmentedControl v-model="viewChoice" :label="t('calendar.range')" :options="viewOptions" />
+        <RlSegmentedControl
+          v-model="viewChoice"
+          :label="t('calendar.range')"
+          :options="viewOptions"
+        />
       </div>
     </div>
 
@@ -663,7 +718,9 @@ function onDragEnd() {
       {{ t('calendar.truncated') }}
     </div>
     <div v-if="longEventWarning" class="truncation-banner truncation-banner--span" role="alert">
-      <I18nT keypath="calendar.longEvents" tag="span"><template #setting><code>max_span</code></template></I18nT>
+      <I18nT keypath="calendar.longEvents" tag="span"
+        ><template #setting><code>max_span</code></template></I18nT
+      >
     </div>
 
     <RlStatusRegion
@@ -672,9 +729,13 @@ function onDragEnd() {
       tone="error"
       data-testid="calendar-source-error"
     >
-      {{ t('calendar.sourceError', { source: sourceName(failure.index), message: failure.message }) }}
+      {{
+        t('calendar.sourceError', { source: sourceName(failure.index), message: failure.message })
+      }}
     </RlStatusRegion>
-    <RlStatusRegion v-if="loadError" tone="error">{{ loadError }}</RlStatusRegion>
+    <!-- The session or workspace screen says why (BUG-ZL4K7QW). -->
+    <div v-if="loadError && accessRefusal" />
+    <RlStatusRegion v-else-if="loadError" tone="error">{{ loadError }}</RlStatusRegion>
     <RlStatusRegion v-else-if="initialLoad">{{ t('common.loading') }}</RlStatusRegion>
 
     <CalendarGrid

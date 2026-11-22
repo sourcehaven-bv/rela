@@ -51,7 +51,11 @@ const props = withDefaults(
     run: FlowRun
     /** The flow's subject type; links and the step form need it. */
     subjectType?: string
-    /** Link the title to the run's own page. */
+    /**
+     * Link the title to the run's own page. Only a reader who manages the run
+     * gets the link: the page adds nothing for anyone else, who sees the run's
+     * state and status on this card.
+     */
     linkTitle?: boolean
     /** Leave the flow label out; the run's own page already shows it as the page title. */
     hideTitle?: boolean
@@ -135,18 +139,20 @@ const branches = computed(() =>
 )
 
 // The notice for each Completed.problem, keyed literally so the i18n guard
-// sees every message in use.
-const problemKeys: Record<NonNullable<FlowCompleted['problem']>, string> = {
+// sees every message in use. The step form shows a blocked step itself, at
+// its fields, where the reader is.
+const problemKeys: Record<Exclude<NonNullable<FlowCompleted['problem']>, 'blocked'>, string> = {
   guard: 'flows.step.problem.guard',
   moved: 'flows.step.problem.moved',
   settling: 'flows.step.problem.settling',
-  blocked: 'flows.step.problem.blocked',
 }
 
 async function onCompleted(result: FlowCompleted) {
-  if (result.problem === 'blocked') ui.warning(t(problemKeys.blocked))
-  else if (result.problem) ui.info(t(problemKeys[result.problem]))
-  else ui.success(result.finished ? t('flows.step.finished') : t('flows.step.done'))
+  if (result.problem && result.problem !== 'blocked') ui.info(t(problemKeys[result.problem]))
+  else if (!result.problem)
+    ui.success(result.finished ? t('flows.step.finished') : t('flows.step.done'))
+  // A form that stays shows its warnings at the fields; one that goes cannot.
+  if (result.moved && result.warnings?.length) ui.warning(t('flows.step.movedWithWarnings'))
   await reload()
   emit('changed')
 }
@@ -191,7 +197,7 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
   <article class="flow-run-card" data-testid="flow-run" :data-run-id="shown.id">
     <header class="flow-run-card__header">
       <h3 v-if="!hideTitle" class="flow-run-card__title">
-        <RouterLink v-if="linkTitle" :to="space.href(runHref(shown.id))">
+        <RouterLink v-if="linkTitle && manage" :to="space.href(runHref(shown.id))">
           {{ labelOf(shown.flow_label, shown.flow) }}
         </RouterLink>
         <template v-else>{{ labelOf(shown.flow_label, shown.flow) }}</template>
@@ -221,7 +227,12 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
       :aria-label="t('flows.waiting.title')"
     >
       <h4 v-if="manage" class="flow-run-card__heading">{{ t('flows.waiting.title') }}</h4>
-      <FlowWaiting :waiting="waiting" :detailed="manage" :can-complete="showStep" />
+      <FlowWaiting
+        :waiting="waiting"
+        :detailed="manage"
+        :can-complete="showStep"
+        :failed-message="shown.failed_message"
+      />
     </section>
 
     <section
@@ -234,7 +245,9 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
         v-for="b in branches"
         :key="b.place.branch"
         class="flow-run-card__branch"
+        :class="{ 'flow-run-card__step': b.showStep }"
         data-testid="flow-run-branch"
+        :data-step-anchor="b.showStep ? '' : undefined"
         :data-branch="b.place.branch"
       >
         <header class="flow-run-card__header">
@@ -257,6 +270,7 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
           :waiting="b.place.waiting"
           :detailed="manage"
           :can-complete="b.showStep"
+          :failed-message="shown.failed_message"
         />
         <FlowStepForm
           v-if="b.showStep"
@@ -268,7 +282,12 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
       </div>
     </section>
 
-    <section v-if="showStep" class="flow-run-card__section" :aria-label="t('flows.step.title')">
+    <section
+      v-if="showStep"
+      class="flow-run-card__section flow-run-card__step"
+      data-step-anchor
+      :aria-label="t('flows.step.title')"
+    >
       <h4 class="flow-run-card__heading">{{ t('flows.step.title') }}</h4>
       <FlowStepForm
         :run="shown"
@@ -328,6 +347,12 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
   border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-lg);
   background: var(--rl-color-bg);
+}
+
+/* `?run=` scrolls the step form to the top of the pane; stop below the
+   entity page's sticky bar here too. */
+.flow-run-card__step {
+  scroll-margin-top: var(--rl-inline-edit-sticky-top, 0px);
 }
 
 .flow-run-card__header {

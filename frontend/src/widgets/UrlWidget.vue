@@ -11,8 +11,13 @@
 // opening that control; the kanban card skips a click on a nested link.
 //
 // `display: {link_text}` shows that text instead of the URL (TKT-IO9PTLD).
-// Without it the URL is the text, cut off with an ellipsis on one line. The
-// title attribute shows the link target on hover either way.
+// Without it the URL is the text, cut off with an ellipsis on one line, and
+// the title attribute shows the whole URL on hover. A link with a link text
+// has no title: a screen reader would read the URL as the link's
+// description, and some read it in place of the text.
+//
+// The link takes the theme's link style (accent colour, underline on hover)
+// on every surface, rather than the browser's default blue.
 //
 // Edit mode is a text input with the URL keyboard. Not `type="url"`: a form
 // submit would then refuse an entity whose stored value is not a full URL
@@ -60,7 +65,7 @@ function onInput(event: Event) {
     :href="href"
     :class="{ 'url-link--truncated': !linkText }"
     :target="newTab ? '_blank' : undefined"
-    :title="href"
+    :title="linkText ? undefined : href"
     rel="noopener noreferrer"
     @click.stop
     >{{ linkText ?? text }}</a
@@ -83,7 +88,14 @@ function onInput(event: Event) {
 
 <style scoped>
 .url-link {
+  color: var(--rl-color-accent);
+  text-decoration: none;
   overflow-wrap: anywhere;
+}
+
+.url-link:hover {
+  color: var(--rl-color-accent-hover);
+  text-decoration: underline;
 }
 
 /* A URL shown as itself stays on one line and ends in an ellipsis. The cap is

@@ -2,6 +2,8 @@ package realtimecfg
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
@@ -40,7 +42,7 @@ func (v objectChecker) object(key string, p Property, raw *rawProperty, limits L
 		v.add(key+".properties", fmt.Sprintf("an object has at most %d fields", realtimelimits.MaxObjectFields))
 	}
 	p.Fields = make(map[string]Property, len(raw.Properties))
-	for _, name := range sortedKeys(raw.Properties) {
+	for _, name := range slices.Sorted(maps.Keys(raw.Properties)) {
 		rf := raw.Properties[name]
 		fkey := key + ".properties." + name
 		if PropertyType(rf.Type) == PropertyObject {
