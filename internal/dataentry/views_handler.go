@@ -1532,31 +1532,33 @@ func writeViewError(w http.ResponseWriter, r *http.Request, vr visibility.Reader
 		writeGateError(w, r, gerr.err)
 		return
 	}
-	failed := func() {
-		writeV1Error(w, r, http.StatusUnprocessableEntity, "view_execution_failed", "View execution failed", err.Error())
-	}
 	if errors.Is(err, errEntryMissing) {
-		viewMiss(w, r, vr, id, failed)
+		viewMiss(w, r, vr, id, func() { writeViewEntryMissing(w, r) })
 		return
 	}
-	failed()
+	writeV1Error(w, r, http.StatusUnprocessableEntity, "view_execution_failed", "View execution failed", err.Error())
+}
+
+// writeViewEntryMissing answers a view whose entry does not exist with the
+// uniform 404 a refused entry gets, so the page shows its not-found state
+// rather than the raw view error.
+func writeViewEntryMissing(w http.ResponseWriter, r *http.Request) {
+	writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 }
 
 // gateViewEntry runs the read gate on a view's entry. A denied entry is the
 // uniform 404, or a redirect when the id was retired ([viewMiss]).
 func gateViewEntry(w http.ResponseWriter, r *http.Request, vr visibility.Reader, entityType, id string) bool {
 	return gateReadOr(w, r, entityType, id, func() {
-		viewMiss(w, r, vr, id, func() {
-			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		})
+		viewMiss(w, r, vr, id, func() { writeViewEntryMissing(w, r) })
 	})
 }
 
 // viewMiss answers a view whose entry the caller cannot be served. When the
 // id was retired into an entity the caller may read it redirects there
 // ([redirectRetired]); otherwise miss writes the answer this route has always
-// given, byte for byte: the uniform 404 for an entry the read gate refused,
-// the 422 for one the view could not find.
+// given: the uniform 404, for an entry the read gate refused and for one the
+// view could not find.
 func viewMiss(w http.ResponseWriter, r *http.Request, vr visibility.Reader, id string, miss func()) {
 	if redirectRetired(w, r, vr, id, func(entityType string) string { return entityType }) {
 		return

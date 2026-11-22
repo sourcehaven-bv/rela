@@ -112,11 +112,10 @@ async function requestClose() {
   // Don't tear the form out from under an in-flight create.
   if (formRef.value?.isSaving()) return
   if (formRef.value?.isDirty()) {
+    const type = typeLabel.value.toLocaleLowerCase(intlLocale())
     const ok = await confirm({
-      title: t('form.inlineCreate.discardTitle', {
-        type: typeLabel.value.toLocaleLowerCase(intlLocale()),
-      }),
-      message: t('form.inlineCreate.discardMessage'),
+      title: t('form.inlineCreate.discardTitle', { type }),
+      message: t('form.inlineCreate.discardMessage', { type }),
       confirmLabel: t('form.discard'),
       danger: true,
     })

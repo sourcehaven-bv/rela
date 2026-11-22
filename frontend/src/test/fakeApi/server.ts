@@ -403,17 +403,9 @@ export class FakeServer {
         `/api/v1/_views/${type}/${id}`
       )
     const e = this.entities.get(key(type, id))
-    // The server answers 422, not 404, for a missing entity here: with no
-    // ACL the read gate admits any id, and the view engine then fails to load
-    // the entry. GET /{plural}/{id} answers 404 for the same id.
+    // A missing entity is the uniform 404, as on GET /{plural}/{id}.
     if (!e) {
-      return problem(
-        422,
-        'view_execution_failed',
-        'View execution failed',
-        `/api/v1/_views/${type}/${id}`,
-        `entry entity not found: ${id}`
-      )
+      return problem(404, 'not_found', 'Entity not found', `/api/v1/_views/${type}/${id}`)
     }
     const config = this.snapshot.config.views?.[type]
     if (!config) return notImplemented('GET', `/_views/${type}/${id} without a configured view`)

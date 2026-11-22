@@ -45,6 +45,7 @@ import BackButton from '@/components/common/BackButton.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import AddToPileMenu from '@/components/piles/AddToPileMenu.vue'
 import PageHeaderContent from '@/components/common/PageHeaderContent'
+import NotFoundView from '@/views/NotFoundView.vue'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { useCreateModal } from '@/composables/useCreateModal'
 import { usePageTabScope } from '@/composables/usePageTabScope'
@@ -1766,9 +1767,7 @@ watch(searchQuery, () => {
     />
   </div>
 
-  <RlStatusRegion v-else tone="error">
-    {{ t('list.unknownList', { id: listId }) }}
-  </RlStatusRegion>
+  <NotFoundView v-else />
 </template>
 
 <style scoped>

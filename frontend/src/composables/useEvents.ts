@@ -1,4 +1,4 @@
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useQueryCache } from '@pinia/colada'
 import { useGitStore, useEntitiesStore, useUIStore } from '@/stores'
 import { entityKeys } from '@/queries/entities'
@@ -86,7 +86,7 @@ const BASE_RECONNECT_DELAY = 1000 // 1 second base
 // Custom event handlers registry
 type EventHandler = (data: EntityEventData) => void
 import { apiUrl } from '@/api/base'
-import { probeSessionEnded } from '@/api/workspaceAccess'
+import { accessRefusal, probeSessionEnded } from '@/api/workspaceAccess'
 const eventHandlers: Map<SSEEventType, Set<EventHandler>> = new Map()
 
 /**
@@ -126,6 +126,9 @@ export function useEvents() {
     if (eventSource) {
       return // Already connected
     }
+    // No stream while the session or workspace screen is up: it could not
+    // be opened, and its live changes would only start requests that fail.
+    if (accessRefusal.value) return
 
     // Clear any pending reconnect
     /* v8 ignore start - reconnection logic tested via e2e */
@@ -322,6 +325,17 @@ export function useEvents() {
   setLiveReconnect(() => {
     disconnect()
     connect()
+  })
+
+  // The session or workspace screen ends the stream and any pending
+  // reconnect; only a reload or a new sign-in brings it back.
+  watch(accessRefusal, (refusal) => {
+    if (!refusal) return
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+    disconnect()
   })
 
   // Lifecycle management
