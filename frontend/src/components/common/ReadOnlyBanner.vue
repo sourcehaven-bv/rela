@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { workspaceReadOnly } from '@/api/workspaceReadOnly'
+import { bootMeta } from '@/i18n/bootMeta'
 
 /**
  * Says that the workspace is read-only, while it is (rela#2511). The create
  * buttons are hidden then, so without this a user would not know why. The app
  * puts it in the shell's full-width `banner` slot, so it is a strip with a
  * rule below rather than a card.
+ *
+ * `account.read_only_text` replaces the default text. The server writes it
+ * into the shell (`bootMeta`), like the suspended and archived page texts.
  */
 const { t } = useI18n()
+const text = bootMeta('rela-read-only-text')
 </script>
 
 <template>
@@ -18,7 +23,7 @@ const { t } = useI18n()
     role="status"
     data-testid="read-only-banner"
   >
-    {{ t('shell.access.readOnlyBanner') }}
+    {{ text || t('shell.access.readOnlyBanner') }}
   </div>
 </template>
 

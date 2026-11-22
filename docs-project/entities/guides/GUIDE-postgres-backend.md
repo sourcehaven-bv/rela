@@ -929,7 +929,8 @@ app name, a link to the account pages (`account.account`) and Sign out
 default "who to contact" text, so the page can say what the account pages
 say. `account.contact_email` adds a mail link to a contact address.
 `account.suspended_text` and `account.archived_text` replace the explanation
-on the suspended and the archived page. The server writes these values into the page, because the workspace
+on the suspended and the archived page, and `account.read_only_text` the
+text of the read-only banner. The server writes these values into the page, because the workspace
 refuses its config; a multi-tenant server reads them from the shared
 `data-entry.yaml`.
 

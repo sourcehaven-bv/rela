@@ -728,7 +728,7 @@ controls act on the page in front of you.
       <RlMenuSection :label="user.name" :lines="[user.email, user.org]" />
       <RlMenuSeparator />
       <RlMenuItem icon="user" :href="urls.profile">Profile</RlMenuItem>
-      <RlMenuItem icon="organization" :href="urls.orgs">Switch org</RlMenuItem>
+      <RlMenuItem icon="organization" :href="urls.orgs">Switch organisation</RlMenuItem>
       <RlMenuSeparator />
       <RlMenuItem icon="sign-out" :href="urls.signOut">Sign out</RlMenuItem>
     </RlMenu>

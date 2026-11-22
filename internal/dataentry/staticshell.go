@@ -83,6 +83,8 @@ type ShellBoot struct {
 	// `account.archived_text`.
 	SuspendedText string
 	ArchivedText  string
+	// ReadOnlyText is `account.read_only_text`, for the read-only banner.
+	ReadOnlyText string
 }
 
 // ShellBootFrom reads a [ShellBoot] from the bytes of data-entry.yaml. Only
@@ -119,6 +121,7 @@ func shellBootOf(app dataentryconfig.AppConfig, acc *dataentryconfig.AccountConf
 		}
 		b.SuspendedText = shellText(acc.SuspendedText)
 		b.ArchivedText = shellText(acc.ArchivedText)
+		b.ReadOnlyText = shellText(acc.ReadOnlyText)
 	}
 	return b
 }
@@ -170,6 +173,7 @@ const (
 	metaEmail    = "rela-contact-email"
 	metaSusp     = "rela-suspended-text"
 	metaArch     = "rela-archived-text"
+	metaReadOnly = "rela-read-only-text"
 )
 
 // bootShell writes boot into an index.html: the title, the html lang
@@ -199,6 +203,7 @@ func bootShell(shell []byte, boot ShellBoot) []byte {
 		{metaEmail, boot.ContactEmail},
 		{metaSusp, boot.SuspendedText},
 		{metaArch, boot.ArchivedText},
+		{metaReadOnly, boot.ReadOnlyText},
 	} {
 		if m.value != "" {
 			s = insertBefore(s, "</head>", metaTag(m.name, html.EscapeString(m.value)))

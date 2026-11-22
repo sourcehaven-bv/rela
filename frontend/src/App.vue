@@ -10,7 +10,7 @@ import { resolvedLanguage } from '@/i18n'
 import { getErrorMessage } from '@/api'
 import { tenantProvisioning } from '@/api/tenantProvisioning'
 import { REFUSAL, accessRefusal, loginUrl, refusalDetail } from '@/api/workspaceAccess'
-import { loadWorkspaceReadOnly, workspaceReadOnly } from '@/api/workspaceReadOnly'
+import { loadWorkspaceStatus, workspaceReadOnly } from '@/api/workspaceReadOnly'
 import {
   useKeyboardShortcuts,
   useShellCommands,
@@ -173,32 +173,41 @@ function handleConfirm() {
 // follow the iOS keyboard. See useVisualViewportOffset for the rationale.
 useVisualViewportOffset()
 
-onMounted(async () => {
+// Whether the page that replaces the app is up (a suspended, archived or
+// unknown workspace, or a server that cannot identify anyone). Then the app
+// loads nothing: each request would only be refused. An ended session is a
+// dialog over the app instead, so the load goes on under it.
+const appReplaced = () => !!accessRefusal.value && accessRefusal.value !== REFUSAL.sessionEnded
+
+// Loads the schema and config. `reload` is for the boot screen's Retry.
+async function loadApp(reload: boolean) {
+  error.value = null
+  loading.value = true
   try {
-    await schemaStore.load()
+    if (!appReplaced()) await (reload ? schemaStore.reload() : schemaStore.load())
   } catch (err) {
     error.value = getErrorMessage(err, t('shell.loadFailed'))
     uiStore.error(error.value)
   } finally {
     loading.value = false
   }
-})
-
-// Whether the workspace is read-only, once the app is up (also after the boot
-// screen's Retry) and again whenever the tab comes back into view, so a state
-// an operator changed meanwhile shows without a reload.
-watch(
-  () => schemaStore.loaded,
-  (loaded) => {
-    if (loaded) void loadWorkspaceReadOnly()
-  },
-  { immediate: true }
-)
-function refreshReadOnlyOnReturn() {
-  if (!isPageHidden() && schemaStore.loaded) void loadWorkspaceReadOnly()
 }
-onMounted(() => document.addEventListener('visibilitychange', refreshReadOnlyOnReturn))
-onBeforeUnmount(() => document.removeEventListener('visibilitychange', refreshReadOnlyOnReturn))
+
+// The workspace status (read-only, suspended, archived) is read before the
+// app mounts (main.ts), again on the boot screen's Retry, and whenever the tab
+// comes back into view. So a state an operator changed meanwhile shows
+// without a reload, whether it makes the workspace read-only or closes it.
+onMounted(() => loadApp(false))
+async function retryLoad() {
+  loading.value = true
+  await loadWorkspaceStatus()
+  await loadApp(true)
+}
+function refreshStatusOnReturn() {
+  if (!isPageHidden() && schemaStore.loaded) void loadWorkspaceStatus()
+}
+onMounted(() => document.addEventListener('visibilitychange', refreshStatusOnReturn))
+onBeforeUnmount(() => document.removeEventListener('visibilitychange', refreshStatusOnReturn))
 
 // A `?world=` naming no served world is a 400 on every API route, so drop
 // it and land in the default world. See unknownWorldQuery.
@@ -302,7 +311,7 @@ watch(
     <RlStatusRegion tone="error">
       {{ error }}
       <template #actions>
-        <RlButton variant="primary" @click="schemaStore.reload()">{{ t('shell.retry') }}</RlButton>
+        <RlButton variant="primary" @click="retryLoad">{{ t('shell.retry') }}</RlButton>
       </template>
     </RlStatusRegion>
   </div>
