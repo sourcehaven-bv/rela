@@ -90,8 +90,8 @@ type RollupDef struct {
 	LatestBy string `yaml:"latest_by,omitempty"`
 	// Avg and Latest are the record functions: the average of the named
 	// field, and its value on the newest row that holds one.
-	Avg    string `yaml:"avg,omitempty"`
-	Latest string `yaml:"latest,omitempty"`
+	AvgOf    string `yaml:"avg,omitempty"`
+	LatestOf string `yaml:"latest,omitempty"`
 }
 
 // MaxRollupPath is the most relations a roll-up's via may name. Each hop is
@@ -138,7 +138,7 @@ func (r *RollupDef) Func() (fn RollupFunc, property string, ok bool) {
 		fn   RollupFunc
 		prop string
 	}{{RollupMin, r.Min}, {RollupMax, r.Max}, {RollupSum, r.Sum}, {RollupLatest, r.LatestBy},
-		{RollupAvg, r.Avg}, {RollupLatestRow, r.Latest}} {
+		{RollupAvg, r.AvgOf}, {RollupLatestRow, r.LatestOf}} {
 		if strings.TrimSpace(c.prop) != "" {
 			found, fn, property = append(found, c.fn), c.fn, c.prop
 		}
@@ -168,7 +168,7 @@ func validateRollupShape(schemaName, propName string, pd PropertyDef, allowRollu
 		errs = append(errs, validateRecordsRollupShape(at, r)...)
 	case r.Window != "":
 		errs = append(errs, at+": window is only valid with records")
-	case r.Avg != "" || r.Latest != "":
+	case r.AvgOf != "" || r.LatestOf != "":
 		errs = append(errs, at+": avg and latest are only valid with records")
 	case len(r.Via) == 0, len(r.Via) == 1 && strings.TrimSpace(r.Via[0]) == "":
 		// A blank scalar via is a missing via, not an empty path element.
