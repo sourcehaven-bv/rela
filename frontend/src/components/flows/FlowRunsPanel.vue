@@ -36,6 +36,11 @@ const props = defineProps<{
   entityType: string
   /** The address on screen (`PER-1` or `POL-1@draft`). */
   entityId: string
+  /**
+   * Bumped by the page after it ran an action, so the runs are read again
+   * in place (BUG-UZGMHIK).
+   */
+  revision?: number
 }>()
 
 const { t } = useI18n()
@@ -115,13 +120,18 @@ const route = useRoute()
 const panel = ref<HTMLElement | null>(null)
 /** The entity and run `?run=` already focused, so a reload does not steal focus. */
 let focusedRun = ''
+let stopFocus: (() => void) | undefined
 watch(
   () => [runs.value, props.entityId, requestedRun(route?.query ?? {})] as const,
   async ([, entityId, id]) => {
     const key = `${entityId}|${id}`
     if (!id || key === focusedRun) return
     await nextTick()
-    if (focusRunCard(panel.value, id)) focusedRun = key
+    const stop = focusRunCard(panel.value, id)
+    if (!stop) return
+    stopFocus?.()
+    stopFocus = stop
+    focusedRun = key
   }
 )
 
@@ -137,8 +147,13 @@ on('entity:changed', (data) => {
   if (data?.type === FLOW_RUN_TYPE || data?.type === props.entityType) reloadSoon()
 })
 on('refresh', () => void load())
+watch(
+  () => props.revision,
+  () => void load()
+)
 
 onBeforeUnmount(() => {
+  stopFocus?.()
   clearTimeout(reloadTimer)
   controller?.abort()
 })

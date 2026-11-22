@@ -20,6 +20,7 @@
  * `bucketMeta`) instead of repeating the enum column.
  */
 import { computed } from 'vue'
+import { accessRefusal } from '@/api/workspaceAccess'
 import { useQuery } from '@pinia/colada'
 import { useI18n } from 'vue-i18n'
 import { useSchemaStore, useUIStore } from '@/stores'
@@ -121,7 +122,9 @@ function metaOf(entity: (typeof rows.value)[number], section?: ListSection): str
 </script>
 
 <template>
-  <RlStatusRegion v-if="loadError" tone="error">{{ loadError }}</RlStatusRegion>
+  <!-- The session or workspace screen says why (BUG-ZL4K7QW). -->
+  <div v-if="loadError && accessRefusal" />
+  <RlStatusRegion v-else-if="loadError" tone="error">{{ loadError }}</RlStatusRegion>
   <RlStatusRegion v-else-if="query.isPending.value">{{ t('list.loading') }}</RlStatusRegion>
   <RlEmptyState
     v-else-if="rows.length === 0"

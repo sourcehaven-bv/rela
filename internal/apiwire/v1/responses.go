@@ -551,7 +551,7 @@ type AbstractType struct {
 }
 
 // Capabilities lists optional API surfaces whose availability depends on
-// the deployment's storage, decided once when the server is wired.
+// the deployment, decided once when the server is wired.
 type Capabilities struct {
 	// AtomicBatch reports that POST /api/v1/_batch is served: the store
 	// rolls a failed transaction back. False on the markdown-file and
@@ -565,6 +565,10 @@ type Capabilities struct {
 	// GET /api/v1/_git/status with a status. False on a deployment without
 	// git, such as a database backend, where the SPA then skips the call.
 	Git bool `json:"git"`
+	// Flows reports that the project declares flows and serves the routes
+	// under /api/v1/_flows. False on a project without flows.yaml, where
+	// those routes answer 404 and the SPA then skips them.
+	Flows bool `json:"flows"`
 }
 
 // World is the JSON representation of one declared world — a named
@@ -1481,11 +1485,16 @@ type SidebarResponse struct {
 	// hint, like InlineCreate; the create endpoint re-authorizes.
 	Create []SidebarCreate `json:"create,omitempty"`
 	// HiddenBuiltins names the built-in sidebar rows ("search", "inbox",
-	// "flow_tasks", "flow_runs", "analysis") and the as-of picker ("as_of")
-	// that the current space, or the top-level sidebar without spaces, leaves
-	// out for this principal ([dataentryconfig.Builtins]). Absent when every row is shown. A UX
+	// "flow_tasks", "flow_runs", "analysis"), the as-of picker ("as_of") and
+	// the footer Shortcuts button ("shortcuts") that the current space, or the
+	// top-level sidebar without spaces, leaves out for this principal
+	// ([dataentryconfig.Builtins]). Absent when every row is shown. A UX
 	// filter: the pages behind the rows stay reachable by URL.
 	HiddenBuiltins []dataentryconfig.BuiltinRow `json:"hidden_builtins,omitempty"`
+	// PhoneHiddenBuiltins names the rows the same sidebar leaves out on a
+	// phone-sized screen (`hidden_on_phone:`). The SPA applies it. Absent
+	// when no row sets it.
+	PhoneHiddenBuiltins []dataentryconfig.BuiltinRow `json:"phone_hidden_builtins,omitempty"`
 
 	// Pages are the config's `pages:`, keyed by page id, each with the tabs
 	// this principal may see. Absent when the config declares no pages.
@@ -1878,6 +1887,10 @@ type ViewColumn struct {
 	// (TKT-4Q2EIVZ), empty otherwise. A cell is an input only when its row's
 	// `_fields` verdict also allows the write.
 	Render string `json:"render,omitempty"`
+	// Primary is the column's `primary:` (BUG-6WQ1U8S). A table section
+	// stacks its rows on a phone and leaves out a column set to false there.
+	// Nil when the config does not set it.
+	Primary *bool `json:"primary,omitempty"`
 }
 
 // ViewRow represents a table row.

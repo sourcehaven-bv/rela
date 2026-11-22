@@ -2,8 +2,8 @@ package ingestspec
 
 import (
 	"fmt"
+	"maps"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -45,7 +45,7 @@ func (m Mapping) validateCreate(meta *metamodel.Metamodel) []string {
 		return []string{fmt.Sprintf("create_if_missing type %q is not a known entity type", createType)}
 	}
 	var errs []string
-	for _, prop := range sortedKeys(m.CreateIfMissing.Properties) {
+	for _, prop := range slices.Sorted(maps.Keys(m.CreateIfMissing.Properties)) {
 		if _, known := def.Properties[prop]; !known {
 			errs = append(errs, fmt.Sprintf(
 				"create_if_missing sets unknown property %q on type %q", prop, createType))
@@ -81,7 +81,7 @@ func (m Mapping) validateFind(meta *metamodel.Metamodel) []string {
 			errs = append(errs, fmt.Sprintf("find matches on unknown property %q of type %q", prop, find.Type))
 		}
 	}
-	for _, prop := range sortedKeys(find.Values) {
+	for _, prop := range slices.Sorted(maps.Keys(find.Values)) {
 		if !slices.Contains(find.Match, prop) {
 			errs = append(errs, fmt.Sprintf("find.values names %q which is not in find.match", prop))
 		}
@@ -152,7 +152,7 @@ func (m Mapping) validateSteps(meta *metamodel.Metamodel) []string {
 			if len(step.Set) == 0 || !ok {
 				continue
 			}
-			for _, prop := range sortedKeys(step.Set) {
+			for _, prop := range slices.Sorted(maps.Keys(step.Set)) {
 				if _, known := def.Properties[prop]; !known {
 					errs = append(errs, fmt.Sprintf(
 						"then[%d] sets unknown property %q on type %q", i, prop, stepType))
@@ -184,12 +184,12 @@ func (m Mapping) stepTypes() []string {
 // template uses against the ones its source can resolve.
 func (m Mapping) Templates(visit func(path, tmpl string)) {
 	if m.Find != nil {
-		for _, prop := range sortedKeys(m.Find.Values) {
+		for _, prop := range slices.Sorted(maps.Keys(m.Find.Values)) {
 			visit("find.values."+prop, m.Find.Values[prop])
 		}
 	}
 	if c := m.CreateIfMissing; c != nil {
-		for _, prop := range sortedKeys(c.Properties) {
+		for _, prop := range slices.Sorted(maps.Keys(c.Properties)) {
 			visit("create_if_missing.properties."+prop, c.Properties[prop])
 		}
 		visit("create_if_missing.content", c.Content)
@@ -198,7 +198,7 @@ func (m Mapping) Templates(visit func(path, tmpl string)) {
 		if as := step.AppendSection; as != nil {
 			visit(fmt.Sprintf("then[%d].append_section.content", i), as.Content)
 		}
-		for _, prop := range sortedKeys(step.Set) {
+		for _, prop := range slices.Sorted(maps.Keys(step.Set)) {
 			visit(fmt.Sprintf("then[%d].set.%s", i, prop), step.Set[prop])
 		}
 	}
@@ -210,13 +210,4 @@ func entityDef(meta *metamodel.Metamodel, typeName string) (*metamodel.EntityDef
 		return nil, false
 	}
 	return meta.GetEntityDef(typeName)
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

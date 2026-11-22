@@ -197,7 +197,9 @@ func newClusterResolver(base string, control controlReader, closer io.Closer) *C
 // A missing row also carries [ErrTenantAbsent], and a provisioning one
 // [ErrTenantProvisioning], so a host that provisions can tell them apart.
 // An erased row carries [ErrTenantErased] and neither of those, so a host
-// never provisions it again.
+// never provisions it again. An archived row also carries
+// [ErrTenantArchived], and a suspended one that is not archived
+// [ErrTenantSuspended].
 func (r *ClusterResolver) Resolve(ctx context.Context, orgID string) (Tenant, error) {
 	rec, err := r.Lookup(ctx, orgID)
 	if err != nil {
@@ -207,8 +209,13 @@ func (r *ClusterResolver) Resolve(ctx context.Context, orgID string) (Tenant, er
 		return Tenant{}, fmt.Errorf("%w: %w: %w: org_id %q is %s",
 			ErrUnknownTenant, ErrTenantInactive, ErrTenantProvisioning, orgID, rec.Status)
 	}
+	if rec.Archived() {
+		return Tenant{}, fmt.Errorf("%w: %w: %w: org_id %q is archived",
+			ErrUnknownTenant, ErrTenantInactive, ErrTenantArchived, orgID)
+	}
 	if rec.Status == StatusSuspended {
-		return Tenant{}, fmt.Errorf("%w: %w: org_id %q is %s", ErrUnknownTenant, ErrTenantInactive, orgID, rec.Status)
+		return Tenant{}, fmt.Errorf("%w: %w: %w: org_id %q is %s",
+			ErrUnknownTenant, ErrTenantInactive, ErrTenantSuspended, orgID, rec.Status)
 	}
 	if rec.Status == StatusErased {
 		return Tenant{}, fmt.Errorf("%w: %w: %q", ErrUnknownTenant, ErrTenantErased, orgID)

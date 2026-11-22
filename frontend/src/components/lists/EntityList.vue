@@ -4,6 +4,7 @@ import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-rout
 import { useI18n } from 'vue-i18n'
 import { useQuery, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
+import { accessRefusal } from '@/api/workspaceAccess'
 import { useListKeyboard } from '@/composables/useListKeyboard'
 import { useListSelection } from '@/composables/useListSelection'
 import { useListActions } from '@/composables/useListActions'
@@ -356,6 +357,7 @@ async function requestActionConfirm(
         ? action.confirm
         : t('list.actionConfirm', { label: action.label, n: selectedIds.value.size }),
     confirmLabel: action.label,
+    danger: action.style === 'danger',
   })
   if (!ok) return
   void executeAction(actionId, action, triggerEl)
@@ -1525,6 +1527,9 @@ watch(searchQuery, () => {
       </RlBanner>
       <RlStatusRegion v-if="loading">{{ t('list.loading') }}</RlStatusRegion>
 
+      <!-- The session or workspace screen says why the read failed; a
+           "Retry" here cannot succeed until it is resolved (BUG-ZL4K7QW). -->
+      <div v-else-if="loadError && accessRefusal" class="empty-state" data-testid="load-refused" />
       <div v-else-if="loadError" class="empty-state load-error">
         <p>{{ loadError }}</p>
         <RlButton variant="secondary" @click="listQuery.refetch()">{{ t('list.retry') }}</RlButton>
@@ -1594,8 +1599,8 @@ watch(searchQuery, () => {
         @collapse="onSectionCollapse"
       >
         <!--
-          The row's primary control. A plain link with no class of its own:
-          the row wraps this in a `display: contents` span and stretches ONE
+          The row's primary control. A plain link with no row-overlay class
+          of its own (its one class only sets the link colour): the row wraps this in a `display: contents` span and stretches ONE
           overlay over whatever it gets, so rela keeps cmd/middle-click and a
           hover URL preview without the `.row-link::after` it used to own.
           Two stretched overlays would fight, which is why this slot exists.
@@ -1605,6 +1610,7 @@ watch(searchQuery, () => {
           <RouterLink
             v-else-if="rowTargets.get(item.id)"
             :to="rowTargets.get(item.id)!"
+            class="entity-list__title-link"
             @click.capture="onRowClick(item as Entity, $event)"
           >
             <component
@@ -1875,6 +1881,31 @@ watch(searchQuery, () => {
  */
 .list-content > :not(.rl-table) {
   padding-inline: var(--rl-page-gutter-left) var(--rl-page-gutter-right);
+}
+
+/*
+ * The table starts right under the header band when nothing comes between
+ * them (BUG-6WQ1U8S). The pane's top padding and the table's own top padding
+ * added up to an empty band above the column headers. A banner, the filter
+ * chips or the view text keep that space, because the table is then not the
+ * first thing on the page. `--pane-padding-top` is the main pane's top
+ * padding (App.vue); a list always fills the shell's header slot, so no
+ * hamburger bar sits in that padding.
+ */
+.entity-list > .list-content:first-child > .rl-table:first-child {
+  margin-top: calc(-1 * var(--pane-padding-top, 0px));
+  padding-top: 0;
+}
+
+/*
+ * The row title links to the entity, so it reads as a link, in the theme's
+ * link colour, as dashboard cards and every other surface show it. That
+ * holds with or without `link:` on the column. The ancestor class outranks
+ * the table row's own `color: inherit` for the control in its name slot
+ * (RlTableRow).
+ */
+.rl-table-row .entity-list__title-link {
+  color: var(--rl-color-accent);
 }
 
 .empty-state {

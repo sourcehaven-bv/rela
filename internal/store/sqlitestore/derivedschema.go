@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -77,7 +77,7 @@ func Reconcile(
 		return nil, err
 	}
 
-	for _, name := range sortedKeys(existing) {
+	for _, name := range slices.Sorted(maps.Keys(existing)) {
 		w, ok := wanted[name]
 		if ok && w.ddl == existing[name] {
 			continue
@@ -100,7 +100,7 @@ func Reconcile(
 		}
 	}
 
-	for _, name := range sortedKeys(wanted) {
+	for _, name := range slices.Sorted(maps.Keys(wanted)) {
 		w := wanted[name]
 		if _, ok := existing[name]; ok {
 			outcomes = append(outcomes, store.DerivedObjectOutcome{Spec: w.spec, State: store.DerivedEnforced})
@@ -269,13 +269,4 @@ func kindOf(name string) store.DerivedObjectKind {
 		return store.DerivedListIndex
 	}
 	return store.DerivedQueryIndex
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

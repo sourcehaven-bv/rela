@@ -52,7 +52,7 @@ entities:
 	app := newAppFromParts(&Config{App: AppConfig{Name: "Variants", Description: "x"}}, meta, newFixture())
 
 	rec := httptest.NewRecorder()
-	app.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
+	app.schemaAPI.handleV1Schema(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}

@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"time"
 
@@ -85,7 +86,7 @@ func (s *Service) Typing(ctx context.Context, addr RawAddress) (TypingResult, er
 // message type. It names the union of those types' post roles.
 func typingDenied(ct realtimecfg.ChannelType) *DenialError {
 	var roles []string
-	for _, name := range sortedKeys(ct.MessageTypes) {
+	for _, name := range slices.Sorted(maps.Keys(ct.MessageTypes)) {
 		mt := ct.MessageTypes[name]
 		if mt.Persist != realtimecfg.PersistLog {
 			continue
@@ -103,7 +104,7 @@ func typingDenied(ct realtimecfg.ChannelType) *DenialError {
 // mayType reports whether the caller holds a post role of at least one log
 // message type of the channel.
 func (c *call) mayType() bool {
-	for _, name := range sortedKeys(c.ct.MessageTypes) {
+	for _, name := range slices.Sorted(maps.Keys(c.ct.MessageTypes)) {
 		if mt := c.ct.MessageTypes[name]; mt.Persist == realtimecfg.PersistLog && c.mayPost(mt) {
 			return true
 		}

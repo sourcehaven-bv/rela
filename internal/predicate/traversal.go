@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -88,11 +89,11 @@ func (s TraversalSpec) Key() string {
 	if s.ID != nil {
 		fmt.Fprintf(&b, "|id=%s:%#v", s.ID.Type().typeName(), s.ID)
 	}
-	for _, name := range sortedKeys(s.Props) {
+	for _, name := range slices.Sorted(maps.Keys(s.Props)) {
 		v := s.Props[name]
 		fmt.Fprintf(&b, "|%q=%s:%#v", name, v.Type().typeName(), v)
 	}
-	for _, name := range sortedKeys(s.Refs) {
+	for _, name := range slices.Sorted(maps.Keys(s.Refs)) {
 		r := s.Refs[name]
 		fmt.Fprintf(&b, "|%q=ref:%q.%q", name, r.Var, r.Field)
 	}
@@ -148,7 +149,7 @@ func (s TraversalSpec) Bind(values map[string]Value) (TraversalSpec, error) {
 	out.Refs = nil
 	out.Props = make(map[string]Value, len(s.Props)+len(s.Refs))
 	maps.Copy(out.Props, s.Props)
-	for _, key := range sortedKeys(s.Refs) {
+	for _, key := range slices.Sorted(maps.Keys(s.Refs)) {
 		ref := s.Refs[key]
 		v, ok := values[key]
 		if !ok {
@@ -166,15 +167,6 @@ func (s TraversalSpec) Bind(values map[string]Value) (TraversalSpec, error) {
 		}
 	}
 	return out, nil
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // traversalNode is the compiled traversal. It evaluates to a bool via a
@@ -412,7 +404,7 @@ func (s *evalState) evalTraversal(ctx context.Context, n *traversalNode) (Value,
 	spec := n.spec
 	if len(n.refs) > 0 {
 		values := make(map[string]Value, len(n.refs))
-		for _, key := range sortedKeys(n.refs) {
+		for _, key := range slices.Sorted(maps.Keys(n.refs)) {
 			v, evalErr := s.eval(ctx, n.refs[key])
 			if evalErr != nil {
 				return nil, evalErr

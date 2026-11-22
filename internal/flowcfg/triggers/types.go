@@ -178,6 +178,10 @@ type Event struct {
 	// Copy names the copy definition whose write raised the event, or is
 	// empty for any other write. Only Created and Updated events carry it.
 	Copy string
+
+	// currentUserID is the acting user's entity id, which [Engine.Process]
+	// reads from ctx for {{current_user.id}}.
+	currentUserID string
 }
 
 // EventType identifies the kind of change.

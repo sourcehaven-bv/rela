@@ -110,3 +110,17 @@ func TestViewColumnsToV1_Render(t *testing.T) {
 		t.Fatalf("columns = %+v", got)
 	}
 }
+
+// TestViewColumnsToV1_Primary pins that a table section column's `primary:`
+// reaches the SPA, which drops a `primary: false` column from a stacked row
+// on a phone (BUG-6WQ1U8S), and that an unset one stays off the wire.
+func TestViewColumnsToV1_Primary(t *testing.T) {
+	no := false
+	got := viewColumnsToV1([]ListColumn{{Property: "title"}, {Property: "due", Primary: &no}})
+	if got[0].Primary != nil {
+		t.Fatalf("unset primary must stay nil, got %v", *got[0].Primary)
+	}
+	if got[1].Primary == nil || *got[1].Primary {
+		t.Fatalf("columns = %+v", got)
+	}
+}

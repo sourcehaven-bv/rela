@@ -5,6 +5,7 @@ import FlowRunsPanel from './FlowRunsPanel.vue'
 import { ApiError } from '@/api/errors'
 import type { Flow, FlowRun } from '@/api/flows'
 import { resetFlowList } from '@/composables/useFlowList'
+import { useSchemaStore } from '@/stores/schema'
 
 const listFlowsMock = vi.fn<() => Promise<Flow[]>>()
 const listSubjectRunsMock = vi.fn<(subject: string, signal?: AbortSignal) => Promise<FlowRun[]>>()
@@ -76,6 +77,8 @@ enableAutoUnmount(afterEach)
 describe('FlowRunsPanel', () => {
   beforeEach(() => {
     resetFlowList()
+    // A loaded schema of a project with flows (capabilities.flows).
+    Object.assign(useSchemaStore(), { loaded: true, flowsEnabled: true })
     listFlowsMock.mockReset()
     listSubjectRunsMock.mockReset()
     startFlowRunMock.mockReset()
@@ -189,5 +192,17 @@ describe('FlowRunsPanel', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="flow-runs-panel"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="flow-start-onboarding"]').exists()).toBe(false)
+  })
+
+  // BUG-UZGMHIK: an action on the page bumps `revision`; the runs are read again.
+  it('reads the runs again when the revision changes', async () => {
+    listFlowsMock.mockResolvedValue([onboarding])
+    listSubjectRunsMock.mockResolvedValue([run()])
+    const wrapper = mountPanel()
+    await flushPromises()
+    const reads = listSubjectRunsMock.mock.calls.length
+    await wrapper.setProps({ revision: 1 })
+    await flushPromises()
+    expect(listSubjectRunsMock).toHaveBeenCalledTimes(reads + 1)
   })
 })

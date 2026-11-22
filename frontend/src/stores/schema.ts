@@ -58,6 +58,9 @@ export const useSchemaStore = defineStore('schema', () => {
   // The server keeps the project in git (capabilities.git), so the git
   // status is worth asking for. False until the schema says so.
   const gitEnabled = ref<boolean>(false)
+  // The project declares flows (capabilities.flows), so the flow routes
+  // answer. False until the schema says so; useFlowList asks only then.
+  const flowsEnabled = ref<boolean>(false)
   // Whether this server runs the co-editing relay (TKT-CJL604; see
   // AppConfig.collab_enabled). False keeps the single-writer editor.
   const collabEnabled = ref<boolean>(false)
@@ -495,6 +498,7 @@ export const useSchemaStore = defineStore('schema', () => {
       worldOrder.value = schemaData.world_order || []
       asOfEnabled.value = schemaData.capabilities?.as_of === true
       gitEnabled.value = schemaData.capabilities?.git === true
+      flowsEnabled.value = schemaData.capabilities?.flows === true
 
       // Feed the API layer's plural registry so it doesn't have to import
       // this store (B1a). Mirror the server's GetPlural fallback (type+'s')
@@ -670,6 +674,7 @@ export const useSchemaStore = defineStore('schema', () => {
     headerButtons,
     asOfEnabled,
     gitEnabled,
+    flowsEnabled,
     collabEnabled,
     collabEpoch,
     getInverseName,

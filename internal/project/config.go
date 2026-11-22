@@ -241,12 +241,6 @@ func DefaultConfig() *Config {
 	}
 }
 
-// LoadConfig loads the project configuration from .rela/config.yaml.
-// If the file doesn't exist, returns default configuration.
-func LoadConfig(ctx *Context) (*Config, error) {
-	return LoadConfigFromPath(ctx.ConfigPath())
-}
-
 // LoadConfigFromPath loads project configuration from a specific path.
 // If the file doesn't exist, returns default configuration.
 func LoadConfigFromPath(path string) (*Config, error) {

@@ -3,6 +3,7 @@ package transitions
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 
@@ -38,7 +39,7 @@ func CompileTransitions(meta *metamodel.Metamodel, opts ...TransitionOption) (*T
 
 	// Build one machine per state-machine custom type, in name order so the
 	// error report and the compiled env are deterministic.
-	for _, typeName := range sortedKeys(meta.Types) {
+	for _, typeName := range slices.Sorted(maps.Keys(meta.Types)) {
 		ct := meta.Types[typeName]
 		if len(ct.Transitions) == 0 {
 			continue // not a machine
@@ -53,9 +54,9 @@ func CompileTransitions(meta *metamodel.Metamodel, opts ...TransitionOption) (*T
 	// Index which (entity type, property) pairs are state machines, so Enforce
 	// can find the machine-typed properties of a written entity without
 	// consulting the metamodel again.
-	for _, etName := range sortedKeys(meta.Entities) {
+	for _, etName := range slices.Sorted(maps.Keys(meta.Entities)) {
 		et := meta.Entities[etName]
-		for _, propName := range sortedKeys(et.Properties) {
+		for _, propName := range slices.Sorted(maps.Keys(et.Properties)) {
 			pd := et.Properties[propName]
 			if _, ok := set.machines[pd.Type]; !ok {
 				continue

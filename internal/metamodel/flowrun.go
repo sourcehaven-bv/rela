@@ -120,7 +120,7 @@ func (m *Metamodel) HasFlowRuns() bool { return m != nil && m.flowRuns }
 // flowRunTargets returns the faceless operator types of m, sorted.
 func flowRunTargets(m *Metamodel) []string {
 	var out []string
-	for _, name := range sortedKeys(m.Entities) {
+	for _, name := range slices.Sorted(maps.Keys(m.Entities)) {
 		if IsReservedName(name) || len(m.Entities[name].Faces) > 0 {
 			continue
 		}

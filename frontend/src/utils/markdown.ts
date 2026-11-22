@@ -674,14 +674,6 @@ export async function renderMermaidDiagrams(container: HTMLElement): Promise<voi
       // Leave the block as-is on error.
     }
   }
-
-  // Signal completion for scroll-settle listeners. Mermaid's SVG injection
-  // shifts layout; components that care about anchor positions (e.g. the
-  // router's scroll-to-anchor) re-check their targets on this event rather
-  // than polling on an arbitrary interval.
-  if (targets.length > 0) {
-    container.dispatchEvent(new CustomEvent('rela:mermaid-rendered', { bubbles: true }))
-  }
 }
 
 /**
@@ -791,11 +783,6 @@ export function renderPlantUMLDiagrams(
       code.textContent = trimmed
       fallback.appendChild(code)
       img.closest('.plantuml-diagram-wrapper')?.replaceWith(fallback)
-    })
-    // Layout shifts when the (lazy) image actually loads; signal scroll-settle
-    // listeners the same way mermaid does after its SVG injection.
-    img.addEventListener('load', () => {
-      container.dispatchEvent(new CustomEvent('rela:plantuml-rendered', { bubbles: true }))
     })
     img.src = url
 

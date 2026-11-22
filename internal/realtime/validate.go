@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
@@ -65,13 +64,4 @@ func messageFields(
 	fields := mt.PredicateFields(props)
 	mt.SetFileCounts(fields, counts)
 	return fields
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }

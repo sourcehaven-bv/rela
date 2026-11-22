@@ -13,6 +13,7 @@ import type { AutoSaveOwner } from '@/composables/useSectionAutoSave'
 import AutoSaveIndicator from '@/components/forms/AutoSaveIndicator.vue'
 import EditableRowCells from './EditableRowCells.vue'
 import SectionTableCellContent from './SectionTableCellContent.vue'
+import { sectionCellClasses, sectionColumnLabel } from '@/utils/sectionTable'
 
 defineProps<{
   row: ViewRow
@@ -43,15 +44,17 @@ const { t } = useI18n()
     :run-write="runWrite"
   >
     <template #cell="{ cell, index }">
-      <SectionTableCellContent
-        :cell="cell"
-        :property="columns[index]?.property"
-        :row="row"
-        @link-click="(e, target, link) => emit('link-click', e, target, link)"
-      />
+      <span class="section-cell__value">
+        <SectionTableCellContent
+          :cell="cell"
+          :property="columns[index]?.property"
+          :row="row"
+          @link-click="(e, target, link) => emit('link-click', e, target, link)"
+        />
+      </span>
     </template>
     <template #actions="{ status, error }">
-      <td class="actions-cell">
+      <td class="actions-cell" role="cell">
         <AutoSaveIndicator :status="status" :error="error" />
         <button
           v-if="row.editFormId"
@@ -66,15 +69,29 @@ const { t } = useI18n()
     </template>
   </EditableRowCells>
   <template v-else>
-    <td v-for="(cell, idx) in row.cells" :key="idx">
-      <SectionTableCellContent
-        :cell="cell"
-        :property="columns[idx]?.property"
-        :row="row"
-        @link-click="(e, target, link) => emit('link-click', e, target, link)"
-      />
+    <!--
+      The label is shown only when a narrow section stacks its rows; the
+      table's own header names the column otherwise. See utils/sectionTable.
+    -->
+    <td
+      v-for="(cell, idx) in row.cells"
+      :key="idx"
+      role="cell"
+      :class="sectionCellClasses(columns[idx], cell, idx)"
+    >
+      <span class="section-cell__label" aria-hidden="true">{{
+        sectionColumnLabel(columns[idx])
+      }}</span>
+      <span class="section-cell__value">
+        <SectionTableCellContent
+          :cell="cell"
+          :property="columns[idx]?.property"
+          :row="row"
+          @link-click="(e, target, link) => emit('link-click', e, target, link)"
+        />
+      </span>
     </td>
-    <td class="actions-cell">
+    <td class="actions-cell" role="cell">
       <button
         v-if="row.editFormId"
         class="icon-btn"

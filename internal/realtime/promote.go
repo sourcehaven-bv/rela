@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -261,7 +262,7 @@ func (s *Service) checkPromoteRefs(c *call, p *realtimecfg.Promote, msg channels
 	if err != nil {
 		return fmt.Errorf("realtime: resolve refs: %w", err)
 	}
-	for _, mp := range sortedKeys(byProp) {
+	for _, mp := range slices.Sorted(maps.Keys(byProp)) {
 		if _, ok := got[byProp[mp]]; !ok {
 			return deny(http.StatusUnprocessableEntity, TypePromoteInvalid,
 				"the message property "+mp+" names an entity that cannot be promoted")

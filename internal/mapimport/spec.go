@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"path"
 	"regexp"
 	"slices"
@@ -310,7 +311,7 @@ func (em *EntityMapping) validate(m *Mapping, meta *metamodel.Metamodel) []strin
 		em.selectPath = p
 	}
 	errs = append(errs, em.validateIdentity(def)...)
-	for _, name := range sortedKeys(em.Properties) {
+	for _, name := range slices.Sorted(maps.Keys(em.Properties)) {
 		v := em.Properties[name]
 		pd, known := def.Properties[name]
 		switch {
@@ -328,7 +329,7 @@ func (em *EntityMapping) validate(m *Mapping, meta *metamodel.Metamodel) []strin
 			errs = append(errs, fmt.Sprintf("properties.%s: %s", name, e))
 		}
 	}
-	for _, name := range sortedKeys(em.Scope) {
+	for _, name := range slices.Sorted(maps.Keys(em.Scope)) {
 		pd, known := def.Properties[name]
 		switch {
 		case !known:
@@ -553,13 +554,4 @@ func (v *Value) compile() []string {
 		}
 	}
 	return nil
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

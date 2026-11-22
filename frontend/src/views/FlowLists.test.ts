@@ -5,6 +5,7 @@ import type { Flow, FlowRun, FlowRunPage, FlowTask, FlowTaskPage } from '@/api/f
 import { resetFlowList } from '@/composables/useFlowList'
 import FlowRunsView from './FlowRunsView.vue'
 import FlowTasksView from './FlowTasksView.vue'
+import { useSchemaStore } from '@/stores/schema'
 
 // The run and task lists name a subject by its title and fall back to its
 // address; their links carry the app's link class.
@@ -73,6 +74,8 @@ enableAutoUnmount(afterEach)
 describe('flow lists', () => {
   beforeEach(() => {
     resetFlowList()
+    // A loaded schema of a project with flows (capabilities.flows).
+    Object.assign(useSchemaStore(), { loaded: true, flowsEnabled: true })
     api.listFlows.mockResolvedValue([onboarding])
   })
 

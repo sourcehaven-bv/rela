@@ -710,7 +710,9 @@ Every other case is refused and opens no store:
 | --- | --- |
 | No row for the org | 403 `unknown_tenant`; 202 with `-tenant-provision=lazy` |
 | Status `provisioning` | 403 `unknown_tenant`; 202 with `-tenant-provision` on |
-| Status `suspended` or `erasing` | 403 `unknown_tenant` |
+| Status `suspended` | 403 `tenant_suspended` |
+| Archived through the tenant API | 403 `tenant_archived` |
+| Status `erasing` or `erased` | 403 `unknown_tenant` |
 | The org's schema is recorded for another org | 503 |
 | Status `active`, but the schema does not exist | 503 |
 | The control table cannot be read | 503 |
@@ -891,18 +893,58 @@ A client calling the API can poll `GET /api/v1/_tenant`. The web app
 does: on a 202 provisioning answer, or a 503 `tenant_provisioning`,
 `provisioning_busy`, `provisioning_failed` or `provisioning_needs_operator`,
 it shows a "setting up" screen, polls the route and reloads once the status
-is `active` or `suspended`, or the route answers 401 or 403. The route answers 200 with
-`{"status":"active"}`, `{"status":"provisioning"}` or
-`{"status":"suspended"}` for the caller's own verified org, and nothing
+is `active`, `suspended` or `archived`, or the route answers 401 or 403. The route answers 200 with
+`{"status":"active"}`, `{"status":"provisioning"}`, `{"status":"suspended"}`
+or `{"status":"archived"}` for the caller's own verified org, and nothing
 about any other org. An org that has no tenant gets 403 `unknown_tenant`,
 unless `lazy` is on, which starts its create and answers `provisioning`.
+A single-tenant server answers the same route with `{"status":"active"}`,
+so the web app's start-up read gets no 404 there.
 
 The "setting up" screen loads before any tenant exists, so it cannot read
 the tenant's config. The server reads `app.name` and `app.language` from
 the shared `data-entry.yaml` once at startup and writes them into that
 page: the tab title is the app name, and the screen uses the app language
 unless the user chose a language on the Settings page. A project's
-`custom/` files are not served there.
+`custom/` files are not served there. A single-tenant server writes the
+same two values into its page from its own `data-entry.yaml`, so a screen
+shown before the config loads also uses the app language.
+
+The web app replaces every screen with a full page when the server refuses
+the whole workspace, instead of an error with a Retry button. An ended
+session is a dialog over the page instead, so a half-filled form keeps its
+input:
+
+| Answer | Page |
+| --- | --- |
+| 403 `tenant_suspended` | "This workspace is suspended", and who to contact. No Try again. |
+| 403 `tenant_archived` | "This workspace is archived", and who to contact. No Try again. |
+| 403 `unknown_tenant` | "This workspace is not available", and who to contact, with Try again. |
+| 401 | "Your session has ended", with Sign in again, over the page. |
+| 401 with a problem `detail` and no `login_url` | "This server cannot identify you", the detail, and Try again. A server with no identity source answers so. |
+
+The three workspace pages also show the app logo (`app.logo`) or else the
+app name, a link to the account pages (`account.account`) and Sign out
+(`account.sign_out`), each when configured. `account.contact` replaces the
+default "who to contact" text, so the page can say what the account pages
+say. `account.contact_email` adds a mail link to a contact address.
+`account.suspended_text` and `account.archived_text` replace the explanation
+on the suspended and the archived page. The server writes these values into the page, because the workspace
+refuses its config; a multi-tenant server reads them from the shared
+`data-entry.yaml`.
+
+Sign in again is a full page navigation to the `login_url` of the 401 body,
+when it is a local path on the same site, and otherwise a reload of the page, which
+the edge sends to sign-in. pratique's edge answers an expired session's API
+request with 401 and `{"error":"session_expired","login_url":"..."}`. An
+edge that redirects such a request to sign-in instead gives the browser a
+cross-origin redirect it will not follow; the web app then asks the status
+route with `redirect: "manual"`, and a redirect answer also shows the
+"session ended" dialog. It asks at most once per 30 seconds, after a request
+that got no response, a dropped live-update stream, or an HTML page in place
+of data, such as a sign-in page on the same site that the browser followed.
+The request that got the page fails with a "reload the page" error and never
+hands the page on as data. The text follows the interface language.
 
 Concurrent requests and webhooks for one org share one create. The create
 runs on its own context with a 5 minute timeout, so a client that hangs up
@@ -1036,7 +1078,18 @@ provisioned, which is not done yet.
 **Read-only.** A read-only tenant serves `GET`, `HEAD`, `OPTIONS` and the
 WebDAV reads `PROPFIND` and `REPORT`. It refuses every other request with
 403 `tenant_read_only`, including remote MCP calls, actions, comments,
-piles, leases, presence, settings and collaborative-editing saves. Two
+piles, leases, presence, settings and collaborative-editing saves. The
+message reads "This workspace is read-only". The web app reads the state
+from `GET /api/v1/_tenant` when it starts, when the tab is shown again, and
+from any refused write. While
+the workspace is read-only it shows a banner across the full width, below
+the page header and above the page and its side panel, and hides the
+New and Add buttons: the space Create menu, New on lists, boards and
+calendars, the section and sidebar add buttons, the table Add button, Add on relation pickers and relation
+cards, and inline create. It also hides what changes a record: Edit,
+Duplicate, Delete, Rename, copy and convert on a record, inline editing, and
+Delete on list rows. A create form says so and shows no Create
+button; edit forms are unchanged. Two
 writes pass because they change no tenant data: the `PUT` of a live-update
 stream's subscriptions, and the IdP webhook. Background work the server
 starts itself, such as scheduled flows, still runs. Export works, because

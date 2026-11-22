@@ -39,7 +39,7 @@ func TestACLAnalyze_FiltersHiddenIssues(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1Analyze(rec, req)
+	app.analyzeAPI.handleV1Analyze(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("_analyze: got %d, want 200; body=%s", rec.Code, rec.Body)
@@ -104,7 +104,7 @@ func TestACLAnalyze_RedactsHiddenPrimaryTitle(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1Analyze(rec, req)
+	app.analyzeAPI.handleV1Analyze(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("_analyze: got %d, want 200; body=%s", rec.Code, rec.Body)
@@ -156,7 +156,7 @@ func TestACLAnalyze_RedactsHiddenTemplatedTitle(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1Analyze(rec, req)
+	app.analyzeAPI.handleV1Analyze(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("_analyze: got %d, want 200; body=%s", rec.Code, rec.Body)
@@ -234,7 +234,7 @@ func TestACLAnalyze_GatedReadClosesMessageLeak(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1Analyze(rec, req)
+	app.analyzeAPI.handleV1Analyze(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("_analyze: got %d, want 200; body=%s", rec.Code, rec.Body)
@@ -279,7 +279,7 @@ func TestACLAnalyze_RedactsHiddenViolatorTitle(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1Analyze(rec, req)
+	app.analyzeAPI.handleV1Analyze(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("_analyze: got %d, want 200; body=%s", rec.Code, rec.Body)
 	}
@@ -342,7 +342,7 @@ func TestACLAnalyze_PropertiesSkipsHiddenFields(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1Analyze(rec, req)
+	app.analyzeAPI.handleV1Analyze(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("_analyze: got %d, want 200; body=%s", rec.Code, rec.Body)

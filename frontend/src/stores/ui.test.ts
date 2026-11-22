@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 import { useUIStore } from './ui'
 import { useToasts } from 'rela-components/components/feedback/useToasts'
+import { REFUSAL, accessRefusal, resetAccessForTest } from '@/api/workspaceAccess'
 
 describe('UI Store', () => {
   let store: ReturnType<typeof useUIStore>
@@ -151,6 +152,21 @@ describe('UI Store', () => {
       store.error('Broken')
       expect(useToasts().toasts.value[0].tone).toBe('danger')
       expect(store.toasts[0].type).toBe('error')
+    })
+
+    // BUG-ZL4K7QW: the session screen already says why every request fails.
+    it('shows no error or warning toast while the session screen is up', () => {
+      accessRefusal.value = REFUSAL.sessionEnded
+      try {
+        expect(store.error('Request failed (401)')).toBe('')
+        expect(store.warning('Request failed (401)')).toBe('')
+        expect(store.showToast('error', 'Request failed (401)')).toBe('')
+        expect(store.toasts).toHaveLength(0)
+      } finally {
+        resetAccessForTest()
+      }
+      store.error('Broken')
+      expect(store.toasts).toHaveLength(1)
     })
 
     it('passes an action through to the library toast', () => {

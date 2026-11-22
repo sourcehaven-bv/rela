@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -837,7 +839,7 @@ func (e *outputEngine) runOne(
 			res.Status = channels.OutputSuperseded
 			return res, outputRan
 		}
-		res.Props = sortedKeys(props)
+		res.Props = slices.Sorted(maps.Keys(props))
 	}
 	req := OutputRequest{
 		Target: outputTarget(r.key, mark.AnchorType, r.plan.attachTo, o), Props: props, Authored: authored,

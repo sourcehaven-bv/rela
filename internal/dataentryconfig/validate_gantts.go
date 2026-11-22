@@ -2,6 +2,8 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -42,7 +44,7 @@ func validateGantts(cfg *Config, meta *metamodel.Metamodel) []string {
 			errs = append(errs, fmt.Sprintf("gantt %q: must declare at least one source", ganttID))
 			continue
 		}
-		for _, typeName := range sortedMapKeys(g.Sources) {
+		for _, typeName := range slices.Sorted(maps.Keys(g.Sources)) {
 			errs = append(errs, validateGanttSource(ganttID, typeName, g.Sources[typeName], meta)...)
 		}
 		errs = append(errs, validateGanttFilterControls(ganttID, g, meta)...)
@@ -121,11 +123,11 @@ func validateGanttShell(ganttID string, g Gantt, meta *metamodel.Metamodel) []st
 			"(valid: first, error)")
 	} else if g.MultiParent != "" && !validGanttMultiParent[g.MultiParent] {
 		errs = append(errs, fmt.Sprintf("%s: multi_parent %q is not valid (valid: %s)",
-			prefix, g.MultiParent, strings.Join(sortedMapKeys(validGanttMultiParent), ", ")))
+			prefix, g.MultiParent, strings.Join(slices.Sorted(maps.Keys(validGanttMultiParent)), ", ")))
 	}
 	if g.OnCycle != "" && !validGanttOnCycle[g.OnCycle] {
 		errs = append(errs, fmt.Sprintf("%s: on_cycle %q is not valid (valid: %s)",
-			prefix, g.OnCycle, strings.Join(sortedMapKeys(validGanttOnCycle), ", ")))
+			prefix, g.OnCycle, strings.Join(slices.Sorted(maps.Keys(validGanttOnCycle)), ", ")))
 	}
 
 	if g.DefaultDepth < 0 {

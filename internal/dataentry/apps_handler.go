@@ -1,7 +1,6 @@
 package dataentry
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -209,16 +208,4 @@ func appsToV1(apps []appInfo) map[string]v1.App {
 		}
 	}
 	return out
-}
-
-// scanAppsOrLog scans the project's apps/ directory, logging (not failing) on
-// error so a transient scan problem degrades to "no apps" rather than breaking
-// the whole config response.
-func (a *App) scanAppsOrLog(ctx context.Context) []appInfo {
-	apps, err := scanApps(ctx, a.assets)
-	if err != nil {
-		slog.Warn("scanning apps directory failed", "error", err)
-		return nil
-	}
-	return apps
 }

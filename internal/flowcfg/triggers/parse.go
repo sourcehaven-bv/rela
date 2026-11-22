@@ -398,7 +398,8 @@ func placeholderErrors(where string, r Rule) []string {
 		for _, ph := range placeholders(tmpl) {
 			if !knownPlaceholder(ph) {
 				errs = append(errs, fmt.Sprintf("%s: %s: unknown placeholder {{%s}}; use new.<property>, "+
-					"old.<property>, entity.id, entity.type, user.name, user.email, today or now", where, field, ph))
+					"old.<property>, entity.id, entity.type, current_user.id, user.name, user.email, today or now",
+					where, field, ph))
 			}
 		}
 	}
@@ -410,7 +411,7 @@ func placeholderErrors(where string, r Rule) []string {
 		}
 		if a.CreateEntity != nil {
 			check(at+" create.template", a.CreateEntity.Template)
-			for _, k := range sortedKeys(a.CreateEntity.Properties) {
+			for _, k := range slices.Sorted(maps.Keys(a.CreateEntity.Properties)) {
 				check(at+" create.properties."+k, a.CreateEntity.Properties[k])
 			}
 		}
@@ -449,7 +450,7 @@ func knownPlaceholder(ph string) bool {
 		return false
 	}
 	switch ph {
-	case "now", "today", "user.name", "user.email", "entity.id", "entity.type":
+	case "now", "today", "user.name", "user.email", "entity.id", "entity.type", PlaceholderCurrentUserID:
 		return true
 	}
 	for _, prefix := range []string{"new.", "old."} {

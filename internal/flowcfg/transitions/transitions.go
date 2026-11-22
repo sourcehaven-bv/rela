@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
@@ -140,7 +142,7 @@ func (m *HeadlessFlow) branches(from, to string) []headlessBranch {
 // eachBranch calls fn for every branch, ordered by from-state name and then
 // declaration order, so load problems and lints are deterministic.
 func (m *HeadlessFlow) eachBranch(fn func(from string, b headlessBranch)) {
-	for _, from := range sortedKeys(m.exits) {
+	for _, from := range slices.Sorted(maps.Keys(m.exits)) {
 		for _, b := range m.exits[from] {
 			fn(from, b)
 		}

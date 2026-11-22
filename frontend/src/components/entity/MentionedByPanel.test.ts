@@ -123,4 +123,21 @@ describe('MentionedByPanel', () => {
     await flushPromises()
     expect(wrapper.find('.mentioned-by-panel').exists()).toBe(false)
   })
+
+  // BUG-UZGMHIK: an action on the page bumps `revision`; the list is read again.
+  it('reads the list again when the revision changes', async () => {
+    getMentionedByMock.mockResolvedValue({ items: [{ id: 'TKT-1', type: 'ticket', title: 'one' }] })
+    const wrapper = mountPanel()
+    await flushPromises()
+    getMentionedByMock.mockResolvedValue({
+      items: [
+        { id: 'TKT-1', type: 'ticket', title: 'one' },
+        { id: 'TKT-2', type: 'ticket', title: 'two' },
+      ],
+    })
+    await wrapper.setProps({ revision: 1 })
+    await flushPromises()
+    expect(getMentionedByMock).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('two')
+  })
 })

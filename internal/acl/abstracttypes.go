@@ -2,6 +2,7 @@ package acl
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -186,7 +187,7 @@ func expandUnion[T any](ex typeExpander, in map[string][]T) map[string][]T {
 			out[key] = append(out[key], grants...)
 		}
 	}
-	for _, key := range sortedKeys(in) {
+	for _, key := range slices.Sorted(maps.Keys(in)) {
 		for _, v := range ex.names(key) {
 			out[v] = append(out[v], in[key]...)
 		}
@@ -223,7 +224,7 @@ func expandOverride[T any](ex typeExpander, in map[string][]T) map[string][]T {
 			out[key] = fields
 		}
 	}
-	for _, key := range sortedKeys(in) {
+	for _, key := range slices.Sorted(maps.Keys(in)) {
 		for _, v := range ex.names(key) {
 			if _, own := in[v]; !own {
 				out[v] = slices.Clone(in[key])

@@ -3,6 +3,7 @@ import { defineComponent, h, ref, type Component } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { useSchemaStore } from '@/stores/schema'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 import {
   useInlineCreate,
   provideInlineCreateDepth,
@@ -37,8 +38,7 @@ function targetsAtDepth(types: string[], depth: number): InlineCreateTarget[] {
     props: { remaining: { type: Number, required: true } },
     setup(props) {
       provideInlineCreateDepth()
-      return () =>
-        props.remaining > 1 ? h(Nester, { remaining: props.remaining - 1 }) : h(Leaf)
+      return () => (props.remaining > 1 ? h(Nester, { remaining: props.remaining - 1 }) : h(Leaf))
     },
   })
 
@@ -70,6 +70,15 @@ describe('useInlineCreate', () => {
     const targets = targetsAtDepth(['ticket', 'concept'], 0)
 
     expect(targets.map((t) => t.entityType)).toEqual(['ticket'])
+  })
+
+  it('offers nothing while the workspace is read-only', () => {
+    workspaceReadOnly.value = true
+    try {
+      expect(targetsAtDepth(['ticket', 'feature'], 0)).toEqual([])
+    } finally {
+      workspaceReadOnly.value = false
+    }
   })
 
   it('offers nothing inside a nested create form (the depth cap)', () => {

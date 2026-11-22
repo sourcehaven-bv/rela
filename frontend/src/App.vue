@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { navigationPending } from '@/router'
@@ -9,6 +9,8 @@ import { localeMessages } from 'rela-components/composables/localeMessages'
 import { resolvedLanguage } from '@/i18n'
 import { getErrorMessage } from '@/api'
 import { tenantProvisioning } from '@/api/tenantProvisioning'
+import { REFUSAL, accessRefusal, loginUrl, refusalDetail } from '@/api/workspaceAccess'
+import { loadWorkspaceReadOnly, workspaceReadOnly } from '@/api/workspaceReadOnly'
 import {
   useKeyboardShortcuts,
   useShellCommands,
@@ -22,10 +24,14 @@ import { useDetailPanelOutlet } from '@/composables/useDetailPanel'
 import { usePageHeaderOutlet } from '@/composables/usePageHeader'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { useShellAppConfig } from '@/composables/useShellAppConfig'
+import { bootMeta } from '@/i18n/bootMeta'
 import { usePresentationOutlet } from '@/composables/usePresentation'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { unknownWorldQuery } from '@/composables/useWorld'
+import { isPageHidden } from '@/composables/visibleRefetch'
 import AsOfBanner from '@/components/common/AsOfBanner.vue'
+import ReadOnlyBanner from '@/components/common/ReadOnlyBanner.vue'
+import WorkspaceAccessScreen from '@/components/common/WorkspaceAccessScreen.vue'
 import ActivityBar from '@/components/common/ActivityBar.vue'
 import RlAppShell from 'rela-components/components/layout/RlAppShell.vue'
 import NextActionCard from '@/components/NextActionCard.vue'
@@ -167,6 +173,22 @@ onMounted(async () => {
   }
 })
 
+// Whether the workspace is read-only, once the app is up (also after the boot
+// screen's Retry) and again whenever the tab comes back into view, so a state
+// an operator changed meanwhile shows without a reload.
+watch(
+  () => schemaStore.loaded,
+  (loaded) => {
+    if (loaded) void loadWorkspaceReadOnly()
+  },
+  { immediate: true }
+)
+function refreshReadOnlyOnReturn() {
+  if (!isPageHidden() && schemaStore.loaded) void loadWorkspaceReadOnly()
+}
+onMounted(() => document.addEventListener('visibilitychange', refreshReadOnlyOnReturn))
+onBeforeUnmount(() => document.removeEventListener('visibilitychange', refreshReadOnlyOnReturn))
+
 // A `?world=` naming no served world is a 400 on every API route, so drop
 // it and land in the default world. See unknownWorldQuery.
 const router = useRouter()
@@ -235,8 +257,27 @@ watch(
     full-viewport wrapper: RlStatusRegion grows to fill its parent, and at boot
     there is no parent pane for it to fill.
   -->
+  <!--
+    The workspace is suspended, archived or unknown, or the server cannot tell
+    who the user is: nothing below can work, so this replaces the app. An
+    ended session is a dialog over the app instead; see the end of the file.
+  -->
+  <WorkspaceAccessScreen
+    v-if="accessRefusal && accessRefusal !== REFUSAL.sessionEnded"
+    :refusal="accessRefusal"
+    :detail="refusalDetail"
+    :app-name="appName()"
+    :logo="bootMeta('rela-app-logo')"
+    :sign-out-url="bootMeta('rela-sign-out')"
+    :account-url="bootMeta('rela-account-url')"
+    :contact="bootMeta('rela-contact')"
+    :contact-email="bootMeta('rela-contact-email')"
+    :suspended-text="bootMeta('rela-suspended-text')"
+    :archived-text="bootMeta('rela-archived-text')"
+  />
+
   <!-- A multi-tenant server is still creating this organization's tenant. -->
-  <div v-if="tenantProvisioning !== 'idle'" class="boot-screen">
+  <div v-else-if="tenantProvisioning !== 'idle'" class="boot-screen">
     <RlStatusRegion :tone="tenantProvisioning === 'failed' ? 'error' : undefined">
       {{ tenantProvisioning === 'failed' ? t('shell.provisioningFailed') : t('shell.provisioning') }}
     </RlStatusRegion>
@@ -322,6 +363,13 @@ watch(
         </RlPageHeader>
       </template>
 
+      <!-- Full width below the header, over the content and the panel both:
+           in the content pane a sticky table header covered it, and an open
+           panel squeezed it. -->
+      <template v-if="workspaceReadOnly && !presentation.presenting.value" #banner>
+        <ReadOnlyBanner />
+      </template>
+
       <template v-if="detailPanel.content.value" #panel>
         <component
           :is="detailPanel.content.value.component"
@@ -386,6 +434,13 @@ watch(
     :danger="confirmState.danger"
     @confirm="handleConfirm"
     @cancel="onCancelEvent"
+  />
+
+  <!-- Over the app, so a half-filled form keeps its input until the user signs in again. -->
+  <WorkspaceAccessScreen
+    v-if="accessRefusal === REFUSAL.sessionEnded"
+    refusal="session_ended"
+    :login-url="loginUrl"
   />
 </template>
 

@@ -1,8 +1,10 @@
 package dataentryconfig
 
 import (
+	"maps"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -194,7 +196,7 @@ func TestGroupColorsMatchLibrary(t *testing.T) {
 		library = append(library, string(m[1]))
 	}
 	sort.Strings(library)
-	assert.Equal(t, sortedMapKeys(ValidGroupColors), library)
+	assert.Equal(t, slices.Sorted(maps.Keys(ValidGroupColors)), library)
 }
 
 // TestDateBucketKeysMatchSPA pins DateBucketKeys to the SPA's bucket order,

@@ -232,7 +232,11 @@
     "schemaChanged": "The configuration changed. Reload and try again.",
     "stateChanged": "This changed while you were working. Try again.",
     "encryptedInaccessible": "This item is encrypted and cannot be edited here",
-    "historyUnsupported": "This installation does not keep version history"
+    "historyUnsupported": "This installation does not keep version history",
+    "tenantReadOnly": "This workspace is read-only",
+    "originNotAllowed": "This page was opened at an address this server does not accept. Open it at its usual address.",
+    "originMissing": "The browser did not say which page sent this request, so the server refused it. Reload the page and try again.",
+    "unexpectedResponse": "The server sent a page instead of data. Your session may have ended. Reload the page."
   },
   "dashboard": {
     "openList": "Open the list",
@@ -499,7 +503,6 @@
     "copyTo": "Copy to",
     "export": "Export",
     "moreActions": "More actions",
-    "exportAs": "Export as {format}",
     "convertMenu": "Convert",
     "convert": {
       "defaultFaceLower": "default face",
@@ -766,6 +769,7 @@
     }
   },
   "form": {
+    "workspaceReadOnly": "This workspace is read-only. New records cannot be saved.",
     "saveFailed": "Save failed",
     "allChangesSaved": "All changes saved",
     "sidePanel": {
@@ -1137,8 +1141,24 @@
       "searching": "Searching...",
       "selected": "{number} selected"
     },
-    "provisioning": "Setting up your organization. This takes a moment.",
-    "provisioningFailed": "Setting up your organization did not finish. Try again later, or contact your administrator if it keeps failing."
+    "provisioning": "Setting up your workspace. This takes a moment.",
+    "provisioningFailed": "Setting up your workspace did not finish. Try again later, or contact your administrator if it keeps failing.",
+    "access": {
+      "sessionEndedTitle": "Your session has ended",
+      "sessionEndedBody": "Sign in again to continue.",
+      "signInAgain": "Sign in again",
+      "suspendedTitle": "This workspace is suspended",
+      "suspendedBody": "Nobody can open it until it is resumed. Its data is kept.",
+      "archivedTitle": "This workspace is archived",
+      "archivedBody": "It can no longer be opened. Its data is kept until it is deleted.",
+      "noIdentityTitle": "This server cannot identify you",
+      "unknownTitle": "This workspace is not available",
+      "unknownBody": "There is no workspace for your organisation here.",
+      "contact": "If you have questions, contact the person who manages your organisation's subscription.",
+      "openAccount": "Go to your account",
+      "tryAgain": "Try again",
+      "readOnlyBanner": "This workspace is read-only. Creating and editing are turned off."
+    }
   },
   "switcher": {
     "projects": "Projects",
@@ -1682,5 +1702,10 @@
     "now": "Now",
     "backToNow": "Back to now",
     "readOnly": "This page shows a past state and is read-only. Go back to now to make changes."
+  },
+  "notFound": {
+    "title": "Page not found",
+    "description": "There is no page at this address. It may have moved, or the link may be wrong.",
+    "home": "Go to the home page"
   }
 }

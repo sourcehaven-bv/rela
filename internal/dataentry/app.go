@@ -237,7 +237,16 @@ type appEntityWriter interface {
 // verdict cache on sseStream; the git status and sync handlers moved to
 // gitHandler, and StartGitFetch now delegates to it (80 -> 72).
 //
-//plimsoll:max-methods=72
+// The configuration endpoints (/_schema, /_schema/..., /_config, the OpenAPI
+// spec, /_templates) and scanAppsOrLog moved to schemaHandler, which also
+// took the templater field; the conflict list and detail moved to
+// conflictsHandler; /_analyze moved to analyzeHandler with the analyze field;
+// and /_commands moved onto commandHandler (72 -> 62). /_search and
+// /_documents stay: search shares the list pipeline's owner and linkable
+// passes, which take *App, and the document routes dispatch to package
+// functions that take *App.
+//
+//plimsoll:max-methods=62
 //plimsoll:max-exported-methods=22
 type App struct {
 	// Primitives — immutable after NewApp.
@@ -374,10 +383,9 @@ type App struct {
 	viewReader visibility.Reader
 	tracer     tracer.Tracer
 	validator  validator.Validator
-	// analyze runs the read-only graph-analysis checks. Extracted from App
-	// (TKT-N26KLB M5.1); holds its own {store, tracer, validator} and takes
-	// the metamodel snapshot per call.
-	analyze analyzeService
+	// analyzeAPI owns /_analyze and the analysis service behind it.
+	// Always non-nil after NewApp.
+	analyzeAPI *analyzeHandler
 	// affordances computes the _actions/field/relation affordance maps and runs
 	// write-time affordance validation. Extracted from App (TKT-N26KLB M5.2);
 	// shares the same acl.ACL as the write path (contract-test invariant).
@@ -440,9 +448,15 @@ type App struct {
 	queries *queryService
 	// gantt owns the read-only gantt tree endpoint (TKT-MW28U5). Like views,
 	// it never mutates.
-	gantt     *ganttHandler
-	templater templating.Templater
-	cfgLoader config.Loader
+	gantt *ganttHandler
+	// schemaAPI owns the configuration endpoints (/_schema, /_config, the
+	// OpenAPI spec, /_templates) and the templater behind /_templates.
+	// Always non-nil after NewApp.
+	schemaAPI *schemaHandler
+	// conflictsAPI owns the merge-conflict list and detail routes. Always
+	// non-nil after NewApp.
+	conflictsAPI *conflictsHandler
+	cfgLoader    config.Loader
 	// assets is cfgLoader seen as the custom/ and apps/ reader; NewApp
 	// requires the loader to support it.
 	assets projectAssets
@@ -1327,7 +1341,6 @@ func NewApp(
 		visibleReader:   visible,
 		reader:          entityReader{store: st},
 		tracer:          trc,
-		templater:       templater,
 		cfgLoader:       cfgLoader,
 		assets:          assets,
 		kv:              kv,
@@ -1348,6 +1361,9 @@ func NewApp(
 	// extracted on the same terms as nextActionHandler below.
 	app.sse = newSSEHandler(app)
 	app.gitAPI = newGitHandler(app)
+	app.schemaAPI = newSchemaHandler(app, templater)
+	app.conflictsAPI = newConflictsHandler(app)
+	app.analyzeAPI = newAnalyzeHandler(app)
 	app.faceEdges = faceEdgesOf(app)
 	// documentService needs scriptEngine (for Lua renders) and a closure
 	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).
@@ -1902,7 +1918,7 @@ func wireValidation(app *App, meta *metamodel.Metamodel, world store.WorldScope)
 	app.validator = val
 	// analyzeService reads, relation counts included, route through the same
 	// gated reader.
-	app.analyze = analyzeService{
+	app.analyzeAPI.svc = analyzeService{
 		reads:     gatedReader,
 		tracer:    lateGatedTracer{app: app},
 		validator: val,

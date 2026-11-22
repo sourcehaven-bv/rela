@@ -64,6 +64,7 @@ export function useBatchAction() {
             ? action.confirm
             : t('entity.llmBatch.confirm', { n: addresses.length }, addresses.length),
         confirmLabel: label,
+        danger: action.style === 'danger',
       })
       if (!ok) return
       pending.value = true
