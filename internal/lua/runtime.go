@@ -154,15 +154,12 @@ type Runtime struct {
 	scriptPath string        // set by RunFile; empty for RunString/inline
 	modules    *moduleLoader // require; Nil: never — set by newRuntime
 
-	// mailSender backs mail.send. Nil means mail is not configured for this
-	// project, which the binding reports as a typed not_configured error
-	// rather than by being absent — see mail.go for why this one differs
-	// from the ai/http capability gate.
-	mailSender MailSender
-
-	// mailBranding backs mail.render's colors and logo. Nil: rela's
-	// default look. Set from [ReadDeps.MailBranding].
-	mailBranding MailBranding
+	// mail backs the mail.* bindings. A nil sender means mail is not
+	// configured for this project, which mail.send reports as a typed
+	// not_configured error rather than by being absent — see mail.go for why
+	// this one differs from the ai/http capability gate. A nil branding gives
+	// mail.render rela's default look; it is set from [ReadDeps.MailBranding].
+	mail mailRenderer
 
 	// out backs the output/filesystem bindings (rela.output, rela.write_file,
 	// the print override). Built in newRuntime AFTER options apply, so it
@@ -470,7 +467,7 @@ func WithHTTPClient(c *http.Client) Option {
 // reach a transport the operator did not configure.
 func WithMailSender(s MailSender) Option {
 	return func(r *Runtime) {
-		r.mailSender = s
+		r.mail.sender = s
 	}
 }
 
@@ -561,7 +558,7 @@ func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Opti
 		caps: deps.Capabilities,
 	}
 	r.modules = installRequire(L, deps.moduleFiles())
-	r.mailBranding = deps.MailBranding
+	r.mail.branding = deps.MailBranding
 
 	// Apply options
 	for _, opt := range opts {
