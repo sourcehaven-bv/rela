@@ -58,6 +58,9 @@ const error = ref('')
 const starting = ref('')
 let controller: AbortController | null = null
 
+// Before load(), which an immediate watcher calls during setup.
+const route = useRoute()
+
 /** The flows that run on this type. */
 const typeFlows = computed<Flow[]>(() => flows.value.filter((f) => f.subject === props.entityType))
 const startButtons = computed(() =>
@@ -117,7 +120,6 @@ watch(
 
 // `?run=<id>` (a flow task hint links here with it) brings that run's card
 // into view once per entity and run, as soon as the card is on screen.
-const route = useRoute()
 const panel = ref<HTMLElement | null>(null)
 /** The entity and run `?run=` already focused, so a reload does not steal focus. */
 let focusedRun = ''
