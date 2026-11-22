@@ -49,7 +49,7 @@ import {
 } from '@/utils/markdown'
 import { makeRefResolver } from '@/utils/entityRefResolver'
 import BackButton from '@/components/common/BackButton.vue'
-import NotFoundState from '@/components/common/NotFoundState.vue'
+import NotFoundState from '@/components/feedback/NotFoundState.vue'
 import InaccessibleField from '@/components/common/InaccessibleField.vue'
 import PropertyDisplay from '@/components/common/PropertyDisplay.vue'
 import SectionTableRowCells from '@/components/entity/SectionTableRowCells.vue'

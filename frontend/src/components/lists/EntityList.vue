@@ -45,7 +45,7 @@ import BackButton from '@/components/common/BackButton.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import AddToPileMenu from '@/components/piles/AddToPileMenu.vue'
 import PageHeaderContent from '@/components/common/PageHeaderContent'
-import NotFoundView from '@/views/NotFoundView.vue'
+import NotFoundPage from '@/components/common/NotFoundPage.vue'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { useCreateModal } from '@/composables/useCreateModal'
 import { usePageTabScope } from '@/composables/usePageTabScope'
@@ -1767,7 +1767,7 @@ watch(searchQuery, () => {
     />
   </div>
 
-  <NotFoundView v-else />
+  <NotFoundPage v-else />
 </template>
 
 <style scoped>
