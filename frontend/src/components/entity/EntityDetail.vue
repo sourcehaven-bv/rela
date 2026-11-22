@@ -12,6 +12,7 @@ import { useEvents, type EntityEventData } from '@/composables/useEvents'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView, getCommands, getErrorMessage } from '@/api'
+import { ApiError } from '@/api/errors'
 import { liveViewPath } from '@/api/live'
 import { accessRefusal } from '@/api/workspaceAccess'
 import { useLiveSubscription } from '@/composables/useLiveSubscription'
@@ -48,6 +49,7 @@ import {
 } from '@/utils/markdown'
 import { makeRefResolver } from '@/utils/entityRefResolver'
 import BackButton from '@/components/common/BackButton.vue'
+import NotFoundState from '@/components/feedback/NotFoundState.vue'
 import InaccessibleField from '@/components/common/InaccessibleField.vue'
 import PropertyDisplay from '@/components/common/PropertyDisplay.vue'
 import SectionTableRowCells from '@/components/entity/SectionTableRowCells.vue'
@@ -277,6 +279,10 @@ const backTarget = useBackTarget()
 // State
 const loading = ref(true)
 const error = ref<string | null>(null)
+// Set with `error` when the server answered the uniform 404: the entity does
+// not exist or this caller may not read it. The page then shows the plain
+// not-found state rather than the error and a Retry that cannot help.
+const notFound = ref(false)
 
 // pageState mirrors DynamicForm's `form-state-*` contract: a stable signal
 // that this screen has finished resolving, so a screenshot can wait for it
@@ -744,7 +750,7 @@ const session = useEntitySession(viewTarget, {
   // server has refused must go (frontend/CLAUDE.md, BUG-E8XE7I).
   onRefused: (err) => {
     viewData.value = null
-    error.value = getErrorMessage(err, t('entity.loadFailed'))
+    setLoadError(err)
   },
 })
 // `loading` is read by useDelayedPending at setup, above the session, which
@@ -1304,11 +1310,17 @@ watch(servedRef, (now, before) => {
   void loadComments()
 })
 
+function setLoadError(err: unknown) {
+  notFound.value = err instanceof ApiError && err.status === 404
+  error.value = getErrorMessage(err, t('entity.loadFailed'))
+}
+
 // `background` is set for a reload after a live change: it then waits for
 // autosave like a refresh does. Only the latest load clears `loading` (the
 // session tracks it).
 async function loadView(opts: { background?: boolean } = {}) {
   error.value = null
+  notFound.value = false
   // Report EVERY load to the global activity bar, including the ones where
   // previous content stays on screen.
   //
@@ -1403,8 +1415,11 @@ async function loadView(opts: { background?: boolean } = {}) {
       // a live change keeps it even then, as a refresh does: the error
       // state would replace the page and an open editor.
       if (isCancelledFetch(outcome.error) || !outcome.current) return
-      console.error('Failed to load entity view:', outcome.error)
-      if (!opts.background) error.value = getErrorMessage(outcome.error, t('entity.loadFailed'))
+      // A 404 is an answer, not a fault: the page says it as not-found.
+      if (!(outcome.error instanceof ApiError && outcome.error.status === 404)) {
+        console.error('Failed to load entity view:', outcome.error)
+      }
+      if (!opts.background) setLoadError(outcome.error)
     }
   } finally {
     settleRouteLoad?.()
@@ -2543,6 +2558,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 
     <!-- The session or workspace screen says why; see EntityList. -->
     <div v-else-if="error && accessRefusal" class="entity-detail-placeholder" />
+    <NotFoundState v-else-if="error && notFound" />
     <RlStatusRegion v-else-if="error" tone="error">
       {{ error }}
       <template #actions>

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { defineComponent, nextTick } from 'vue'
+import { defineComponent, nextTick, type Ref } from 'vue'
+import { accessRefusal } from '@/api/workspaceAccess'
 import { useQueryCache } from '@pinia/colada'
 import { useEvents, type SSEConnectionState } from './useEvents'
 
@@ -22,9 +23,14 @@ vi.mock('@/stores', () => ({
 }))
 
 const mockProbeSessionEnded = vi.fn().mockResolvedValue(undefined)
-vi.mock('@/api/workspaceAccess', () => ({
-  probeSessionEnded: () => mockProbeSessionEnded(),
-}))
+vi.mock('@/api/workspaceAccess', async () => {
+  const { ref } = await import('vue')
+  return {
+    probeSessionEnded: () => mockProbeSessionEnded(),
+    accessRefusal: ref<string | null>(null),
+  }
+})
+const mockAccessRefusal = accessRefusal as unknown as Ref<string | null>
 
 // Wrap the MockEventSource from test/setup.ts so tests can grab the
 // instance the composable connected to and drive server-sent events
@@ -352,6 +358,23 @@ describe('useEvents', () => {
     const source = lastSource as unknown as EventSource
     source.onerror?.(new Event('error'))
     expect(mockProbeSessionEnded).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes the stream and opens no new one while a refusal is up', async () => {
+    await mountConnected()
+    expect(connectionState.value.connected).toBe(true)
+    const source = lastSource
+
+    mockAccessRefusal.value = 'session_ended'
+    await nextTick()
+    expect(connectionState.value.connected).toBe(false)
+
+    // A reconnect after the stream failed does not open a new stream.
+    ;(source as unknown as EventSource).onerror?.(new Event('error'))
+    await vi.runAllTimersAsync()
+    expect(lastSource).toBe(source)
+    expect(connectionState.value.connected).toBe(false)
+    mockAccessRefusal.value = null
   })
 
   describe('disconnect', () => {

@@ -21,6 +21,7 @@
  */
 import { ref } from 'vue'
 import { apiUrl } from './base'
+import { ApiError } from './errors'
 import { problemCode } from '@/i18n/apiErrors'
 
 /** The refusals, named once so other modules compare against these. */
@@ -95,6 +96,26 @@ export function trackAccess(status: number, data: unknown): void {
   loginUrl.value = refusal === REFUSAL.sessionEnded ? loginUrlOf(data) : null
   refusalDetail.value = refusal === REFUSAL.noIdentity ? detailOf(data) : null
   accessRefusal.value = refusal
+}
+
+/**
+ * The error a request gets while a refusal is up. The client sends no more
+ * requests then: none can succeed until the user signs in again or reloads,
+ * and each would only fail and be logged. It is a cancellation, so callers
+ * drop it as they drop an aborted request.
+ */
+export function refusedRequestError(): ApiError {
+  return new ApiError('Request cancelled', { kind: 'cancelled', original: null })
+}
+
+/**
+ * Whether a caught error is not worth logging: a cancelled request, or any
+ * failure while the session or workspace screen is up, which already says
+ * what happened.
+ */
+export function isQuietFailure(err: unknown): boolean {
+  if (accessRefusal.value) return true
+  return err instanceof ApiError && err.kind === 'cancelled'
 }
 
 /** How long after one probe the next may run, so an outage does not double the traffic. */

@@ -106,3 +106,19 @@ describe('EntityList empty state', () => {
     expect(await placeholder()).toBe('Search...')
   })
 })
+
+describe('EntityList for a list the configuration does not have', () => {
+  it('shows the not-found page with a way home, not the list id', async () => {
+    const wrapper = mount(withPageHeader(EntityList), {
+      props: { listId: 'x' },
+      attachTo: document.body,
+      global: { plugins: [pinia, PiniaColada] },
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="not-found-state"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="not-found-home"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('configuration')
+    expect(listEntitiesMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+})

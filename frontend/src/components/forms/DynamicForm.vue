@@ -84,6 +84,7 @@ import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.v
 import RlKbd from 'rela-components/components/data/RlKbd.vue'
 import { parseDecimal } from '@/utils/decimal'
 import MarkdownHelp from './MarkdownHelp.vue'
+import NotFoundState from '@/components/feedback/NotFoundState.vue'
 
 const props = defineProps<{
   formId: string
@@ -3127,9 +3128,7 @@ defineExpose({
     <SidePanel v-if="isEdit && entityId" :form-id="formId" :entity-id="entityId" />
   </div>
 
-  <RlStatusRegion v-else tone="error">
-    {{ t('form.missingForm', { id: formId }) }}
-  </RlStatusRegion>
+  <NotFoundState v-else />
 
   <!-- Help Modal -->
   <HelpModal

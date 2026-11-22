@@ -80,8 +80,8 @@ func TestRetiredRedirect_ViewsInAWorld(t *testing.T) {
 	if got, want := rec.Header().Get("Location"), "../ticket/TKT-001?world=published"; got != want {
 		t.Errorf("Location = %q, want %q", got, want)
 	}
-	if code := viewStatus(t, app, "/api/v1/_views/ticket/NOPE-1?world=published"); code != http.StatusUnprocessableEntity {
-		t.Errorf("a never-existing id: got %d, want the 422 it has always had", code)
+	if code := viewStatus(t, app, "/api/v1/_views/ticket/NOPE-1?world=published"); code != http.StatusNotFound {
+		t.Errorf("a never-existing id: got %d, want the uniform 404", code)
 	}
 }
 
