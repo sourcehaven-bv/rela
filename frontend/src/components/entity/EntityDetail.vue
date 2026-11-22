@@ -35,6 +35,7 @@ import { anchorSections } from '@/utils/rowAnchors'
 import { editFormRoute, entityDetailHref, ownedEntityHref } from '@/utils/entityRoute'
 import { shouldDeferToBrowser } from '@/utils/openIntent'
 import { computeActionAllowed } from '@/utils/affordancesWarning'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 import { isInputFocused } from '@/utils/dom'
 import { isAnyModalOpen } from '@/composables/modalStack'
 import {
@@ -442,9 +443,12 @@ const canDelete = computed(() => mayDelete.value)
 // authorization: the create re-authorizes.
 //
 // Withheld on an inaccessible entity: its properties are ciphertext, so a
-// "copy" of them would be a copy of nothing.
+// "copy" of them would be a copy of nothing. Withheld in a read-only
+// workspace, which refuses the create.
 const duplicateFormId = computed(() =>
-  isInaccessible.value ? undefined : schemaStore.inlineCreateFormFor(props.entityType)
+  isInaccessible.value || workspaceReadOnly.value
+    ? undefined
+    : schemaStore.inlineCreateFormFor(props.entityType)
 )
 const canDuplicate = computed(() => !!duplicateFormId.value && !!entry.value)
 const showDuplicateModal = ref(false)
@@ -1487,9 +1491,14 @@ async function requestDelete() {
 // Always an array. The wire keeps `_copies` absent (no capability) distinct
 // from `[]` (none declared), but this page renders nothing for both, so the
 // distinction is collapsed HERE, once, rather than carried into every reader.
-const copyOffers = computed<CopyOffer[]>(() => entry.value?._copies ?? [])
-const conversionOffers = computed<ConversionOffer[]>(
-  () => entry.value?._conversions?.filter((o) => o.allowed) ?? []
+//
+// A read-only workspace refuses the writes a copy or a conversion makes, so
+// it offers neither.
+const copyOffers = computed<CopyOffer[]>(() =>
+  workspaceReadOnly.value ? [] : (entry.value?._copies ?? [])
+)
+const conversionOffers = computed<ConversionOffer[]>(() =>
+  workspaceReadOnly.value ? [] : (entry.value?._conversions?.filter((o) => o.allowed) ?? [])
 )
 // The body editor's task-item recipes, and the entity they convert from.
 const taskItemSource = computed(() =>

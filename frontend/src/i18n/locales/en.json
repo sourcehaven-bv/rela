@@ -1155,6 +1155,7 @@
       "unknownTitle": "This workspace is not available",
       "unknownBody": "There is no workspace for your organisation here.",
       "contact": "If you have questions, contact the person who manages your organisation's subscription.",
+      "openAccount": "Go to your account",
       "tryAgain": "Try again",
       "readOnlyBanner": "This workspace is read-only. Creating and editing are turned off."
     }

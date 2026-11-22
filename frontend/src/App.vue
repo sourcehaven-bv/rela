@@ -10,7 +10,7 @@ import { resolvedLanguage } from '@/i18n'
 import { getErrorMessage } from '@/api'
 import { tenantProvisioning } from '@/api/tenantProvisioning'
 import { REFUSAL, accessRefusal, loginUrl, refusalDetail } from '@/api/workspaceAccess'
-import { loadWorkspaceReadOnly } from '@/api/workspaceReadOnly'
+import { loadWorkspaceReadOnly, workspaceReadOnly } from '@/api/workspaceReadOnly'
 import {
   useKeyboardShortcuts,
   useShellCommands,
@@ -24,6 +24,7 @@ import { useDetailPanelOutlet } from '@/composables/useDetailPanel'
 import { usePageHeaderOutlet } from '@/composables/usePageHeader'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { useShellAppConfig } from '@/composables/useShellAppConfig'
+import { bootMeta } from '@/i18n/bootMeta'
 import { usePresentationOutlet } from '@/composables/usePresentation'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { unknownWorldQuery } from '@/composables/useWorld'
@@ -265,6 +266,14 @@ watch(
     v-if="accessRefusal && accessRefusal !== REFUSAL.sessionEnded"
     :refusal="accessRefusal"
     :detail="refusalDetail"
+    :app-name="appName()"
+    :logo="bootMeta('rela-app-logo')"
+    :sign-out-url="bootMeta('rela-sign-out')"
+    :account-url="bootMeta('rela-account-url')"
+    :contact="bootMeta('rela-contact')"
+    :contact-email="bootMeta('rela-contact-email')"
+    :suspended-text="bootMeta('rela-suspended-text')"
+    :archived-text="bootMeta('rela-archived-text')"
   />
 
   <!-- A multi-tenant server is still creating this organization's tenant. -->
@@ -354,6 +363,13 @@ watch(
         </RlPageHeader>
       </template>
 
+      <!-- Full width below the header, over the content and the panel both:
+           in the content pane a sticky table header covered it, and an open
+           panel squeezed it. -->
+      <template v-if="workspaceReadOnly && !presentation.presenting.value" #banner>
+        <ReadOnlyBanner />
+      </template>
+
       <template v-if="detailPanel.content.value" #panel>
         <component
           :is="detailPanel.content.value.component"
@@ -386,7 +402,6 @@ watch(
            is always mounted and simply renders nothing where none is owed. -->
       <NextActionCard v-if="!presentation.presenting.value" />
       <AsOfBanner v-if="!presentation.presenting.value" />
-      <ReadOnlyBanner v-if="!presentation.presenting.value" />
       <RouterView />
       <RlToastHost :toasts="toasts" @dismiss="dismissToast" />
       <ScriptErrorDialog />

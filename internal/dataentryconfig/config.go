@@ -493,6 +493,11 @@ type AppConfig struct {
 	// one of [SupportedUILanguages]. A region (nl-BE) is kept for date and
 	// number formatting.
 	Language string `yaml:"language,omitempty"`
+	// Logo is an image of the app for the pages shown before a workspace
+	// loads, such as a suspended workspace, where the logo uploaded on the
+	// Settings page cannot be read. A root-relative path or an https URL,
+	// validated at load like the account links. Empty shows the app name.
+	Logo string `yaml:"logo,omitempty" json:"logo,omitempty"`
 	// DefaultWorld names the world a request lands in when the URL carries no
 	// `?world=`. Empty (the default) means the default world — the raw stored
 	// faces, which is right for an authoring tool and wrong for a reader.

@@ -70,4 +70,71 @@ describe('WorkspaceAccessScreen', () => {
     await wrapper.get('button').trigger('click')
     expect(location.reload).toHaveBeenCalled()
   })
+
+  const exits = {
+    signOutUrl: '/auth/logout',
+    accountUrl: 'https://account.example.com/',
+  }
+
+  it.each(['suspended', 'archived', 'unknown_workspace'] as const)(
+    'offers the account portal and sign out on a %s workspace',
+    (refusal) => {
+      const { wrapper } = render(refusal, exits)
+      const links = wrapper.findAll('a')
+      expect(links.map((a) => [a.text(), a.attributes('href')])).toEqual([
+        ['Go to your account', exits.accountUrl],
+        ['Sign out', exits.signOutUrl],
+      ])
+    }
+  )
+
+  it('offers no account links when the server cannot identify anyone', () => {
+    const { wrapper } = render('no_identity', { ...exits, detail: 'set auth.header' })
+    expect(wrapper.findAll('a')).toHaveLength(0)
+  })
+
+  it('shows the configured contact text instead of the default', () => {
+    const contact = 'Email support@example.com'
+    const { wrapper } = render('suspended', { contact })
+    expect(wrapper.text()).toContain(contact)
+    expect(wrapper.text()).not.toContain('manages your organisation')
+  })
+
+  it('links the configured contact address', () => {
+    const { wrapper } = render('archived', { contactEmail: 'support@sourcehaven.test' })
+    const link = wrapper.get('.access-contact a')
+    expect(link.attributes('href')).toBe('mailto:support@sourcehaven.test')
+    expect(link.text()).toBe('support@sourcehaven.test')
+  })
+
+  it.each(['a@example.com?cc=b@example.com', 'Support <s@example.com>', 'a@localhost'])(
+    'shows no link for a contact address that is not bare: %s',
+    (contactEmail) => {
+      const { wrapper } = render('suspended', { contactEmail })
+      expect(wrapper.find('.access-contact a').exists()).toBe(false)
+    }
+  )
+
+  it.each([
+    ['suspended', 'suspendedText', 'Paused for billing.', 'Nobody can open it'],
+    ['archived', 'archivedText', 'Closed at your request.', 'It can no longer be opened'],
+  ] as const)(
+    'shows the configured %s text instead of the default',
+    (refusal, prop, body, gone) => {
+      const { wrapper } = render(refusal, { [prop]: body })
+      expect(wrapper.get('.access-body').text()).toBe(body)
+      expect(wrapper.text()).not.toContain(gone)
+    }
+  )
+
+  it('shows the logo, or else the app name', () => {
+    const named = render('archived', { appName: 'Workspace' }).wrapper
+    expect(named.find('img').exists()).toBe(false)
+    expect(named.get('.access-brand').text()).toBe('Workspace')
+
+    const logo = '/brand/logo.svg'
+    const img = render('archived', { appName: 'Workspace', logo }).wrapper.get('img')
+    expect(img.attributes('src')).toBe(logo)
+    expect(img.attributes('alt')).toBe('Workspace')
+  })
 })

@@ -50,12 +50,23 @@ type meDeps struct {
 // handleV1Me serves GET /api/v1/_me: who the request principal is, for the
 // SPA's account menu (TKT-MJTD12). See [v1.MeResponse].
 //
+// POST /api/v1/_me answers the same, after running the provision seam: under
+// `unmatched_principal: provision` a verified principal with no user entity
+// gets its stub now rather than on its first change. The SPA posts when a GET
+// says `provisionable`, so a member who has only looked around is listed
+// among the people too (BUG-WS7QF2K). It stays a POST because provisioning
+// writes; a GET never provisions. A read-only workspace refuses the POST
+// before it gets here.
+//
 // A package function taking the App rather than a method: App is at its
 // plimsoll load line, and this needs only what it names.
 func handleV1Me(a *App, w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
+	}
+	if r.Method == http.MethodPost {
+		r = r.WithContext(newProvisionSeam(a)(r.Context()))
 	}
 	s := a.State()
 	deps := meDeps{
@@ -64,7 +75,8 @@ func handleV1Me(a *App, w http.ResponseWriter, r *http.Request) {
 		people:  worldPeople{res: a.viewReader.Resolver()},
 		typeOf:  a.reader.entityType,
 	}
-	if d, ok := a.acl.(*acl.Declarative); ok {
+	d, _ := a.acl.(*acl.Declarative)
+	if d != nil {
 		if pol := d.Policy(); pol != nil {
 			deps.userType = pol.UserEntityType
 		}
@@ -72,9 +84,25 @@ func handleV1Me(a *App, w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	// Per principal; writeV1JSON marks every v1 response no-store.
 	me := buildMe(ctx, principal.From(ctx), deps)
+	me.Provisionable = provisionable(ctx, d)
 	me.CanConfigure = a.configure != nil && mayConfigure(a, r)
 	me.CanRemoteSync = a.remotes != nil && permitsRemoteSync(a.acl, r)
 	writeV1JSON(w, http.StatusOK, me)
+}
+
+// provisionable reports whether a POST to `_me` would provision the request
+// principal: it is verified, resolves to no user entity, and the policy says
+// `unmatched_principal: provision`.
+func provisionable(ctx context.Context, d *acl.Declarative) bool {
+	if d == nil {
+		return false
+	}
+	req, err := d.RequestFrom(ctx)
+	if err != nil || !req.UnmatchedVerified() {
+		return false
+	}
+	pol := d.Policy()
+	return pol != nil && pol.EffectiveUnmatchedPrincipal() == acl.UnmatchedProvision
 }
 
 // buildMe assembles the account response for p.

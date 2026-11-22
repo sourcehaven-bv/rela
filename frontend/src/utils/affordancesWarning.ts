@@ -31,20 +31,16 @@ interface AffordanceCarrier {
  * verb. Keeps the contract in one place — a future change (e.g. flip
  * to `=== true`) is a single edit, not a sweep across N call sites.
  *
- * A read-only workspace refuses every create, whatever the verdict says, so
- * `create` and `create@<face>` are hidden there too (see
- * `api/workspaceReadOnly.ts`).
+ * Every verb in `_actions` is a write (create, create@<face>, update, delete,
+ * rename). A read-only workspace refuses every write, whatever the verdict
+ * says, so all of them are hidden there (see `api/workspaceReadOnly.ts`).
  */
 export function actionAllowed(
   carrier: AffordanceCarrier | undefined | null,
   verb: string
 ): boolean {
-  if (isCreateVerb(verb) && workspaceReadOnly.value) return false
+  if (workspaceReadOnly.value) return false
   return carrier?._actions?.[verb] !== false
-}
-
-function isCreateVerb(verb: string): boolean {
-  return verb === 'create' || verb.startsWith('create@')
 }
 
 /**

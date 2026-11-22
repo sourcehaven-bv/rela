@@ -3271,6 +3271,11 @@ func validateApp(cfg *Config, meta *metamodel.Metamodel) []string {
 	errs := validateDefaultWorldAlias(cfg.App.DefaultWorld, meta)
 	errs = append(errs, validateAppLanguage(cfg.App.Language)...)
 	errs = append(errs, validateWorldSwitcher(cfg.App.WorldSwitcher)...)
+	if logo := cfg.App.Logo; logo != "" {
+		if err := validAccountLink(logo); err != nil {
+			errs = append(errs, fmt.Sprintf("app.logo: %q %v", logo, err))
+		}
+	}
 	return append(errs, validatePlantUMLURL(cfg.App.PlantUMLServerURL)...)
 }
 

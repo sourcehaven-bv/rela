@@ -1,6 +1,6 @@
 package v1
 
-// MeResponse is the body of GET /api/v1/_me: who the request principal is,
+// MeResponse is the body of GET and POST /api/v1/_me: who the request principal is,
 // for the SPA's account menu (TKT-MJTD12).
 //
 // It is display data only. Nothing the SPA does with it is an access
@@ -33,6 +33,10 @@ type MeResponse struct {
 	// and the principal holds remote:sync. It only decides whether the
 	// Remotes link is shown; the routes check the permission themselves.
 	CanRemoteSync bool `json:"can_remote_sync,omitempty"`
+	// Provisionable is true when the principal is verified but has no user
+	// entity yet, and the server would create one on a POST to `_me`
+	// (`unmatched_principal: provision`). Absent means no.
+	Provisionable bool `json:"provisionable,omitempty"`
 }
 
 // MeOrg is the principal's org. ID is always set; Slug and Name are omitted

@@ -58,43 +58,87 @@ func StaticShell(boot ShellBoot) http.Handler {
 }
 
 // ShellBoot is what the tenant-free shell says about the app before any
-// tenant config can load: the `app.name` and `app.language` of the shared
-// data-entry.yaml. A multi-tenant server shows its "setting up" screen from
-// this shell, so without it that screen reads "rela" and follows the
-// browser's language (BUG-21N3J4N). The zero value leaves the shell as built.
+// tenant config can load, read from the shared data-entry.yaml. A
+// multi-tenant server shows its "setting up" screen from this shell, so
+// without the name and language that screen reads "rela" and follows the
+// browser's language (BUG-21N3J4N). The pages for a suspended or archived
+// workspace come from the same shell, so the logo, the account links, the
+// contact text and address, and the page texts they show come from here too. The zero value leaves the shell
+// as built.
 //
-// Both values are operator configuration, which is not a secret (see the
-// root CLAUDE.md), and are the same for every tenant of the server.
+// Every value is operator configuration, which is not a secret (see the
+// root CLAUDE.md), and is the same for every tenant of the server.
 type ShellBoot struct {
 	AppName  string
 	Language string
+	// Logo is `app.logo`.
+	Logo string
+	// SignOut and Account are `account.sign_out` and `account.account`.
+	SignOut string
+	Account string
+	// Contact is `account.contact`; ContactEmail is `account.contact_email`.
+	Contact      string
+	ContactEmail string
+	// SuspendedText and ArchivedText are `account.suspended_text` and
+	// `account.archived_text`.
+	SuspendedText string
+	ArchivedText  string
 }
 
 // ShellBootFrom reads a [ShellBoot] from the bytes of data-entry.yaml. Only
-// the `app:` block is read. A language that is not a plain BCP 47 tag is
-// dropped, so a typo there cannot break the shell; the full config load
-// reports it.
+// the `app:` and `account:` blocks are read. A value that fails the config
+// load's own check is dropped, so a typo there cannot break the shell; the
+// full config load reports it.
 func ShellBootFrom(data []byte) (ShellBoot, error) {
 	var doc struct {
-		App struct {
-			Name     string `yaml:"name"`
-			Language string `yaml:"language"`
-		} `yaml:"app"`
+		App     dataentryconfig.AppConfig      `yaml:"app"`
+		Account *dataentryconfig.AccountConfig `yaml:"account"`
 	}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return ShellBoot{}, err
 	}
-	return shellBootOf(doc.App.Name, doc.App.Language), nil
+	return shellBootOf(doc.App, doc.Account), nil
 }
 
-// shellBootOf is the [ShellBoot] for an app name and language. A language
-// that is not a plain BCP 47 tag is dropped.
-func shellBootOf(name, language string) ShellBoot {
-	b := ShellBoot{AppName: strings.TrimSpace(name)}
-	if lang := strings.TrimSpace(language); languageTag.MatchString(lang) {
+// shellBootOf is the [ShellBoot] for an `app:` and an `account:` block.
+// A language that is not a plain BCP 47 tag and a link that is not a valid
+// account link are dropped.
+func shellBootOf(app dataentryconfig.AppConfig, acc *dataentryconfig.AccountConfig) ShellBoot {
+	b := ShellBoot{AppName: strings.TrimSpace(app.Name), Logo: shellLink(app.Logo)}
+	if lang := strings.TrimSpace(app.Language); languageTag.MatchString(lang) {
 		b.Language = lang
 	}
+	if acc != nil {
+		b.SignOut = shellLink(acc.SignOut)
+		b.Account = shellLink(acc.Account)
+		if c := strings.TrimSpace(acc.Contact); len([]rune(c)) <= dataentryconfig.MaxAccountContactRunes {
+			b.Contact = c
+		}
+		if e := strings.TrimSpace(acc.ContactEmail); dataentryconfig.ValidContactEmail(e) {
+			b.ContactEmail = e
+		}
+		b.SuspendedText = shellText(acc.SuspendedText)
+		b.ArchivedText = shellText(acc.ArchivedText)
+	}
 	return b
+}
+
+// shellText is s trimmed, or empty when it is longer than a page text may be.
+func shellText(s string) string {
+	s = strings.TrimSpace(s)
+	if len([]rune(s)) > dataentryconfig.MaxAccountPageTextRunes {
+		return ""
+	}
+	return s
+}
+
+// shellLink is s when it is a valid account link, else empty.
+func shellLink(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || !dataentryconfig.ValidAccountLink(s) {
+		return ""
+	}
+	return s
 }
 
 // LoadShellBoot reads a [ShellBoot] from data-entry.yaml through load, a
@@ -119,6 +163,13 @@ var languageTag = regexp.MustCompile(`^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$`)
 const (
 	metaAppName  = "rela-app-name"
 	metaLanguage = "rela-language"
+	metaLogo     = "rela-app-logo"
+	metaSignOut  = "rela-sign-out"
+	metaAccount  = "rela-account-url"
+	metaContact  = "rela-contact"
+	metaEmail    = "rela-contact-email"
+	metaSusp     = "rela-suspended-text"
+	metaArch     = "rela-archived-text"
 )
 
 // bootShell writes boot into an index.html: the title, the html lang
@@ -139,6 +190,19 @@ func bootShell(shell []byte, boot ShellBoot) []byte {
 		lang := html.EscapeString(boot.Language)
 		s = langAttr.ReplaceAllLiteralString(s, `<html lang="`+lang+`"`)
 		s = insertBefore(s, "</head>", metaTag(metaLanguage, lang))
+	}
+	for _, m := range []struct{ name, value string }{
+		{metaLogo, boot.Logo},
+		{metaSignOut, boot.SignOut},
+		{metaAccount, boot.Account},
+		{metaContact, boot.Contact},
+		{metaEmail, boot.ContactEmail},
+		{metaSusp, boot.SuspendedText},
+		{metaArch, boot.ArchivedText},
+	} {
+		if m.value != "" {
+			s = insertBefore(s, "</head>", metaTag(m.name, html.EscapeString(m.value)))
+		}
 	}
 	return []byte(s)
 }
