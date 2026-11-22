@@ -7673,7 +7673,9 @@ Here the buttons read Make active, Suspend, Archive, with Archive in red.
 a startup error. The
 "⋯" menu on a phone and in a narrow header uses the same order and color.
 Both keys only change how the page draws the buttons. They do not change who
-may run an action, and lists, boards and the sidebar ignore them.
+may run an action, and lists, boards and the sidebar ignore them. One
+exception: when a `style: danger` action has `confirm:`, its confirm button
+is drawn in the danger color wherever the action runs.
 `/api/v1/_config` serves both keys with the action.
 
 An action with `available_on` needs an entity, so it cannot be referenced from

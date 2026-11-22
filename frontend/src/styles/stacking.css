@@ -1,0 +1,73 @@
+/*
+ * ## Stacking: the library's z-scale rebased onto rela's
+ *
+ * The two projects picked incompatible ranges. The library stacks its
+ * overlays at 60-400 (`--rl-z-drawer` 60 … `--rl-z-toast` 400); rela's
+ * overlays sit far higher, in three deliberate tiers:
+ *
+ *   900    a dialog that must stay BELOW a confirm raised from inside it
+ *          (DuplicateModal, InlineCreateFormModal) — both Teleport to body,
+ *          so at equal z-index DOM order would hide the discard-confirm
+ *          behind the dialog that opened it
+ *   1000   the standard overlay tier: ConfirmModal, CommandPalette, Help,
+ *          KeyboardShortcuts, StatusBar's own overlay, HelpButton
+ *   1201   the workspace and session screen (WorkspaceAccessScreen, at
+ *          `--rl-z-tooltip` + 1): above every dialog and confirm, since
+ *          nothing under it can be used once the session has ended; below
+ *          toasts and editor fullscreen
+ *   10000  editor fullscreen (Milkdown/EasyMDE, which uses 9999 internally)
+ *
+ * Left alone, an `RlModal` at 100 renders UNDERNEATH every one of those. The
+ * app is migrating one component at a time, so library and rela overlays
+ * coexist for the whole of it and a half-migrated stack must still be right.
+ *
+ * The rebase lives in its own file, imported in `main.ts` AFTER
+ * `tokens.css`. Every `:root` block here and in `tokens.css` declares only
+ * custom properties, so `relaCssLayer.ts` keeps all of them unlayered, and
+ * the winner is decided by source order alone. `tokens.css` is generated
+ * from the library and carries the library's z-values, so a rebase placed
+ * before it (as it once was, at the bottom of `rl.css`) silently lost: confirms
+ * opened at 100, under the 900 dialogs that raised them, and the session
+ * screen at 301 (BUG-ZL4K7QW). `rlStacking.test.ts` resolves the cascade in
+ * import order and fails on that.
+ *
+ * Rebasing here rather than in the library keeps this rela's problem: the
+ * library's internal ORDER is preserved exactly (drawer < modal < menu <
+ * tooltip < toast), just shifted into rela's range. The sticky tokens keep
+ * their small values — they order table headers within a scroll container,
+ * not overlays against the page.
+ *
+ * Remove this block once every rela overlay is an Rl component and the
+ * hand-written 900/1000 rules are gone; until then it is what makes the two
+ * halves stack in one coherent order.
+ */
+:root {
+  /*
+   * The shell's floating regions: the overlay detail panel and, above it,
+   * the sidebar flyout. Above rela's own page layers (sticky bars 10-50, the
+   * hamburger at 101, the activity bar at 200), which they cover, and below
+   * every overlay, which may be raised from inside them.
+   */
+  --rl-z-shell-panel: 300;
+  --rl-z-shell-panel-full: 310;
+  --rl-z-shell-flyout: 320;
+  /*
+   * The off-canvas sidebar drawer and its scrim, shown when the detail panel
+   * or a narrow window pushes the sidebar off screen. Above the panels it
+   * covers, below the drawer proper, as in the library's own ladder.
+   */
+  --rl-z-shell-nav-scrim: 330;
+  --rl-z-shell-nav: 340;
+  /* Below the 900 tier, so a rela dialog still wins where it must. */
+  --rl-z-drawer: 880;
+  /* The standard overlay tier, alongside ConfirmModal et al. */
+  --rl-z-modal: 1000;
+  /*
+   * Above 1000: a menu or tooltip opened from inside a dialog has to clear
+   * it, and both teleport to body so they cannot rely on DOM order.
+   */
+  --rl-z-menu: 1100;
+  --rl-z-tooltip: 1200;
+  /* Toasts outrank every overlay but stay under editor fullscreen. */
+  --rl-z-toast: 1300;
+}

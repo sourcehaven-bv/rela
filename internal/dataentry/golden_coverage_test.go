@@ -263,6 +263,8 @@ var goldenMethodExemptions = map[string]string{
 	"* /api/v1/_records/{type}/_aggregate":   exemptRecords,
 	"* /api/v1/_records/{type}/_reverse":     exemptRecords,
 	"* /api/v1/_records/{type}/_transaction": exemptRecords,
+	"GET /api/v1/_tenant": "a constant single-tenant status that reads no entity and is the same for " +
+		"every principal; TestTenantStatus_SingleTenant pins it",
 	"GET /api/v1/_conflicts/resolve": "reads the conflicted file named resolve, which is the " +
 		"GET /api/v1/_conflicts/{path...} read the conflict cases record",
 }

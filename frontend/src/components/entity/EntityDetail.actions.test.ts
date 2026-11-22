@@ -31,7 +31,7 @@ vi.mock('@/api', async (orig) => ({
 vi.mock('@/api/actions', () => ({
   runAction: (...a: unknown[]) => runActionMock(...a),
 }))
-type ConfirmOpts = { title: string; message: string; confirmLabel?: string }
+type ConfirmOpts = { title: string; message: string; confirmLabel?: string; danger?: boolean }
 const confirmMock = vi.fn<(opts: ConfirmOpts) => Promise<boolean>>(async () => true)
 vi.mock('@/composables/useConfirm', () => ({
   useConfirm: () => ({ confirm: (opts: ConfirmOpts) => confirmMock(opts) }),
@@ -78,7 +78,7 @@ describe('EntityDetail detail actions', () => {
         { label: 'Regenerate', script: 'r.lua', confirm: 'Overwrite the concept?' },
       ],
       ['notify', { label: 'Notify owner', script: 'n.lua' }],
-      ['archive', { label: 'Archive', script: 'a.lua', confirm: true }],
+      ['archive', { label: 'Archive', script: 'a.lua', confirm: true, style: 'danger' }],
     ])
     fetchViewMock.mockReset()
     runActionMock.mockReset().mockResolvedValue({ message: 'Regenerated' })
@@ -200,6 +200,17 @@ describe('EntityDetail detail actions', () => {
     expect(confirmMock).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'Run Archive on this entity?' })
     )
+  })
+
+  it('draws the confirm of a style: danger action in the danger style', async () => {
+    const w = await mountDetail(viewResponse({ 'action:archive': true, 'action:regenerate-soa': true }))
+    await desktopButton(w, 'Archive')!.trigger('click')
+    await flushPromises()
+    expect(confirmMock).toHaveBeenLastCalledWith(expect.objectContaining({ danger: true }))
+
+    await desktopButton(w, 'Regenerate')!.trigger('click')
+    await flushPromises()
+    expect(confirmMock).toHaveBeenLastCalledWith(expect.objectContaining({ danger: false }))
   })
 
   it('does not run when the confirm is declined', async () => {

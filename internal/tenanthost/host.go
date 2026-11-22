@@ -72,7 +72,7 @@ const WebhookPath = "/webhooks/idp"
 
 // StatusPath answers the caller's own tenant status, for a client to poll
 // while its tenant is being created. It never names another org.
-const StatusPath = "/api/v1/_tenant"
+const StatusPath = dataentry.TenantStatusPath
 
 // webhookMaxBody caps the webhook body read before verification, matching
 // the data-entry receiver's own cap.
