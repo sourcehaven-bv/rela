@@ -121,6 +121,9 @@ export interface ViewColumn {
   // 'input' on a column that may be edited in place (TKT-4Q2EIVZ). The row's
   // `_fields` verdict still decides whether the reader may write it.
   render?: 'input' | 'display'
+  // false leaves the column out of a stacked row on a phone (BUG-6WQ1U8S).
+  // The first column always stays.
+  primary?: boolean
 }
 
 // One line of a table section's totals (TKT-4Q2EIVZ). The value is the

@@ -28,6 +28,9 @@ export const API_ERROR_KEYS: Readonly<Record<string, ErrorKey>> = {
   state_changed: 'errors.stateChanged',
   encrypted_inaccessible: 'errors.encryptedInaccessible',
   history_unsupported: 'errors.historyUnsupported',
+  tenant_read_only: 'errors.tenantReadOnly',
+  origin_not_allowed: 'errors.originNotAllowed',
+  origin_missing: 'errors.originMissing',
 }
 
 /**

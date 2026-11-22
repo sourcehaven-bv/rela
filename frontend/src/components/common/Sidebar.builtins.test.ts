@@ -32,6 +32,7 @@ vi.mock('@/api/flows', async (orig) => ({
 }))
 
 import Sidebar from './Sidebar.vue'
+import { getSidebar } from '@/api'
 
 /**
  * The pinned rows follow the sidebar's `hidden_builtins`, which the server
@@ -61,6 +62,8 @@ describe('Sidebar built-in rows', () => {
 
   async function mountSidebar(asOf = false) {
     const pinia = createPinia()
+    // A loaded schema of a project with flows (capabilities.flows).
+    Object.assign(useSchemaStore(pinia), { loaded: true, flowsEnabled: true })
     if (asOf) {
       useSchemaStore(pinia).asOfEnabled = true
     }
@@ -101,6 +104,52 @@ describe('Sidebar built-in rows', () => {
     expect(push).not.toHaveBeenCalled()
   })
 
+  function hasShortcutsButton(w: VueWrapper): boolean {
+    return w.find('.shortcuts-btn').exists()
+  }
+
+  // A fake matchMedia that answers the phone query with `phone`.
+  function screen(phone: boolean) {
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query: string) =>
+        ({
+          matches: phone && query.includes('max-width'),
+          media: query,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList
+    )
+  }
+
+  it('shows the Shortcuts button by default, also on a phone', async () => {
+    screen(true)
+    const w = await mountSidebar()
+    expect(hasShortcutsButton(w)).toBe(true)
+  })
+
+  it('hides the Shortcuts button when shortcuts is hidden', async () => {
+    sidebar.hidden_builtins = ['shortcuts']
+    const w = await mountSidebar()
+    expect(hasShortcutsButton(w)).toBe(false)
+    expect(pinnedHrefs(w)).toEqual(['/search', '/flows/tasks', '/flows/runs', '/analyze'])
+  })
+
+  it('hides a hidden_on_phone row only on a phone-sized screen', async () => {
+    sidebar.phone_hidden_builtins = ['shortcuts', 'analysis']
+
+    screen(false)
+    const wide = await mountSidebar()
+    expect(hasShortcutsButton(wide)).toBe(true)
+    expect(pinnedHrefs(wide)).toEqual(['/search', '/flows/tasks', '/flows/runs', '/analyze'])
+    wide.unmount()
+    vi.restoreAllMocks()
+
+    screen(true)
+    const phone = await mountSidebar()
+    expect(hasShortcutsButton(phone)).toBe(false)
+    expect(pinnedHrefs(phone)).toEqual(['/search', '/flows/tasks', '/flows/runs'])
+  })
+
   it('shows the as-of picker unless as_of is hidden', async () => {
     const shown = await mountSidebar(true)
     expect(shown.find('[data-testid="as-of-picker"]').exists()).toBe(true)
@@ -111,5 +160,28 @@ describe('Sidebar built-in rows', () => {
     expect(hidden.find('[data-testid="as-of-picker"]').exists()).toBe(false)
     // The pinned rows are not affected.
     expect(pinnedHrefs(hidden)).toEqual(['/search', '/flows/tasks', '/flows/runs', '/analyze'])
+  })
+  // BUG-UZGMHIK: on a full load the generic rows showed for a moment before
+  // the space's own navigation arrived.
+  it('draws no nav rows until the sidebar has loaded', async () => {
+    let answer: (d: SidebarData) => void = () => {}
+    vi.mocked(getSidebar).mockImplementationOnce(() => new Promise((r) => (answer = r)))
+    sidebar.navigation = [{ group: 'Work', items: [{ label: 'Orders', href: '/list/orders' }] }]
+    const w = await mountSidebar()
+    expect(w.find('#main-sidebar').exists()).toBe(true)
+    expect(pinnedHrefs(w)).toEqual([])
+    expect(w.text()).not.toContain('Orders')
+
+    answer(sidebar)
+    await flushPromises()
+    expect(pinnedHrefs(w)).toEqual(['/search', '/flows/tasks', '/flows/runs', '/analyze'])
+    expect(w.text()).toContain('Orders')
+  })
+
+  it('shows the built-in rows when the sidebar fails to load', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(getSidebar).mockRejectedValueOnce(new Error('down'))
+    const w = await mountSidebar()
+    expect(pinnedHrefs(w)).toEqual(['/search', '/flows/tasks', '/flows/runs', '/analyze'])
   })
 })

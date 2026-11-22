@@ -5,6 +5,10 @@ import { PiniaColada } from '@pinia/colada'
 import EntityDetail from './EntityDetail.vue'
 import EntityActionsMenu from './EntityActionsMenu.vue'
 import LLMProposalDialog from './LLMProposalDialog.vue'
+import ChangesPanel from './ChangesPanel.vue'
+import DocumentsPanel from './DocumentsPanel.vue'
+import MentionedByPanel from './MentionedByPanel.vue'
+import FlowRunsPanel from '@/components/flows/FlowRunsPanel.vue'
 import type { EntityAction } from './entityActions'
 import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
@@ -113,6 +117,37 @@ describe('EntityDetail detail actions', () => {
     expect(desktopButton(w, 'Archive')).toBeUndefined()
   })
 
+  it('orders the buttons by order, then label, and draws danger actions as danger', async () => {
+    const schema = useSchemaStore()
+    schema.actions = new Map<string, ActionConfig>([
+      ['archive', { label: 'Archive', script: 'a.lua', style: 'danger', order: 90 }],
+      ['activate', { label: 'Make active', script: 'm.lua', order: 10 }],
+      ['suspend', { label: 'Suspend', script: 's.lua', order: 20 }],
+    ])
+    const w = await mountDetail(
+      viewResponse({ 'action:archive': true, 'action:activate': true, 'action:suspend': true })
+    )
+    // Compare DOM positions of each button rather than its text, which also
+    // holds a hidden pending label.
+    const buttons = w.findAll('.desktop-actions button').map((b) => b.element)
+    const position = (label: string) => buttons.indexOf(desktopButton(w, label)!.element)
+    const positions = ['Make active', 'Suspend', 'Archive'].map(position)
+    expect(positions.every((p) => p >= 0)).toBe(true)
+    expect(positions).toEqual([...positions].sort((a, b) => a - b))
+    expect(desktopButton(w, 'Archive')!.classes().join(' ')).toMatch(/danger/)
+    expect(desktopButton(w, 'Suspend')!.classes().join(' ')).not.toMatch(/danger/)
+
+    const menu = w.find('.mobile-actions').findComponent(EntityActionsMenu)
+    const offered = (menu.props('actions') as EntityAction[]).filter((a) =>
+      a.id.startsWith('action:')
+    )
+    expect(offered.map((a) => [a.id, a.tone])).toEqual([
+      ['action:activate', undefined],
+      ['action:suspend', undefined],
+      ['action:archive', 'danger'],
+    ])
+  })
+
   it('offers the actions in the mobile overflow menu too', async () => {
     const w = await mountDetail(viewResponse({ 'action:regenerate-soa': true }))
     const menu = w.find('.mobile-actions').findComponent(EntityActionsMenu)
@@ -133,6 +168,29 @@ describe('EntityDetail detail actions', () => {
     expect(runActionMock).toHaveBeenCalledWith('regenerate-soa', 'DOC-1@concept')
     expect(successMock).toHaveBeenCalledWith('Regenerated')
     expect(fetchViewMock).toHaveBeenCalledTimes(2)
+  })
+
+  // BUG-UZGMHIK: the panels below the view read their own lists, so the view
+  // reload alone left the Changes list as it was until a page reload.
+  it('tells the panels to read their lists again after an action', async () => {
+    const w = await mountDetail(viewResponse({ 'action:notify': true }))
+    const panels = [ChangesPanel, DocumentsPanel, MentionedByPanel, FlowRunsPanel]
+    const before = panels.map((p) => w.findComponent(p).props('revision'))
+
+    await desktopButton(w, 'Notify owner')!.trigger('click')
+    await flushPromises()
+
+    const after = panels.map((p) => w.findComponent(p).props('revision'))
+    after.forEach((rev, i) => expect(rev).toBe((before[i] as number) + 1))
+  })
+
+  it('leaves the panels alone when the action fails', async () => {
+    runActionMock.mockRejectedValue(new Error('script failed'))
+    const w = await mountDetail(viewResponse({ 'action:notify': true }))
+    const before = w.findComponent(ChangesPanel).props('revision')
+    await desktopButton(w, 'Notify owner')!.trigger('click')
+    await flushPromises()
+    expect(w.findComponent(ChangesPanel).props('revision')).toBe(before)
   })
 
   it('uses a default message for confirm: true', async () => {
@@ -177,6 +235,19 @@ describe('EntityDetail detail actions', () => {
     const dialog = w.findComponent(LLMProposalDialog)
     expect(dialog.exists()).toBe(true)
     expect(dialog.props('entityType')).toBe('document')
+  })
+
+  it('reloads the view and the panels once a proposal is applied', async () => {
+    runActionMock.mockResolvedValue({ proposal })
+    const w = await mountDetail(viewResponse({ 'action:notify': true }))
+    await desktopButton(w, 'Notify owner')!.trigger('click')
+    await flushPromises()
+    const before = w.findComponent(ChangesPanel).props('revision') as number
+    const views = fetchViewMock.mock.calls.length
+    w.findComponent(LLMProposalDialog).vm.$emit('applied')
+    await flushPromises()
+    expect(fetchViewMock).toHaveBeenCalledTimes(views + 1)
+    expect(w.findComponent(ChangesPanel).props('revision')).toBe(before + 1)
   })
 
   it('drops a proposal for an entity the user has left', async () => {

@@ -146,6 +146,41 @@ test.describe("Mobile app shell", () => {
     expect(parseFloat(padding.bottom)).toBeGreaterThanOrEqual(24);
   });
 
+  /*
+   * The list's table starts right under the header band. The pane's top
+   * padding and the table's own top padding used to add up to an empty band
+   * between the toolbar and the rows (BUG-6WQ1U8S).
+   */
+  test("a list's table starts right under the header", async ({ appPage }) => {
+    const mobile = new MobileLayoutPage(appPage);
+    await mobile.openList("features");
+
+    const gap = await mobile.headerToTableGap();
+    expect(gap).toBeLessThanOrEqual(2);
+    // Not pulled up under the header band either.
+    expect(gap).toBeGreaterThanOrEqual(-1);
+  });
+
+  /*
+   * A view section table stacks each row on a phone, as a list does: the
+   * first column heads the row and every other column is a labelled line.
+   * It used to scroll sideways, with its last columns off screen
+   * (BUG-6WQ1U8S). TASK-001 implements FEAT-001 in the seed, so the task
+   * view's "Linked features" table has a row.
+   */
+  test("a view section table stacks its rows instead of scrolling", async ({ appPage }) => {
+    const mobile = new MobileLayoutPage(appPage);
+    await mobile.openEntityTable("task", SEED.tasks.writeUnitTests, "Linked features");
+
+    expect(await mobile.sectionTableScrolls("Linked features")).toBe(false);
+    // Each value carries its own column label.
+    const labels = mobile.sectionCellLabels("Linked features");
+    // The heading cell shows no label; the status line does.
+    await expect(labels.nth(0)).toBeHidden();
+    await expect(labels.nth(1)).toBeVisible();
+    await expect(labels.nth(1)).toHaveText(/status/i);
+  });
+
   // The header's tools hold the list's search, sort and filter. A phone
   // needs them as much as a desktop does.
   test("a list keeps its search box on a phone", async ({ appPage }) => {

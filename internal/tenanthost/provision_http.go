@@ -20,6 +20,7 @@ const (
 	statusActive       = "active"
 	statusProvisioning = "provisioning"
 	statusSuspended    = "suspended"
+	statusArchived     = "archived"
 )
 
 // Retry-After values, in seconds. A provisioning run takes seconds, so the
@@ -102,6 +103,8 @@ func (h *Host) serveStatus(w http.ResponseWriter, r *http.Request, orgID string)
 			h.prov.noteStuck(r.Context(), orgID)
 		}
 		writeStatus(w, http.StatusOK, statusProvisioning)
+	case errors.Is(err, tenant.ErrTenantArchived):
+		writeStatus(w, http.StatusOK, statusArchived)
 	case errors.Is(err, tenant.ErrTenantInactive):
 		writeStatus(w, http.StatusOK, statusSuspended)
 	default:
@@ -117,7 +120,7 @@ func (h *Host) serveStatus(w http.ResponseWriter, r *http.Request, orgID string)
 func (h *Host) provisionLazily(w http.ResponseWriter, r *http.Request, orgID string, code int) {
 	if _, err := tenant.SchemaFor(orgID); err != nil {
 		slog.InfoContext(r.Context(), "tenant host: org id cannot be a tenant", "error", err)
-		writeError(w, r, http.StatusForbidden, "unknown_tenant", "No tenant for this organization")
+		writeError(w, r, http.StatusForbidden, "unknown_tenant", unknownTenantMessage)
 		return
 	}
 	_, err := h.prov.start(r.Context(), orgID)

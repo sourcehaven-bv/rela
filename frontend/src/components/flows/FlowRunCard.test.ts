@@ -214,7 +214,12 @@ describe('FlowRunCard', () => {
           you_hold: true,
           writes: ['documents', 'name'],
           branches: [
-            { to: 'review', guard: 'entity.documents == true', holds: false, fields: ['documents'] },
+            {
+              to: 'review',
+              guard: 'entity.documents == true',
+              holds: false,
+              fields: ['documents'],
+            },
           ],
         },
       })
@@ -284,8 +289,12 @@ describe('FlowRunCard', () => {
       })
     )
     await after[0].find('input').setValue(true)
+    // An expected refusal is not an application error (BUG-UZGMHIK).
+    const logged = vi.spyOn(console, 'error')
     await wrapper.find('[data-testid="flow-step-form"]').trigger('submit')
     await flushPromises()
+    expect(logged).not.toHaveBeenCalled()
+    logged.mockRestore()
     after = wrapper.findAll('[data-testid="flow-step-field"]')
     expect(after[0].text()).toContain('Check the documents first.')
     expect(after[0].text()).not.toContain('validation rule')
@@ -294,16 +303,21 @@ describe('FlowRunCard', () => {
     expect(useUIStore().toasts).toHaveLength(0)
   })
 
-  it('says the flow\'s own text to a reader of a failed step who does not manage it', async () => {
+  it("says the flow's own text to a reader of a failed step who does not manage it", async () => {
     const failed = (failed_message?: string) =>
       run({
         failed_message,
-        waiting: { you_hold: false, pending: { failures: 0, job: { phase: 'failed', failed: 3, attempts: 3 } } },
+        waiting: {
+          you_hold: false,
+          pending: { failures: 0, job: { phase: 'failed', failed: 3, attempts: 3 } },
+        },
         _actions: { complete: false, manage: false, cancel: false, retry: false },
       })
     let wrapper = mountCard(failed('Mail support@example.com.'))
     await flushPromises()
-    expect(wrapper.find('[data-testid="flow-waiting-plain"]').text()).toBe('Mail support@example.com.')
+    expect(wrapper.find('[data-testid="flow-waiting-plain"]').text()).toBe(
+      'Mail support@example.com.'
+    )
 
     wrapper = mountCard(failed())
     await flushPromises()
@@ -326,7 +340,9 @@ describe('FlowRunCard', () => {
       })
     )
     await flushPromises()
-    expect(wrapper.find('[data-testid="flow-waiting-job"]').text()).toContain('is retried: attempt 2 of 5')
+    expect(wrapper.find('[data-testid="flow-waiting-job"]').text()).toContain(
+      'is retried: attempt 2 of 5'
+    )
     expect(wrapper.find('[data-testid="flow-waiting-job-error"]').text()).toContain(
       'webhook answered 503'
     )

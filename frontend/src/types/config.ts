@@ -129,6 +129,16 @@ export interface ActionConfig {
    * (TKT-I2SRNWR). Only `batch` is served; the prompt and outputs are not.
    */
   llm?: { batch?: { max: number } }
+  /**
+   * How an entity page draws the action: `danger` for a destructive button.
+   * Absent is the normal button. Other surfaces ignore it.
+   */
+  style?: 'danger'
+  /**
+   * Position among the entity page's actions: lower first, then by label.
+   * Absent counts as 0.
+   */
+  order?: number
 }
 
 export interface AppConfig {
@@ -1363,6 +1373,11 @@ export interface SidebarData {
    */
   hidden_builtins?: BuiltinRow[]
   /**
+   * The rows the same sidebar leaves out on a phone-sized screen
+   * (`hidden_on_phone:`). Absent when no row sets it.
+   */
+  phone_hidden_builtins?: BuiltinRow[]
+  /**
    * Every page of `pages:`, keyed by page id, with the tabs this principal
    * may see (TKT-ITQ0HL). Absent when the config declares no pages.
    */
@@ -1510,10 +1525,12 @@ export interface SidebarSpace {
 }
 
 /**
- * A built-in sidebar row, or the as-of picker in the sidebar header, as
- * `builtins:` in data-entry.yaml names it.
+ * A built-in sidebar row, the as-of picker in the sidebar header, or the
+ * Shortcuts button in the sidebar footer, as `builtins:` in data-entry.yaml
+ * names it.
  */
-export type BuiltinRow = 'search' | 'inbox' | 'flow_tasks' | 'flow_runs' | 'analysis' | 'as_of'
+export type BuiltinRow =
+  'search' | 'inbox' | 'flow_tasks' | 'flow_runs' | 'analysis' | 'as_of' | 'shortcuts'
 
 /** One row of a space's Create menu. */
 export interface SidebarCreate {

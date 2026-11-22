@@ -653,5 +653,9 @@ func TestReadOnly(t *testing.T) {
 		if !tc.ok && !strings.Contains(w.Body.String(), "tenant_read_only") {
 			t.Errorf("%s %s: body %s lacks tenant_read_only", tc.method, tc.path, w.Body)
 		}
+		// Customers know a tenant as a workspace; the message says so.
+		if !tc.ok && !strings.Contains(w.Body.String(), "This workspace is read-only") {
+			t.Errorf("%s %s: body %s lacks the workspace wording", tc.method, tc.path, w.Body)
+		}
 	}
 }

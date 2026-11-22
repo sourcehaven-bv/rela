@@ -51,7 +51,7 @@ function onHandleKey(event: KeyboardEvent) {
     ref="rowEl"
     :class="{ 'ordered-row--dragging': dragging, [`ordered-row--drop-${edge}`]: edge !== null }"
   >
-    <td class="ordered-row__handle-cell">
+    <td class="ordered-row__handle-cell" role="cell">
       <button
         ref="handleEl"
         type="button"
@@ -119,5 +119,30 @@ function onHandleKey(event: KeyboardEvent) {
 
 .ordered-row--drop-bottom > :deep(td) {
   box-shadow: inset 0 -2px 0 var(--rl-color-accent);
+}
+
+/*
+ * A narrow section stacks each row into a block (EntityDetail). The handle
+ * cell is then a grid item, where `width: 1px` is a fixed size rather than a
+ * table's shrink-to-fit, so it takes the handle's own width. Each cell is a
+ * line of its own, so the drop line goes on the row instead of on every cell.
+ */
+@container section-table (max-width: 480px) {
+  .ordered-row__handle-cell {
+    width: auto;
+  }
+
+  .ordered-row--drop-top > :deep(td),
+  .ordered-row--drop-bottom > :deep(td) {
+    box-shadow: none;
+  }
+
+  .ordered-row--drop-top {
+    box-shadow: inset 0 2px 0 var(--rl-color-accent);
+  }
+
+  .ordered-row--drop-bottom {
+    box-shadow: inset 0 -2px 0 var(--rl-color-accent);
+  }
 }
 </style>

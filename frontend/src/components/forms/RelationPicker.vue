@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 import FieldLabelRow from './FieldLabelRow.vue'
 import MarkdownHelp from './MarkdownHelp.vue'
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
@@ -101,7 +102,8 @@ const isIncoming = computed(() => props.field.direction === 'incoming')
 
 // TKT-G7N5 affordance helpers. Defaults preserve today's behavior —
 // affordances render unless explicitly denied.
-const canCreate = computed(() => props.verdict?.creatable !== false)
+// A read-only workspace refuses the link as it refuses any write.
+const canCreate = computed(() => props.verdict?.creatable !== false && !workspaceReadOnly.value)
 const canRemove = computed(() => props.verdict?.removable !== false)
 // Incoming rows are keyed by address (addressedEntry): an incoming
 // content-scoped edge belongs to one face of its source, so `POL-1@draft` and

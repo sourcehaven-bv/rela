@@ -245,7 +245,9 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
         v-for="b in branches"
         :key="b.place.branch"
         class="flow-run-card__branch"
+        :class="{ 'flow-run-card__step': b.showStep }"
         data-testid="flow-run-branch"
+        :data-step-anchor="b.showStep ? '' : undefined"
         :data-branch="b.place.branch"
       >
         <header class="flow-run-card__header">
@@ -280,7 +282,12 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
       </div>
     </section>
 
-    <section v-if="showStep" class="flow-run-card__section" :aria-label="t('flows.step.title')">
+    <section
+      v-if="showStep"
+      class="flow-run-card__section flow-run-card__step"
+      data-step-anchor
+      :aria-label="t('flows.step.title')"
+    >
       <h4 class="flow-run-card__heading">{{ t('flows.step.title') }}</h4>
       <FlowStepForm
         :run="shown"
@@ -340,6 +347,12 @@ async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: str
   border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-lg);
   background: var(--rl-color-bg);
+}
+
+/* `?run=` scrolls the step form to the top of the pane; stop below the
+   entity page's sticky bar here too. */
+.flow-run-card__step {
+  scroll-margin-top: var(--rl-inline-edit-sticky-top, 0px);
 }
 
 .flow-run-card__header {

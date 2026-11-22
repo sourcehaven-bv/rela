@@ -23,6 +23,11 @@ import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.v
 const props = defineProps<{
   entityType: string
   entityId: string
+  /**
+   * Bumped by the page after it ran an action, so the document renders
+   * again in place (BUG-UZGMHIK).
+   */
+  revision?: number
 }>()
 
 const route = useRoute()
@@ -65,9 +70,7 @@ const isCached = ref(false)
 const docBody = useTemplateRef<HTMLElement>('docBody')
 
 // Sanitized content for safe rendering
-const sanitizedContent = computed(() =>
-  wrapTablesForScroll(DOMPurify.sanitize(docContent.value))
-)
+const sanitizedContent = computed(() => wrapTablesForScroll(DOMPurify.sanitize(docContent.value)))
 
 // Re-run mermaid rendering whenever the doc content is (re-)painted. The
 // rela-server's document renderer emits <pre class="mermaid">…</pre>
@@ -235,6 +238,11 @@ onMounted(() => {
   on('entity:changed', handleEntityChange)
 })
 
+watch(
+  () => props.revision,
+  () => void loadDocument(true)
+)
+
 onUnmounted(() => {
   off('entity:changed', handleEntityChange)
 })
@@ -353,8 +361,6 @@ function getDocTitle(name: string, config: DocumentConfig): string {
   color: var(--rl-color-text-muted);
 }
 
-
-
 .document-content {
   position: relative;
   padding: 24px;
@@ -376,5 +382,4 @@ function getDocTitle(name: string, config: DocumentConfig): string {
    pre, blockquote, hr, img, links, tables) is shared across every markdown
    surface via the `.md-body` class on the `.document-body` container — see
    styles/markdown-content.css. */
-
 </style>

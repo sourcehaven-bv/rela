@@ -79,6 +79,17 @@ var ErrUnknownTenant = errors.New("tenant: unknown organization")
 // events have nothing to apply to.
 var ErrTenantInactive = errors.New("tenant: organization is not served now")
 
+// ErrTenantSuspended marks an [ErrTenantInactive] for an org whose tenant is
+// suspended and not archived: it is not served until it is resumed. A host
+// tells it apart from an archive so the refusal can say which one it is.
+var ErrTenantSuspended = errors.New("tenant: organization is suspended")
+
+// ErrTenantArchived marks an [ErrTenantInactive] for an org whose tenant the
+// tenant API archived: it is not served, and its data stays until an operator
+// erases it. A host tells it apart from a suspension so the refusal can say
+// which one it is.
+var ErrTenantArchived = errors.New("tenant: organization is archived")
+
 // ErrTenantProvisioning marks an [ErrTenantInactive] for an org whose create
 // has not finished. Running [Provisioner.Create] again finishes it, so a host
 // that provisions may treat it like [ErrTenantAbsent].

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/Sourcehaven-BV/rela/internal/rootfs"
 )
 
 // TestStaticShell_ServesOnlyEmbeddedBytes pins that the tenant-free shell
@@ -140,5 +142,35 @@ func TestLoadShellBoot(t *testing.T) {
 	}
 	if _, err = LoadShellBoot(t.Context(), load(nil, errors.New("boom"))); err == nil {
 		t.Error("read error: want an error")
+	}
+}
+
+// TestSPAHandlerWithCustom_WritesBootPerRequest pins that a single-tenant
+// server's shell names the app and its language from the current config, read
+// per request. A screen shown before `/_config` loads, such as a refused
+// request, then follows `app.language` and not the browser.
+func TestSPAHandlerWithCustom_WritesBootPerRequest(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{"index.html": {Data: []byte(testShell)}, "app.js": {Data: []byte("js")}}
+	custom := newCustomAssets(rootfs.New(t.TempDir()), []byte(testShell), func() bool { return true })
+	boot := ShellBoot{AppName: "Workspace", Language: "en"}
+	h := spaHandlerWithCustom(fsys, custom, func() ShellBoot { return boot })
+
+	get := func(path string) string {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, http.NoBody))
+		return w.Body.String()
+	}
+	if got := get("/s/portal"); !strings.Contains(got, `<meta name="rela-language" content="en" />`) ||
+		!strings.Contains(got, `<meta name="rela-app-name" content="Workspace" />`) {
+
+		t.Errorf("shell does not carry the boot values:\n%s", got)
+	}
+	boot = ShellBoot{Language: "nl"}
+	if got := get("/"); !strings.Contains(got, `content="nl"`) || strings.Contains(got, "Workspace") {
+		t.Errorf("a config reload did not reach the shell:\n%s", got)
+	}
+	if got := get("/app.js"); got != "js" {
+		t.Errorf("an asset was rewritten: %q", got)
 	}
 }

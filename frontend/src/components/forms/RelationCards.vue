@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 import FieldLabelRow from './FieldLabelRow.vue'
 import MarkdownHelp from './MarkdownHelp.vue'
 import { ref, computed, onMounted, watch } from 'vue'
@@ -104,7 +105,8 @@ function entryFaceLabel(entry: RelationEntry): string {
 
 // TKT-G7N5: per-relation-type affordance helpers. Defaults preserve
 // today's behavior — buttons render unless explicitly denied.
-const canCreate = computed(() => props.verdict?.creatable !== false)
+// A read-only workspace refuses the link as it refuses any write.
+const canCreate = computed(() => props.verdict?.creatable !== false && !workspaceReadOnly.value)
 const canRemove = computed(() => props.verdict?.removable !== false)
 
 // Per-meta-field disabled lookup. Returns true when the verdict

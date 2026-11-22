@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
@@ -1179,5 +1181,100 @@ func TestProcess_TagsResultsWithAutomationName(t *testing.T) {
 	}
 	if got := result.EntitiesToCreate[0].AutomationName; got != "beta" {
 		t.Errorf("entity AutomationName: want %q, got %q", "beta", got)
+	}
+}
+
+// TestEngine_CurrentUserPlaceholder pins {{current_user.id}} (TKT-CY0NTFS):
+// the user entity the principal resolved to, or empty, which skips a relate.
+func TestEngine_CurrentUserPlaceholder(t *testing.T) {
+	t.Parallel()
+	resolved := principal.Principal{User: "PERS-1", RawUser: "ann@example.com", Tool: principal.ToolDataEntry}
+	tests := []struct {
+		name string
+		ctx  context.Context //nolint:containedctx // table fixture
+		want string
+	}{
+		{name: "no principal", ctx: context.Background()},
+		{name: "resolved user entity", ctx: principal.With(context.Background(), resolved), want: resolved.User},
+		{
+			name: "raw principal without a lookup",
+			ctx:  principal.With(context.Background(), principal.Principal{User: "ann", Tool: principal.ToolCLI}),
+		},
+		{
+			name: "raw user equal to user",
+			ctx: principal.With(context.Background(),
+				principal.Principal{User: "ann@example.com", RawUser: "ann@example.com", Tool: principal.ToolDataEntry}),
+		},
+		{
+			// The audit records the principal; a stamped query identity
+			// must not name someone else as the author.
+			name: "stamped query identity is not read",
+			ctx: predicatefns.WithQueryIdentity(principal.With(context.Background(), resolved),
+				predicatefns.QueryIdentity{EntityID: "PERS-2", Raw: "bob@example.com"}),
+			want: resolved.User,
+		},
+		{
+			name: "stamped query identity without a principal",
+			ctx: predicatefns.WithQueryIdentity(context.Background(),
+				predicatefns.QueryIdentity{EntityID: "PERS-2", Raw: "bob@example.com"}),
+		},
+	}
+	engine := NewEngine([]Rule{
+		newAutomation("note-author").
+			OnCreate("note").
+			CreateRelation("authored-by", "{{current_user.id}}").
+			Set("author_seen", "{{current_user.id}}").
+			Build(),
+	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			note := buildEntity(testutil.Entity("note"))
+			result := engine.Process(tc.ctx, Event{Type: EventEntityCreated, Entity: note})
+
+			got, set := result.PropertiesSet["author_seen"]
+			if got != tc.want || set != (tc.want != "") {
+				t.Errorf("set value = %q (set %v), want %q; without a user the set is left out", got, set, tc.want)
+			}
+			if tc.want == "" {
+				if len(result.RelationsToCreate) != 0 {
+					t.Fatalf("relations = %+v, want none", result.RelationsToCreate)
+				}
+				return
+			}
+			if len(result.RelationsToCreate) != 1 {
+				t.Fatalf("relations = %+v, want one", result.RelationsToCreate)
+			}
+			rel := result.RelationsToCreate[0].Relation
+			if rel.From != note.ID || rel.Type != "authored-by" || rel.To != tc.want {
+				t.Errorf("relation = %+v, want %s authored-by %s", rel, note.ID, tc.want)
+			}
+		})
+	}
+}
+
+// TestEngine_CurrentUserLeftOutOfCreate pins that a create property reading
+// {{current_user.id}} is left out without a resolved user, not written empty.
+func TestEngine_CurrentUserLeftOutOfCreate(t *testing.T) {
+	t.Parallel()
+	engine := NewEngine([]Rule{{
+		Name: "log",
+		On:   Trigger{Entity: []string{"note"}, Created: true},
+		Do: []Action{{CreateEntity: &CreateEntityAction{
+			Type:       "log",
+			Properties: map[string]string{"by": "{{current_user.id}}", "about": "{{entity.id}}"},
+		}}},
+	}})
+	note := buildEntity(testutil.Entity("note"))
+	result := engine.Process(context.Background(), Event{Type: EventEntityCreated, Entity: note})
+	if len(result.EntitiesToCreate) != 1 {
+		t.Fatalf("creates = %+v, want one", result.EntitiesToCreate)
+	}
+	props := result.EntitiesToCreate[0].Properties
+	if _, ok := props["by"]; ok {
+		t.Errorf("by = %q, want it left out", props["by"])
+	}
+	if props["about"] != note.ID {
+		t.Errorf("about = %q, want %q", props["about"], note.ID)
 	}
 }

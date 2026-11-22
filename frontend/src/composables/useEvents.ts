@@ -86,6 +86,7 @@ const BASE_RECONNECT_DELAY = 1000 // 1 second base
 // Custom event handlers registry
 type EventHandler = (data: EntityEventData) => void
 import { apiUrl } from '@/api/base'
+import { probeSessionEnded } from '@/api/workspaceAccess'
 const eventHandlers: Map<SSEEventType, Set<EventHandler>> = new Map()
 
 /**
@@ -156,14 +157,15 @@ export function useEvents() {
         }
       }
 
-      /* v8 ignore start - SSE error handling tested via e2e */
       eventSource.onerror = () => {
         // EventSource will automatically try to reconnect,
         // but we handle it manually for better control
         disconnect()
         scheduleReconnect()
+        // An EventSource reports no status, so an ended session looks like
+        // a dropped connection. Ask whether it is one.
+        void probeSessionEnded()
       }
-      /* v8 ignore stop */
 
       // ready moves the resume position and names the stream for live views;
       // ping only moves the resume position.

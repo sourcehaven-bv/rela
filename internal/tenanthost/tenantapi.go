@@ -452,7 +452,7 @@ func (h *Host) tenantAPIStartRefused(w http.ResponseWriter, r *http.Request, org
 // with 503. The error is logged only: it can name the database.
 func (h *Host) tenantAPIFailed(w http.ResponseWriter, r *http.Request, orgID string, err error) {
 	if errors.Is(err, tenant.ErrUnknownTenant) {
-		writeError(w, r, http.StatusNotFound, "unknown_tenant", "No tenant for this organization")
+		writeError(w, r, http.StatusNotFound, "unknown_tenant", unknownTenantMessage)
 		return
 	}
 	slog.ErrorContext(r.Context(), "tenant api: tenant unavailable", "org_id", orgID, "error", err)

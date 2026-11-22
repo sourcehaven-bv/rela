@@ -3,6 +3,7 @@
 // the labels and titles the rest of the page shows. The global audit log
 // (AuditView) keeps the raw values for operators.
 import { t } from '@/i18n'
+import { actorLabel } from '@/utils/actorLabel'
 import type { AuditSubject, ChangeRecord } from '@/api/audit'
 import type { EntityType, RelationType } from '@/types'
 
@@ -42,23 +43,7 @@ export function opText(op: string): string {
  * (`idpWebhookUserPrefix` in internal/dataentry/audit_handler.go).
  */
 export function actorText(c: ChangeRecord, titles: Record<string, string> = {}): string {
-  const user = c.user ?? ''
-  if (titles[user]) return titles[user]
-  const idpEvent = cut(user, 'webhook:')
-  if (idpEvent) return t('audit.changes.actor.idp', { event: idpEvent })
-  const hook = cut(user, 'system:webhook:')
-  if (hook) return t('audit.changes.actor.webhook', { name: hook })
-  const integration = cut(user, 'integration:')
-  if (integration) return t('audit.changes.actor.integration', { name: integration })
-  if (!user || user === 'unknown' || user.startsWith('system:')) {
-    return t('audit.changes.system')
-  }
-  return user
-}
-
-/** The rest of `s` after `prefix`, or '' when it does not start with it. */
-function cut(s: string, prefix: string): string {
-  return s.startsWith(prefix) ? s.slice(prefix.length) : ''
+  return actorLabel(c.user, titles)
 }
 
 function typeLabel(schema: ChangeSchema, name: string | undefined): string {

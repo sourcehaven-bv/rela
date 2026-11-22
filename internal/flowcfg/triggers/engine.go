@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // TraversalBinder answers the `related(...)` traversals of a condition for
@@ -328,6 +329,7 @@ func (e *Engine) SetTemplateVars(vars TemplateVars) {
 // renders its outputs in declaration order. A guard that fails to evaluate
 // adds a warning in its place and fires nothing.
 func (e *Engine) Process(ctx context.Context, event Event) *Result {
+	event.currentUserID = currentUserEntityID(ctx)
 	result := &Result{
 		PropertiesSet:     make(map[string]string),
 		RelationsToCreate: make([]RelationToCreate, 0),
@@ -546,7 +548,38 @@ func matchSimple(val any, f *filter.Filter) bool {
 
 // interpolate replaces template variables in a string.
 func (e *Engine) interpolate(template string, event Event) string {
-	return Interpolate(template, e.vars, event.Entity, event.OldEntity)
+	vars := e.vars
+	vars.CurrentUserID = event.currentUserID
+	vars.currentUser = true
+	return Interpolate(template, vars, event.Entity, event.OldEntity)
+}
+
+// lacksCurrentUser reports whether template reads {{current_user.id}} while
+// the event has no resolved user. Such a `set` or `create.properties` value
+// is left out: writing "" would erase a stored value on every write from
+// the CLI, a job or a flow.
+func lacksCurrentUser(template string, event Event) bool {
+	return event.currentUserID == "" && strings.Contains(template, "{{"+PlaceholderCurrentUserID+"}}")
+}
+
+// PlaceholderCurrentUserID names the acting user's entity in a template,
+// written as {{current_user.id}}.
+const PlaceholderCurrentUserID = "current_user.id"
+
+// currentUserEntityID returns the user entity the principal on ctx resolved
+// to, for {{current_user.id}}. The principal counts only when the ACL's
+// principal_property lookup substituted its User with an entity id, which
+// RawUser records (the rule appbuild.queryIdentityFor follows). It reads the
+// principal, the identity the audit records, and not a stamped query
+// identity, so the two cannot disagree. A raw identity (the CLI, a job, a
+// flow's run_as, an unmatched principal) is not an entity id, so it yields
+// "" rather than pointing at an entity whose id happens to match.
+func currentUserEntityID(ctx context.Context) string {
+	p, ok := principal.Stamped(ctx)
+	if !ok || p.RawUser == "" || p.RawUser == p.User {
+		return ""
+	}
+	return p.User
 }
 
 // isValidTemplateName validates that a template name contains only safe identifier characters.

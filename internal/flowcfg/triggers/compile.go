@@ -391,6 +391,9 @@ func (e *Engine) renderOutput(o output, name string, event Event, result *Result
 	act := o.act
 	switch o.kind {
 	case outputSet:
+		if lacksCurrentUser(act.Value, event) {
+			break
+		}
 		result.PropertiesSet[act.Set] = e.interpolate(act.Value, event)
 	case outputRelate:
 		targetID := e.interpolate(act.CreateRelation.To, event)
@@ -449,6 +452,9 @@ func (e *Engine) renderCreate(ce CreateEntityAction, name string, event Event, r
 	}
 	props := make(map[string]string, len(ce.Properties))
 	for k, v := range ce.Properties {
+		if lacksCurrentUser(v, event) {
+			continue
+		}
 		props[k] = e.interpolate(v, event)
 	}
 	ifExists := ce.IfExists

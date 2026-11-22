@@ -2,6 +2,8 @@ import axios, { type AxiosInstance, type AxiosResponse } from 'axios'
 import { ApiError, toApiError } from './errors'
 import { apiUrl } from './base'
 import { isProvisioningResponse, startProvisioningPoll } from './tenantProvisioning'
+import { trackWorkspaceReadOnly } from './workspaceReadOnly'
+import { probeSessionEnded, trackAccess } from './workspaceAccess'
 import { carriesAsOf, currentAsOf } from './asOf'
 import { t } from '@/i18n'
 
@@ -55,6 +57,7 @@ class ApiClient {
           void startProvisioningPoll()
           return Promise.reject(toApiError(new Error('tenant_provisioning')))
         }
+        trackWorkspaceReadOnly(response.config, response.status, response.data)
         return response
       },
       (error: unknown) => {
@@ -68,7 +71,17 @@ class ApiClient {
         ) {
           void startProvisioningPoll()
         }
-        return Promise.reject(toApiError(error))
+        if (axios.isAxiosError(error) && error.response) {
+          trackWorkspaceReadOnly(error.config ?? {}, error.response.status, error.response.data)
+          trackAccess(error.response.status, error.response.data)
+        }
+        const normalized = toApiError(error)
+        // No response at all: perhaps the edge sent an ended session to its
+        // sign-in page and the browser refused the redirect. Ask once.
+        if (normalized instanceof ApiError && normalized.kind === 'network') {
+          void probeSessionEnded()
+        }
+        return Promise.reject(normalized)
       },
     )
   }

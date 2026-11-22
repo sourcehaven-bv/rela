@@ -32,7 +32,7 @@ func TestValidateBuiltins(t *testing.T) {
 			"unknown row",
 			Builtins{"serach": {Hidden: true}},
 			nil,
-			`builtins: unknown built-in row "serach" (valid rows: search, inbox, flow_tasks, flow_runs, analysis, as_of)`,
+			`builtins: unknown built-in row "serach" (valid rows: search, inbox, flow_tasks, flow_runs, analysis, as_of, shortcuts)`,
 		},
 		{
 			"unknown row in a space",
@@ -43,11 +43,17 @@ func TestValidateBuiltins(t *testing.T) {
 		{"hidden and permission", Builtins{BuiltinSearch: {Hidden: true, Permission: "p"}}, nil,
 			"builtins.search: set hidden or permission, not both"},
 		{"neither set", Builtins{BuiltinAnalysis: {}}, nil,
-			"builtins.analysis: set hidden: true or a permission"},
+			"builtins.analysis: set hidden: true, hidden_on_phone: true or a permission"},
 		{"blank permission", Builtins{BuiltinAnalysis: {Permission: "  "}}, nil,
-			"builtins.analysis: set hidden: true or a permission"},
+			"builtins.analysis: set hidden: true, hidden_on_phone: true or a permission"},
 		{"hidden with a blank permission", Builtins{BuiltinSearch: {Hidden: true, Permission: "  "}}, nil,
 			`builtins.search: permission "  " has leading or trailing spaces`},
+		{"hidden on phone", Builtins{BuiltinShortcuts: {HiddenOnPhone: true}}, nil, ""},
+		{"hidden on phone and a permission",
+			Builtins{BuiltinShortcuts: {HiddenOnPhone: true, Permission: "staff:use"}}, nil, ""},
+		{"hidden and hidden on phone", Builtins{BuiltinShortcuts: {Hidden: true, HiddenOnPhone: true}}, nil,
+			"builtins.shortcuts: set hidden or hidden_on_phone, not both"},
+		{"shortcuts hidden", Builtins{BuiltinShortcuts: {Hidden: true}}, nil, ""},
 		{"padded permission", Builtins{BuiltinAnalysis: {Permission: " p"}}, nil,
 			`builtins.analysis: permission " p" has leading or trailing spaces`},
 		{
@@ -121,7 +127,7 @@ builtins:
 		t.Fatal(err)
 	}
 	err := ValidateConfig(typo, &bad, testMetamodel())
-	if err == nil || !strings.Contains(err.Error(), "builtins.search: set hidden: true or a permission") {
+	if err == nil || !strings.Contains(err.Error(), "builtins.search: set hidden: true, hidden_on_phone: true or a permission") {
 		t.Fatalf("a misspelled field must be refused, got %v", err)
 	}
 }
@@ -140,5 +146,53 @@ func TestBuiltins_Hidden(t *testing.T) {
 	}
 	if got := Builtins(nil).Hidden(func(string) bool { return false }); got != nil {
 		t.Errorf("nil Builtins hides %v", got)
+	}
+}
+
+func TestBuiltins_HiddenOnPhone(t *testing.T) {
+	cases := []struct {
+		name string
+		b    Builtins
+		want []BuiltinRow
+	}{
+		{"no block", nil, nil},
+		{"none set", Builtins{BuiltinSearch: {Hidden: true}}, nil},
+		{"sidebar order", Builtins{
+			BuiltinShortcuts: {HiddenOnPhone: true},
+			BuiltinSearch:    {HiddenOnPhone: true, Permission: "p"},
+			BuiltinAnalysis:  {Permission: "p"},
+		}, []BuiltinRow{BuiltinSearch, BuiltinShortcuts}},
+		{"hidden for everyone is left to Hidden", Builtins{
+			BuiltinShortcuts: {Hidden: true, HiddenOnPhone: true},
+		}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.b.HiddenOnPhone(); !slices.Equal(got, tc.want) {
+				t.Errorf("HiddenOnPhone = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// `hidden_on_phone:` decodes from YAML on the shortcuts entry.
+func TestBuiltins_HiddenOnPhoneFromYAML(t *testing.T) {
+	data := []byte(`version: "1.0"
+lists:
+  tickets: {entity_type: ticket}
+navigation:
+  - {label: Tickets, list: tickets}
+builtins:
+  shortcuts: {hidden_on_phone: true}
+`)
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateConfig(data, &cfg, testMetamodel()); err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if !cfg.Builtins[BuiltinShortcuts].HiddenOnPhone {
+		t.Errorf("builtins = %+v", cfg.Builtins)
 	}
 }

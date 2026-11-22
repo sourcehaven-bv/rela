@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 import { intlLocale } from '@/i18n/locale'
 /**
  * Month/week calendar over date-bearing entities.
@@ -71,7 +72,8 @@ const router = useRouter()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const { t } = useI18n()
-const sourceName = (i: number) => config.value?.sources?.[i]?.label || config.value?.sources?.[i]?.entity
+const sourceName = (i: number) =>
+  config.value?.sources?.[i]?.label || config.value?.sources?.[i]?.entity
 const { worldParam } = useWorld()
 const queryCache = useQueryCache()
 
@@ -538,7 +540,7 @@ function createNew() {
  * unrelated data and hiding a button the user may legitimately use.
  */
 function canCreate(): boolean {
-  return !!config.value?.create_form
+  return !!config.value?.create_form && !workspaceReadOnly.value
 }
 
 // --- Drag to reschedule ---
@@ -694,7 +696,11 @@ function onDragEnd() {
         </span>
       </div>
       <div class="calendar-views">
-        <RlSegmentedControl v-model="viewChoice" :label="t('calendar.range')" :options="viewOptions" />
+        <RlSegmentedControl
+          v-model="viewChoice"
+          :label="t('calendar.range')"
+          :options="viewOptions"
+        />
       </div>
     </div>
 
@@ -711,7 +717,9 @@ function onDragEnd() {
       {{ t('calendar.truncated') }}
     </div>
     <div v-if="longEventWarning" class="truncation-banner truncation-banner--span" role="alert">
-      <I18nT keypath="calendar.longEvents" tag="span"><template #setting><code>max_span</code></template></I18nT>
+      <I18nT keypath="calendar.longEvents" tag="span"
+        ><template #setting><code>max_span</code></template></I18nT
+      >
     </div>
 
     <RlStatusRegion
@@ -720,7 +728,9 @@ function onDragEnd() {
       tone="error"
       data-testid="calendar-source-error"
     >
-      {{ t('calendar.sourceError', { source: sourceName(failure.index), message: failure.message }) }}
+      {{
+        t('calendar.sourceError', { source: sourceName(failure.index), message: failure.message })
+      }}
     </RlStatusRegion>
     <RlStatusRegion v-if="loadError" tone="error">{{ loadError }}</RlStatusRegion>
     <RlStatusRegion v-else-if="initialLoad">{{ t('common.loading') }}</RlStatusRegion>
