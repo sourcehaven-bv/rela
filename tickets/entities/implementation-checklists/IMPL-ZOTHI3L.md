@@ -10,7 +10,7 @@ status: done
 
 ## Development
 
-- [x] Unit tests written for new code (job_test, flows_handler_test, chrome_test, acl_audit_permissions_test, flowView, nextActionPlacement, NextActionCard, Sidebar.groupAdd, useNextAction, EntityDetail.actions, InlinePropertyValue, FlowRunsPanel)
+- [x] Unit tests written for new code (job_test, flows_handler_test, chrome_test, acl_audit_permissions_test, flowView, nextActionTarget, NextActionCard, Sidebar.groupAdd, useNextAction, EntityDetail.actions, InlinePropertyValue, FlowRunsPanel)
 - [x] Integration tests written (e2e mobile-layout: menu bar title and column positions)
 - [x] Happy path implemented
 - [x] Edge cases from planning handled (exhausted retries, a fork branch failing, an unknown space, no acl.yaml)

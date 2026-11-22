@@ -169,7 +169,7 @@ test.describe("Mobile app shell", () => {
   test("an entity page has a title in the top bar", async ({ appPage }) => {
     const mobile = new MobileLayoutPage(appPage);
     await mobile.navigateTo(`/entity/feature/${SEED.features.authentication}`);
-    await expect(appPage.getByTestId("mobile-menu-bar-title")).toHaveText(/feature/i);
+    await expect(mobile.menuBarTitle()).toHaveText(/feature/i);
   });
 
   /*

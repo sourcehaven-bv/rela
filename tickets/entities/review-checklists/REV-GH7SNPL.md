@@ -31,7 +31,7 @@ status: done
 
 **Acceptance Status:**
 - Failure entry on the timeline: PASS (job_test, flowView.test)
-- Banner hidden on its own target: PASS (nextActionPlacement.test, NextActionCard.test)
+- Banner hidden on its own target: PASS (nextActionTarget.test, NextActionCard.test)
 - Empty read-only group left out: PASS (Sidebar.groupAdd.test)
 - Notices read with the view: PASS (useNextAction.test, EntityDetail.actions.test)
 - Phone columns line up: PASS (e2e mobile-layout)

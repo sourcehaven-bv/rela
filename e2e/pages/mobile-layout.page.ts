@@ -240,6 +240,11 @@ export class MobileLayoutPage extends BasePage {
     return Math.min(table.y, firstRow.y) - (header.y + header.height);
   }
 
+  /** The title beside the menu toggle in the phone top bar. */
+  menuBarTitle(): Locator {
+    return this.page.getByTestId("mobile-menu-bar-title");
+  }
+
   /**
    * The left edge of each kept (primary) cell, per list row, in pixels. The
    * compressed row hides the other cells with `display: none`, which leaves

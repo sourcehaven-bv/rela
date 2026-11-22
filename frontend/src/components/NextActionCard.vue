@@ -19,7 +19,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useNextAction } from '@/composables/useNextAction'
 import { useEvents } from '@/composables/useEvents'
-import { leadsHere } from '@/utils/nextActionPlacement'
+import { leadsHere } from './nextActionTarget'
 import NextActionOffers from './NextActionOffers.vue'
 
 const { t } = useI18n()
