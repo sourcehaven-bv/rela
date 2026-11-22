@@ -201,12 +201,12 @@ func readRecordsFile(path string) ([]records.Input, error) {
 
 // RecordsListCmd lists one owner's rows.
 type RecordsListCmd struct {
-	Type  string `arg:"" help:"Record type key."`
-	Owner string `arg:"" help:"Owner entity ID."`
-	From  string `help:"Rows at or after this RFC 3339 time."`
-	To    string `help:"Rows before this RFC 3339 time."`
-	After string `help:"Cursor: the next value of the previous page."`
-	Limit int    `help:"Page size, 1 to 1000. Default 100."`
+	Type     string `arg:"" help:"Record type key."`
+	Owner    string `arg:"" help:"Owner entity ID."`
+	Since    string `name:"from" help:"Rows at or after this RFC 3339 time."`
+	Until    string `name:"to" help:"Rows before this RFC 3339 time."`
+	Cursor   string `name:"after" help:"Cursor: the next value of the previous page."`
+	PageSize int    `name:"limit" help:"Page size, 1 to 1000. Default 100."`
 }
 
 // Run prints one page of rows, oldest first.
@@ -215,12 +215,12 @@ func (c *RecordsListCmd) Run(ctx context.Context, r *recordServices) error {
 	if err != nil {
 		return err
 	}
-	from, to, err := recordsRange(c.From, c.To)
+	from, to, err := recordsRange(c.Since, c.Until)
 	if err != nil {
 		return err
 	}
 	page, err := svc.List(ctx, c.Type, strings.TrimSpace(c.Owner), records.ListQuery{
-		From: from, To: to, After: c.After, Limit: c.Limit,
+		From: from, To: to, After: c.Cursor, Limit: c.PageSize,
 	})
 	if err != nil {
 		return recordsFailed(ctx, "list", err)
@@ -241,13 +241,13 @@ func (c *RecordsListCmd) Run(ctx context.Context, r *recordServices) error {
 
 // RecordsAggregateCmd folds rows into points.
 type RecordsAggregateCmd struct {
-	Type     string   `arg:"" help:"Record type key."`
-	Owner    []string `help:"Owner entity ID to fold (repeatable). Default: every owner you may read."`
-	Field    string   `help:"Decimal or integer field to fold. Default: count rows only."`
-	Bucket   string   `help:"Group by time: hour, day, week or month."`
-	PerOwner bool     `name:"per-owner" help:"Keep owners apart instead of folding them together."`
-	From     string   `help:"Rows at or after this RFC 3339 time."`
-	To       string   `help:"Rows before this RFC 3339 time."`
+	Type        string   `arg:"" help:"Record type key."`
+	OwnerIDs    []string `name:"owner" help:"Owner entity ID to fold (repeatable). Default: every owner you may read."`
+	Column      string   `name:"field" help:"Decimal or integer field to fold. Default: count rows only."`
+	Granularity string   `name:"bucket" help:"Group by time: hour, day, week or month."`
+	KeepApart   bool     `name:"per-owner" help:"Keep owners apart instead of folding them together."`
+	Since       string   `name:"from" help:"Rows at or after this RFC 3339 time."`
+	Until       string   `name:"to" help:"Rows before this RFC 3339 time."`
 }
 
 // Run prints the folded points. Only owners the caller may read fold.
@@ -256,16 +256,16 @@ func (c *RecordsAggregateCmd) Run(ctx context.Context, r *recordServices) error 
 	if err != nil {
 		return err
 	}
-	from, to, err := recordsRange(c.From, c.To)
+	from, to, err := recordsRange(c.Since, c.Until)
 	if err != nil {
 		return err
 	}
-	bucket, err := records.ParseBucket(c.Bucket)
+	bucket, err := records.ParseBucket(c.Granularity)
 	if err != nil {
 		return recordsFailed(ctx, "aggregate", err)
 	}
 	pts, err := svc.Aggregate(ctx, records.AggregateQuery{
-		Type: c.Type, Owners: c.Owner, From: from, To: to, Field: c.Field, Bucket: bucket, PerOwner: c.PerOwner,
+		Type: c.Type, Owners: c.OwnerIDs, From: from, To: to, Field: c.Column, Bucket: bucket, PerOwner: c.KeepApart,
 	})
 	if err != nil {
 		return recordsFailed(ctx, "aggregate", err)

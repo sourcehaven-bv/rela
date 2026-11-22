@@ -8,23 +8,25 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/records"
 )
 
 type fakeRecordReader struct {
-	list lua.RecordListQuery
-	agg  lua.RecordAggregateQuery
-	page lua.RecordPageView
-	pts  []lua.RecordPoint
-	err  error
-	tag  any
+	typ, owner string
+	list       records.ListQuery
+	agg        records.AggregateQuery
+	page       records.Page
+	pts        []records.Point
+	err        error
+	tag        any
 }
 
-func (f *fakeRecordReader) ListRecords(ctx context.Context, q lua.RecordListQuery) (lua.RecordPageView, error) {
-	f.list, f.tag = q, ctx.Value(ctxKey{})
+func (f *fakeRecordReader) List(ctx context.Context, typ, owner string, q records.ListQuery) (records.Page, error) {
+	f.typ, f.owner, f.list, f.tag = typ, owner, q, ctx.Value(ctxKey{})
 	return f.page, f.err
 }
 
-func (f *fakeRecordReader) AggregateRecords(ctx context.Context, q lua.RecordAggregateQuery) ([]lua.RecordPoint, error) {
+func (f *fakeRecordReader) Aggregate(ctx context.Context, q records.AggregateQuery) ([]records.Point, error) {
 	f.agg, f.tag = q, ctx.Value(ctxKey{})
 	return f.pts, f.err
 }
@@ -41,7 +43,7 @@ func runRecordReads(t *testing.T, f lua.RecordReader, src string) (string, error
 
 func TestListRecords_Binding(t *testing.T) {
 	ts := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
-	f := &fakeRecordReader{page: lua.RecordPageView{Next: "cur", Records: []lua.RecordView{
+	f := &fakeRecordReader{page: records.Page{Next: "cur", Records: []records.Record{
 		{ID: "r1", Type: "measurement", Owner: "MET-1", TS: ts, RecordedAt: ts, Group: "g",
 			Fields: map[string]any{"value": "0.82", "n": int64(3), "ok": true}},
 	}}}
@@ -56,7 +58,7 @@ rela.output(#page.records .. " " .. page.next .. " " .. r.id .. " " .. r.ts .. "
 	if out != "1 cur r1 2026-11-01T00:00:00Z 0.82 3 true g nil" {
 		t.Errorf("output %q", out)
 	}
-	if f.list.Type != "measurement" || f.list.Owner != "MET-1" || f.list.Limit != 5 ||
+	if f.typ != "measurement" || f.owner != "MET-1" || f.list.Limit != 5 ||
 		!f.list.From.Equal(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) {
 
 		t.Errorf("query %+v", f.list)
@@ -67,7 +69,7 @@ rela.output(#page.records .. " " .. page.next .. " " .. r.id .. " " .. r.ts .. "
 }
 
 func TestAggregateRecords_Binding(t *testing.T) {
-	f := &fakeRecordReader{pts: []lua.RecordPoint{{Owner: "MET-1", Count: 2, Sum: "3.5", Avg: "1.75"}}}
+	f := &fakeRecordReader{pts: []records.Point{{Owner: "MET-1", Count: 2, Sum: "3.5", Avg: "1.75"}}}
 	out, err := runRecordReads(t, f, `
 local pts, err = rela.aggregate_records("measurement",
   {owner = "MET-9", owners = {"MET-1"}, field = "value", bucket = "day", per_owner = true})
@@ -80,7 +82,7 @@ rela.output(#pts .. " " .. pts[1].owner .. " " .. pts[1].count .. " " .. pts[1].
 		t.Errorf("output %q", out)
 	}
 	if len(f.agg.Owners) != 2 || f.agg.Owners[0] != "MET-9" || f.agg.Owners[1] != "MET-1" ||
-		f.agg.Field != "value" || f.agg.Bucket != "day" || !f.agg.PerOwner {
+		f.agg.Field != "value" || f.agg.Bucket != records.BucketDay || !f.agg.PerOwner {
 
 		t.Errorf("query %+v", f.agg)
 	}

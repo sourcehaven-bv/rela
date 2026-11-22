@@ -21,58 +21,17 @@ import (
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
+
+	"github.com/Sourcehaven-BV/rela/internal/records"
 )
-
-// RecordView is one stored row as a script sees it. Fields holds string,
-// int64 and bool values; a decimal is its exact text.
-type RecordView struct {
-	ID, Type, Owner, RecordedBy, Group, Reverses string
-	TS, RecordedAt                               time.Time
-	Revision                                     int64
-	Fields                                       map[string]any
-}
-
-// RecordListQuery selects one owner's rows. Limit 0 is the service default.
-type RecordListQuery struct {
-	Type, Owner string
-	From, To    time.Time
-	After       string
-	Limit       int
-}
-
-// RecordPageView is one page of rows. Next is empty on the last page.
-type RecordPageView struct {
-	Records []RecordView
-	Next    string
-}
-
-// RecordAggregateQuery folds rows of one type. Owners empty folds every
-// owner the caller may read. Bucket is "", "hour", "day", "week" or "month".
-type RecordAggregateQuery struct {
-	Type     string
-	Owners   []string
-	From, To time.Time
-	Field    string
-	Bucket   string
-	PerOwner bool
-}
-
-// RecordPoint is one folded bucket. The text fields are exact decimals,
-// empty when the query names no field.
-type RecordPoint struct {
-	Owner                      string
-	Start                      time.Time
-	Count                      int64
-	Sum, Min, Max, Avg, Latest string
-}
 
 // RecordReader reads rows for rela.list_records and rela.aggregate_records.
 // Defined here at the consumer; the wiring site supplies the record service.
 // It acts as the principal on ctx, and its errors are written for the script
 // author.
 type RecordReader interface {
-	ListRecords(ctx context.Context, q RecordListQuery) (RecordPageView, error)
-	AggregateRecords(ctx context.Context, q RecordAggregateQuery) ([]RecordPoint, error)
+	List(ctx context.Context, typ, owner string, q records.ListQuery) (records.Page, error)
+	Aggregate(ctx context.Context, q records.AggregateQuery) ([]records.Point, error)
 }
 
 // registerRecordReads installs the record read bindings when the runtime has
@@ -94,10 +53,11 @@ type recordReadBinding struct {
 func (b recordReadBinding) list(ls *lua.LState) int {
 	const binding = "rela.list_records"
 	typ := ls.CheckString(1)
-	q := RecordListQuery{Type: typ}
+	var q records.ListQuery
+	var owner string
 	opts := ls.OptTable(2, ls.NewTable())
 	if bad := readRecordOpts(opts, map[string]recordOpt{
-		"owner": {str: &q.Owner},
+		"owner": {str: &owner},
 		"from":  {ts: &q.From},
 		"to":    {ts: &q.To},
 		"after": {str: &q.After},
@@ -106,11 +66,11 @@ func (b recordReadBinding) list(ls *lua.LState) int {
 		ls.RaiseError("%s: %s", binding, bad)
 		return 0
 	}
-	if q.Owner == "" {
+	if owner == "" {
 		ls.RaiseError("%s: owner is required", binding)
 		return 0
 	}
-	page, err := b.reader.ListRecords(scriptContext(ls), q)
+	page, err := b.reader.List(scriptContext(ls), typ, owner, q)
 	if err != nil {
 		return pushRecordError(ls, err)
 	}
@@ -130,9 +90,9 @@ func (b recordReadBinding) list(ls *lua.LState) int {
 func (b recordReadBinding) aggregate(ls *lua.LState) int {
 	const binding = "rela.aggregate_records"
 	typ := ls.CheckString(1)
-	q := RecordAggregateQuery{Type: typ}
+	q := records.AggregateQuery{Type: typ}
 	opts := ls.OptTable(2, ls.NewTable())
-	var owner string
+	var owner, bucket string
 	var owners *lua.LTable
 	if bad := readRecordOpts(opts, map[string]recordOpt{
 		"owner":     {str: &owner},
@@ -140,7 +100,7 @@ func (b recordReadBinding) aggregate(ls *lua.LState) int {
 		"from":      {ts: &q.From},
 		"to":        {ts: &q.To},
 		"field":     {str: &q.Field},
-		"bucket":    {str: &q.Bucket},
+		"bucket":    {str: &bucket},
 		"per_owner": {flag: &q.PerOwner},
 	}); bad != "" {
 		ls.RaiseError("%s: %s", binding, bad)
@@ -159,7 +119,11 @@ func (b recordReadBinding) aggregate(ls *lua.LState) int {
 			q.Owners = append(q.Owners, string(s))
 		}
 	}
-	pts, err := b.reader.AggregateRecords(scriptContext(ls), q)
+	var err error
+	if q.Bucket, err = records.ParseBucket(bucket); err != nil {
+		return pushRecordError(ls, err)
+	}
+	pts, err := b.reader.Aggregate(scriptContext(ls), q)
 	if err != nil {
 		return pushRecordError(ls, err)
 	}
@@ -173,8 +137,12 @@ func (b recordReadBinding) aggregate(ls *lua.LState) int {
 
 // pushRecordError returns nil and the message, the shape of every refusal.
 func pushRecordError(ls *lua.LState, err error) int {
+	msg := err.Error()
+	if text, ok := records.UserText(err); ok {
+		msg = text
+	}
 	ls.Push(lua.LNil)
-	ls.Push(lua.LString(err.Error()))
+	ls.Push(lua.LString(msg))
 	return 2
 }
 
@@ -251,7 +219,7 @@ func setRecordOpt(key string, o recordOpt, v lua.LValue) string {
 	return ""
 }
 
-func recordViewTable(ls *lua.LState, rec RecordView) *lua.LTable {
+func recordViewTable(ls *lua.LState, rec records.Record) *lua.LTable {
 	t := ls.NewTable()
 	t.RawSetString("id", lua.LString(rec.ID))
 	t.RawSetString("type", lua.LString(rec.Type))
@@ -279,7 +247,7 @@ func recordViewTable(ls *lua.LState, rec RecordView) *lua.LTable {
 	return t
 }
 
-func recordPointTable(ls *lua.LState, p RecordPoint) *lua.LTable {
+func recordPointTable(ls *lua.LState, p records.Point) *lua.LTable {
 	t := ls.NewTable()
 	setNonEmpty(t, "owner", p.Owner)
 	if !p.Start.IsZero() {
