@@ -269,7 +269,8 @@ func (b *Binder) Bind(
 	if len(specs) == 0 {
 		return func(string) predicate.TraversalFunc { return nil }, nil
 	}
-	answers, err := Answer(ctx, b.meta, b.gate, b.match, entityType, specs, slices.Compact(slices.Sorted(slices.Values(ids))))
+	uniqueIDs := slices.Compact(slices.Sorted(slices.Values(ids)))
+	answers, err := Answer(ctx, b.meta, b.gate, b.match, entityType, specs, uniqueIDs)
 	if err != nil {
 		return nil, err
 	}
