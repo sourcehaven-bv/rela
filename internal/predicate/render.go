@@ -1,6 +1,8 @@
 package predicate
 
 import (
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -66,7 +68,7 @@ func renderArgs(b *strings.Builder, args []node) {
 
 func renderTable(b *strings.Builder, entries map[string]Value) {
 	b.WriteString("{ ")
-	for i, k := range sortedKeys(entries) {
+	for i, k := range slices.Sorted(maps.Keys(entries)) {
 		if i > 0 {
 			b.WriteString(", ")
 		}
