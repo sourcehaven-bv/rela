@@ -130,6 +130,10 @@ describe('body editor on create forms', () => {
     const { wrapper } = await mountWithPrefill(prefill, true)
     expect(wrapper.find('.content-field').exists()).toBe(true)
   })
+  it('is shown when the prefill carries a body, as Duplicate does', async () => {
+    const { wrapper } = await mountWithPrefill({ ...prefill, content: '# copied' })
+    expect(wrapper.find('.content-field').exists()).toBe(true)
+  })
 })
 
 /** The relations body of the single create call. */

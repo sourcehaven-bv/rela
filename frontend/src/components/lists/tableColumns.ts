@@ -65,23 +65,20 @@ export function columnHeader(column: ListColumn): string {
 export const BUSY_COLUMN_WIDTH = 160
 
 /**
- * Converts rela's list columns to the library's, dropping the FIRST column.
+ * Converts rela's list columns to the library's, dropping the name column.
  *
  * The library's table owns the leading name column itself — it holds the
- * row's title and its primary control — and rela's convention is that
- * `columns[0]` is that title (the mobile card layout already reads it that
- * way). Passing it again would render the title twice.
+ * row's title and its primary control. Passing that column again would
+ * render the title twice.
  *
- * `nameColumn` returns the one taken out, since the caller still needs it to
- * render the title cell's contents through the `name` slot.
- *
- * `name` is the column that fills the name cell. It is the first column
- * unless a later one carries `link`; then the first column (a `logo`, say)
- * is an ordinary column and renders as configured, after the name.
+ * `name` is the column taken out, as `nameColumn` picks it; the caller still
+ * needs it to render the title cell's contents through the `name` slot. Any
+ * other column, including a first one that is not the name (a `logo`, say),
+ * is an ordinary column and renders as configured.
  */
 export function toTableColumns(
   columns: ListColumn[],
-  name: ListColumn | undefined = columns[0]
+  name: ListColumn | undefined = nameColumn(columns)
 ): TableColumn[] {
   const seen = new Set<string>()
   return columns
@@ -136,12 +133,13 @@ export function toTableNameColumn(column: ListColumn | undefined): TableColumn |
 }
 
 /**
- * The column holding the row title, which the library's table renders itself.
+ * The column holding the row title, which the library's table renders itself:
+ * the column that carries `link`, else the first column.
  *
  * Nil: undefined when the list declares no columns at all.
  */
 export function nameColumn(columns: ListColumn[]): ListColumn | undefined {
-  return columns[0]
+  return columns.find((column) => column.link) ?? columns[0]
 }
 
 /** Reads a converted column's originating rela config back out of `meta`. */
