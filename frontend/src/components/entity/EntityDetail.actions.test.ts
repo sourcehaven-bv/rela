@@ -37,6 +37,10 @@ vi.mock('@/composables/useConfirm', () => ({
   useConfirm: () => ({ confirm: (opts: ConfirmOpts) => confirmMock(opts) }),
   withConfirmError: (fn: unknown) => fn,
 }))
+const refreshNowMock = vi.fn(async () => {})
+vi.mock('@/composables/useNextAction', () => ({
+  useNextAction: () => ({ refreshNow: refreshNowMock }),
+}))
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   useRoute: () => ({ query: {}, path: '/entity/document/DOC-1', name: 'entity' }),
@@ -182,6 +186,15 @@ describe('EntityDetail detail actions', () => {
 
     const after = panels.map((p) => w.findComponent(p).props('revision'))
     after.forEach((rev, i) => expect(rev).toBe((before[i] as number) + 1))
+  })
+
+  // A notice whose condition the action settled goes with the reload.
+  it('reads the page notices again with the view after an action', async () => {
+    const w = await mountDetail(viewResponse({ 'action:notify': true }))
+    refreshNowMock.mockClear()
+    await desktopButton(w, 'Notify owner')!.trigger('click')
+    await flushPromises()
+    expect(refreshNowMock).toHaveBeenCalledTimes(1)
   })
 
   it('leaves the panels alone when the action fails', async () => {

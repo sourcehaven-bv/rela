@@ -79,6 +79,33 @@ describe('useNextAction', () => {
     })
   })
 
+  // An action on the viewed entity reloads the page; a notice it settled
+  // must go with it, not after the change event's debounce.
+  describe('refreshNow', () => {
+    it('resolves again at once, sending the suggestion on screen as current', async () => {
+      mockGet.mockResolvedValue({ suggestion: suggestion(), refresh_types: ['account'] })
+      const na = useNextAction()
+      await na.loadOnce()
+      mockGet.mockResolvedValue({ suggestion: null, refresh_types: ['account'] })
+
+      await na.refreshNow()
+
+      expect(mockGet).toHaveBeenCalledTimes(2)
+      expect(mockGet.mock.calls[1][1]).toMatchObject({ current: { source: 'stale' } })
+      expect(na.suggestion.value).toBeNull()
+    })
+
+    it('does nothing when no source on the page depends on changes', async () => {
+      mockGet.mockResolvedValue({ suggestion: suggestion() })
+      const na = useNextAction()
+      await na.loadOnce()
+
+      await na.refreshNow()
+
+      expect(mockGet).toHaveBeenCalledTimes(1)
+    })
+  })
+
   describe('impressions', () => {
     // Resolving is NOT displaying. load() also runs after feedback, so
     // reporting from it would start a 24h cooldown on the replacement

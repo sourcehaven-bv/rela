@@ -208,9 +208,13 @@ const allNavGroups = computed(() => {
 })
 
 // A read-only workspace refuses every create, so no group offers its "+".
+// An empty generated group stays only for its "+", so without it the group
+// goes too: a heading over nothing reads as a fault.
 const navGroups = computed(() =>
   workspaceReadOnly.value
-    ? allNavGroups.value.map(({ addLabel: _addLabel, ...group }) => group)
+    ? allNavGroups.value
+        .map(({ addLabel: _addLabel, ...group }) => group)
+        .filter((group) => group.items.length > 0)
     : allNavGroups.value
 )
 

@@ -235,11 +235,24 @@ func (e jobSteps) jobStep(ctx context.Context, f *flowcfg.Flow, run flowrun.Run,
 	if j.Phase == flowrun.JobWaiting && !now.Before(j.NextAt) {
 		return e.enqueue(ctx, f, run, tok, cur, job, j)
 	}
-	if j.Phase == flowrun.JobFailed {
+	if j.Phase == flowrun.JobFailed && (p.Job == nil || p.Job.Phase != flowrun.JobFailed) {
 		slog.WarnContext(ctx, "flowengine: a job step failed", "run", run.ID, "flow", f.Name(),
 			"state", cur.State, "kind", j.FailKind)
+		return e.parkFailed(ctx, run, tok, cur.State, j, now)
 	}
 	return e.park(ctx, run, tok, j)
+}
+
+// parkFailed stores j, which has just failed for good, with a timeline
+// entry for the failure, so the timeline says where the run stopped.
+func (e jobSteps) parkFailed(ctx context.Context, run flowrun.Run, tok, state string, j flowrun.JobAttempt,
+	now time.Time) (flowrun.Run, error) {
+	step := flowrun.Step{At: now, State: state, Via: flowrun.ViaFailed, Branch: tok}
+	saved, err := e.storeJobStep(ctx, run, tok, j, &step, now)
+	if err != nil || saved.ID == "" {
+		return saved, err
+	}
+	return saved, errParked
 }
 
 // unsent returns j, which never started, waiting again after a backoff by
@@ -286,7 +299,7 @@ func (e jobSteps) enqueue(ctx context.Context, f *flowcfg.Flow, run flowrun.Run,
 	if j.Seq >= flowrun.MaxJobSeq {
 		j = flowrun.JobAttempt{Seq: j.Seq, Failed: j.Failed, Phase: flowrun.JobFailed,
 			FailKind: flowrun.JobExhausted, Error: j.Error}
-		return e.park(ctx, run, tok, j)
+		return e.parkFailed(ctx, run, tok, cur.State, j, now)
 	}
 	q := flowrun.JobAttempt{Seq: j.Seq + 1, Failed: j.Failed, Unsent: j.Unsent, Phase: flowrun.JobQueued,
 		QueuedAt: now, Deadline: now.Add(job.Retry.Timeout), Error: j.Error}
@@ -328,11 +341,18 @@ func (e jobSteps) park(ctx context.Context, run flowrun.Run, tok string, j flowr
 // zero run.
 func (e jobSteps) storeJob(ctx context.Context, run flowrun.Run, tok string, j flowrun.JobAttempt) (flowrun.Run,
 	error) {
+	return e.storeJobStep(ctx, run, tok, j, nil, e.now())
+}
+
+// storeJobStep is [jobSteps.storeJob] with step, when not nil, appended to
+// the run log.
+func (e jobSteps) storeJobStep(ctx context.Context, run flowrun.Run, tok string, j flowrun.JobAttempt,
+	step *flowrun.Step, now time.Time) (flowrun.Run, error) {
 	p := *pendingOf(run, tok)
 	p.Job = &j
 	inst := instOf(run, tok)
 	inst.NextDueAt, _ = jobDue(&j)
-	next, err := e.save(ctx, run, tok, inst, &p, nil, e.now())
+	next, err := e.save(ctx, run, tok, inst, &p, step, now)
 	if isLost(err) {
 		return flowrun.Run{}, nil
 	}

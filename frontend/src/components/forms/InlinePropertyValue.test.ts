@@ -53,6 +53,18 @@ describe('InlinePropertyValue', () => {
     expect(wrapper.findComponent({ name: 'RlInlineEdit' }).exists()).toBe(false)
   })
 
+  // A checkbox has no text of its own: without the field label a screen
+  // reader names it by its value, "on".
+  it.each([true, false])('names a checkbox by its field label (writable: %s)', (writable) => {
+    const wrapper = mountValue({
+      widget: CheckboxWidget,
+      value: true,
+      writable,
+      propertyDef: { type: 'boolean' } as PropertyDef,
+    })
+    expect(wrapper.get('input[type="checkbox"]').attributes('aria-label')).toBe('Status')
+  })
+
   // Every empty value reads as the library's `emptyValue` text, whichever
   // control edits it.
   it('words an empty value the same for an enum, an enum list and a string', () => {

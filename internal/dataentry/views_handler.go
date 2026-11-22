@@ -389,6 +389,17 @@ func hiddenBuiltins(
 	})
 }
 
+// flowRunsPanelShown reports whether the principal gets the flow runs panel
+// of an entity page in space (`entity_panels.flow_runs`). Its `permission:`
+// is the same display filter as a navigation entry's (permitsGatedUIElement):
+// the subject runs route answers empty for a hidden panel, and the runs stay
+// behind their own read rules on every other route.
+func flowRunsPanelShown(ctx context.Context, aclImpl acl.ACL, cfg *dataentryconfig.Config, space string) bool {
+	return cfg.FlowRunsPanelShown(space, func(permission string) bool {
+		return permitsGatedUIElement(ctx, aclImpl, permission)
+	})
+}
+
 // permittedSpaces returns the spaces the principal may enter, in config
 // order. The space `permission:` is the same UX filter as a navigation
 // entry's (permitsGatedUIElement): it keeps a space out of the switcher and

@@ -35,6 +35,7 @@
       "moved": "naar {state}",
       "join": "samengekomen in {state}",
       "cancel": "geannuleerd in {state}",
+      "failed": "de taak van {state} is mislukt",
       "inBranch": "{summary} (tak {branch})"
     },
     "waiting": {

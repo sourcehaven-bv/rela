@@ -106,7 +106,7 @@ export interface FlowEvent {
   /** The state's label, or its name when the flow lost the state. */
   label?: string
   from?: string
-  via: 'start' | 'done' | 'change' | 'timer' | 'join' | 'cancel' | string
+  via: 'start' | 'done' | 'change' | 'timer' | 'join' | 'cancel' | 'failed' | string
   timer?: string
   by?: string
   /** The title of `by` when it is an entity the reader may see. */
@@ -313,10 +313,16 @@ export async function listFlowRuns(
 
 /**
  * GET every run on one entity the caller can see, newest first, and the
- * flows the caller may start on it.
+ * flows the caller may start on it. `space` is the space the entity page is
+ * open in: where `entity_panels.flow_runs` hides the panel there, the answer
+ * is empty.
  */
-export async function listSubjectRuns(subject: string, signal?: AbortSignal): Promise<SubjectRuns> {
-  const res = await api.get<Partial<SubjectRuns>>('/_flows/runs', { subject }, signal)
+export async function listSubjectRuns(
+  subject: string,
+  signal?: AbortSignal,
+  space?: string
+): Promise<SubjectRuns> {
+  const res = await api.get<Partial<SubjectRuns>>('/_flows/runs', { subject, space }, signal)
   return { runs: res.runs ?? [], startable: res.startable ?? [] }
 }
 
