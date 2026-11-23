@@ -5,7 +5,7 @@ title: Native SQL aggregator for sqlrecords
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: done
 ---
 
 ## Description

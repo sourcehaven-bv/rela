@@ -50,6 +50,7 @@ func RunAll(t *testing.T, newStore Factory) {
 		{"Drop", testDrop},
 		{"Expire", testExpire},
 		{"BadCursor", testBadCursor},
+		{"AggregateMatchesGeneric", testAggregateMatchesGeneric},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) { tc.fn(t, newStore(t)) })
