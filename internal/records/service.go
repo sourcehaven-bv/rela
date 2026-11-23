@@ -139,7 +139,8 @@ func NewService(d Deps) (*Service, error) {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	return &Service{perms: d.Permissions, store: d.Store, owners: d.Owners, meta: d.Meta, lock: d.Lock, audit: d.Audit, now: d.Now}, nil
+	return &Service{perms: d.Permissions, store: d.Store, owners: d.Owners, meta: d.Meta, lock: d.Lock,
+		audit: d.Audit, now: d.Now}, nil
 }
 
 // locked runs fn under the write lock, or on the store directly when none is
@@ -251,9 +252,9 @@ func (s *Service) Append(ctx context.Context, typ string, in []Input) ([]Record,
 	if err != nil {
 		return nil, err
 	}
-	if err := s.canAppend(ctx, typ); err != nil {
-		s.deniedAppend(ctx, err, typ, "")
-		return nil, err
+	if perr := s.canAppend(ctx, typ); perr != nil {
+		s.deniedAppend(ctx, perr, typ, "")
+		return nil, perr
 	}
 	if len(in) == 0 {
 		return nil, fmt.Errorf("%w: no rows", ErrInvalid)
@@ -506,9 +507,9 @@ func (s *Service) Reverse(ctx context.Context, typ, group string) ([]Record, err
 	}
 	// A reversal reads the transaction and returns its negation, so it
 	// needs both permissions, as a change to a mutable row does.
-	if err := errors.Join(s.canAppend(ctx, typ), s.canRead(ctx, typ)); err != nil {
-		s.deniedAppend(ctx, err, typ, group)
-		return nil, err
+	if perr := errors.Join(s.canAppend(ctx, typ), s.canRead(ctx, typ)); perr != nil {
+		s.deniedAppend(ctx, perr, typ, group)
+		return nil, perr
 	}
 	if group == "" {
 		return nil, fmt.Errorf("%w: group is required", ErrInvalid)
@@ -629,8 +630,8 @@ func (s *Service) Transaction(ctx context.Context, typ, group string) ([]Record,
 	if d.Ledger == nil {
 		return nil, fmt.Errorf("%w: %s is not a ledger", ErrInvalid, typ)
 	}
-	if err := s.canRead(ctx, typ); err != nil {
-		return nil, err
+	if perr := s.canRead(ctx, typ); perr != nil {
+		return nil, perr
 	}
 	rows, err := groupRows(ctx, s.store, typ, group)
 	if err != nil {
@@ -669,8 +670,8 @@ func (s *Service) List(ctx context.Context, typ, owner string, q ListQuery) (Pag
 	if _, err := s.def(typ); err != nil {
 		return Page{}, err
 	}
-	if err := s.canRead(ctx, typ); err != nil {
-		return Page{}, err
+	if perr := s.canRead(ctx, typ); perr != nil {
+		return Page{}, perr
 	}
 	if err := s.readableOwner(ctx, owner); err != nil {
 		return Page{}, err
@@ -705,8 +706,8 @@ func (s *Service) Aggregate(ctx context.Context, q AggregateQuery) ([]Point, err
 	if err != nil {
 		return nil, err
 	}
-	if err := s.canRead(ctx, q.Type); err != nil {
-		return nil, err
+	if perr := s.canRead(ctx, q.Type); perr != nil {
+		return nil, perr
 	}
 	scale := 0
 	if q.Field != "" {

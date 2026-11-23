@@ -71,7 +71,9 @@ func TestRecords_TypePermissionsThroughPolicy(t *testing.T) {
 	}))
 	rs := appbuild.Records(svc)
 	require.NotNil(t, rs)
-	as := func(user string) *principal.Principal { return &principal.Principal{User: user, Tool: principal.ToolMCP} }
+	as := func(user string) *principal.Principal {
+		return &principal.Principal{User: user, Tool: principal.ToolMCP}
+	}
 	in := []records.Input{{Owner: "DEV-1", Fields: map[string]any{"kwh": 3}}}
 
 	_, err = rs.Append(boundAs(t, svc, *as("kim")), "reading", in)
