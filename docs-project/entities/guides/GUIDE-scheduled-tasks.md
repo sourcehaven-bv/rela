@@ -722,6 +722,62 @@ Give each metric its own `run_as` identity when the metrics read different
 data. One wide identity for every metric makes every stored value as
 sensitive as the widest of them.
 
+#### Capturing a dashboard card without a script
+
+When the value is already a card on a dashboard, a `capture:` task stores
+it without Lua. Each run computes the card as `run_as` and appends one row:
+
+```yaml
+# schedules.yaml
+tasks:
+  - name: control-coverage
+    every: monday
+    run_as: system:metrics
+    capture:
+      dashboard: default        # or a name under dashboards:; default if omitted
+      card: Control coverage    # the card's title, unique on that dashboard
+      record: measurement
+      owner: MET-control-coverage
+      field: value
+```
+
+A task has exactly one of `script:`, `template:` or `capture:`. The rules:
+
+- **Which cards.** The card needs a `list:` and one of the displays
+  `count`, `ratio`, `sum`, `avg`, `min` or `max`. A ratio stores the matched
+  rows as a percentage. Query cards, cards on an entity dashboard, and
+  displays without one figure (breakdown, table, matrix, line) are refused.
+- **The record type.** The field must be an `integer` or `decimal` field,
+  the type must not be a ledger, and no other field may be required. rela
+  checks the record type and field when it loads `schedules.yaml`. The
+  dashboard and card are found when the task runs, so a renamed card makes
+  each run fail until you update the task.
+- **Rounding.** The figure is computed exactly and rounded once, to a whole
+  number for an integer field and to the field's `scale` (2 if unset) for a
+  decimal. Halves round away from zero.
+- **`run_as` is required,** and may not be the shared `system:scheduler`.
+  The task takes no capabilities. The figure
+  counts only the rows `run_as` reads. A `sum`, `avg`, `min` or `max` over a
+  property that `visible:` hides from `run_as` on some row fails the run
+  instead of storing a figure over fewer rows than the card. So does a value
+  that is not a number, a fold where no row has a value, and a ratio over no
+  rows. A card's `permission:` is not consulted; it only hides the card on
+  the dashboard.
+- **Who can read the result.** The stored figure is computed for `run_as`
+  and readable by every reader of the owner, exactly as with a script. Give
+  the owner a read rule no wider than what `run_as` can read (see above).
+- **Configure.** The Configure space refuses to change a card that a capture
+  task stores, its list, or the schema it reads (see "What cannot be edited
+  in the app" in the data-entry guide). Change such a card in the files.
+- **Time.** The row's time is the instant the card was read.
+- **Retries.** A failed run stores nothing and enters the normal retry
+  ladder. If the row was stored but the run's outcome was lost, the retry can
+  store a second row for the same figure.
+- **Where it runs.** Only `rela-server` and `rela-desktop` compute dashboard
+  cards. `rela scheduler` refuses to start when `schedules.yaml` has a
+  capture task. A capture task added while it runs is left out with a
+  warning, and the next start is refused.
+
 ## Audit log
 
 Every write a scheduled task performs (via `rela.create_entity`,

@@ -104,17 +104,7 @@ func foldSummary(
 func numericFold(
 	fn dataentryconfig.SummaryFunction, pd metamodel.PropertyDef, prop string, rows []*entityPkg.Entity,
 ) any {
-	sum := new(big.Rat)
-	scale, n := 0, 0
-	for _, e := range rows {
-		r, sc, err := metamodel.ParseDecimal(e.Properties[prop])
-		if err != nil {
-			continue
-		}
-		sum.Add(sum, r)
-		scale = max(scale, sc)
-		n++
-	}
+	sum, scale, n := sumDecimals(prop, rows)
 	if n == 0 {
 		return nil
 	}
@@ -125,6 +115,23 @@ func numericFold(
 		return sum.Num().Int64()
 	}
 	return sum.FloatString(scale)
+}
+
+// sumDecimals sums prop exactly over rows. It returns the sum, the longest
+// fraction seen and how many rows had a number. Both the card's display
+// value and a captured figure fold through it, so they agree.
+func sumDecimals(prop string, rows []*entityPkg.Entity) (sum *big.Rat, scale, n int) {
+	sum = new(big.Rat)
+	for _, e := range rows {
+		r, sc, err := metamodel.ParseDecimal(e.Properties[prop])
+		if err != nil {
+			continue
+		}
+		sum.Add(sum, r)
+		scale = max(scale, sc)
+		n++
+	}
+	return sum, scale, n
 }
 
 // extremeFold picks the smallest or largest value of prop in the order a

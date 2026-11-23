@@ -64,6 +64,13 @@ func LoadConfig(ctx context.Context, loader config.Loader, meta *metamodel.Metam
 		if cfg, err = ParseConfig(data); err != nil {
 			return nil, err
 		}
+		// A capture's record type and field are schema-checked at load, so
+		// a typo fails the file rather than every run.
+		if meta != nil {
+			if err := cfg.validateCaptures(meta); err != nil {
+				return nil, fmt.Errorf("%s: %w", ConfigFile, err)
+			}
+		}
 	}
 	subErr := wrapSubscriptions(loadSubscriptions(ctx, loader, meta, cfg))
 	remoteErr := wrapRemotes(loadRemoteTasks(ctx, loader, meta, cfg))

@@ -92,6 +92,13 @@ func (s *Scheduler) UseQueue(q jobs.Client) error {
 	if err := q.Register(RemoteKind, s.runRemoteJob); err != nil {
 		return fmt.Errorf("scheduler: register remote handler: %w", err)
 	}
+	// Only a process that can compute cards takes capture runs. On a shared
+	// durable queue the others leave the job for one that can.
+	if s.cards != nil {
+		if err := q.Register(CaptureKind, s.runCaptureJob); err != nil {
+			return fmt.Errorf("scheduler: register capture handler: %w", err)
+		}
+	}
 	s.queue = q
 	return nil
 }
@@ -117,6 +124,9 @@ func (s *Scheduler) jobFor(task TaskConfig, runID string, now time.Time) (jobs.J
 	}
 	if task.Remote != nil {
 		return remoteJob(task, runID), "", nil
+	}
+	if task.Capture != nil {
+		return captureJob(task, runID), "", nil
 	}
 	if task.ForEach != nil {
 		occurrence, ok := task.Every.Occurrence(now)
