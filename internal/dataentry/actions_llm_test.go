@@ -873,3 +873,66 @@ func TestLLMAction_LoweredCandidatesScaleFree(t *testing.T) {
 		return counting.Cost(), counting.String()
 	})
 }
+
+// TestLLMAction_UnconditionedCandidatesScaleFree pins that a relate output
+// with no `candidates:` condition reads one bounded page of the target type,
+// as a lowered condition does, rather than every row (TKT-C5H506O).
+func TestLLMAction_UnconditionedCandidatesScaleFree(t *testing.T) {
+	storetest.AssertScaleFree(t, func(n int) (storetest.Cost, string) {
+		ents := []*entity.Entity{
+			{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "Login broken", "priority": "low"}},
+		}
+		for i := range n {
+			ents = append(ents, &entity.Entity{ID: fmt.Sprintf("CON-%04d", i), Type: "concept",
+				Properties: map[string]any{"title": fmt.Sprintf("Concept %d", i), "area": "auth"}})
+		}
+		var counting *storetest.Counting
+		a := buildLLMApp(t, llmFixture{
+			meta: llmGraphMeta(t), seed: ents, read: []string{"ticket", "concept", "component"},
+			action: llmAction(nil, []string{"priority"}, []dataentryconfig.LLMRelateOutput{{
+				Relation: "affects", Limit: 3,
+			}}),
+			reply: `{"set":{"priority":null},"relate":{"affects":[]}}`,
+			wrap: func(s store.Store) store.Store {
+				counting = storetest.NewCounting(s)
+				return counting
+			},
+		})
+		counting.Reset()
+		code, _, body := a.run(t, "alice")
+		if code != http.StatusOK {
+			t.Fatalf("status %d: %s", code, body)
+		}
+		c := a.chat.doc(t).Candidates["affects"]
+		if got := itemIDs(c.Entities); !slices.Equal(got, []string{"CON-0000", "CON-0001", "CON-0002"}) || !c.Truncated {
+			t.Fatalf("candidates = %v truncated=%v, want the first 3 concepts, truncated", got, c.Truncated)
+		}
+		return counting.Cost(), counting.String()
+	})
+}
+
+// TestLLMAction_UnconditionedCandidatesFillExactly pins the truncation flag
+// on the bounded read: a target type that holds exactly the limit is not
+// truncated, and the subject is never its own candidate.
+func TestLLMAction_UnconditionedCandidatesFillExactly(t *testing.T) {
+	ents := []*entity.Entity{
+		{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "Login broken", "priority": "low"}},
+		{ID: "TKT-2", Type: "ticket", Properties: map[string]any{"title": "Other", "priority": "low"}},
+		{ID: "TKT-3", Type: "ticket", Properties: map[string]any{"title": "Third", "priority": "low"}},
+	}
+	a := buildLLMApp(t, llmFixture{
+		meta: llmGraphMeta(t), seed: ents, read: []string{"ticket", "concept", "component"},
+		action: llmAction(nil, []string{"priority"}, []dataentryconfig.LLMRelateOutput{{
+			Relation: "blocks", Limit: 2,
+		}}),
+		reply: `{"set":{"priority":null},"relate":{"blocks":[]}}`,
+	})
+	code, _, body := a.run(t, "alice")
+	if code != http.StatusOK {
+		t.Fatalf("status %d: %s", code, body)
+	}
+	c := a.chat.doc(t).Candidates["blocks"]
+	if got := itemIDs(c.Entities); !slices.Equal(got, []string{"TKT-2", "TKT-3"}) || c.Truncated {
+		t.Fatalf("candidates = %v truncated=%v, want [TKT-2 TKT-3], not truncated", got, c.Truncated)
+	}
+}

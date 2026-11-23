@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
@@ -206,8 +207,9 @@ func (p *listPipeline) scopedSortedEntitiesScoped(
 		pageIDs, pageScoped = narrowToReach(pageIDs, pageScoped, query.reach), true
 	}
 	// The verdict switch, the world scope, the face allowlist and the query
-	// scope all live in scopedHeaders (scopedread.go) — see its doc for why
-	// they must not be re-implemented per handler.
+	// scope all live in scopedread.go (scopedQuery, scopedHeaders and
+	// scanHeaders); see the scopedHeaders doc for why they must not be
+	// re-implemented per handler.
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 	if readWithheld(ctx, rqr) {
 		// Return BEFORE the free-text search: a principal who may read
@@ -231,7 +233,7 @@ func (p *listPipeline) scopedSortedEntitiesScoped(
 	// and the query scope in scopedHeaders, so neither can surface a row the
 	// full read would not admit.
 	ids, byIDs := narrowingIDs(pageScoped, pageIDs, searchResult)
-	entities, withheld, err := scopedEntities(ctx, p.services(), rqr, scopeRequest{
+	req := scopeRequest{
 		Type:        typeName,
 		Faces:       rqr.Faces,
 		ByIDs:       byIDs,
@@ -239,14 +241,15 @@ func (p *listPipeline) scopedSortedEntitiesScoped(
 		Scope:       scope.Scope,
 		ScopeProps:  scope.Props,
 		ScopeFilter: scope.Filter,
-	})
+	}
+	var entities []*entityPkg.Entity
+	if byIDs {
+		entities, err = scopedEntities(ctx, p.services(), rqr, req)
+	} else {
+		entities, err = p.scanType(ctx, rqr, req)
+	}
 	if err != nil {
 		return nil, nil, err
-	}
-	if withheld {
-		// Unreachable after the readWithheld check above (same ctx and
-		// verdict); kept so the empty shape does not depend on that check.
-		return []*entityPkg.Entity{}, nil, nil
 	}
 
 	// Each filter[<key>] param was classified as property vs relation ONCE,
@@ -271,6 +274,29 @@ func (p *listPipeline) scopedSortedEntitiesScoped(
 		return nil, nil, err
 	}
 	return entities, ordering, nil
+}
+
+// scanType reads every row of req.Type the principal may read, for a list
+// request that names no ids: the Go pipeline then filters, sorts and counts
+// the whole set. Its cost grows with the type; TKT-5SXPBL1 pushes the shapes
+// that still come here into the store.
+func (p *listPipeline) scanType(
+	ctx context.Context, rqr acl.ReadQueryResult, req scopeRequest,
+) ([]*entityPkg.Entity, error) {
+	q, errClass, withheld, err := scopedQuery(ctx, rqr, req)
+	if err != nil {
+		return nil, err
+	}
+	if withheld {
+		// Unreachable after the readWithheld check in the caller (same ctx
+		// and verdict); kept so the empty shape does not depend on that check.
+		return []*entityPkg.Entity{}, nil
+	}
+	headers, err := scanHeaders(ctx, p.services(), q, errClass, req)
+	if err != nil {
+		return nil, err
+	}
+	return headerEntities(headers), nil
 }
 
 // applyRelationFilters keeps only the entities that match every relation

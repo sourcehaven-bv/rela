@@ -72,7 +72,8 @@ type scopeRequest struct {
 
 	// Limit and Offset read one window of the type's rows in id order, the
 	// order an unpaged read returns them in, so a caller that keeps only a
-	// prefix reads only that prefix (TKT-CKLZMWB). Limit 0 reads every row.
+	// prefix reads only that prefix (TKT-CKLZMWB). Limit 0 with no ids is
+	// refused: a read of every row goes through scanHeaders.
 	//
 	// A window is refused alongside Scope: Scope filters after the store
 	// read, so a window of the store's rows is not a window of the result.
@@ -131,8 +132,10 @@ type QueryScopeLower func(
 	gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
 ) (frag store.GraphQuery, empty, ok bool)
 
-// scopedHeaders is the ONE place a data-entry collection read resolves the
-// ACL verdict into a store query.
+// scopedHeaders is the bounded data-entry collection read. With
+// [scanHeaders] it is the only way a collection read resolves the ACL verdict
+// into a store query: both take the query from [scopedQuery], which holds the
+// one verdict switch.
 //
 // # Why this exists
 //
@@ -143,14 +146,14 @@ type QueryScopeLower func(
 // fell back to the default world) and TKT-O7R2A1 (the same for faces,
 // leaving the most privileged population with no face narrowing).
 //
-// The shape of that bug is what this function's structure prevents: the
+// The shape of that bug is what scopedQuery's structure prevents: the
 // verdict switch and the narrowings are in one scope, so a new dimension
 // added to [scopeRequest] is applied to both branches or neither.
 //
 // # The branches
 //
-// DenyAll yields nothing. AllowAll reads the type directly. A zero verdict
-// is REFUSED rather than treated as AllowAll — a zero [acl.ReadQueryResult]
+// DenyAll yields nothing. AllowAll queries the type with no ACL predicate.
+// A zero verdict is REFUSED rather than treated as AllowAll — a zero [acl.ReadQueryResult]
 // would otherwise alias the most permissive branch, so the defensive error
 // is the difference between a misconfiguration and a silent full disclosure.
 // Otherwise the ACL's own query is copied and stamped.
@@ -159,13 +162,14 @@ type QueryScopeLower func(
 // principal, so stamping *rqr.Query in place would leak one request's
 // narrowing into the next caller's.
 //
-// # Reading by ids
+// # Bounded reads only
 //
-// With ByIDs the stamped query is answered for those ids alone
-// ([headersByIDs]), so a page scope or a `?q=` search costs reads that follow
-// its own size, not the size of the type (TKT-F2EJQY8). Without it the read
-// scans the type, which is what a caller that needs the whole filtered set
-// (totals, a Go-side sort, a condition or scope that does not lower) pays.
+// This function serves bounded reads: by ids ([headersByIDs]), whose cost
+// follows the ids asked for (TKT-F2EJQY8), or one window of the rows in id
+// order (Limit > 0), whose cost follows the window. A request with neither is
+// refused. A caller that needs every row of the type calls [scopedQuery] and
+// [scanHeaders] itself, so the scan is charged to that caller and carries its
+// own entry in the unpaged-read allowlist (TKT-C5H506O).
 //
 // # Withheld vs empty
 //
@@ -193,8 +197,13 @@ type QueryScopeLower func(
 func scopedHeaders(
 	ctx context.Context, svc Services, rqr acl.ReadQueryResult, req scopeRequest,
 ) (headers []store.EntityHeader, withheld bool, err error) {
-	if (req.Limit > 0 || req.Offset > 0) && (req.Scope != nil || req.ByIDs) {
+	switch {
+	case req.Limit < 0 || req.Offset < 0:
+		return nil, false, fmt.Errorf("%w: a negative read window on %q", errListLoad, req.Type)
+	case (req.Limit > 0 || req.Offset > 0) && (req.Scope != nil || req.ByIDs):
 		return nil, false, fmt.Errorf("%w: a read window with a query scope or ids on %q", errListLoad, req.Type)
+	case !req.ByIDs && req.Limit == 0:
+		return nil, false, fmt.Errorf("%w: an unbounded read of %q; use scanHeaders", errListLoad, req.Type)
 	}
 
 	q, errClass, withheld, err := scopedQuery(ctx, rqr, req)
@@ -203,14 +212,15 @@ func scopedHeaders(
 	}
 
 	var out []store.EntityHeader
-	switch {
-	case req.ByIDs:
+	if req.ByIDs {
 		out, err = headersByIDs(ctx, svc, q, req.IDs, errClass)
-	case rqr.AllowAll && len(q.Props) == 0 && req.Limit == 0 && req.Offset == 0:
-		// No extra conjuncts and no window, so the cheaper type-scan serves it.
-		out, err = typeHeaders(ctx, svc, store.EntityQuery{Type: q.EntityType, Faces: q.Faces, FaceIn: q.FaceIn})
-	default:
-		out, err = collectHeaders(ctx, svc, windowed(q, req), errClass)
+	} else {
+		// The window is cut in the store query, after the row gate, so a
+		// hidden row never takes a slot. Set on the stamped query, not in
+		// stampScope, whose result also answers applyScope's traversal
+		// matches, which a window must not cut.
+		q.Limit, q.Offset = req.Limit, req.Offset
+		out, err = collectHeaders(ctx, svc, q, errClass)
 	}
 	if err != nil {
 		return nil, false, err
@@ -219,16 +229,49 @@ func scopedHeaders(
 	return out, false, err
 }
 
-// scopedQuery is the verdict half of [scopedHeaders]: the store query one
-// collection read of req.Type runs for this principal, with every narrowing
-// that lives in the query stamped on. errClass is the error a failure of that
-// query is reported as: errListLoad for an allow-all read, errACLListQuery for
-// the ACL's own query. withheld is as for scopedHeaders.
+// scanHeaders reads every row q admits, then applies req's query scope.
+//
+// q, errClass and req must come from one [scopedQuery] call in the caller:
+//
+//	q, errClass, withheld, err := scopedQuery(ctx, rqr, req)
+//	if withheld || err != nil { ... }
+//	rows, err := scanHeaders(ctx, svc, q, errClass, req)
+//
+// The query carries the verdict, the world and the faces; req carries the
+// scope, which runs here in Go. A req other than the one q was built from
+// would skip or change the scope, so TestScanHeaders_TakesItsQueryFromScopedQuery
+// pins the call shape.
+//
+// The read is unpaged: its cost grows with the type. The unpaged-read guard
+// charges it to the caller, as it does for [collectHeaders], so every scan
+// has its own allowlist entry saying why it may stay. New code should read a
+// page through [scopedHeaders] instead.
+//
+// A query with no type is refused: it is the zero query a withheld verdict
+// returns, and several backends read every type for it.
+func scanHeaders(
+	ctx context.Context, svc Services, q store.GraphQuery, errClass error, req scopeRequest,
+) ([]store.EntityHeader, error) {
+	if q.EntityType == "" || q.EntityType != req.Type {
+		return nil, fmt.Errorf("%w: a scan of %q with a query for %q", errListLoad, req.Type, q.EntityType)
+	}
+	out, err := collectHeaders(ctx, svc, q, errClass)
+	if err != nil {
+		return nil, err
+	}
+	return applyScope(ctx, svc, out, req)
+}
+
+// scopedQuery is the verdict half of [scopedHeaders] and [scanHeaders]: the
+// store query one collection read of req.Type runs for this principal, with
+// every narrowing that lives in the query stamped on. errClass is the error a
+// failure of that query is reported as: errListLoad for an allow-all read,
+// errACLListQuery for the ACL's own query. withheld is as for scopedHeaders.
 //
 // req.Scope is NOT in the query: it runs in Go after the read
 // ([applyScope]). A caller that pages or counts the query itself, rather
-// than reading it whole through scopedHeaders, must therefore not pass a
-// Scope: a page of the store's rows is not a page of the scoped result.
+// than reading it through scopedHeaders or scanHeaders, must therefore not
+// pass a Scope: a page of the store's rows is not a page of the scoped result.
 //
 // Props is always a fresh slice, so a caller may append to it without
 // writing into the ACL layer's cached verdict or into req.
@@ -268,24 +311,12 @@ func scopedQuery(
 	return stampScope(ctx, q, req), errClass, false, nil
 }
 
-// typeHeaders drains a type scan, failing loud like [collectHeaders].
-func typeHeaders(ctx context.Context, svc Services, q store.EntityQuery) ([]store.EntityHeader, error) {
-	var out []store.EntityHeader
-	for h, err := range store.ListEntityHeaders(ctx, svc.Store, q) {
-		if err != nil {
-			return nil, fmt.Errorf("%w: %w", errListLoad, err)
-		}
-		out = append(out, h)
-	}
-	return out, nil
-}
-
 // headersByIDs answers q for the candidate ids only: one MatchingFaces call
 // decides which rows of those ids q admits, and one header read per matched
 // face loads them. Its cost follows len(ids), never the size of the type.
 //
 // q is the fully stamped query, so the verdict, the world, the face
-// allowlist and the props apply exactly as on the scanning branches. The
+// allowlist and the props apply exactly as on a window or a scan. The
 // rows come back sorted by id, then face, so the order does not depend on
 // the backend.
 //
@@ -446,14 +477,6 @@ func stampScope(ctx context.Context, q store.GraphQuery, req scopeRequest) store
 	return q
 }
 
-// windowed applies req's read window to a stamped row query. Kept out of
-// stampScope, whose result also answers applyScope's traversal matches,
-// which a window must not cut.
-func windowed(q store.GraphQuery, req scopeRequest) store.GraphQuery {
-	q.Limit, q.Offset = req.Limit, req.Offset
-	return q
-}
-
 // collectHeaders drains a GraphQueryHeaders iterator, failing loud on the
 // first error rather than returning a partial slice — a truncated collection
 // read is indistinguishable from a genuinely small one.
@@ -473,16 +496,24 @@ func collectHeaders(
 // scopedEntities is [scopedHeaders] adapted to the header-entity shape most
 // callers want. Separate rather than a flag because the header form is the
 // one new code should reach for.
+//
+// It drops the withheld flag: a withheld read returns no rows, and none of
+// its callers skips work on it.
 func scopedEntities(
 	ctx context.Context, svc Services, rqr acl.ReadQueryResult, req scopeRequest,
-) (entities []*entity.Entity, withheld bool, err error) {
-	headers, withheld, err := scopedHeaders(ctx, svc, rqr, req)
+) ([]*entity.Entity, error) {
+	headers, _, err := scopedHeaders(ctx, svc, rqr, req)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
+	return headerEntities(headers), nil
+}
+
+// headerEntities converts content-free headers to header entities.
+func headerEntities(headers []store.EntityHeader) []*entity.Entity {
 	out := make([]*entity.Entity, 0, len(headers))
 	for _, h := range headers {
 		out = append(out, headerEntity(h))
 	}
-	return out, withheld, nil
+	return out
 }

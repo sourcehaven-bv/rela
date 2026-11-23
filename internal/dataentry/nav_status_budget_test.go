@@ -131,8 +131,8 @@ func TestQueryBudget_NavStatusIsSizeIndependent(t *testing.T) {
 		})
 	// TODO(TKT-D3RAB0E): calls only. The marker counts in Go over a full
 	// header scan of the type (navStatusRows in nav_status.go, through
-	// scopedSortedEntitiesScoped to scopedHeaders' type scan in
-	// scopedread.go).
+	// scopedSortedEntitiesScoped to listPipeline.scanType in
+	// list_pipeline.go).
 	assertCallBudget(t, "nav status", b, navStatusFieldPolicyBudget, detail)
 }
 

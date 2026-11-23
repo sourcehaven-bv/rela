@@ -6,7 +6,9 @@ import (
 	"encoding/base32"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -350,14 +352,20 @@ func (b *caldavBackend) resolveDynamic(
 // # Row visibility is applied downstream, not here
 //
 // The ids returned are unfiltered by ACL. That is safe because the caller
-// intersects them with `src.listType`, which IS ACL-scoped — an id the
-// principal cannot read is absent from that list and never reaches the output.
-// Gating here too would be a second, redundant read of every neighbor.
+// reads them through `src.listByIDs`, which IS ACL-scoped: an id the
+// principal cannot read is absent from that read and never reaches the
+// output. Gating here too would be a second, redundant read of every
+// neighbor.
 func (b *caldavBackend) dynamicMembers(
 	ctx context.Context, name string,
 ) (members map[string]struct{}, scoped bool, err error) {
 	dyn, driverID, ok := b.resolveDynamic(ctx, name)
-	if !ok {
+	switch {
+	case !ok && driverID != "":
+		// A dynamic name whose driver is gone or unreadable since mapperFor
+		// resolved it. Not found, never the whole member type.
+		return nil, false, notFoundHere()
+	case !ok:
 		return nil, false, nil
 	}
 	// An absent `direction:` is inferred from the metamodel against the MEMBER
@@ -403,11 +411,6 @@ func (b *caldavBackend) listTodos(ctx context.Context, name string) ([]caldav.Ca
 	if err != nil {
 		return nil, err
 	}
-	src := feedEntitySource{app: b.app}
-	ents, err := src.listType(ctx, cfg.EntityType)
-	if err != nil {
-		return nil, err
-	}
 	filters, err := parseWhereAt(cfg.Where, requestReadTime(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("caldav %q: %w", name, err)
@@ -416,18 +419,23 @@ func (b *caldavBackend) listTodos(ctx context.Context, name string) ([]caldav.Ca
 	if err != nil {
 		return nil, err
 	}
+	// A dynamic collection holds one driver's members, so it reads those ids
+	// only; a static one reads the whole type.
+	src := feedEntitySource{app: b.app}
+	var ents []*entitypkg.Entity
+	if scoped {
+		ents, err = src.listByIDs(ctx, cfg.EntityType, slices.Sorted(maps.Keys(members)))
+	} else {
+		ents, err = src.listType(ctx, cfg.EntityType)
+	}
+	if err != nil {
+		return nil, err
+	}
 	entDef, _ := b.app.State().Meta.GetEntityDef(cfg.EntityType)
 	ctx = visibility.PrimeTraversals(ctx, b.fieldRedactor(), ents)
 
 	out := make([]caldav.CalendarObject, 0, len(ents))
 	for _, e := range ents {
-		// Membership first: for a dynamic collection this is the cheap set
-		// lookup, and it excludes most of the type before any filter runs.
-		if scoped {
-			if _, isMember := members[e.ID]; !isMember {
-				continue
-			}
-		}
 		matched, matchErr := filter.MatchAll(entityRecord(e), filters, entDef, b.app.State().Meta)
 		if matchErr != nil {
 			return nil, fmt.Errorf("caldav %q: %w", name, matchErr)
