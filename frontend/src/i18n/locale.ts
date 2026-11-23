@@ -7,7 +7,13 @@
  * language changes.
  */
 import { computed, ref } from 'vue'
-import { isUiLanguage, resolveLanguage, type ResolvedLanguage, type UiLanguage } from './language'
+import {
+  isUiLanguage,
+  offeredLanguages as offeredOf,
+  resolveLanguage,
+  type ResolvedLanguage,
+  type UiLanguage,
+} from './language'
 import { bootMeta } from './bootMeta'
 
 /**
@@ -39,6 +45,12 @@ const userLanguage = ref<UiLanguage | null>(readStoredLanguage())
 // Until the config loads, the language the server named in the shell, if any.
 const projectLanguage = ref<string | null>(bootMeta('rela-language'))
 const browser = ref<readonly string[]>(browserLanguages())
+// `app.languages`; until the config loads, the list the server named in the shell.
+const projectLanguages = ref<readonly string[]>(splitLanguages(bootMeta('rela-languages')))
+
+function splitLanguages(list: string | null): string[] {
+  return list ? list.split(',').filter(Boolean) : []
+}
 
 /** The language and formatting locale in effect now. */
 export const resolvedLanguage = computed<ResolvedLanguage>(() =>
@@ -46,8 +58,12 @@ export const resolvedLanguage = computed<ResolvedLanguage>(() =>
     user: userLanguage.value,
     project: projectLanguage.value,
     browser: browser.value,
+    offered: projectLanguages.value,
   })
 )
+
+/** The languages a user may pick on the Settings page. */
+export const offeredLanguages = computed(() => offeredOf(projectLanguages.value))
 
 /** The user's own choice, or null for "automatic". */
 export const chosenLanguage = computed(() => userLanguage.value)
@@ -76,18 +92,33 @@ export function setProjectLanguage(tag: string | null | undefined): void {
   projectLanguage.value = tag || null
 }
 
+/** Set the offered languages from `app.languages`; empty or absent offers all. */
+export function setProjectLanguages(list: readonly string[] | null | undefined): void {
+  projectLanguages.value = list ?? []
+}
+
 /**
  * What the language would be without the user's choice: the answer shown
  * next to "Automatic" on the Settings page.
  */
 export const automaticLanguage = computed(() =>
-  resolveLanguage({ project: projectLanguage.value, browser: browser.value })
+  resolveLanguage({
+    project: projectLanguage.value,
+    browser: browser.value,
+    offered: projectLanguages.value,
+  })
 )
 
 /** Test hook: reset every input to a known state. */
 export function resetLanguageState(
-  inputs: { user?: UiLanguage | null; project?: string | null; browser?: readonly string[] } = {}
+  inputs: {
+    user?: UiLanguage | null
+    project?: string | null
+    browser?: readonly string[]
+    offered?: readonly string[]
+  } = {}
 ): void {
+  projectLanguages.value = inputs.offered ?? []
   userLanguage.value = inputs.user ?? null
   projectLanguage.value = inputs.project ?? null
   browser.value = inputs.browser ?? ['en-US']

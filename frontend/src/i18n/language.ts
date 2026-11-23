@@ -33,6 +33,20 @@ export interface LanguageInputs {
   project?: string | null
   /** The browser's preferred languages, most preferred first. */
   browser: readonly string[]
+  /**
+   * The languages the app offers, `app.languages`. Empty or absent means
+   * every language with a message file.
+   */
+  offered?: readonly string[] | null
+}
+
+/**
+ * The languages the app offers: those of `offered` that have a message file,
+ * in its order, or every supported language when that leaves none.
+ */
+export function offeredLanguages(offered?: readonly string[] | null): UiLanguage[] {
+  const known = (offered ?? []).filter(isUiLanguage)
+  return known.length > 0 ? [...new Set(known)] : SUPPORTED_LANGUAGES
 }
 
 export interface ResolvedLanguage {
@@ -64,7 +78,8 @@ function hasRegionOrScript(tag: string): boolean {
 /**
  * First match wins: the user's choice, the project default, the browser's
  * languages in order, then English. A tag matches when its base language has
- * a message file, so `nl-BE` selects Dutch.
+ * a message file and the app offers it, so `nl-BE` selects Dutch. When the
+ * app does not offer English, the first language it offers is the fallback.
  *
  * The formatting locale keeps the winning tag when it names a region
  * (`nl-BE`). Otherwise it borrows the first browser tag in the same language,
@@ -79,6 +94,7 @@ function hasRegionOrScript(tag: string): boolean {
  */
 export function resolveLanguage(inputs: LanguageInputs): ResolvedLanguage {
   const browser = inputs.browser.map(canonical).filter((t): t is string => !!t)
+  const offered = offeredLanguages(inputs.offered)
 
   const candidates: [string | null | undefined, ResolvedLanguage['source']][] = [
     [inputs.user, 'user'],
@@ -91,12 +107,14 @@ export function resolveLanguage(inputs: LanguageInputs): ResolvedLanguage {
     const tag = canonical(raw)
     if (!tag) continue
     const base = baseOf(tag)
-    if (!isUiLanguage(base)) continue
+    if (!isUiLanguage(base) || !offered.includes(base)) continue
     return { language: base, locale: formattingLocale(tag, base, browser), source }
   }
+  // The first offered language; English when the app sets no list.
+  const fallback = offered[0] ?? FALLBACK_LANGUAGE
   return {
-    language: FALLBACK_LANGUAGE,
-    locale: browser[0] ?? FALLBACK_LANGUAGE,
+    language: fallback,
+    locale: browser[0] ?? fallback,
     source: 'fallback',
   }
 }

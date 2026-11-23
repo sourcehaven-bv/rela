@@ -64,6 +64,11 @@ const { confirm } = useConfirm()
 // permission itself.
 const { data: me, isPending: meLoading } = useMe()
 const canEdit = computed(() => me.value?.can_edit_settings === true && !workspaceReadOnly.value)
+// The counts of types, relations, forms and lists describe the model, so only
+// someone who may change it (the Configure space) sees them.
+const canConfigure = computed(() => me.value?.can_configure === true)
+// A choice of one is no choice: the card shows only when the app offers more
+// than one language (`app.languages`).
 
 // Display-timezone picker. The list comes from Intl (all IANA zones); the
 // empty value maps to "Browser default". Changing it only affects how datetime
@@ -1495,7 +1500,7 @@ watch(
       </div>
 
       <!-- App Info -->
-      <div class="settings-card">
+      <div v-if="canConfigure" class="settings-card" data-testid="app-info">
         <h3>Application Info</h3>
         <div class="info-grid">
           <div class="info-row">

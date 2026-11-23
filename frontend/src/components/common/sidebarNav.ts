@@ -72,7 +72,7 @@ export function isNavigable(item: SidebarItem): boolean {
  * caller (which imports it) rather than named in config.
  */
 export function toNavGroups(
-  groups: SidebarGroup[],
+  groups: ShownGroup[],
   routerLink: Component,
   onFlyoutClick?: FlyoutClickHandler,
   statusFor?: NavStatusLookup
@@ -87,6 +87,7 @@ export function toNavGroups(
     ...(group.items_create
       ? { addLabel: t('nav.newItem', { label: group.items_create.label }) }
       : {}),
+    ...(group.items_empty ? { emptyLabel: t('nav.emptyGroup') } : {}),
     // A malformed entry is dropped rather than rendered inert: a row that
     // looks like a link and goes nowhere is worse than an absent one.
     items: group.items
@@ -155,6 +156,13 @@ function toNavItem(
 export type NavItemsLookup = (key: string) => NavItemList | undefined
 
 /** The unprefixed href a generated entry opens. */
+/**
+ * A sidebar group as the client shows it. `items_empty` is set here, not by
+ * the server: the group's entries have loaded and there are none, so the
+ * group says so under its heading.
+ */
+export type ShownGroup = SidebarGroup & { items_empty?: boolean }
+
 export type GeneratedItemHref = (group: SidebarGroup, entry: NavItemEntry) => string
 
 /**
@@ -184,8 +192,8 @@ export function expandGeneratedItems(
   groups: SidebarGroup[],
   lookup: NavItemsLookup,
   hrefFor: GeneratedItemHref = generatedItemHref
-): SidebarGroup[] {
-  const out: SidebarGroup[] = []
+): ShownGroup[] {
+  const out: ShownGroup[] = []
   for (const group of groups) {
     if (!group.items_key) {
       out.push(group)
@@ -193,7 +201,10 @@ export function expandGeneratedItems(
     }
     const list = lookup(group.items_key)
     if (!list?.entries.length) {
-      if (group.items_create) out.push({ ...group, items: [] })
+      // Kept for its "+". Once the entries have loaded, it says that there
+      // are none; a heading over nothing reads as a fault.
+      if (group.items_create)
+        out.push({ ...group, items: [], ...(list ? { items_empty: true } : {}) })
       continue
     }
     const items: SidebarItem[] = list.entries.map((entry) => ({

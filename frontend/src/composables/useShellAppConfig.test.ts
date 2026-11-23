@@ -83,6 +83,21 @@ describe('useShellAppConfig (BUG-HZS0DGQ)', () => {
     expect(locale.resolvedLanguage.value.source).toBe('browser')
   })
 
+  it('offers only the shell languages, then the config languages', async () => {
+    addMeta('rela-languages', 'en')
+    const { locale, useShellAppConfig } = await freshModules(['nl-NL'])
+    const store = notLoaded()
+    mountShell(useShellAppConfig, store)
+    expect(locale.resolvedLanguage.value.language).toBe('en')
+    expect(locale.offeredLanguages.value).toEqual(['en'])
+
+    store.app = { name: 'Harbourmaster', languages: ['en', 'nl'] }
+    store.loaded = true
+    await nextTick()
+    expect(locale.resolvedLanguage.value).toMatchObject({ language: 'nl', source: 'browser' })
+    expect(locale.offeredLanguages.value).toEqual(['en', 'nl'])
+  })
+
   it('keeps the config through a reload that unsets loaded', async () => {
     addMeta('rela-language', 'en')
     addMeta('rela-app-name', 'Sourcehaven Workspace')

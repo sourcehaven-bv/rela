@@ -230,6 +230,21 @@ test.describe("Mobile app shell", () => {
     expect(await mobile.paneScrollsSideways()).toBe(false);
   });
 
+  /*
+   * The create dialog is a full-screen sheet on a phone. Its body editor
+   * used to reach past the body's edges, so the body scrolled sideways and a
+   * swipe or the caret cut off the form's left edge.
+   */
+  test("the create sheet fits the screen and does not scroll sideways", async ({ appPage }) => {
+    const mobile = new MobileLayoutPage(appPage);
+    await mobile.openCreateSheet("features");
+
+    const sheet = await mobile.createSheetGeometry();
+    expect(sheet.left).toBeGreaterThanOrEqual(0);
+    expect(sheet.right).toBeLessThanOrEqual(sheet.viewport);
+    expect(sheet.sideways).toBe(0);
+  });
+
   // The header's tools hold the list's search, sort and filter. A phone
   // needs them as much as a desktop does.
   test("a list keeps its search box on a phone", async ({ appPage }) => {

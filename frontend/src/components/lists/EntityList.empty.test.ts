@@ -117,6 +117,8 @@ describe('EntityList for a list the configuration does not have', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="not-found-state"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="not-found-home"]').exists()).toBe(true)
+    // Named once, by the page title, not again by the state below it.
+    expect(document.body.textContent?.split('Page not found').length).toBe(2)
     expect(wrapper.text()).not.toContain('configuration')
     expect(listEntitiesMock).not.toHaveBeenCalled()
     wrapper.unmount()

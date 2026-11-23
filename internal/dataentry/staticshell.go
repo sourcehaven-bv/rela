@@ -71,6 +71,10 @@ func StaticShell(boot ShellBoot) http.Handler {
 type ShellBoot struct {
 	AppName  string
 	Language string
+	// Languages is `app.languages`, comma-separated, so the pages before
+	// the config loads show only a language the app offers. A string, not a
+	// slice, so ShellBoot stays comparable.
+	Languages string
 	// Logo is `app.logo`.
 	Logo string
 	// SignOut and Account are `account.sign_out` and `account.account`.
@@ -110,6 +114,13 @@ func shellBootOf(app dataentryconfig.AppConfig, acc *dataentryconfig.AccountConf
 	if lang := strings.TrimSpace(app.Language); languageTag.MatchString(lang) {
 		b.Language = lang
 	}
+	var langs []string
+	for _, l := range app.Languages {
+		if baseLanguage.MatchString(l) {
+			langs = append(langs, l)
+		}
+	}
+	b.Languages = strings.Join(langs, ",")
 	if acc != nil {
 		b.SignOut = shellLink(acc.SignOut)
 		b.Account = shellLink(acc.Account)
@@ -162,10 +173,14 @@ func LoadShellBoot(ctx context.Context, load func(context.Context, string) ([]by
 // parts. It keeps anything else out of the lang attribute.
 var languageTag = regexp.MustCompile(`^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$`)
 
+// baseLanguage is the shape of an `app.languages` entry.
+var baseLanguage = regexp.MustCompile(`^[a-z]{2,3}$`)
+
 // The meta names the SPA reads at boot (frontend/src/i18n/bootMeta.ts).
 const (
 	metaAppName  = "rela-app-name"
 	metaLanguage = "rela-language"
+	metaLangs    = "rela-languages"
 	metaLogo     = "rela-app-logo"
 	metaSignOut  = "rela-sign-out"
 	metaAccount  = "rela-account-url"
@@ -196,6 +211,7 @@ func bootShell(shell []byte, boot ShellBoot) []byte {
 		s = insertBefore(s, "</head>", metaTag(metaLanguage, lang))
 	}
 	for _, m := range []struct{ name, value string }{
+		{metaLangs, boot.Languages},
 		{metaLogo, boot.Logo},
 		{metaSignOut, boot.SignOut},
 		{metaAccount, boot.Account},
