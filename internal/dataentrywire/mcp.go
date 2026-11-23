@@ -136,6 +136,10 @@ func RemoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 	if leases := appbuild.Leases(svc); leases != nil {
 		deps.Leases = leases
 	}
+	// Assigned only when set, like Leases above.
+	if recs := appbuild.Records(svc); recs != nil {
+		deps.Records = recs
+	}
 	if host.Actions != nil {
 		deps.Commands.Actions = host.Actions
 	}

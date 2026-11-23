@@ -32,6 +32,7 @@ var validTopLevelKeys = map[string]bool{
 	"kanbans":      true,
 	"calendars":    true,
 	"gantts":       true,
+	"sankeys":      true,
 	"documents":    true,
 	"feeds":        true,
 	"caldav":       true,
@@ -65,6 +66,7 @@ var knownTypos = map[string]string{
 	"kanban":      "kanbans",
 	"calendar":    "calendars",
 	"gantt":       "gantts",
+	"sankey":      "sankeys",
 	"command":     "commands",
 	"style":       "styles",
 	"nav":         "navigation",
@@ -516,6 +518,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 
 	// Phase 1: Structural validation (unknown keys)
 	errs = append(errs, checkUnknownKeys(data)...)
+	errs = append(errs, aboutUnknownKeys(data)...)
 
 	// Phase 2: Semantic validation (cross-references, types, etc.)
 	errs = append(errs, validateNavigation(cfg)...)
@@ -531,6 +534,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateKanbans(cfg, meta)...)
 	errs = append(errs, validateCalendars(cfg, meta)...)
 	errs = append(errs, validateGantts(cfg, meta)...)
+	errs = append(errs, validateSankeys(cfg, meta)...)
 	errs = append(errs, validateDashboard(cfg, meta)...)
 	errs = append(errs, validateCommands(cfg, meta)...)
 	errs = append(errs, validateActions(cfg, meta)...)
@@ -720,6 +724,11 @@ func navTargetErrors(nav NavigationEntry, cfg *Config, anchorType string) []stri
 	if nav.Gantt != "" {
 		if _, ok := cfg.Gantts[nav.Gantt]; !ok {
 			errs = append(errs, fmt.Sprintf("references unknown gantt %q", nav.Gantt))
+		}
+	}
+	if nav.Sankey != "" {
+		if _, ok := cfg.Sankeys[nav.Sankey]; !ok {
+			errs = append(errs, fmt.Sprintf("references unknown sankey %q", nav.Sankey))
 		}
 	}
 	if e := dashboardRefError(nav.Dashboard, cfg); e != "" {
@@ -3273,6 +3282,7 @@ func validateApp(cfg *Config, meta *metamodel.Metamodel) []string {
 	errs := validateDefaultWorldAlias(cfg.App.DefaultWorld, meta)
 	errs = append(errs, validateAppLanguage(cfg.App.Language)...)
 	errs = append(errs, validateWorldSwitcher(cfg.App.WorldSwitcher)...)
+	errs = append(errs, validateAbout(cfg.App.About)...)
 	if logo := cfg.App.Logo; logo != "" {
 		if err := validAccountLink(logo); err != nil {
 			errs = append(errs, fmt.Sprintf("app.logo: %q %v", logo, err))

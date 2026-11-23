@@ -65,11 +65,8 @@ func TestEntityView_DraftWithNoFaceInThisWorldIsNotAnError(t *testing.T) {
 // not turn a genuine miss into a soft absence. "No such entity" and "no face in
 // this world" are different answers and must stay different.
 //
-// The status asserted is 422, which is what this surface has returned for a
-// missing entry since before worlds existed (`3a846d8a`). This test pins that
-// the BUG-1 fix did not widen that behavior to cover real misses — it is
-// deliberately NOT a claim that 422 is the right code for a missing id, which
-// is a separate pre-existing question.
+// A genuine miss is the uniform 404 a refused entry gets, so the page shows
+// its not-found state rather than the raw view error.
 func TestEntityView_NonexistentEntityStaysAnError(t *testing.T) {
 	app := newTestAppV1(t)
 	app.setWorlds(stubWorlds{names: map[string]bool{"published": true}})
@@ -84,9 +81,12 @@ func TestEntityView_NonexistentEntityStaysAnError(t *testing.T) {
 				"that would make every typo look like an unpublished draft; body=%s",
 				path, rec.Body)
 		}
-		if rec.Code != http.StatusUnprocessableEntity {
-			t.Errorf("%s: want the pre-existing 422 for a genuine miss; got %d",
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s: want the uniform 404 for a genuine miss; got %d",
 				path, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), "entry entity not found") {
+			t.Errorf("%s: the raw view error must not reach the wire; body=%s", path, rec.Body)
 		}
 	}
 }

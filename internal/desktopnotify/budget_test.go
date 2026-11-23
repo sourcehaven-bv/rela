@@ -95,6 +95,78 @@ badge:
 	}
 }
 
+// or, not, ~= and ordered comparisons are answered by the store too
+// (TKT-I3MGCRT): one capped query and one count, however many rows the
+// type has.
+func TestEvaluate_LoweredTreeIsScaleFree(t *testing.T) {
+	t.Parallel()
+	for _, condition := range []string{
+		"entity.status == 'open' or entity.status == 'new'",
+		"entity.status ~= 'done'",
+		"not (entity.status == 'done' or entity.status < 'b')",
+		"entity.status > 'n' and entity.status < 'p'",
+	} {
+		t.Run(condition, func(t *testing.T) {
+			t.Parallel()
+			cfg := load(t, fmt.Sprintf(`
+notifications:
+  - id: open
+    type: taak
+    condition: %q
+badge:
+  type: taak
+  condition: %q
+`, condition, condition))
+			cost := storetest.AssertScaleFree(t, measureEvaluate(t, cfg, openTaken, 3, 3))
+			if want := (storetest.Cost{Calls: 2, Rows: 3}); cost != want {
+				t.Errorf("cost = %s, want %s (one capped query, one count)", cost, want)
+			}
+		})
+	}
+}
+
+// A date condition is still judged in Go, but its `~=` conjunct narrows the
+// read: rows it excludes are never read. Rows that pass it are, so the
+// scan is real and its cost grows with them.
+func TestEvaluate_DateConditionScanIsNarrowedByLoweredConjuncts(t *testing.T) {
+	t.Parallel()
+	const condition = "entity.status ~= 'done' and entity.vervaldatum <= today()"
+	cfg := load(t, fmt.Sprintf(`
+notifications:
+  - id: due
+    type: taak
+    condition: %q
+badge:
+  type: taak
+  condition: %q
+`, condition, condition))
+	if cfg.rules[0].exact {
+		t.Fatal("the date condition lowered exactly; this test needs the Go path")
+	}
+	cost := storetest.AssertScaleFree(t, measureEvaluate(t, cfg, openTaken, 1, 1))
+	if want := (storetest.Cost{Calls: 1, Rows: 3}); cost != want {
+		t.Errorf("cost = %s, want %s (one read of the taken not done)", cost, want)
+	}
+
+	measureOpen := func(n int) storetest.Cost {
+		st := newStore(t, openTaken...)
+		ctx := context.Background()
+		for i := range n {
+			if err := st.CreateEntity(ctx, newTaak(fmt.Sprintf("TAAK-OPEN-%04d", i), "open", "2027-01-01")); err != nil {
+				t.Fatalf("CreateEntity: %v", err)
+			}
+		}
+		counting := storetest.NewCounting(st)
+		if _, err := cfg.Evaluate(ctx, counting, store.TrivialScope()); err != nil {
+			t.Fatalf("Evaluate: %v", err)
+		}
+		return counting.Cost()
+	}
+	if small, large := measureOpen(10), measureOpen(50); large.Rows-small.Rows != 40 {
+		t.Errorf("rows %d at 10, %d at 50; want the scan to read every row not done", small.Rows, large.Rows)
+	}
+}
+
 // A lowered rule reads a capped page however many entities match, so its
 // rows do not grow with the matches either.
 func TestEvaluate_LoweredRuleReadsAtMostTheCap(t *testing.T) {
@@ -205,30 +277,71 @@ func TestLower(t *testing.T) {
 	tests := []struct {
 		condition string
 		exact     bool
-		pushed    string
+		filter    string
 	}{
 		{"entity.status == 'open'", true, "status=open"},
-		{"entity.title == 'x' and entity.status == 'open'", true, "status=open,title=x"},
+		{"entity.title == 'x' and entity.status == 'open'", true, "status=open title=x"},
+		{"entity.status == 'open' or entity.status == 'new'", true, "or(status=open, status=new)"},
+		{"entity.status ~= 'done'", true, "status~=done"},
+		{"not (entity.status == 'done')", true, "not(status=done)"},
+		{"entity.status < 'b'", true, "status<b"},
+		{"entity.punten >= 3", true, "punten>=3"},
+		{"true", true, ""},
+		// A date against today() is judged in Go; the conjuncts that lower
+		// still narrow the read.
 		{"entity.status == 'open' and entity.vervaldatum <= today()", false, "status=open"},
-		{"entity.status == 'open' or entity.status == 'new'", false, ""},
-		{"entity.status ~= 'done'", false, ""},
-		{"true", false, ""},
+		{"entity.status ~= 'done' and entity.vervaldatum <= today()", false, "status~=done"},
+		{"entity.vervaldatum <= today() and (entity.status == 'a' or entity.punten > 1)", false,
+			"or(status=a, punten>1)"},
+		{"entity.status == 'open' or entity.vervaldatum <= today()", false, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.condition, func(t *testing.T) {
 			t.Parallel()
 			cfg := load(t, fmt.Sprintf("badge:\n  type: taak\n  condition: %q\n", tc.condition))
-			got := make([]string, len(cfg.badge.pushed))
-			for i, p := range cfg.badge.pushed {
-				if p.Op != store.PropEqual {
-					t.Fatalf("pushed %+v, want equalities only", p)
-				}
-				got[i] = p.Property + "=" + p.Value
-			}
-			if cfg.badge.exact != tc.exact || strings.Join(got, ",") != tc.pushed {
-				t.Fatalf("exact = %v, pushed = %v; want %v, %q", cfg.badge.exact, got, tc.exact, tc.pushed)
+			got := renderFilter(cfg.badge.pushed, cfg.badge.where)
+			if cfg.badge.exact != tc.exact || got != tc.filter {
+				t.Fatalf("exact = %v, filter = %q; want %v, %q", cfg.badge.exact, got, tc.exact, tc.filter)
 			}
 		})
+	}
+}
+
+// renderFilter writes a condition's store filter for comparison: the pushed
+// predicates, then the where tree.
+func renderFilter(pushed []store.PropPredicate, where *store.Cond) string {
+	var parts []string
+	for _, p := range pushed {
+		parts = append(parts, renderPred(p))
+	}
+	if where != nil {
+		parts = append(parts, renderCond(*where))
+	}
+	return strings.Join(parts, " ")
+}
+
+func renderPred(p store.PropPredicate) string {
+	op := map[store.PropOp]string{
+		store.PropEqual: "=", store.PropNotEqualOrEmpty: "~=", store.PropLess: "<", store.PropLessEqual: "<=",
+		store.PropGreater: ">", store.PropGreaterEqual: ">=",
+	}[p.Op]
+	return p.Property + op + p.Value
+}
+
+func renderCond(c store.Cond) string {
+	var args []string
+	for _, a := range c.Args {
+		args = append(args, renderCond(a))
+	}
+	switch c.Op {
+	case store.CondProp:
+		return renderPred(c.Prop)
+	case store.CondAnd:
+		return "and(" + strings.Join(args, ", ") + ")"
+	case store.CondOr:
+		return "or(" + strings.Join(args, ", ") + ")"
+	default:
+		return "not(" + strings.Join(args, ", ") + ")"
 	}
 }
 

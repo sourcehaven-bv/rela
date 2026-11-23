@@ -375,6 +375,13 @@ describe('SelectWidget', () => {
     expect(w.emitted('update:modelValue')?.[0]).toEqual(['review'])
   })
 
+  it('names the select by its field label, not by the placeholder option', () => {
+    const w = mount(SelectWidget, {
+      props: { modelValue: '', mode: 'edit' as const, propertyName: 'country', propertyDef: def, label: 'Country' },
+    })
+    expect(w.find('select').attributes('aria-label')).toBe('Country')
+  })
+
   it('shows inline enum labels as option text while keeping the raw value', () => {
     const labeled = {
       type: 'enum' as const,

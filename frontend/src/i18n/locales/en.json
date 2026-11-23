@@ -166,6 +166,7 @@
   "footer": {
     "settings": "Settings",
     "about": "About",
+    "aboutVersion": "Version {version}",
     "shortcuts": "Shortcuts",
     "keyboardShortcuts": "Keyboard shortcuts",
     "clickToSync": "Click to sync",
@@ -801,7 +802,7 @@
     },
     "inlineCreate": {
       "discardTitle": "Discard new {type}?",
-      "discardMessage": "This entity has not been created yet. Your input will be lost."
+      "discardMessage": "This {type} has not been created yet. Your input will be lost."
     },
     "discard": "Discard",
     "newOfType": "New {type}",
@@ -915,7 +916,6 @@
     "prevStep": "← Prev step",
     "nextStep": "Next step →",
     "createAndAddAnother": "Create & add another",
-    "missingForm": "The form \"{id}\" does not exist in the configuration.",
     "autosave": {
       "fieldConflict": "Someone else changed this field while you were editing. Your change was not saved. Edit it again to overwrite their value.",
       "contentConflict": "Someone else changed the same lines of the body. Your change was not saved. Edit it again to overwrite their version.",
@@ -940,7 +940,6 @@
     "noItems": "Nothing found.",
     "createOne": "Create one",
     "inaccessible": "inaccessible",
-    "unknownList": "The list \"{id}\" does not exist in the configuration.",
     "moveFailed": "Could not move the row",
     "pagination": {
       "summary": "Showing {first} - {last} of {total}"
@@ -1444,6 +1443,15 @@
     "manualContent": "Manual Content",
     "applying": "Applying…",
     "apply": "Apply Resolution"
+  },
+  "sankey": {
+    "truncated": "Not all nodes shown",
+    "truncatedTitle": "The diagram has more nodes than its limit allows, so some are left out.",
+    "unknown": "This diagram is not configured.",
+    "empty": "Nothing to show yet.",
+    "diagramLabel": "Flow diagram: {title}",
+    "nodeLabel": "{type}: {name}",
+    "pipLabel": "{type}: {name}"
   },
   "gantt": {
     "sortTitle": "Title",

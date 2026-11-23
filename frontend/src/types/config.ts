@@ -37,6 +37,7 @@ export interface Config {
   /** Optional: the Go side omits the key entirely when no calendar is configured. */
   calendars?: Record<string, CalendarConfig>
   gantts?: Record<string, GanttConfig>
+  sankeys?: Record<string, SankeyConfig>
   dashboard?: DashboardConfig
   /** Named dashboards (TKT-5LQNLY), reached at `/dashboard/<name>`. */
   dashboards?: Record<string, DashboardConfig>
@@ -186,6 +187,11 @@ export interface AppConfig {
   collab_enabled?: boolean
   /** Names the relay process's rooms; the SPA joins with it (TKT-CJL604). */
   collab_epoch?: string
+  /**
+   * `app.about:`: the version and links the About dialog shows below the
+   * description. Absent when neither is configured.
+   */
+  about?: { version?: string; links?: { label: string; url: string }[] }
 }
 
 export interface FormConfig {
@@ -864,6 +870,41 @@ export interface GanttSourceConfig {
   color?: CalendarColor
 }
 
+/** SankeyConfig declares a flow diagram: one column per entity type (or group
+ * of types), with the relations between neighbouring columns drawn as ribbons.
+ * Server-normalized: `title` and `max_nodes` always arrive filled. */
+export interface SankeyConfig {
+  title: string
+  header?: string
+  footer?: string
+  /** Entity types per column, left to right. */
+  columns: string[][]
+  /** Relation types drawn as ribbons. */
+  edges: string[]
+  types?: Record<string, SankeyTypeConfig>
+  max_nodes: number
+}
+
+export interface SankeyTypeConfig {
+  where?: string[]
+  label?: string
+  /** Property that pins the type's node order; "id" orders by entity id. */
+  order?: string
+  color?: CalendarColor
+  /** Property whose value picks the node's tone. */
+  color_by?: string
+  /** Related entities drawn as dots beside each node. */
+  pips?: SankeyPipsConfig
+}
+
+export interface SankeyPipsConfig {
+  relation: string
+  type: string
+  label?: string
+  color_by?: string
+  max: number
+}
+
 export interface KanbanCard {
   title: string
   subtitle?: string
@@ -1428,6 +1469,7 @@ export interface PageConfig {
     kanban?: string
     calendar?: string
     gantt?: string
+    sankey?: string
     /** `true` for the default dashboard, or the name of one under `dashboards:`. */
     dashboard?: boolean | string
     document?: string
@@ -1528,11 +1570,19 @@ export interface SidebarSpace {
 
 /**
  * A built-in sidebar row, the as-of picker in the sidebar header, or the
- * Shortcuts button in the sidebar footer, as `builtins:` in data-entry.yaml
- * names it.
+ * Shortcuts, Settings and About buttons in the sidebar footer, as `builtins:`
+ * in data-entry.yaml names it.
  */
 export type BuiltinRow =
-  'search' | 'inbox' | 'flow_tasks' | 'flow_runs' | 'analysis' | 'as_of' | 'shortcuts'
+  | 'search'
+  | 'inbox'
+  | 'flow_tasks'
+  | 'flow_runs'
+  | 'analysis'
+  | 'as_of'
+  | 'shortcuts'
+  | 'settings'
+  | 'about'
 
 /** One row of a space's Create menu. */
 export interface SidebarCreate {

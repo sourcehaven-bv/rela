@@ -136,6 +136,19 @@ describe('InlineCreateFormModal', () => {
     wrapper.unmount()
   })
 
+  it('names the type in the discard message, not "entity"', async () => {
+    confirmMock.mockResolvedValue(false)
+    const { wrapper } = mountModal({ dirty: true })
+
+    dispatchKey('Escape')
+    await flushPromises()
+
+    const { message } = confirmMock.mock.calls[0][0] as { message: string }
+    expect(message).toContain('feature')
+    expect(message).not.toMatch(/entity/i)
+    wrapper.unmount()
+  })
+
   it('stays open when the discard is declined', async () => {
     confirmMock.mockResolvedValue(false)
     const { wrapper } = mountModal({ dirty: true })

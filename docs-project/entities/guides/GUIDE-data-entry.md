@@ -395,6 +395,7 @@ app:
 | `description` | Subtitle shown below the title   |
 | `logo`        | An image of the app for the pages shown before a workspace loads, such as a suspended or archived workspace. A path starting with `/` or an `https://` URL. Without it those pages show `name`. The sidebar logo is the one uploaded on the Settings page. |
 | `default_world` | Deprecated alias for the schema's `default_world:`; must name the same world. See [Worlds in the web app and API](#worlds-in-the-web-app-and-api) |
+| `about`       | A version and links for the About dialog. See [The About dialog](#the-about-dialog) |
 
 The browser tab title reads `<page> · <name>`, for example
 `Orders · Support Tickets`. The page part is the title the page shows: the
@@ -402,6 +403,34 @@ list, board, dashboard, document, form or custom app title, the entity title
 on an entity page, or the name of a built-in screen such as Search. A page
 without a title shows `name` alone. When the inbox has mentions or entries
 waiting on you, their count comes first: `(3) Orders · Support Tickets`.
+
+### The About dialog
+
+The About button in the sidebar footer opens a dialog with `name` as its
+title, `description` (or, without it, the schema's `description`) as its
+text, and the version and links of `app.about:` below it:
+
+```yaml
+app:
+  name: "Support Tickets"
+  description: "Internal ticket management system"
+  about:
+    version: "2026.11"
+    links:
+      - { label: Help, url: "https://help.example.com/" }
+      - { label: Terms of use, url: /terms }
+```
+
+| Field           | Description |
+| --------------- | ----------- |
+| `version`       | Free text shown as "Version 2026.11". rela shows no version of its own. |
+| `links`         | Links shown in order, each opening in a new tab. `label` and `url` are required; `url` is a path starting with `/` or an `https://` URL. |
+
+The button shows only when the dialog has a description, a version or a
+link. `builtins: { about: { hidden: true } }` hides it, or shows it only to
+holders of a permission (see [Built-in sidebar rows](#built-in-sidebar-rows-builtins)).
+An unknown key, a link without a label, and a link that is not a path or an
+`https://` URL fail to load.
 
 ### Interface language
 
@@ -2217,7 +2246,14 @@ A list narrower than its columns, as on a phone, keeps only some of them.
 The first column, the row title, always stays. By default an enum column
 (such as a status), a face column and a busy column stay as well, and the
 other columns are dropped. A kept column has the same width in every row,
-also where its value is empty, so the columns line up down the list.
+also where its value is empty, so the columns line up down the list. The
+title keeps a readable width: when it and the kept columns do not fit on one
+line, the kept columns move to a line of their own under the title.
+
+A list switches to this layout below 640 pixels. Wider, it shows every
+column with its header. Each column has a preferred width that suits its
+property type, and the columns and the title shrink together to fit the
+page before the list scrolls sideways.
 
 Set `primary:` on a list column to choose for yourself. `primary: true`
 keeps the column; `primary: false` drops it, also when it is an enum. A
@@ -6113,7 +6149,7 @@ inherits the surrounding text colour, so icons follow the light / dark theme
 instead of fighting it the way an emoji does.
 
 <!-- BEGIN generated: icons -->
-The 218 names below are the complete set. This table is **generated** from the
+The 219 names below are the complete set. This table is **generated** from the
 same definition the server validates against and the app renders from, so it
 cannot fall out of step with either — an earlier hand-written copy went stale
 within a single release, which is why it is machine-written now.
@@ -6130,6 +6166,7 @@ draws nothing.
 | `kanban` | Kanban | Board view; the default kanban glyph |
 | `calendar` | CalendarDays | Calendar view |
 | `gantt` | ChartGantt | Gantt view |
+| `sankey` | Waypoints | Sankey flow diagram |
 | `search` | Search | Search |
 | `settings` | Settings | Settings or configuration |
 | `apps` | Blocks | Custom apps section |
@@ -6664,6 +6701,8 @@ builtins:
 | `analysis`   | Analysis   |
 | `as_of`      | The date picker in the sidebar header |
 | `shortcuts`  | The Shortcuts button in the sidebar footer, which opens the keyboard shortcuts help |
+| `settings`   | The Settings button in the sidebar footer |
+| `about`      | The About button in the sidebar footer, which shows only when [the About dialog](#the-about-dialog) has something to show |
 
 An entry sets `hidden: true`, or `permission:`, `hidden_on_phone: true` or
 both. An unknown row name, an entry with none of them, `hidden` together with
@@ -6685,6 +6724,18 @@ builtins:
 
 Hiding the Shortcuts button does not turn off the `?` key, which still opens
 the keyboard shortcuts help.
+
+A portal whose customers have nothing to set on the Settings page can show
+the button only to staff, and leave out About:
+
+```yaml
+builtins:
+  settings: { permission: "settings:edit" }
+  about: { hidden: true }
+```
+
+The Settings page stays reachable by URL. A user without `settings:edit`
+sees only their own preferences there (see [Settings Page](#settings-page)).
 
 When the Search row is hidden, the `/` shortcut to the search page is off too,
 also where `hidden_on_phone` hides it.
@@ -8364,6 +8415,11 @@ An operator can hide these buttons with
 [`list_buttons`](#list-and-search-buttons-list_buttons) and
 [`header_buttons`](#entity-header-buttons-header_buttons).
 
+A read-only workspace refuses every change to a pile, so it shows none of
+these buttons, no pile toggles and no **Remove from pile** on an entity page.
+The piles themselves can still be opened, but the pile page offers no rename,
+delete or remove.
+
 A pile holds one face of an entity. When you add from a page or a row that
 shows a face, such as `POL-1@draft`, that face goes on the pile. An id alone
 is refused for a type with faces, and the message lists the faces you can
@@ -9034,6 +9090,123 @@ Loading fails when:
   containment and deserve their own view.
 - Dates render at day granularity; `datetime` values are treated as their date.
 
+## Sankeys
+
+A sankey draws **how entities of several types connect**, in columns from left
+to right. Each entity is a node, and each relation between two nodes is a
+ribbon. The width of a node follows the number of ribbons it carries. Use it to
+see where work, cost or responsibility flows, for example labels to tickets to
+categories.
+
+```yaml
+sankeys:
+  flow:
+    title: "Ticket flow"
+    columns: [[label], [ticket], [category]]
+    edges: [tagged, belongs-to]
+    types:
+      ticket:
+        where: ["status != 'closed'"]
+        color_by: priority
+      label: { order: id }
+```
+
+Reach it from the sidebar with a `sankey:` navigation entry:
+
+```yaml
+navigation:
+  - label: "Ticket flow"
+    sankey: flow
+```
+
+### How it is drawn
+
+- `columns` lists the entity types of each column. Types that share a column
+  stack in the listed order, each under its own heading.
+- A relation in `edges` is drawn when both ends are in the diagram, whichever
+  way it points. The ribbon always runs from the lower column to the higher
+  one. A relation between two entities in the same column is not drawn.
+- Node order comes from a crossing minimiser, so ribbons cross as little as
+  possible. Set `order:` on a type to pin its nodes instead.
+- Hovering a node or ribbon dims everything it is not connected to.
+- Clicking a node opens the entity in a detail panel over the diagram, and
+  puts its id in `?selected=` so a reload or a shared link reopens it. The
+  panel's expand control goes to the entity's own page, and its close control
+  drops the selection.
+
+### Pips
+
+`pips:` on a type draws the entities related to each node as small dots on the
+node's label line, for example the evidence of a control. A dot is not a
+diagram node: it has no ribbon and does not count against `max_nodes`.
+Clicking a dot opens that entity in the same detail panel.
+
+```yaml
+sankeys:
+  coverage:
+    columns: [[control], [clause]]
+    edges: [covers]
+    types:
+      control:
+        pips: { relation: evidenced-by, type: evidence, color_by: status, max: 6 }
+```
+
+The relation may point either way between the node and the pip type. Dots are
+ordered by id. When a node has more than `max` of them, the rest show as `+n`.
+The server reads all pips of a type in two batched reads, one of the pip type
+and one of the relation, so the cost does not grow with the number of nodes.
+
+Pips follow the same access rules as nodes. The pip type is row-gated and
+redacted before a title or tone is read, and the `+n` count only includes
+entities the principal may read. A principal who may not read the pip type
+sees no dots and no count.
+
+### Access control
+
+The server reads the nodes through the same row gate and field redaction as a
+list. It then applies `where:` to the redacted entities and applies the
+`max_nodes` cap. A ribbon is kept only when both ends are visible. The answer
+differs per principal, so it is never shared between users.
+
+### Sankey fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `title` | string | Heading above the diagram (default: the config key) |
+| `header` / `footer` | string | Markdown rendered above / below the diagram |
+| `columns` | list of lists | Entity types per column, left to right; at least two columns, each type once |
+| `edges` | list | Relation types drawn as ribbons; at least one |
+| `max_nodes` | int | Nodes per response (default 2000); exceeding it flags the response as truncated |
+| `types` | map | Per-type options, keyed by an entity type in `columns` |
+
+Per-type options:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `where` | list | Filter clauses, ANDed, evaluated on the redacted entity |
+| `label` | string | Property used as the node label (default: the display property) |
+| `order` | string | Property that pins the node order, compared as text then by id; `id` orders by id |
+| `color` | string | Palette token: `blue`, `green`, `amber`, `red`, `violet` or `slate` |
+| `color_by` | string | Property whose value picks the tone; equal values share a tone |
+| `pips` | object | Related entities drawn as dots beside each node, see below |
+
+Pip options:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `relation` | string | Relation type linking a node to its pips, in either direction. Required |
+| `type` | string | Entity type of the pips. Required; must differ from the node's type |
+| `label` | string | Property shown on hover (default: the display property) |
+| `color_by` | string | Property of the pip type whose value picks the dot's tone |
+| `max` | int | Dots per node (default 8, at most 50) |
+
+### Limits
+
+- The diagram is read-only.
+- Node height follows the ribbon count; a weight from a property is not
+  supported yet.
+- The page does not refresh by itself when the data changes; reload it.
+
 ## Commands
 
 Commands let you define shell scripts in `data-entry.yaml` that users can trigger from the UI.
@@ -9332,6 +9505,15 @@ only when creating tickets, while leaving the global default as `medium`.
 
 The page also lets you choose the interface language and turn on browser
 notifications for the inbox (see [Inbox](#inbox)).
+
+The defaults, the palette, the logo and the theme package are shared by every
+user, so saving them needs the `settings:edit` permission when the project
+has an `acl.yaml`, and a read-only workspace never saves them. A user who
+cannot save them sees only their own preferences on the page: language,
+notifications, display time zone and the application info. The page leaves
+the rest out, with the file paths it is stored in. This tidies the page; it
+hides nothing secret, and every save checks the permission itself. Hide the
+Settings button with [`builtins.settings`](#built-in-sidebar-rows-builtins).
 
 ### Resolution Order
 

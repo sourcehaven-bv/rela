@@ -8,5 +8,6 @@ versions:
 body:
 {
   "user": "editor@example.test",
-  "can_remote_sync": true
+  "can_remote_sync": true,
+  "can_edit_settings": true
 }

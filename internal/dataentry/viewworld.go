@@ -187,9 +187,8 @@ func errViewEntryNoFaceHere(entryID string) error {
 var errNoFaceInWorld = errors.New("entry entity has no face in this world")
 
 // errViewEntryNotFound is the entry-missing error, spelled once so the
-// default-world and world paths cannot drift in wording. The message is
-// preserved verbatim from before item 4b: it reaches the wire as a 422
-// `view_execution_failed` detail, and callers' tests match on it.
+// default-world and world paths cannot drift in wording. The `_views` route
+// answers it with the uniform 404, never with this message.
 func errViewEntryNotFound(entryID string) error {
 	return fmt.Errorf("%w: %s", errEntryMissing, entryID)
 }
@@ -460,10 +459,7 @@ func (h *viewsHandler) writeWorldAbsentView(
 	// A world that ranks faces reaches this page for an id it found no face
 	// of, so an id a rename or conversion retired lands here too.
 	if err != nil || e == nil || e.Type != entityType {
-		viewMiss(w, r, h.viewReader, entityID, func() {
-			writeV1Error(w, r, http.StatusUnprocessableEntity, "view_execution_failed",
-				"View execution failed", errViewEntryNotFound(entityID).Error())
-		})
+		viewMiss(w, r, h.viewReader, entityID, func() { writeViewEntryMissing(w, r) })
 		return
 	}
 

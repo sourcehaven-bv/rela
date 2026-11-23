@@ -6,6 +6,7 @@ import { ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
 import DashboardView from './DashboardView.vue'
+import { usePageHeaderOutlet } from '@/composables/usePageHeader'
 import { useSchemaStore } from '@/stores/schema'
 import type {
   DashboardCardEntry,
@@ -87,6 +88,12 @@ async function mountView() {
 }
 
 enableAutoUnmount(afterEach)
+
+
+/** The title the view published to the shell's header band. */
+function headerTitle(): string {
+  return usePageHeaderOutlet().title.value
+}
 
 describe('DashboardView', () => {
   beforeEach(() => {
@@ -377,7 +384,7 @@ describe('DashboardView', () => {
       await flushPromises()
 
       expect(getDashboardMock).toHaveBeenCalledWith('crm')
-      expect(wrapper.find('h1').text()).toBe('Pipeline')
+      expect(headerTitle()).toBe('Pipeline')
       expect(wrapper.findAll('.dashboard-card h3').map((h) => h.text())).toEqual(['Open deals'])
       expect(searchEntitiesMock).toHaveBeenCalledWith('type:deal')
       expect(wrapper.text()).not.toContain('Default card')
@@ -413,11 +420,11 @@ describe('DashboardView', () => {
 
       const wrapper = mount(DashboardView, { props: { name: 'crm' } })
       await flushPromises()
-      expect(wrapper.find('h1').text()).toBe('Pipeline')
+      expect(headerTitle()).toBe('Pipeline')
 
       await wrapper.setProps({ name: 'ops' })
       await flushPromises()
-      expect(wrapper.find('h1').text()).toBe('Ops')
+      expect(headerTitle()).toBe('Ops')
     })
 
     it('keeps the newer dashboard when an older load finishes last', async () => {
@@ -433,11 +440,11 @@ describe('DashboardView', () => {
       await flushPromises()
       await wrapper.setProps({ name: 'ops' })
       await flushPromises()
-      expect(wrapper.find('h1').text()).toBe('Ops')
+      expect(headerTitle()).toBe('Ops')
 
       finishCrm({ title: 'Pipeline', cards: [] })
       await flushPromises()
-      expect(wrapper.find('h1').text()).toBe('Ops')
+      expect(headerTitle()).toBe('Ops')
     })
   })
 

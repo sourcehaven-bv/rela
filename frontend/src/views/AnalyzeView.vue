@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { analyze } from '@/api'
+import { isQuietFailure } from '@/api/workspaceAccess'
 import type { AnalyzeResult, AnalyzeIssue } from '@/types'
 import { useBackTarget } from '@/composables/useBackTarget'
 import BackButton from '@/components/common/BackButton.vue'
@@ -131,7 +132,7 @@ async function loadAnalysis() {
   try {
     result.value = await analyze()
   } catch (err) {
-    console.error('Analyze error:', err)
+    if (!isQuietFailure(err)) console.error('Analyze error:', err)
     loadError.value = true
   } finally {
     loading.value = false

@@ -1415,6 +1415,7 @@ jobs:
             ./internal/sqlitedb/... \
             ./internal/appbuild/... \
             ./internal/dataentry/... \
+            ./internal/desktopnotify/... \
             ./internal/cli/...
           # The manager's write-concurrency tests race goroutines on purpose
           # (TKT-WE0S2K), so they run with -race here too.

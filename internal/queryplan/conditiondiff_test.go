@@ -113,7 +113,10 @@ func runLowered(t *testing.T, st store.Store, _ *metamodel.Metamodel, l querypla
 	}
 	q := store.GraphQuery{EntityType: "task", Props: l.Props, Faces: store.InWorld(store.TrivialScope())}
 	if l.Where != nil {
-		c := toCond(t, *l.Where)
+		c, ok := l.Where.PropCond()
+		if !ok {
+			t.Fatal("the differential generates no traversals")
+		}
 		q.Where = &c
 	}
 	var ids []string
@@ -125,20 +128,4 @@ func runLowered(t *testing.T, st store.Store, _ *metamodel.Metamodel, l querypla
 	}
 	slices.Sort(ids)
 	return ids
-}
-
-func toCond(t *testing.T, c queryplan.LoweredCond) store.Cond {
-	t.Helper()
-	switch c.Op {
-	case store.CondProp:
-		return store.PropLeaf(c.Prop)
-	case store.CondRelated:
-		t.Fatal("the differential generates no traversals")
-	default:
-	}
-	out := store.Cond{Op: c.Op}
-	for _, a := range c.Args {
-		out.Args = append(out.Args, toCond(t, a))
-	}
-	return out
 }

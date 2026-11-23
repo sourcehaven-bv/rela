@@ -7,9 +7,9 @@ import (
 )
 
 // BuiltinRow names one of the rows the sidebar pins above the configured
-// navigation, the as-of date picker in the sidebar header, or the Shortcuts
-// button in the sidebar footer. The names are the keys of a `builtins:`
-// block.
+// navigation, the as-of date picker in the sidebar header, or the Settings,
+// About and Shortcuts buttons in the sidebar footer. The names are the keys
+// of a `builtins:` block.
 type BuiltinRow string
 
 // The built-in sidebar rows, in the order the sidebar shows them.
@@ -25,13 +25,22 @@ const (
 	// BuiltinShortcuts is the Shortcuts button in the sidebar footer, which
 	// opens the keyboard shortcuts help. Not a row either.
 	BuiltinShortcuts BuiltinRow = "shortcuts"
+	// BuiltinSettings is the Settings button in the sidebar footer. Hiding
+	// it tidies the footer for users with nothing to set there; the
+	// settings page stays reachable by URL, and its saves keep checking
+	// settings:edit.
+	BuiltinSettings BuiltinRow = "settings"
+	// BuiltinAbout is the About button in the sidebar footer. It shows only
+	// when the About dialog has something to say; this can only hide it
+	// further.
+	BuiltinAbout BuiltinRow = "about"
 )
 
 // BuiltinRows lists every built-in row in sidebar order, then the as-of
-// picker and the Shortcuts button.
+// picker and the footer buttons.
 var BuiltinRows = []BuiltinRow{
 	BuiltinSearch, BuiltinInbox, BuiltinFlowTasks, BuiltinFlowRuns, BuiltinAnalysis, BuiltinAsOf,
-	BuiltinShortcuts,
+	BuiltinShortcuts, BuiltinSettings, BuiltinAbout,
 }
 
 // BuiltinConfig says whether one built-in sidebar row is shown.

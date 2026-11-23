@@ -118,7 +118,9 @@ type GlobalFlags struct {
 // Raised 52 → 53 for `audit` (TKT-USQBMG6), which verifies, prunes and
 // imports the database audit log; a top-level verb like `history-purge`.
 //
-//plimsoll:max-fields=53
+// Raised 53 → 54 for `records` (TKT-EV8U8T4), a verb family like `lease`.
+//
+//plimsoll:max-fields=54
 type CLI struct {
 	GlobalFlags `embed:""`
 
@@ -191,6 +193,7 @@ type CLI struct {
 	Scheduler            SchedulerCmd            `cmd:"" help:"Run scheduled Lua tasks."`
 	Renumber             RenumberCmd             `cmd:"" help:"Renumber managed order properties on orderable relations."`
 	Secrets              SecretsCmd              `cmd:"" help:"Inspect how project secrets are supplied."`
+	Records              RecordsCmd              `cmd:"" help:"Append, list and aggregate record rows, and expire them past retention."`
 	Lease                LeaseCmd                `cmd:"" help:"Claim, renew, release and list advisory leases on entities."`
 	Channel              ChannelCmd              `cmd:"" help:"List, read, post to and watch the realtime channels on an entity."`
 	Reconcile            ReconcileCmd            `cmd:"" help:"Compare this project with a remote rela."`
@@ -312,7 +315,7 @@ func runKong() int {
 	ktx.Bind(out, identity)
 	if bundles != nil {
 		ktx.Bind(bundles.read, bundles.write, bundles.attachment, bundles.renametype, bundles.analysis, bundles.leases,
-			bundles.channels, bundles.flows, bundles.reconcile)
+			bundles.records, bundles.channels, bundles.flows, bundles.reconcile)
 		// The scheduler command's workspace and request-edge step are
 		// supplied here at the wiring site (consumer-side interface):
 		// appbuild.Services satisfies scheduler.WorkspaceProvider directly.
@@ -358,7 +361,7 @@ func requiresProject(cmd string) bool {
 		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",
 		"sync", "history", "restore", "secrets",
 		"relation-history", "relation-restore", "history-tag", "history-purge", "relation-history-purge",
-		"dev", "token", "audit", "lease", "channel", "reconcile", "remote":
+		"dev", "token", "audit", "lease", "records", "channel", "reconcile", "remote":
 		return true
 	case "migrate":
 		// Bare `rela migrate` (config-file migration) deliberately gets NO

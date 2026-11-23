@@ -12,7 +12,8 @@ export class DashboardPage extends BasePage {
   constructor(page: Page) {
     super(page);
     this.view = page.locator('.dashboard-view');
-    this.header = page.locator('.dashboard-header');
+    // The shell's header band, where the dashboard puts its title as a list does.
+    this.header = page.locator('.rl-page-header');
     this.loadingState = page.locator('.dashboard-view .rl-status-region--pending');
     this.cards = page.locator('.dashboard-card');
     this.grid = page.locator('.dashboard-grid');

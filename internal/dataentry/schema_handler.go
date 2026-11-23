@@ -392,6 +392,22 @@ func aboutDescription(s *Schema) string {
 	return ""
 }
 
+// aboutWire projects `app.about:`. Each link is re-checked with the load-time
+// rule, because a live config reload does not re-run validation; an invalid
+// link is dropped rather than served, as meLinks does.
+func aboutWire(a dataentryconfig.AboutConfig) *v1.AppAbout {
+	out := v1.AppAbout{Version: a.Version}
+	for _, l := range a.Links {
+		if strings.TrimSpace(l.Label) != "" && dataentryconfig.ValidAccountLink(l.URL) {
+			out.Links = append(out.Links, v1.AppAboutLink{Label: l.Label, URL: l.URL})
+		}
+	}
+	if out.Version == "" && len(out.Links) == 0 {
+		return nil
+	}
+	return &out
+}
+
 //archplan:auth=required reason="navigation config, served verbatim"
 func (h *schemaHandler) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -432,6 +448,7 @@ func (h *schemaHandler) handleV1Config(w http.ResponseWriter, r *http.Request) {
 			HistoryEnabled: h.historyEnabled(),
 			CollabEnabled:  collab != nil,
 			CollabEpoch:    collabEpoch(collab),
+			About:          aboutWire(s.Cfg.App.About),
 		},
 		AboutDescription: aboutDescription(s),
 		Styles:           s.StyleMap,
@@ -443,6 +460,7 @@ func (h *schemaHandler) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Kanbans:          resolveKanbanDirections(s, s.Cfg.Kanbans),
 		Calendars:        resolveCalendarDirections(s, s.Cfg.Calendars),
 		Gantts:           s.Cfg.Gantts,
+		Sankeys:          s.Cfg.Sankeys,
 		Dashboard:        s.Cfg.Dashboard,
 		Dashboards:       s.Cfg.Dashboards,
 		Actions:          s.Cfg.Actions,

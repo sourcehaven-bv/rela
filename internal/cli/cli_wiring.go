@@ -151,6 +151,7 @@ type cliBundles struct {
 	renametype *renametype.Service
 	analysis   *analysis.Service
 	leases     *leaseServices
+	records    *recordServices
 	channels   *channelServices
 	flows      *flowServices
 	reconcile  *reconcileServices
@@ -260,6 +261,11 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 	if l := appbuild.Leases(svc); l != nil {
 		leases.Svc = l
 	}
+	recs := &recordServices{}
+	// Assigned only when present, for the same reason as Comments above.
+	if rs := appbuild.Records(svc); rs != nil {
+		recs.Svc = rs
+	}
 	channels, chErr := newChannelServices(svc)
 	if chErr != nil { // coverage-ignore: newChannelServices only fails on a nil channel service
 		return nil, chErr
@@ -283,6 +289,7 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		flows:      flows,
 		reconcile:  recon,
 		leases:     leases,
+		records:    recs,
 		channels:   channels,
 		read:       &read,
 		write:      &write,

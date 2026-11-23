@@ -173,6 +173,7 @@ var ValidIconNames = map[string]bool{
 	"rocket":         true,
 	"route":          true,
 	"rows":           true,
+	"sankey":         true,
 	"save":           true,
 	"scale":          true,
 	"schedule":       true,

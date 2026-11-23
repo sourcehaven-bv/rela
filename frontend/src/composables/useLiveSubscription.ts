@@ -1,6 +1,7 @@
 import { onBeforeUnmount, watch, type MaybeRefOrGetter, toValue } from 'vue'
 import { putLiveSubscriptions } from '@/api/live'
 import { ApiError } from '@/api/errors'
+import { isQuietFailure } from '@/api/workspaceAccess'
 import { refetchJitter, runWhenVisible } from './visibleRefetch'
 
 /**
@@ -102,7 +103,7 @@ async function send() {
           reconnect()
         }, delay)
       }
-    } else {
+    } else if (!isQuietFailure(err)) {
       console.warn('live views: subscription update failed', err)
     }
   } finally {

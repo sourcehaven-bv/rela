@@ -390,7 +390,8 @@ describe('EntityDetail switching between entities', () => {
       await gate.release('deliver GET /_views/note/NOTE-002', 'last') // the refresh
       await gate.release('deliver GET /_views/note/NOTE-002') // the load: 404
       await gate.drain()
-      expect(document.querySelector('.rl-status-region--error')).not.toBeNull()
+      // A 404 shows the not-found state in place of the entity.
+      expect(document.querySelector('[data-testid="not-found-state"]')).not.toBeNull()
       expect(onScreen()).toBeNull()
     })
   })

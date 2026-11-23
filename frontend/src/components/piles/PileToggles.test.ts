@@ -5,7 +5,9 @@ import { PiniaColada } from '@pinia/colada'
 import { useSchemaStore } from '@/stores'
 import { resetPilesState, usePiles } from '@/composables/usePiles'
 import type { PileSummary } from '@/api/piles'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 import PileToggles from './PileToggles.vue'
+import AddToPileMenu from './AddToPileMenu.vue'
 
 const api = vi.hoisted(() => ({
   listPiles: vi.fn(),
@@ -67,6 +69,7 @@ beforeEach(() => {
 
 afterEach(() => {
   mounted.splice(0).forEach((w) => w.unmount())
+  workspaceReadOnly.value = false
 })
 
 describe('PileToggles', () => {
@@ -124,5 +127,25 @@ describe('PileToggles', () => {
     await wrapper.vm.$.appContext.app.runWithContext(() => usePiles().refresh())
     await flushPromises()
     expect(api.markPilesOpened).toHaveBeenCalledWith(['RISK-1'])
+  })
+
+  it('shows no toggle and no Add to pile menu in a read-only workspace', async () => {
+    api.listPiles.mockResolvedValue({ piles: [declared({})], icons: [] })
+    workspaceReadOnly.value = true
+    const toggles = await mountToggles('TKT-1')
+    expect(toggles.find('[data-testid="pile-toggle"]').exists()).toBe(false)
+
+    const menu = mount(AddToPileMenu, {
+      props: { addresses: () => ['TKT-1'] },
+      global: { plugins: [pinia, PiniaColada] },
+    })
+    mounted.push(menu)
+    expect(menu.find('[data-testid="add-to-pile"]').exists()).toBe(false)
+
+    // Writable again: both come back.
+    workspaceReadOnly.value = false
+    await flushPromises()
+    expect(toggles.find('[data-testid="pile-toggle"]').exists()).toBe(true)
+    expect(menu.find('[data-testid="add-to-pile"]').exists()).toBe(true)
   })
 })

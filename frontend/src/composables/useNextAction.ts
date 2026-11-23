@@ -11,6 +11,7 @@
 import { ref, computed, watch, effectScope } from 'vue'
 import { useRoute } from 'vue-router'
 import { getNextAction, sendNextActionFeedback } from '@/api'
+import { isQuietFailure } from '@/api/workspaceAccess'
 import { useSchemaStore } from '@/stores'
 import { useWorld } from '@/composables/useWorld'
 import {
@@ -219,7 +220,7 @@ export function useNextAction() {
     } catch (err) {
       if (seq !== requestSeq) return
       // An advisory surface must never break the page it sits on.
-      console.error('next-action load failed:', err)
+      if (!isQuietFailure(err)) console.error('next-action load failed:', err)
       suggestion.value = null
       refreshTypes = []
       // Not latched: the page has not been answered, so the next loadOnce
