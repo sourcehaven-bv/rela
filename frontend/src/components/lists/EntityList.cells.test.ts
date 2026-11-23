@@ -459,6 +459,22 @@ describe('EntityList cell rendering via widgets', () => {
     expect(wrapper.findAll('.rl-table-row img.image-cell')).toHaveLength(1)
     const name = wrapper.find('.rl-table-row__name')
     expect(name.find('img.image-cell').exists()).toBe(true)
-    expect(name.html().indexOf('image-cell')).toBeLessThan(name.html().indexOf('Acme'))
+    const lead = name.find('.entity-list__lead')
+    expect(lead.attributes('aria-hidden')).toBe('true')
+    expect(lead.element.compareDocumentPosition(name.find('a').element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('keeps an empty slot for a row without an image so titles line up', async () => {
+    seedSchema({ title: { type: 'string' }, logo: { type: 'file', display: { image: true } } }, [
+      { property: 'logo', label: 'Logo' },
+      { property: 'title', label: 'Title', link: 'detail' },
+    ])
+    seedEntities([
+      { id: 'T-1', type: entityType, properties: { title: 'Acme', logo: ['attachments/T-1/logo/abc/logo.png'] } },
+      { id: 'T-2', type: entityType, properties: { title: 'Bare' } },
+    ])
+    const wrapper = await mountList()
+    expect(wrapper.findAll('.rl-table-row .entity-list__lead')).toHaveLength(2)
+    expect(wrapper.findAll('.rl-table-row img.image-cell')).toHaveLength(1)
   })
 })

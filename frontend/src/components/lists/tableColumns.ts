@@ -70,7 +70,7 @@ export const IMAGE_COLUMN_WIDTH = 64
 
 /** True for a `file` property marked `display: {image: true}`. */
 export function isImageProperty(property: PropertyDef | undefined): boolean {
-  return property?.type === 'file' && property.display?.image === true
+  return property?.type === 'file' && !property.list && property.display?.image === true
 }
 
 /**
@@ -86,7 +86,12 @@ export function leadingImageColumns(
 ): ListColumn[] {
   const at = name ? columns.indexOf(name) : -1
   if (at <= 0) return []
-  return columns.slice(0, at).filter((column) => !!column.property && isImageProperty(properties[column.property]))
+  const seen = new Set<string>()
+  return columns.slice(0, at).filter((column) => {
+    if (!column.property || !isImageProperty(properties[column.property]) || seen.has(column.property)) return false
+    seen.add(column.property)
+    return true
+  })
 }
 
 /**
