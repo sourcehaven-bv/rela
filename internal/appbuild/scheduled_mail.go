@@ -11,6 +11,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
+	"github.com/Sourcehaven-BV/rela/internal/mailbrand"
 	"github.com/Sourcehaven-BV/rela/internal/mailrender"
 	"github.com/Sourcehaven-BV/rela/internal/mailtemplate"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -70,7 +71,8 @@ func (w *SchedulerWorkspace) RunScheduledTemplate(ctx context.Context, name, rec
 	if tmpl.RequireVisibleContent && contributed == 0 {
 		return skipEmptyContent(ctx, name, recipientID)
 	}
-	renderer, err := mailrender.New(&mailrender.Options{BaseURL: w.mail.config.BaseURL})
+	opts := scheduledMailOptions(ctx, w)
+	renderer, err := mailrender.New(&opts)
 	if err != nil {
 		return err
 	}
@@ -82,6 +84,19 @@ func (w *SchedulerWorkspace) RunScheduledTemplate(ctx context.Context, name, rec
 		To:      []mail.Address{{Email: parsed.Address, Name: parsed.Name}},
 		Subject: model.Subject, HTML: html, Text: text, RenderedFor: recipientID,
 	})
+}
+
+// scheduledMailOptions returns the renderer options for a scheduled mail: the
+// mail.yaml base URL with the app's accent color and logo. A branding read
+// error is logged and the defaults fill in, so a bad palette file does not stop
+// the mail. A function rather than a method: it is only ever called from
+// [SchedulerWorkspace.RunScheduledTemplate].
+func scheduledMailOptions(ctx context.Context, w *SchedulerWorkspace) mailrender.Options {
+	opts, err := mailbrand.Source{Config: w.cfgLoader, KV: w.stateKV}.RenderOptions(ctx, w.mail.config.BaseURL)
+	if err != nil {
+		slog.WarnContext(ctx, "scheduled mail: app branding not fully read; using defaults for the rest", "error", err)
+	}
+	return opts
 }
 
 // servicesNow reads the clock of the base s was assembled from ([WithClock]),

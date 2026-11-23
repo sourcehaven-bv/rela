@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   isReadOnlyResponse,
-  loadWorkspaceReadOnly,
+  loadWorkspaceStatus,
   trackWorkspaceReadOnly,
   workspaceReadOnly,
 } from './workspaceReadOnly'
+import { accessRefusal, resetAccessForTest } from './workspaceAccess'
 import { actionAllowed } from '@/utils/affordancesWarning'
 
 const refused = { type: 'https://rela.dev/errors/tenant_read_only' }
@@ -37,26 +38,68 @@ describe('workspace read-only flag', () => {
   })
 })
 
-describe('loadWorkspaceReadOnly', () => {
+describe('loadWorkspaceStatus', () => {
   afterEach(() => {
     workspaceReadOnly.value = false
+    resetAccessForTest()
   })
 
   const answer = (status: number, body: unknown) =>
     vi.fn().mockResolvedValue({ ok: status < 300, status, json: async () => body })
 
   it('reads the flag from the tenant status at start', async () => {
-    await loadWorkspaceReadOnly(answer(200, { status: 'active', read_only: true }))
+    await loadWorkspaceStatus(answer(200, { status: 'active', read_only: true }))
     expect(workspaceReadOnly.value).toBe(true)
-    await loadWorkspaceReadOnly(answer(200, { status: 'active' }))
+    await loadWorkspaceStatus(answer(200, { status: 'active' }))
     expect(workspaceReadOnly.value).toBe(false)
   })
 
   it('leaves the flag alone on a server with no tenant status', async () => {
     workspaceReadOnly.value = true
-    await loadWorkspaceReadOnly(answer(404, {}))
-    await loadWorkspaceReadOnly(vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+    await loadWorkspaceStatus(answer(404, {}))
+    await loadWorkspaceStatus(vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
     expect(workspaceReadOnly.value).toBe(true)
+    expect(accessRefusal.value).toBeNull()
+  })
+
+  it.each(['suspended', 'archived'] as const)(
+    'records a %s workspace from its status, without a refused request',
+    async (status) => {
+      await loadWorkspaceStatus(answer(200, { status }))
+      expect(accessRefusal.value).toBe(status)
+      expect(workspaceReadOnly.value).toBe(false)
+    }
+  )
+
+  it('records a refused status request like any refused request', async () => {
+    await loadWorkspaceStatus(
+      answer(403, { type: 'https://rela.dev/errors/unknown_tenant', status: 403 })
+    )
+    expect(accessRefusal.value).toBe('unknown_workspace')
+  })
+
+  it('keeps the first refusal', async () => {
+    await loadWorkspaceStatus(answer(200, { status: 'suspended' }))
+    await loadWorkspaceStatus(answer(200, { status: 'archived' }))
+    expect(accessRefusal.value).toBe('suspended')
+  })
+
+  it('records nothing for a workspace that is active or being set up', async () => {
+    await loadWorkspaceStatus(answer(200, { status: 'provisioning' }))
+    await loadWorkspaceStatus(answer(200, { status: 'active' }))
+    expect(accessRefusal.value).toBeNull()
+  })
+
+  it('gives up when the status does not answer in time', async () => {
+    const hang = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+        })
+    )
+    await loadWorkspaceStatus(hang, 10)
+    expect(hang).toHaveBeenCalled()
+    expect(accessRefusal.value).toBeNull()
   })
 })
 

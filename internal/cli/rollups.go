@@ -33,6 +33,8 @@ func withRollups(ctx context.Context, svc *readServices, entities []*entity.Enti
 		set, svc.Store, visibility.AllowAllReadQueries{}, visibility.NopRedactor{},
 	); err != nil {
 		slog.Warn("roll-up properties not computed", "err", err)
+	} else if svc.RecordRollups != nil {
+		r = r.WithRecords(svc.RecordRollups, nil)
 	}
 	out := make([]*entity.Entity, len(entities))
 	copy(out, entities)

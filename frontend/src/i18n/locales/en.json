@@ -188,7 +188,7 @@
   "account": {
     "profile": "Profile",
     "account": "Account",
-    "switchOrg": "Switch org",
+    "switchOrg": "Switch organisation",
     "admin": "Admin",
     "signOut": "Sign out"
   },
@@ -731,7 +731,7 @@
       "types": "Types",
       "type": "type"
     },
-    "placeholder": "Write, or type {'@'} to link an entity"
+    "placeholder": "Write, or type {'@'} to link a record"
   },
   "widgets": {
     "file": {
@@ -1157,6 +1157,10 @@
       "contact": "If you have questions, contact the person who manages your organisation's subscription.",
       "openAccount": "Go to your account",
       "tryAgain": "Try again",
+      "suspendedTab": "Workspace suspended",
+      "archivedTab": "Workspace archived",
+      "noIdentityTab": "Cannot identify you",
+      "unknownTab": "Workspace not available",
       "readOnlyBanner": "This workspace is read-only. Creating and editing are turned off."
     }
   },

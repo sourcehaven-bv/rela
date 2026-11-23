@@ -60,6 +60,18 @@ export function refusalOf(status: number, data: unknown): AccessRefusal | null {
   return PROBLEM_REFUSALS[code]
 }
 
+/**
+ * Records a suspended or archived workspace that the tenant status endpoint
+ * reported. The endpoint answers 200 with the state, so the app learns it
+ * before it sends any request the workspace refuses. Any other state records
+ * nothing. The first refusal stays, as in {@link trackAccess}.
+ */
+export function trackTenantStatus(status: unknown): void {
+  if (accessRefusal.value) return
+  if (status === 'suspended') accessRefusal.value = REFUSAL.suspended
+  else if (status === 'archived') accessRefusal.value = REFUSAL.archived
+}
+
 function detailOf(data: unknown): string | null {
   if (typeof data !== 'object' || data === null) return null
   const detail = (data as { detail?: unknown }).detail

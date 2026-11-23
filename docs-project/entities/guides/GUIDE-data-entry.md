@@ -7403,6 +7403,7 @@ account:
 | `contact_email` | An email address shown after the contact text as a mail link, such as `support@example.com`. It must be a bare address, without a name or angle brackets. |
 | `suspended_text` | The explanation on the page for a suspended workspace. Plain text of at most 500 characters, shown instead of the default text. |
 | `archived_text` | The explanation on the page for an archived workspace. Plain text of at most 500 characters, shown instead of the default text. |
+| `read_only_text` | The text of the banner in a read-only workspace. Plain text of at most 500 characters, shown instead of the default text. |
 
 Every key is optional. A link you leave out is not shown. An unknown key is a
 load error, so a typo such as `signout:` cannot silently drop a link.

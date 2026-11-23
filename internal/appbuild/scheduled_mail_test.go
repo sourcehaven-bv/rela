@@ -66,4 +66,13 @@ func TestRunScheduledTemplateSendsRenderedRecipientMessage(t *testing.T) {
 	require.Equal(t, "alice@example.test", messages[0].To[0].Email)
 	require.Contains(t, string(messages[0].Text), task.Properties["title"])
 	require.ErrorContains(t, svc.Scheduler().ValidateScheduledMailRecipients(t.Context()), "P-2")
+	require.Contains(t, string(messages[0].HTML), "#4772fb", "no app palette: rela's accent")
+
+	// The app's accent and public logo reach the mail.
+	svc.cfgLoader.(staticConfig)["data-entry.yaml"] = []byte("app:\n  logo: /_custom/logo.png\npalette:\n  accent: \"#e11d48\"\n")
+	require.NoError(t, svc.Scheduler().RunScheduledTemplate(t.Context(), "digest", recipient.ID))
+	branded := string(sender.Messages()[1].HTML)
+	require.Contains(t, branded, "#e11d48")
+	require.NotContains(t, branded, "#4772fb")
+	require.Contains(t, branded, `src="https://rela.example/_custom/logo.png"`)
 }

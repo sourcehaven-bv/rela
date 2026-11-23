@@ -1,8 +1,13 @@
-import { describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { defineComponent, h, nextTick } from 'vue'
 import { i18n } from '@/i18n'
+import { useDocumentTitle, usePageTitle } from '@/composables/useDocumentTitle'
 import WorkspaceAccessScreen from './WorkspaceAccessScreen.vue'
 import type { AccessRefusal } from '@/api/workspaceAccess'
+
+// Each screen names the tab while it is mounted, so none may outlive its test.
+enableAutoUnmount(afterEach)
 
 function render(refusal: AccessRefusal, extra: Record<string, unknown> = {}) {
   const location = { assign: vi.fn(), reload: vi.fn() }
@@ -136,5 +141,48 @@ describe('WorkspaceAccessScreen', () => {
     const img = render('archived', { appName: 'Workspace', logo }).wrapper.get('img')
     expect(img.attributes('src')).toBe(logo)
     expect(img.attributes('alt')).toBe('Workspace')
+  })
+
+  describe('tab title', () => {
+    afterEach(() => {
+      document.title = ''
+    })
+
+    // The app shell writes the title; the page under it and the screen only
+    // name their page.
+    const Page = defineComponent({
+      setup() {
+        usePageTitle('Orders')
+        return () => null
+      },
+    })
+    function shell(refusal: AccessRefusal) {
+      return mount(
+        defineComponent({
+          setup() {
+            useDocumentTitle('Sourcehaven Workspace')
+            return () => [h(Page), h(WorkspaceAccessScreen, { refusal })]
+          },
+        }),
+        { global: { plugins: [i18n] } }
+      )
+    }
+
+    it.each([
+      ['suspended', 'Workspace suspended · Sourcehaven Workspace'],
+      ['archived', 'Workspace archived · Sourcehaven Workspace'],
+      ['unknown_workspace', 'Workspace not available · Sourcehaven Workspace'],
+      ['no_identity', 'Cannot identify you · Sourcehaven Workspace'],
+    ] as const)('names the %s page in the tab', async (refusal, title) => {
+      shell(refusal)
+      await nextTick()
+      expect(document.title).toBe(title)
+    })
+
+    it('leaves the tab to the page under the session dialog', async () => {
+      shell('session_ended')
+      await nextTick()
+      expect(document.title).toBe('Orders · Sourcehaven Workspace')
+    })
   })
 })

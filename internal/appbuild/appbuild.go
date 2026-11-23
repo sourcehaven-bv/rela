@@ -58,6 +58,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lease"
 	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/mailbrand"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -583,6 +584,7 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 	deps.RoleHolders = roleHoldersFor(s)
 	if s.base != nil {
 		deps.Seams = s.base.luaSeams()
+		deps.MailBranding = mailbrand.Source{Config: s.cfgLoader, KV: s.stateKV}
 		if s.base.cfg.projectConfig != nil {
 			deps.Files = s.base.cfg.projectConfig
 		}
@@ -899,6 +901,9 @@ func gatedRollups(s *Services) *visibility.Rollups {
 	if err != nil { // coverage-ignore: invariant: every argument is non-nil here
 		slog.Error("appbuild: roll-ups unavailable", "err", err)
 		return nil
+	}
+	if f := RecordRollups(s); f != nil {
+		r = r.WithRecords(f, nil)
 	}
 	return r
 }
@@ -2995,6 +3000,7 @@ func (b *SharedBase) cascadeReadDeps(
 		Host:          host,
 		World:         w.DefaultWorld(),
 		Piles:         pileReaderFor(pileSvc),
+		MailBranding:  mailbrand.Source{Config: b.cfg.configLoader(), KV: stateKV},
 		Seams:         b.luaSeams(),
 	}, nil
 }

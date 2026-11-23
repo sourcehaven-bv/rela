@@ -41,7 +41,9 @@
 package lua
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 
 	lua "github.com/yuin/gopher-lua"
 
@@ -74,50 +76,82 @@ func baseURLFor(sender MailSender) string {
 	return ""
 }
 
-// mailRenderFunc returns the mail.render binding bound to sender.
+// MailBranding is the consumer-side view of the app's look for mail:
+// mailbrand.Source satisfies it. It returns the renderer options for baseURL
+// with the app's accent color and logo.
 //
-// A FREE function returning a closure, rather than a method on Runtime like
-// mail.send. Two reasons, and the first is the load-bearing one:
+// On an error the options it returns are still used: a palette file that cannot
+// be read must not stop a script's mail, so mail.render logs the error and
+// renders with what came back (the defaults for the part that failed).
+type MailBranding interface {
+	RenderOptions(ctx context.Context, baseURL string) (mailrender.Options, error)
+}
+
+// renderOptions returns the renderer options for one mail.render call.
+func renderOptions(ctx context.Context, sender MailSender, branding MailBranding) mailrender.Options {
+	base := baseURLFor(sender)
+	if branding == nil {
+		return mailrender.Options{BaseURL: base}
+	}
+	opts, err := branding.RenderOptions(ctx, base)
+	if err != nil {
+		slog.WarnContext(ctx, "mail.render: app branding not fully read; using defaults for the rest", "error", err)
+	}
+	return opts
+}
+
+// mailRenderer is the mail.render binding: the sender it reads the base URL
+// from and the app's look.
 //
-//   - Runtime sits at its plimsoll load line (//plimsoll:max-methods), and
-//     the sanctioned fix for a full type is to take methods off it (TKT-N0IKN9),
-//     not to raise the cap. A binding that needs one field is not a reason to
-//     widen the type's surface.
-//   - The contextcheck false positive that forces mail.send to register as a
-//     method VALUE does not apply here: nothing in this path takes or threads a
-//     context, because rendering is pure formatting with no I/O.
+// A small type of its own, rather than a method on Runtime like mail.send.
+// Runtime sits at its plimsoll load line (//plimsoll:max-methods), and the
+// sanctioned fix for a full type is to take methods off it (TKT-N0IKN9), not to
+// raise the cap.
+//
+// It registers as a METHOD VALUE, not a closure, for the reason mail.send does:
+// the branding read takes the runtime's context, and contextcheck follows a
+// closure back to every NewReader/NewWriter call site, while it does not follow
+// a method value.
 //
 // Registered unconditionally and usable with no mail transport configured:
 // "mail is not configured" would be a nonsense answer to a request that never
 // needed a transport. A script may legitimately render a message to log it,
 // diff it, or hand it somewhere other than mail.send. A nil sender simply
-// yields an empty base URL.
-func mailRenderFunc(sender MailSender) lua.LGFunction {
-	return func(ls *lua.LState) int {
-		opts := ls.CheckTable(1)
+// yields an empty base URL, and a nil branding rela's default look.
+type mailRenderer struct {
+	sender   MailSender
+	branding MailBranding
+}
 
-		msg, err := parseRenderMessage(opts)
-		if err != nil {
-			ls.RaiseError("mail.render: %s", err.Error())
-			return 0
-		}
+func (m mailRenderer) render(ls *lua.LState) int {
+	opts := ls.CheckTable(1)
 
-		renderer, err := mailrender.New(&mailrender.Options{BaseURL: baseURLFor(sender)})
-		if err != nil {
-			ls.RaiseError("mail.render: %s", err.Error())
-			return 0
-		}
-
-		html, text, err := renderer.Render(msg)
-		if err != nil {
-			ls.RaiseError("mail.render: %s", err.Error())
-			return 0
-		}
-
-		ls.Push(lua.LString(html))
-		ls.Push(lua.LString(text))
-		return 2
+	msg, err := parseRenderMessage(opts)
+	if err != nil {
+		ls.RaiseError("mail.render: %s", err.Error())
+		return 0
 	}
+
+	ctx := ls.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	renderOpts := renderOptions(ctx, m.sender, m.branding)
+	renderer, err := mailrender.New(&renderOpts)
+	if err != nil {
+		ls.RaiseError("mail.render: %s", err.Error())
+		return 0
+	}
+
+	html, text, err := renderer.Render(msg)
+	if err != nil {
+		ls.RaiseError("mail.render: %s", err.Error())
+		return 0
+	}
+
+	ls.Push(lua.LString(html))
+	ls.Push(lua.LString(text))
+	return 2
 }
 
 // parseRenderMessage converts the Lua opts table into a mailrender.Message.

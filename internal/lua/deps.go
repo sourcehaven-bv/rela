@@ -165,6 +165,12 @@ type ReadDeps struct {
 	// in this context".
 	RoleHolders RoleHolders
 
+	// MailBranding gives mail.render the app's accent color and logo, so a
+	// script's mail matches the app. Wiring supplies mailbrand.Source.
+	//
+	// Nil: accepted. mail.render then uses rela's default look.
+	MailBranding MailBranding
+
 	// RecordReads backs rela.list_records and rela.aggregate_records
 	// (TKT-EV8U8T4). It reads as the ctx principal through the record
 	// service, which gates every row on its owner.

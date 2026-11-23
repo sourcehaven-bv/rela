@@ -27,6 +27,10 @@ import (
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
 const ConfigFile = "data-entry.yaml"
 
+// UserPaletteKey is the state-store key of the palette saved on the Settings
+// page, layered over the `palette:` of [ConfigFile] (see [ResolvePalette]).
+const UserPaletteKey = "palette.yaml"
+
 // Widget type constants for form fields.
 const (
 	WidgetText        = "text"

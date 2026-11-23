@@ -58,6 +58,11 @@ type readServices struct {
 	//
 	// Nil: accepted; the export then has no record rows to write.
 	Records recordReader
+	// RecordRollups computes roll-ups over record types (TKT-VMSWSWP)
+	// through the gated record service.
+	//
+	// Nil: accepted; such a roll-up is then left out.
+	RecordRollups visibility.RecordAggregator
 }
 
 // writeServices is the read-write capability bundle. It embeds
@@ -177,6 +182,7 @@ func newReadServices(svc *appbuild.Services) readServices {
 	if rs := appbuild.RecordStore(svc); rs != nil {
 		read.Records = rs
 	}
+	read.RecordRollups = appbuild.RecordRollups(svc)
 	return read
 }
 

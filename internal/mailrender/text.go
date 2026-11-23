@@ -313,15 +313,26 @@ func (r *Renderer) writeInline(b *strings.Builder, n ast.Node, src []byte) {
 			b.WriteString(label)
 			// The parser hands over the whole destination, so a URL containing
 			// parens survives — the case the old index arithmetic truncated.
-			if href, ok := r.safeHref(string(node.Destination)); ok && href != label {
+			href, ok := r.safeHref(string(node.Destination))
+			if !ok {
+				href, ok = mailtoAddress(string(node.Destination))
+			}
+			if ok && href != label {
 				b.WriteString(" (")
 				b.WriteString(href)
 				b.WriteString(")")
 			}
 
 		case *ast.AutoLink:
-			if href, ok := r.safeHref(string(node.URL(src))); ok {
+			// An email autolink (<a@b.nl>, or a bare address under GFM
+			// linkify) is kept as its address: it is text the reader needs,
+			// and nothing a client could follow to a script.
+			if node.AutoLinkType == ast.AutoLinkEmail {
+				b.Write(node.Label(src))
+			} else if href, ok := r.safeHref(string(node.URL(src))); ok {
 				b.WriteString(href)
+			} else if addr, ok := mailtoAddress(string(node.URL(src))); ok {
+				b.WriteString(addr)
 			}
 
 		case *ast.Image:
@@ -337,6 +348,24 @@ func (r *Renderer) writeInline(b *strings.Builder, n ast.Node, src []byte) {
 			r.writeInline(b, c, src)
 		}
 	}
+}
+
+// mailtoAddress returns the address of a mailto: link, for the text part. A
+// link with no address, or one carrying markup or a line break, gives false.
+func mailtoAddress(link string) (string, bool) {
+	l := strings.TrimSpace(link)
+	if len(l) < len("mailto:") || !strings.EqualFold(l[:len("mailto:")], "mailto:") {
+		return "", false
+	}
+	addr := l[len("mailto:"):]
+	if i := strings.IndexByte(addr, '?'); i >= 0 {
+		addr = addr[:i]
+	}
+	addr = stripMarkup(addr)
+	if addr == "" || strings.ContainsAny(addr, " \t\r\n<>") {
+		return "", false
+	}
+	return addr, true
 }
 
 // inlineOnly renders a node's children without following links, used for link

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/records"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 const (
@@ -30,6 +31,22 @@ type recordsHandler struct {
 	// appender backs rela.append_records in an action script. It appends
 	// through svc, so a script passes the same owner check as a POST.
 	appender lua.RecordAppender
+	// rollups backs roll-ups over record types (TKT-VMSWSWP).
+	//
+	// Nil: accepted; such a roll-up is then left out.
+	rollups visibility.RecordAggregator
+}
+
+// SetRecordRollups installs the reader of roll-ups over record types. It
+// follows [SetRecords]; without it those roll-ups have no value.
+//
+// Nil: agg rejected.
+func SetRecordRollups(a *App, agg visibility.RecordAggregator) error {
+	if a.records == nil || agg == nil {
+		return errors.New("dataentry: SetRecordRollups requires SetRecords and a reader")
+	}
+	a.records.rollups = agg
+	return nil
 }
 
 // SetRecords installs the record service and the rela.append_records

@@ -26,6 +26,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/mailbrand"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
@@ -49,7 +50,7 @@ const ConfigFile = dataentryconfig.ConfigFile
 const userDefaultsFile = "user-defaults.yaml"
 
 // userPaletteFile is the filename for user-specific palette overrides within the .rela directory.
-const userPaletteFile = "palette.yaml"
+const userPaletteFile = dataentryconfig.UserPaletteKey
 
 // entityRecreator is the create-only write a history restore of a deleted
 // face needs. It never falls through to an update: a face recreated between
@@ -690,6 +691,7 @@ func (a *App) luaWriteDeps() lua.WriteDeps {
 			Files:         a.cfgLoader,
 			Host:          a.luaHost.host,
 			World:         defaultWorldScope(a.worlds),
+			MailBranding:  mailbrand.Source{Config: a.cfgLoader, KV: a.kv},
 			Seams:         a.luaHost.seams,
 		},
 		EntityManager: a.entityManager,

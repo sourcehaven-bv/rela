@@ -33,13 +33,16 @@
 // or unsafe — which is why this is written down rather than left to be
 // rediscovered.
 //
-// # The logo is embedded, and raster only
+// # The logo is embedded or public, and raster only
 //
-// The operator logo is referenced as cid:<LogoCID> and travels with the message
-// as an attached part, never as a URL: rela serves it from an authenticated
-// endpoint, so a mail client could not fetch it.
+// A logo uploaded on the Settings page is served from an authenticated
+// endpoint, so a mail client could not fetch it: it must be referenced as
+// cid:<LogoCID> and travel with the message as an attached part. A logo that
+// is already public (data-entry.yaml's app.logo) may instead be linked with
+// LogoURL; the mail client fetches it.
 //
-// Callers must supply raster bytes (PNG/JPEG/WebP) and must NOT pass an SVG.
+// Callers must supply raster bytes (PNG/JPEG/WebP) and must NOT pass an SVG
+// (New refuses a LogoURL ending in .svg).
 // SVG has near-zero support across mail clients — Gmail, Outlook and Apple Mail
 // strip or fail it — and it is an active-content format that can carry a script
 // element, so embedding operator-uploaded SVG would ship script-capable bytes
@@ -150,6 +153,16 @@ type Options struct {
 	// Raster only. See "The logo is embedded, and raster only" in the package
 	// doc for why an SVG must never be passed here.
 	LogoCID string
+
+	// LogoURL, when non-empty and LogoCID is empty, is a public address of the
+	// logo: an http(s) URL, or a root-relative path that BaseURL makes
+	// absolute. The mail client fetches it, so it must be reachable without a
+	// session (data-entry.yaml's app.logo is, the Settings-page upload is not).
+	// A root-relative path without a BaseURL renders no logo.
+	//
+	// Raster only, for the same reason as LogoCID: a path ending in .svg is
+	// refused by [New].
+	LogoURL string
 
 	// LogoAlt is the logo's alt text. Defaults to "logo".
 	LogoAlt string
@@ -285,6 +298,34 @@ func validateBaseURL(u string) error {
 	return nil
 }
 
+// ValidateLogoURL checks a [Options.LogoURL]: empty, an http(s) URL, or a
+// root-relative path, with no control characters and not an SVG.
+//
+// Exported so a caller that reads the address from operator config can skip a
+// logo it would refuse rather than fail every message.
+func ValidateLogoURL(u string) error {
+	if u == "" {
+		return nil
+	}
+	if strings.ContainsAny(u, "\r\n\x00") {
+		return errors.New("mailrender: logo URL contains a control character")
+	}
+	l := strings.ToLower(strings.TrimSpace(u))
+	if !strings.HasPrefix(l, "http://") && !strings.HasPrefix(l, "https://") &&
+		(!strings.HasPrefix(l, "/") || strings.HasPrefix(l, "//")) {
+
+		return fmt.Errorf("mailrender: logo URL must be http(s) or root-relative, got %q", u)
+	}
+	path := l
+	if i := strings.IndexAny(path, "?#"); i >= 0 {
+		path = path[:i]
+	}
+	if strings.HasSuffix(path, ".svg") {
+		return fmt.Errorf("mailrender: logo URL %q is an SVG, which mail clients do not show", u)
+	}
+	return nil
+}
+
 // validateHeaderish rejects control characters in a value that lands in a
 // header-like position (a Content-ID reference).
 func validateHeaderish(field, v string) error {
@@ -309,6 +350,9 @@ func New(opts *Options) (*Renderer, error) {
 		return nil, err
 	}
 	if err := validateHeaderish("logo CID", opts.LogoCID); err != nil {
+		return nil, err
+	}
+	if err := ValidateLogoURL(opts.LogoURL); err != nil {
 		return nil, err
 	}
 	if err := ValidateLang(opts.DefaultLang); err != nil {

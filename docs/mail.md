@@ -370,6 +370,10 @@ Notes worth knowing:
 - **Links are vetted.** Absolute `http(s)://` passes; a root-relative `/path` is
   resolved against `base_url`. Anything else (including `javascript:`) is
   dropped and the text renders unlinked.
+- **Email addresses stay in the text part.** A bare address, an `<a@b.nl>`
+  autolink and a `mailto:` link all keep their address in the `text/plain`
+  part.
+- **It uses your app's accent colour and logo.** See [Branding](#branding).
 - **There is no `html` or `css` field, deliberately.** Everything you pass is
   sanitized, which is the whole point of the binding. If you genuinely need raw
   markup, that is what `mail.send{html = ...}` is still for.
@@ -569,16 +573,28 @@ setting for `just dev` and for any test environment pointed at production-like d
 
 ## Branding
 
-Mail reuses your existing theme rather than introducing a second one. The accent
-colour comes from your palette, and the operator logo is embedded in the message.
+Mail reuses your app's look rather than introducing a second one. This holds for
+scheduled mail and for `mail.render` in scripts.
 
-Two constraints worth knowing:
+- **The accent colour comes from your palette.** The button and the top bar use
+  the `accent` of the `palette:` in `data-entry.yaml`, with the palette saved on
+  the Settings page layered over it, as in the app. The dark accent follows the
+  app's dark palette, or the light accent when dark mode is off. The card, text
+  and border colours stay the mail template's own, because they are tuned for
+  mail clients. Without a palette, mail uses rela's default blue.
+- **The logo is `app.logo`, linked by address.** It is the public logo of the
+  pages shown before a workspace loads. A `/` path is made absolute with
+  `base_url`, so set `base_url` in `mail.yaml`. The mail client fetches the
+  image, and many clients only show remote images after the reader allows them.
+  The logo uploaded on the Settings page is not used: it is served only to a
+  signed-in user, so a mail client could not fetch it. `app.name` is the logo's
+  alt text.
+- **SVG logos are skipped.** SVG has near-zero support in mail clients. If
+  `app.logo` is an SVG, or there is no `app.logo`, mail has no logo. Use a PNG,
+  JPEG or WebP.
 
-- **The logo is embedded, not linked.** The logo endpoint sits behind authentication,
-  so a mail client could never fetch it — the bytes travel with the message.
-- **SVG logos are skipped.** SVG has near-zero support in mail clients and is an
-  active-content format. If your logo is an SVG, mail renders without it; upload a
-  PNG if you want it to appear.
+If the palette cannot be read, the server logs a warning and the mail uses the
+defaults for that part.
 
 Messages are sent as `multipart/alternative` — an HTML part plus a plain-text
 alternative — using a table-based layout that renders correctly in Outlook, Gmail and

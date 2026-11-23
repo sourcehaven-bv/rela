@@ -2008,7 +2008,8 @@ fallbacks. `intro`/`body`/`footer` are markdown and are **sanitized**; `rows`
 cells are escaped values, not markdown; row links and the `button` URL are
 limited to `http(s)` or a `/`-relative path resolved against `base_url`. The
 `button` is a link styled as a button, shown below the intro; its text part is
-`label: URL`.
+`label: URL`. The button and the top bar use the app's accent colour, and
+`app.logo` shows as the logo (see [Branding](mail.md#branding)).
 
 There is deliberately no `html` or `css` field: the sanitizing is the point.
 `mail.render` needs no mail configuration (it only formats), and a malformed

@@ -5,7 +5,9 @@ title: Rollups over record types
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-11-22"
+completed: "2026-11-22"
+status: done
 ---
 
 ## Description
