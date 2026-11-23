@@ -33,6 +33,8 @@ entities:
         type: date
       tags:
         type: string
+      punten:
+        type: integer
   note:
     label: Note
     plural: notes

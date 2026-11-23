@@ -49,12 +49,35 @@ func (c LoweredCond) Walk(visit func(LoweredCond)) {
 	}
 }
 
+// PropCond returns c as a [store.Cond]. ok is false when c holds a
+// traversal anywhere: a traversal must pass the principal's traversal gate
+// before it becomes a relation leaf, which this conversion cannot do. It
+// does not check field visibility; the property leaves match the stored
+// row.
+func (c LoweredCond) PropCond() (store.Cond, bool) {
+	switch c.Op {
+	case store.CondProp:
+		return store.PropLeaf(c.Prop), true
+	case store.CondRelated:
+		return store.Cond{}, false
+	default:
+	}
+	out := store.Cond{Op: c.Op}
+	for _, a := range c.Args {
+		ac, ok := a.PropCond()
+		if !ok {
+			return store.Cond{}, false
+		}
+		out.Args = append(out.Args, ac)
+	}
+	return out, true
+}
+
 // LowerCondition decides whether a query condition on entityType can be
 // answered by the store alone, and if so returns the predicates that answer
 // it. A query condition is one that narrows a collection read: a list's
 // `condition:`, a nav status rule, a list query scope, an MCP list
-// condition. A desktop notification rule has the same shape and can use it
-// too (TKT-I3MGCRT).
+// condition, a desktop notification rule (TKT-I3MGCRT).
 //
 // The Go path it replaces must evaluate with
 // [predicatefns.Evaluator.LoweringSemantics]: an ordered comparison on an
@@ -153,6 +176,55 @@ type UnsupportedConditionError struct {
 
 func (e *UnsupportedConditionError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Construct, e.Reason)
+}
+
+// ConditionSuperset returns a store filter that keeps every entity of
+// entityType that prog matches, for a condition [LowerCondition] declines.
+// It is the AND of the top-level conjuncts of prog that lower exactly
+// ([predicate.Program.ConditionConjuncts]); the others are left out, so the
+// filter is a SUPERSET of the condition. Unlike [LowerCondition], it does
+// not replace the Go evaluation: the caller must still evaluate prog on
+// every row the filter returns.
+//
+// Soundness does not depend on [predicatefns.Evaluator.LoweringSemantics]:
+// a row prog matches made every conjunct true, and a conjunct that lowers
+// exactly is then true in the store too. A row prog fails on, or errors
+// on, may be dropped or kept; the caller's evaluation decides it.
+//
+// A conjunct that holds a traversal anywhere is left out, so the result has
+// no Traversals and its Where converts with [LoweredCond.PropCond]. A
+// conjunct that would push the AND over the store's [store.Cond] limits is
+// left out too, so the filter is never one every backend refuses. The zero
+// value narrows nothing.
+//
+// The filter matches on the STORED row, as [LowerCondition]'s predicates
+// do. A caller whose Go path judges a redacted row must push it only when
+// every attribute the filter reads is visible to the principal on every
+// row: otherwise the store drops rows the Go check would keep, and whether
+// a row appears reveals a hidden value.
+func ConditionSuperset(
+	prog *predicate.Program, meta *metamodel.Metamodel, entityType, identity string,
+) ConditionLowering {
+	if prog == nil || meta == nil || entityType == "" {
+		return ConditionLowering{}
+	}
+	l := lowerer{meta: meta, types: []string{entityType}, identity: identity}
+	root := LoweredCond{Op: store.CondAnd}
+	for _, t := range prog.ConditionConjuncts(predicatefns.CurrentUserPrefilterSpec()) {
+		c, err := l.lower(t)
+		if err != nil {
+			continue
+		}
+		if _, plain := c.PropCond(); !plain {
+			continue
+		}
+		next := LoweredCond{Op: store.CondAnd, Args: append(slices.Clone(root.Args), c)}
+		if !withinCondLimits(next) {
+			continue
+		}
+		root = next
+	}
+	return splitConjuncts(root)
 }
 
 // splitConjuncts moves the plain leaves of root's top-level AND into Props
