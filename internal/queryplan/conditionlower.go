@@ -41,14 +41,6 @@ type LoweredCond struct {
 	Args      []LoweredCond
 }
 
-// Walk calls visit on c and on every node below it, depth first.
-func (c LoweredCond) Walk(visit func(LoweredCond)) {
-	visit(c)
-	for _, a := range c.Args {
-		a.Walk(visit)
-	}
-}
-
 // PropCond returns c as a [store.Cond]. ok is false when c holds a
 // traversal anywhere: a traversal must pass the principal's traversal gate
 // before it becomes a relation leaf, which this conversion cannot do. It

@@ -870,7 +870,7 @@ function isEnumColumn(column: TableColumn): boolean {
  * value.
  */
 const titleColumn = computed(
-  () => linkColumn.value ?? nameColumn(listConfig.value?.columns ?? []),
+  () => nameColumn(listConfig.value?.columns ?? []),
 )
 
 /**

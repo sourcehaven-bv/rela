@@ -39,6 +39,14 @@ paths:
   interface lives in configedit and the server supplies it. The `flows:`
   section must parse the same after a save, or flow versions would change.
 
+  A dashboard card that a `capture:` task in `schedules.yaml` stores runs
+  as that task's `run_as` and is read by every reader of the owner, so
+  `captureProblems` refuses a save that changes its definition: every card
+  with the title, its list, the folded property, every query scope and the
+  faces of the list's type and its parents, the worlds and default world, and every
+  property or relation definition named in the card, list, folded property
+  or scopes, followed transitively (TKT-6OYQO79). An unparseable `schedules.yaml` refuses the save.
+
   Only an interactive principal configures: `mayConfigure` refuses a
   `principal_type` other than empty or `user`, because a client type no
   baseline matches is unrestricted by the ceiling.

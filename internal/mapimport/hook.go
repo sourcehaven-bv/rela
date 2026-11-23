@@ -214,7 +214,7 @@ func mergeRelations(d *draft, t *lua.LTable) error {
 				keys = append(keys, string(s))
 			}
 		}
-		out[string(name)] = dedup(keys)
+		out[string(name)] = slices.Compact(slices.Sorted(slices.Values(keys)))
 	})
 	if iterErr != nil {
 		return iterErr

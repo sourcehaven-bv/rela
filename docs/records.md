@@ -219,7 +219,9 @@ chart one over time, capture it as a record:
    `value` field.
 3. Add a [scheduled task](scheduled-tasks.md#capturing-a-metric-for-trend-charts)
    with `run_as:` that computes the value and appends one row with
-   `rela.append_records`.
+   `rela.append_records`. When the value is a dashboard card, a `capture:`
+   task stores it without a script (see "Capturing a dashboard card without
+   a script" in the scheduled-tasks guide).
 4. Add a [line card](data-entry.md#line-cards-display-line) to a dashboard.
 
 **The value is computed under `run_as`, but anyone who can read the metric

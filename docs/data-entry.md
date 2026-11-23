@@ -11413,6 +11413,17 @@ Locked in `flows.yaml`:
   (`if_exists: replace` deletes the existing record);
 - `on.deleted`, `on.faces` and `on.copy`.
 
+A dashboard card that a [capture task](scheduled-tasks.md#capturing-a-dashboard-card-without-a-script)
+in `schedules.yaml` stores cannot be changed in the app either. The task
+computes the card as its own `run_as` identity and stores the figure for
+everyone who reads the owner entity, so the card has the trust of
+`schedules.yaml`. A save is refused when it changes any card with that title
+on that dashboard, the list such a card reads, or in `schema.yaml` anything
+the card reads: the property it folds, the query scopes and faces of the
+list's type and of each type it extends, the worlds and default world, and
+every property or relation definition named in any of these. A save is also refused while
+`schedules.yaml` does not parse.
+
 An automation that holds a locked setting is shown read-only. An automation
 that runs a script cannot be removed in the app, and what fires it and its
 outputs stay as they are. Automations run in the order of the file. The app

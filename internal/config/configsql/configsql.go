@@ -15,7 +15,6 @@
 package configsql
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -157,34 +156,6 @@ func (l *Loader) Stat(ctx context.Context, name string) (fs.FileInfo, error) {
 	modTime, _ := time.Parse(timeFmt, updated)
 	return fileInfo{name: path.Base(name), size: size, modTime: modTime}, nil
 }
-
-// Open returns name as an in-memory file. The content is read whole: a row
-// is one value, so there is nothing to stream from.
-func (l *Loader) Open(ctx context.Context, name string) (fs.File, error) {
-	info, err := l.Stat(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	data, err := l.Load(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	fi, ok := info.(fileInfo)
-	if !ok {
-		return nil, fmt.Errorf("configsql: unexpected file info %T", info)
-	}
-	fi.size = int64(len(data))
-	return &memFile{Reader: bytes.NewReader(data), info: fi}, nil
-}
-
-// memFile is a stored file opened for reading.
-type memFile struct {
-	*bytes.Reader
-	info fileInfo
-}
-
-func (f *memFile) Stat() (fs.FileInfo, error) { return f.info, nil }
-func (f *memFile) Close() error               { return nil }
 
 // Dirs returns the sorted names of the directories directly under dir: the
 // next path segment of every stored path below dir that has one. An absent

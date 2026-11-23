@@ -168,6 +168,7 @@ func StartBackground(
 	ws WorkspaceProvider,
 	bind IdentityBinder,
 	logger *slog.Logger,
+	opts ...Option,
 ) <-chan struct{} {
 	done := make(chan struct{})
 	cfg, loadErr := LoadWorkspaceConfig(ctx, ws)
@@ -180,7 +181,7 @@ func StartBackground(
 		logger.Error("subscriptions or remote pulls not started", "error", loadErr)
 	}
 
-	s, err := NewWithQueue(cfg, script.NewEngine(), ws, bind, logger)
+	s, err := NewWithQueue(cfg, script.NewEngine(), ws, bind, logger, opts...)
 	if err != nil {
 		logger.Error("scheduler not started", "error", err)
 		close(done)
@@ -262,8 +263,9 @@ func attachQueue(s *Scheduler, ws WorkspaceProvider) error {
 // scheduler that will fail every task.
 func NewWithQueue(
 	cfg *Config, engine *script.Engine, ws WorkspaceProvider, bind IdentityBinder, logger *slog.Logger,
+	opts ...Option,
 ) (*Scheduler, error) {
-	s, err := New(cfg, engine, ws, bind, logger)
+	s, err := New(cfg, engine, ws, bind, logger, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -361,6 +363,11 @@ type Scheduler struct {
 	// pruneAge is the largest prune age used so far; see maybePrune. Only
 	// the tick touches it.
 	pruneAge time.Duration
+
+	// cards computes the dashboard card figures of capture tasks. Set only
+	// at construction (WithCards), so the queue workers read it unlocked.
+	// Nil means this process runs no capture tasks; see supportedTasks.
+	cards CardEvaluator
 }
 
 // taskContext is the scheduler's request edge: it stamps the task's
@@ -415,6 +422,7 @@ func New(
 	ws WorkspaceProvider,
 	bind IdentityBinder,
 	logger *slog.Logger,
+	opts ...Option,
 ) (*Scheduler, error) {
 	switch {
 	case cfg == nil:
@@ -441,6 +449,13 @@ func New(
 		now:    time.Now,
 		node:   nodeID(),
 	}
+	for _, opt := range opts {
+		if opt != nil { // a nil option configures nothing
+			opt(s)
+		}
+	}
+	cfg, skipped := s.supportedTasks(cfg)
+	s.noteSkippedCaptures(skipped)
 	s.config.Store(cfg)
 	return s, nil
 }
@@ -473,6 +488,10 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		}
 		if t.Remote != nil {
 			s.logger.Info("scheduled remote pull", "task", t.Name, "every", t.Every)
+			continue
+		}
+		if t.Capture != nil {
+			s.logger.Info("scheduled capture", "task", t.Name, "every", t.Every, "card", t.Capture.Card)
 			continue
 		}
 		s.logger.Info("scheduled task", "task", t.Name, "every", t.Every, "script", t.Script)

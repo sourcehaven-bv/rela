@@ -624,6 +624,9 @@ func (s *Service) prepare(ctx context.Context, cur *current, d *Draft) (*prepare
 	if p.problems = s.triggerProblems(ctx, cur, p); len(p.problems) > 0 {
 		return p, nil
 	}
+	if p.problems = s.captureProblems(cur, p); len(p.problems) > 0 {
+		return p, nil
+	}
 	if bytes.Equal(p.schema, cur.schema) {
 		return p, nil
 	}

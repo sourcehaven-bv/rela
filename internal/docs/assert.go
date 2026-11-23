@@ -2,6 +2,7 @@ package docs
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -277,10 +278,10 @@ func checkShows(subject string, got, contains, absent, exactly []string, hasExac
 	var b strings.Builder
 	fmt.Fprintf(&b, "shows{%s} failed", subject)
 	if len(missing) > 0 {
-		fmt.Fprintf(&b, "\n  missing:  %s", strings.Join(dedupe(missing), ", "))
+		fmt.Fprintf(&b, "\n  missing:  %s", strings.Join(slices.Compact(slices.Sorted(slices.Values(missing))), ", "))
 	}
 	if len(unexpected) > 0 {
-		fmt.Fprintf(&b, "\n  unexpected: %s", strings.Join(dedupe(unexpected), ", "))
+		fmt.Fprintf(&b, "\n  unexpected: %s", strings.Join(slices.Compact(slices.Sorted(slices.Values(unexpected))), ", "))
 	}
 	// The seeded set is printed on every failure, not just the exact-match one.
 	// Most confusion when a world assertion fails is not knowing what was
@@ -294,18 +295,6 @@ func joinOrNone(ids []string) string {
 		return "(none)"
 	}
 	return strings.Join(ids, ", ")
-}
-
-func dedupe(in []string) []string {
-	seen := make(map[string]bool, len(in))
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		if !seen[s] {
-			seen[s] = true
-			out = append(out, s)
-		}
-	}
-	return out
 }
 
 // hasField reports whether a key is present at all, which is not the same as

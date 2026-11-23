@@ -5,7 +5,9 @@ title: 'Declarative metric capture: schedule task that appends a dashboard card 
 kind: enhancement
 priority: low
 effort: m
-status: backlog
+started: "2026-11-19"
+completed: "2026-11-19"
+status: done
 ---
 
 ## Description

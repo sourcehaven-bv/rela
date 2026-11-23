@@ -50,16 +50,6 @@ type MigrateFileResult struct {
 	Error   error
 }
 
-// DetectMigrations checks for pending migrations in project files.
-// If startDir is empty, it uses the current working directory.
-func DetectMigrations(startDir string) ([]MigrateDetection, error) {
-	// coverage-ignore-start: main-or-wiring: constructs the real OS filesystem and delegates to DetectMigrationsWithFS,
-	// which is the tested seam
-	fs := storage.NewSafeFS(storage.NewOsFS())
-	return DetectMigrationsWithFS(startDir, fs)
-	// coverage-ignore-end
-}
-
 // CheckPending reports everything `rela migrate --check` needs: content
 // migrations plus schema-filename work. It discovers the project ONCE and
 // derives both answers from that single Context, so the two cannot disagree
