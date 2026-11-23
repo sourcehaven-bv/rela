@@ -2,6 +2,7 @@ package appbuild_test
 
 import (
 	"context"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -34,6 +35,13 @@ func stepProjectWith(t *testing.T, extra string) (*appbuild.Services, *appbuild.
 	return stepProjectEdit(t, "name", func(p string) string { return p + extra })
 }
 
+// stepProjectAt is stepProjectWith that also returns the project root.
+func stepProjectAt(t *testing.T, extra string) (*appbuild.Services, *appbuild.FlowControl, string) {
+	t.Helper()
+	keep := func(s string) string { return s }
+	return stepProjectFlowsAt(t, "name", keep, func(p string) string { return p + extra }, keep)
+}
+
 // stepProjectEdit is stepProject with display as the person's display
 // property and acl.yaml passed through edit.
 func stepProjectEdit(t *testing.T, display string, edit func(string) string) (*appbuild.Services,
@@ -55,6 +63,14 @@ func stepProjectSchema(t *testing.T, display string, editSchema, edit func(strin
 func stepProjectFlows(t *testing.T, display string, editSchema, edit, editFlows func(string) string) (
 	*appbuild.Services, *appbuild.FlowControl) {
 	t.Helper()
+	svc, ctl, _ := stepProjectFlowsAt(t, display, editSchema, edit, editFlows)
+	return svc, ctl
+}
+
+// stepProjectFlowsAt is stepProjectFlows that also returns the project root.
+func stepProjectFlowsAt(t *testing.T, display string, editSchema, edit, editFlows func(string) string) (
+	*appbuild.Services, *appbuild.FlowControl, string) {
+	t.Helper()
 	root := writeFlowProject(t)
 	flows, err := os.ReadFile(filepath.Join(root, "flows.yaml"))
 	require.NoError(t, err)
@@ -74,7 +90,7 @@ func stepProjectFlows(t *testing.T, display string, editSchema, edit, editFlows 
 	t.Cleanup(func() { _ = svc.Close() })
 	ctl := appbuild.FlowControlFor(svc)
 	require.NotNil(t, ctl)
-	return svc, ctl
+	return svc, ctl, root
 }
 
 func flowUser(t *testing.T, svc *appbuild.Services, user string) context.Context {
@@ -93,7 +109,8 @@ func addFlowPerson(t *testing.T, svc *appbuild.Services, id string, props map[st
 }
 
 // TestFlowControl_CompleteStep pins AC 1: only a holder of a waiting role
-// completes a step, it writes only `writes:` properties as the caller, and
+// completes a step, it writes only the fields of the state's `form:` as the
+// caller, and
 // the change branch moves the run; a hidden run is not found.
 func TestFlowControl_CompleteStep(t *testing.T) {
 	tests := []struct {
@@ -111,7 +128,7 @@ func TestFlowControl_CompleteStep(t *testing.T) {
 		{name: "holder, nothing written", user: "alice", problem: flowview.ProblemBlocked},
 		{name: "non-holder", user: "bob", props: map[string]any{"documents": true}, wantErr: flowview.ErrForbidden},
 		{name: "hidden run", user: "eve", props: map[string]any{"documents": true}, wantErr: flowview.ErrNotFound},
-		{name: "property outside writes", user: "alice", props: map[string]any{"stage": "x"},
+		{name: "property outside the form", user: "alice", props: map[string]any{"stage": "x"},
 			wantErr: flowview.ErrInvalid},
 		{name: "stale generation", user: "alice", props: map[string]any{"documents": true}, gen: 1,
 			wantErr: flowview.ErrConflict},
@@ -126,7 +143,8 @@ func TestFlowControl_CompleteStep(t *testing.T) {
 			run, err := ctl.Run(alice, id)
 			require.NoError(t, err)
 			require.True(t, run.Actions.Complete)
-			require.Equal(t, []string{"documents"}, run.Waiting.Writes)
+			require.Equal(t, "collect_documents", run.Waiting.Form)
+			require.Equal(t, []string{"documents"}, run.Waiting.Fields)
 
 			got, err := ctl.Complete(flowUser(t, svc, tc.user), id, run.Generation+tc.gen, tc.props)
 			require.ErrorIs(t, err, tc.wantErr)
@@ -151,6 +169,59 @@ func TestFlowControl_CompleteStep(t *testing.T) {
 			}
 			require.Equal(t, "collect", after.State)
 			require.Empty(t, after.Waiting.ClaimedBy, "a step that moves nothing releases its claim")
+		})
+	}
+}
+
+// TestFlowControl_StepFormReadPerStep pins that a step reads its form from
+// data-entry.yaml as it is now: an edit applies without a restart, and a
+// form that can no longer be used refuses the step instead of completing it
+// with nothing written (RR-YNSWLUM, RR-DWWR4SB).
+func TestFlowControl_StepFormReadPerStep(t *testing.T) {
+	tests := []struct {
+		name      string
+		dataEntry string
+		props     map[string]any
+		fields    []string
+		wantErr   error
+	}{
+		{name: "a field added after start",
+			dataEntry: "forms:\n  collect_documents:\n    entity_type: person\n    fields:\n" +
+				"      - property: documents\n      - property: stage\n",
+			props: map[string]any{"stage": "x"}, fields: []string{"documents", "stage"}},
+		{name: "a field removed after start",
+			dataEntry: "forms:\n  collect_documents:\n    entity_type: person\n    fields: []\n",
+			props:     map[string]any{"documents": true}, fields: []string{}, wantErr: flowview.ErrInvalid},
+		{name: "the form removed after start", dataEntry: "forms: {}\n", wantErr: flowview.ErrConflict},
+		{name: "the form made a wizard after start",
+			dataEntry: "forms:\n  collect_documents:\n    entity_type: person\n    steps: [{title: a}]\n",
+			wantErr:   flowview.ErrConflict},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, ctl, root := stepProjectAt(t, "")
+			addFlowPerson(t, svc, "PER-1", map[string]any{"name": "Ada"})
+			alice := flowUser(t, svc, "alice")
+			id, err := ctl.Start(alice, "onboarding", "PER-1")
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(root, "data-entry.yaml"), []byte(tc.dataEntry), 0o600))
+
+			run, err := ctl.Run(alice, id)
+			require.NoError(t, err)
+			unusable := errors.Is(tc.wantErr, flowview.ErrConflict)
+			require.Equal(t, unusable, run.Waiting.FormProblem != "", run.Waiting.FormProblem)
+			require.Equal(t, !unusable, run.Actions.Complete)
+			if !unusable && len(tc.fields) > 0 {
+				require.Equal(t, tc.fields, run.Waiting.Fields)
+			}
+
+			_, err = ctl.Complete(alice, id, run.Generation, tc.props)
+			require.ErrorIs(t, err, tc.wantErr)
+			after, err := ctl.Run(alice, id)
+			require.NoError(t, err)
+			if tc.wantErr != nil {
+				require.Equal(t, "collect", after.State, "a refused step does not move the run")
+			}
 		})
 	}
 }
@@ -530,6 +601,46 @@ func TestFlowControl_RunList(t *testing.T) {
 	}
 }
 
+// TestFlowControl_CompleteStepFieldGate pins that a step form does not widen
+// a role's field grants: a field of the form the caller may not write is
+// refused on Complete and the run does not move.
+func TestFlowControl_CompleteStepFieldGate(t *testing.T) {
+	root := writeFlowProject(t)
+	schema, err := os.ReadFile(filepath.Join("..", "flowcfg", "testdata", "schema.yaml"))
+	require.NoError(t, err)
+	writeMetamodelBody(t, root, string(schema))
+	policy, err := os.ReadFile(filepath.Join(root, "acl.yaml"))
+	require.NoError(t, err)
+	hr := "  hr:\n    read: [person, task]\n    update: [person]\n"
+	require.Contains(t, string(policy), hr)
+	p := strings.Replace(string(policy), hr,
+		hr+"    fields:\n      person:\n        - field: name\n          when: \"true\"\n", 1)
+	p = strings.Replace(p, "assignments:\n", "assignments:\n  alice: hr\n", 1)
+	writePolicy(t, root, p)
+	svc, err := appbuildOnDisk(t, root)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+	ctl := appbuild.FlowControlFor(svc)
+	require.NotNil(t, ctl)
+
+	addFlowPerson(t, svc, "PER-1", map[string]any{"name": "Ada", "status": "hired"})
+	alice := flowUser(t, svc, "alice")
+	id, err := ctl.Start(alice, "onboarding", "PER-1")
+	require.NoError(t, err)
+	run, err := ctl.Run(alice, id)
+	require.NoError(t, err)
+	require.Equal(t, []string{"documents"}, run.Waiting.Fields)
+
+	_, err = ctl.Complete(alice, id, run.Generation, map[string]any{"documents": true})
+	require.ErrorIs(t, err, flowview.ErrForbidden)
+	subj, err := svc.Store().GetEntity(context.Background(), entity.Ref{ID: "PER-1"})
+	require.NoError(t, err)
+	require.Nil(t, subj.Properties["documents"], "a refused field writes nothing")
+	after, err := ctl.Run(alice, id)
+	require.NoError(t, err)
+	require.Equal(t, "collect", after.State)
+}
+
 // TestFlowControl_FinishedRunNamesSubject pins BUG-TVU9HRT: a finished run
 // keeps only its header, and its detail still names the subject for a
 // reader of the subject, from the `_carries` edge as the run list does.
@@ -701,11 +812,15 @@ func TestFlowControl_CompleteStepFieldFeedback(t *testing.T) {
 			"    description: Check the documents first.\n    entity_type: person\n"+
 			"    enforce: write\n    when_condition: \"entity.documents == true\"\n    then: [\"stage=checked\"]\n"+"relations:\n", 1)
 	}
-	editFlows := func(s string) string {
-		return strings.Replace(s, "writes: [documents]", "writes: [documents, name, stage]", 1)
-	}
 	keep := func(s string) string { return s }
-	svc, ctl := stepProjectFlows(t, "name", editSchema, keep, editFlows)
+	svc, ctl, root := stepProjectFlowsAt(t, "name", editSchema, keep, keep)
+	// The step's form lets it write name and stage too.
+	forms, err := os.ReadFile(filepath.Join(root, "data-entry.yaml"))
+	require.NoError(t, err)
+	widened := strings.Replace(string(forms), "        help: Tick once every document is in.\n",
+		"        help: Tick once every document is in.\n      - property: name\n      - property: stage\n", 1)
+	require.NotEqual(t, string(forms), widened)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "data-entry.yaml"), []byte(widened), 0o600))
 	addFlowPerson(t, svc, "PER-1", map[string]any{"name": "ADA", "status": "hired"})
 	alice := flowUser(t, svc, "alice")
 	id, err := ctl.Start(alice, "onboarding", "PER-1")

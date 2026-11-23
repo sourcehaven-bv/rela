@@ -74,7 +74,7 @@ test.describe("flow task hint", () => {
   }) => {
     const flows = new FlowsPage(appPage);
     const na = new NextActionPage(appPage);
-    const { person, flow, states, writes } = FLOW_SEED;
+    const { person, flow, states, stepField } = FLOW_SEED;
 
     await flows.openEntity("person", person.id);
     await flows.start(flow.name);
@@ -95,7 +95,7 @@ test.describe("flow task hint", () => {
     // the page renders above it (BUG-UZGMHIK).
     await flows.expectStepFormTopInView();
 
-    await flows.completeStepWithCheckbox(writes);
+    await flows.completeStepWithCheckbox(stepField);
     await flows.expectOneRunIn(states.finished);
     await expect(na.card).toHaveCount(0, { timeout: 15_000 });
 

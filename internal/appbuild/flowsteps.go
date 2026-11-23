@@ -40,8 +40,8 @@ const MaxRunList = 1000
 // reads.
 const maxRoleHolders = 5000
 
-// errFlowInput answers a step that writes a property its state does not
-// name in `writes:`.
+// errFlowInput answers a step that writes a property its state's form does
+// not edit.
 var errFlowInput = errors.New("flows: the step does not write that property")
 
 // errFlowRequest answers a request the flow does not allow, such as a
@@ -70,7 +70,7 @@ func classify(err error) error {
 		errors.Is(err, flowengine.ErrSettling), errors.Is(err, flowengine.ErrNotPending),
 		errors.Is(err, flowengine.ErrStranded), errors.Is(err, flowengine.ErrSubjectBusy),
 		errors.Is(err, flowengine.ErrGuard), errors.Is(err, errFlowBusy), errors.Is(err, errFlowCondition),
-		errors.Is(err, flowengine.ErrJobRunning):
+		errors.Is(err, flowengine.ErrJobRunning), errors.Is(err, errStepForm):
 		return fmt.Errorf("%w: %w", flowview.ErrConflict, err)
 	case errors.Is(err, ErrFlowPermission), isFieldWriteError(err):
 		return fmt.Errorf("%w: %w", flowview.ErrForbidden, err)
@@ -454,6 +454,7 @@ func (c *FlowControl) unnamedViews(ctx context.Context, cl *caller, hdrs []*enti
 		explained[r.ID] = xs[i]
 	}
 	flows := c.eng.FlowCache()
+	forms := c.forms.load(ctx)
 	manages := &manageVerdicts{c: c}
 	subjects := map[entity.Ref]*entity.Entity{}
 	out := make([]flowview.Run, 0, len(hdrs))
@@ -483,7 +484,8 @@ func (c *FlowControl) unnamedViews(ctx context.Context, cl *caller, hdrs []*enti
 			v.Subject, v.Title = "", v.FlowLabel
 		}
 		holds := cl.holds(ctx, run.Subject.ID)
-		w := waitingOf(x, holds)
+		subject := subjectTypeOf(ctx, flows, run)
+		w := waitingOf(x, holds, forms, subject)
 		if detail {
 			addDetail(w, x)
 			addTimeline(ctx, &v, run, x, flows)
@@ -495,10 +497,11 @@ func (c *FlowControl) unnamedViews(ctx context.Context, cl *caller, hdrs []*enti
 		}
 		v.Waiting = w
 		mayStep := func(w *flowview.Waiting, x flowengine.Explanation) bool {
-			return subj != nil && w.YouHold && x.Pending == nil && !x.Stranded && !x.Arrived && cl.mayUpdate(ctx, subj)
+			return subj != nil && w.YouHold && w.FormProblem == "" && x.Pending == nil && !x.Stranded && !x.Arrived &&
+				cl.mayUpdate(ctx, subj)
 		}
 		for _, bx := range x.Parallel {
-			bw := waitingOf(bx, holds)
+			bw := waitingOf(bx, holds, forms, subject)
 			if detail {
 				addDetail(bw, bx)
 			}
@@ -609,12 +612,44 @@ func (c *FlowControl) subjectOf(ctx context.Context, seen map[entity.Ref]*entity
 	return subj, nil
 }
 
+// subjectTypeOf is the subject type of the flow version run follows, or ""
+// when that version cannot be read; the run is then stranded.
+func subjectTypeOf(ctx context.Context, flows *flowengine.FlowCache, run flowrun.Run) string {
+	f, err := flows.Of(ctx, run)
+	if err != nil {
+		return ""
+	}
+	return f.Subject()
+}
+
+// stepInput checks props against the step form of x, read now, and returns
+// their names in order.
+func (c *FlowControl) stepInput(ctx context.Context, run flowrun.Run, x flowengine.Explanation,
+	props map[string]any) ([]string, error) {
+	f, err := c.eng.FlowCache().Of(ctx, run)
+	if err != nil {
+		return nil, err
+	}
+	fields, err := c.forms.load(ctx).fields(x.Form, f.Subject())
+	if err != nil {
+		return nil, err
+	}
+	return inputNames(props, fields)
+}
+
 // waitingOf is why a run with explanation x waits, for a caller whose
-// roles on the subject holds reports.
-func waitingOf(x flowengine.Explanation, holds func(string) bool) *flowview.Waiting {
+// roles on the subject holds reports. forms names the fields of its step,
+// on a subject of the flow subject type subject.
+func waitingOf(x flowengine.Explanation, holds func(string) bool, forms stepFormSet,
+	subject string) *flowview.Waiting {
 	w := &flowview.Waiting{
-		Roles: x.WaitingFor, YouHold: slices.ContainsFunc(x.WaitingFor, holds), Writes: x.Writes,
-		Stranded: x.Stranded,
+		Roles: x.WaitingFor, YouHold: slices.ContainsFunc(x.WaitingFor, holds),
+		Form: x.Form, Stranded: x.Stranded,
+	}
+	if fields, err := forms.fields(x.Form, subject); err != nil {
+		w.FormProblem = err.Error()
+	} else {
+		w.Fields = fields
 	}
 	if x.Pending != nil {
 		w.Pending = &flowview.Pending{Failures: x.Pending.Failures, NextAttempt: x.Pending.NextAttempt}
@@ -669,15 +704,28 @@ func jobFailed(v *flowview.Run) bool {
 	return slices.ContainsFunc(v.Parallel, func(p flowview.Place) bool { return failed(p.Waiting) })
 }
 
-// addDetail adds the timers and branches of x to w.
+// addDetail adds the timers and branches of x to w. A branch's fields are
+// the fields of w's step form that its guard reads, in form order.
 func addDetail(w *flowview.Waiting, x flowengine.Explanation) {
 	for _, t := range x.Timers {
 		w.Timers = append(w.Timers, flowview.Timer{Name: t.Name, Label: t.Label, To: t.To, Due: t.Due})
 	}
 	for _, b := range x.Branches {
 		w.Branches = append(w.Branches, flowview.Branch{To: b.To, Fork: b.Fork, Label: b.Label, Roles: b.Roles,
-			Guard: b.Guard, Holds: b.Holds, Failed: b.Failed, Fields: b.Fields})
+			Guard: b.Guard, Holds: b.Holds, Failed: b.Failed, Fields: guardFields(w.Fields, b.Reads)})
 	}
+}
+
+// guardFields returns the fields among fields that reads names, in fields
+// order.
+func guardFields(fields, reads []string) []string {
+	var out []string
+	for _, f := range fields {
+		if slices.Contains(reads, f) {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // addTimeline adds the timeline and diagram of run to v. The diagram
@@ -848,7 +896,7 @@ func propTime(e *entity.Entity, key string) time.Time {
 }
 
 // Complete does the step of run id at generation gen for the caller: it
-// writes props, which must all be named in the state's `writes:`, on the
+// writes props, which must all be fields of the state's `form:`, on the
 // subject as the caller, and then fires the state's change event.
 //
 // The checks run in this order, so nothing about a hidden run leaks
@@ -894,7 +942,7 @@ func (c *FlowControl) complete(ctx context.Context, id flow.RunID, gen int64,
 	if x.Stranded {
 		return flowview.Completed{}, flowengine.ErrStranded
 	}
-	names, err := inputNames(props, x.Writes)
+	names, err := c.stepInput(ctx, run, x, props)
 	if err != nil {
 		return flowview.Completed{}, err
 	}
@@ -927,7 +975,7 @@ func (c *FlowControl) complete(ctx context.Context, id flow.RunID, gen int64,
 			c.eng.ReleaseClaim(ctx, id, gen, cl.user)
 			return flowview.Completed{}, perr
 		}
-		warnings = fieldNotes(res, x.Writes)
+		warnings = fieldNotes(res, names)
 	}
 	changed, err := c.eng.Change(wctx, id, gen, cl.user, holds)
 	out := flowview.Completed{Written: names, Moved: changed.Moved, State: changed.State, Finished: changed.Finished,
@@ -979,11 +1027,11 @@ func (c *FlowControl) Retry(ctx context.Context, id flow.RunID) error {
 	return classify(c.eng.Retry(byCaller(ctx), id))
 }
 
-// fieldNotes returns the warnings of res on the properties in writes, in
-// res's order. A warning's path is a JSON pointer to the property.
+// fieldNotes returns the warnings of res on the properties the step sent,
+// in res's order. A warning's path is a JSON pointer to the property.
 //
 // Nil: res accepted, returns nil.
-func fieldNotes(res *entity.UpdateResult, writes []string) []flowview.FieldNote {
+func fieldNotes(res *entity.UpdateResult, sent []string) []flowview.FieldNote {
 	if res == nil {
 		return nil
 	}
@@ -994,7 +1042,7 @@ func fieldNotes(res *entity.UpdateResult, writes []string) []flowview.FieldNote 
 			continue
 		}
 		name = strings.ReplaceAll(strings.ReplaceAll(name, "~1", "/"), "~0", "~")
-		if slices.Contains(writes, name) {
+		if slices.Contains(sent, name) {
 			out = append(out, flowview.FieldNote{Field: name, Message: w.Detail})
 		}
 	}
@@ -1002,11 +1050,11 @@ func fieldNotes(res *entity.UpdateResult, writes []string) []flowview.FieldNote 
 }
 
 // inputNames returns the names of props, sorted, or errFlowInput for a
-// name the step does not write.
-func inputNames(props map[string]any, writes []string) ([]string, error) {
+// name that is not one of fields, the properties the step's form edits.
+func inputNames(props map[string]any, fields []string) ([]string, error) {
 	names := make([]string, 0, len(props))
 	for k := range props {
-		if !slices.Contains(writes, k) {
+		if !slices.Contains(fields, k) {
 			return nil, fmt.Errorf("%w: %q", errFlowInput, k)
 		}
 		names = append(names, k)

@@ -95,6 +95,36 @@ const triggerACLFlows = `triggers:
       - set: {properties: {state: open}}
 `
 
+// triggerACLStepFlow is a flow over task whose open state waits for an
+// editor's step through the task_check form of data-entry.yaml.
+const triggerACLStepFlow = `flows:
+  check:
+    label: Check
+    subject: task
+    initial: open
+    states:
+      open:
+        waiting_for: [editor]
+        form: task_check
+        on:
+          change: {to: closed, roles: [editor]}
+      closed:
+        final: true
+`
+
+// stepForm returns data-entry.yaml with the task_check form editing fields.
+func stepForm(fields ...string) string {
+	if len(fields) == 0 {
+		return "forms:\n  task_check:\n    entity_type: task\n    fields: []\n"
+	}
+	var b strings.Builder
+	b.WriteString("forms:\n  task_check:\n    entity_type: task\n    fields:\n")
+	for _, f := range fields {
+		b.WriteString("      - property: " + f + "\n")
+	}
+	return b.String()
+}
+
 // fakeEditor holds the editor role; deny names the types the live request
 // refuses it.
 type fakeEditor struct{ deny []string }
@@ -117,8 +147,11 @@ func TestCheckTriggerACL(t *testing.T) {
 		acl           string // appended to triggerACLBase
 		schemaAfter   string // replaces the schema after the edit when set
 		before, after string
-		editor        fakeEditor
-		want          []string // message parts, one per expected problem; none means the edit passes
+		// dataEntryBefore and dataEntry are data-entry.yaml before and after;
+		// dataEntryBefore defaults to dataEntry.
+		dataEntryBefore, dataEntry string
+		editor                     fakeEditor
+		want                       []string // message parts, one per expected problem; none means the edit passes
 	}{
 		{name: "a plain set passes",
 			after: strings.Replace(triggerACLFlows, "state: open", "state: done", 1)},
@@ -238,6 +271,22 @@ func TestCheckTriggerACL(t *testing.T) {
 			after: triggerACLFlow + trigger("    on: {entity: task, updated: true}\n"+
 				"    outputs:\n      - set: {properties: {notes: x}}\n"),
 			want: []string{"sets task.notes, which flow \"review\" locks against outside edits"}},
+		{name: "a property a step form edits",
+			before: triggerACLStepFlow + triggerACLFlows, dataEntry: stepForm("title"),
+			after: triggerACLStepFlow + trigger("    on: {entity: task, updated: true}\n"+
+				"    outputs:\n      - set: {properties: {title: x}}\n"),
+			want: []string{"sets task.title, which flow \"check\" locks against outside edits"}},
+		{name: "a property the step form does not edit",
+			before: triggerACLStepFlow + triggerACLFlows, dataEntry: stepForm("notes"),
+			after: triggerACLStepFlow + trigger("    on: {entity: task, updated: true}\n"+
+				"    outputs:\n      - set: {properties: {title: x}}\n")},
+		{name: "a form edit locks what an unchanged trigger sets",
+			before: triggerACLStepFlow + trigger("    on: {entity: task, updated: true}\n"+
+				"    outputs:\n      - set: {properties: {title: x}}\n"),
+			after: triggerACLStepFlow + trigger("    on: {entity: task, updated: true}\n"+
+				"    outputs:\n      - set: {properties: {title: x}}\n"),
+			dataEntryBefore: stepForm(), dataEntry: stepForm("title"),
+			want: []string{"sets task.title, which flow \"check\" locks against outside edits"}},
 		{name: "a field granted on another face only",
 			acl:   "    fields:\n      doc@draft: [{field: x}]\n      doc@published: [{field: y}]\n",
 			after: trigger("    on: {entity: doc, updated: true}\n    outputs:\n      - set: {properties: {x: v}}\n"),
@@ -279,10 +328,15 @@ func TestCheckTriggerACL(t *testing.T) {
 				aclText = strings.Replace(aclText, "    permissions: [config:edit]\n",
 					"    permissions: [config:edit]\n"+tc.acl, 1)
 			}
+			dataEntryBefore := tc.dataEntryBefore
+			if dataEntryBefore == "" {
+				dataEntryBefore = tc.dataEntry
+			}
 			got, err := CheckTriggerACL(configedit.TriggerEdit{
 				ACL:          []byte(aclText),
 				SchemaBefore: []byte(triggerACLSchema), SchemaAfter: []byte(schemaAfter),
 				FlowsBefore: []byte(before), FlowsAfter: []byte(tc.after),
+				DataEntryBefore: []byte(dataEntryBefore), DataEntryAfter: []byte(tc.dataEntry),
 			}, tc.editor)
 			if err != nil {
 				t.Fatal(err)
@@ -348,5 +402,68 @@ func TestCheckTriggerACL_FailsClosed(t *testing.T) {
 func TestRequestEditor_RejectsNil(t *testing.T) {
 	if _, err := RequestEditor(nil); err == nil {
 		t.Fatal("want error")
+	}
+}
+
+// TestCheckTriggerACL_StepFormEdits pins how an edit of data-entry.yaml
+// alone is judged: only a change to what a step may send is judged, and a
+// form may not add a property the flow locks in the step's state
+// (RR-3IMPOH2, RR-BZASHNZ).
+func TestCheckTriggerACL_StepFormEdits(t *testing.T) {
+	lockedFlow := strings.Replace(triggerACLStepFlow, "    initial: open\n",
+		"    initial: open\n    outside_edits:\n      properties:\n        owner: deny\n", 1)
+	tests := []struct {
+		name          string
+		acl           string
+		noFlows       bool
+		before, after string
+		want          string
+		wantErr       string
+	}{
+		{name: "a form edit with triggers only and no acl.yaml", noFlows: true,
+			before: stepForm("notes"), after: stepForm("notes", "title")},
+		{name: "an unrelated form edit", acl: triggerACLBase,
+			before: stepForm("notes"), after: stepForm("notes") + "  other:\n    entity_type: note\n    fields: []\n"},
+		{name: "reordering the step's fields", acl: triggerACLBase,
+			before: stepForm("notes", "title"), after: stepForm("title", "notes")},
+		{name: "adding a locked property", acl: triggerACLBase,
+			before: stepForm("notes"), after: stepForm("notes", "owner"),
+			want: `Form "task_check" adds "owner" to the step of flow "check" in state "open"`},
+		{name: "adding an unlocked property is judged against acl.yaml", acl: triggerACLBase,
+			before: stepForm("notes"), after: stepForm("notes", "title")},
+		{name: "a step form made unusable", acl: triggerACLBase,
+			before: stepForm("notes"), after: "forms: {}\n", wantErr: "as saved"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			flows := lockedFlow + triggerACLFlows
+			if tc.noFlows {
+				flows = triggerACLFlows
+			}
+			got, err := CheckTriggerACL(configedit.TriggerEdit{
+				ACL:          []byte(tc.acl),
+				SchemaBefore: []byte(triggerACLSchema), SchemaAfter: []byte(triggerACLSchema),
+				FlowsBefore: []byte(flows), FlowsAfter: []byte(flows),
+				DataEntryBefore: []byte(tc.before), DataEntryAfter: []byte(tc.after),
+			}, fakeEditor{})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want one containing %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.want == "" {
+				if len(got) > 0 {
+					t.Fatalf("want no problem, got %+v", got)
+				}
+				return
+			}
+			if len(got) != 1 || got[0].Form != "task_check" || !strings.Contains(got[0].Message, tc.want) {
+				t.Fatalf("got %+v, want one task_check problem containing %q", got, tc.want)
+			}
+		})
 	}
 }

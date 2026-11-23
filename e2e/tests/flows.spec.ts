@@ -28,7 +28,7 @@ test.describe("flows", () => {
     appPage,
   }) => {
     const flows = new FlowsPage(appPage);
-    const { person, flow, states, role, writes } = FLOW_SEED;
+    const { person, flow, states, role, stepField } = FLOW_SEED;
 
     await flows.openEntity("person", person.id);
     await flows.expectStartOffered(flow.name, flow.label);
@@ -39,7 +39,7 @@ test.describe("flows", () => {
     await flows.expectWaitingFor(role, true);
     await flows.expectCancelOffered();
 
-    await flows.completeStepWithCheckbox(writes);
+    await flows.completeStepWithCheckbox(stepField);
 
     await flows.expectStatus("Completed");
     await flows.expectOneRunIn(states.finished);
@@ -54,7 +54,7 @@ test.describe("flows for someone who only does the step", () => {
 
   test("sees a plain step form and none of the flow's workings", async ({ appPage }) => {
     const flows = new FlowsPage(appPage);
-    const { person, flow, states, writes, stepFields, guard } = FLOW_SEED;
+    const { person, flow, states, stepField, stepFields, guard } = FLOW_SEED;
 
     await flows.openEntity("person", person.id);
     await flows.expectStartOffered(flow.name, flow.label);
@@ -65,7 +65,7 @@ test.describe("flows for someone who only does the step", () => {
     await flows.expectStepFieldsStacked(stepFields);
     await flows.expectNoManagerDetails(guard);
 
-    await flows.completeStep(writes, stepFields[1], "2026-12-01");
+    await flows.completeStep(stepField, stepFields[1], "2026-12-01");
 
     await flows.expectStatus("Completed");
     await flows.expectOneRunIn(states.finished);

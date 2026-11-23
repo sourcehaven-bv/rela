@@ -27,7 +27,7 @@ func flowServices(t *testing.T) *appbuild.Services {
 		}
 	}
 	for src, dst := range map[string]string{"schema.yaml": "metamodel.yaml", "acl.yaml": "acl.yaml",
-		"flows.yaml": "flows.yaml"} {
+		"flows.yaml": "flows.yaml", "data-entry.yaml": "data-entry.yaml"} {
 		data, err := os.ReadFile(filepath.Join("..", "flowcfg", "testdata", src))
 		if err != nil {
 			t.Fatal(err)

@@ -335,8 +335,8 @@ type Explanation struct {
 	EnteredAt  time.Time
 	// WaitingFor are the roles the state waits on.
 	WaitingFor []string
-	// Writes are the subject properties the step form edits.
-	Writes []string
+	// Form names the data-entry.yaml form of the step, or is empty.
+	Form string
 	// Timers are the state's timers with their due times.
 	Timers []TimerDue
 	// Branches are the state's change branches with their guard verdicts.
@@ -381,9 +381,9 @@ type BranchCheck struct {
 	// Failed is set when the guard could not be evaluated. The error is
 	// not reported, since it can quote subject values (RR-RKBBA7H).
 	Failed bool
-	// Fields are the properties of the state's writes that the guard
-	// reads, in writes order: the step form marks them required.
-	Fields []string
+	// Reads are the properties the guard reads. The caller keeps those
+	// the step's form sends, which the step form marks required.
+	Reads []string
 }
 
 // PendingStep is a run that has not settled in its state.
@@ -509,7 +509,7 @@ func (ex *explainer) explain(ctx context.Context, run flowrun.Run) (Explanation,
 		bx.Branch, bx.Arrived = b.Name, b.Arrived
 		if b.Arrived {
 			// It waits for the others, not for anyone in the join.
-			bx.WaitingFor, bx.Writes, bx.Timers, bx.Branches = nil, nil, nil, nil
+			bx.WaitingFor, bx.Form, bx.Timers, bx.Branches = nil, "", nil, nil
 		}
 		if bx.Pending != nil {
 			x.Pending = bx.Pending
@@ -534,7 +534,7 @@ func (ex *explainer) place(ctx context.Context, f *flowcfg.Flow, run flowrun.Run
 		return x, nil
 	}
 	st, _ := f.State(cur.State)
-	x.Label, x.Status, x.WaitingFor, x.Writes = st.Label, st.Status, st.WaitingFor(), st.Writes()
+	x.Label, x.Status, x.WaitingFor, x.Form = st.Label, st.Status, st.WaitingFor(), st.Form()
 	def := f.Definition()
 	for _, t := range st.Timers() {
 		td := TimerDue{Name: t.Name, Label: t.Label, To: t.To}
@@ -544,7 +544,7 @@ func (ex *explainer) place(ctx context.Context, f *flowcfg.Flow, run flowrun.Run
 		x.Timers = append(x.Timers, td)
 	}
 	for _, b := range st.Branches(flowcfg.EventChange) {
-		bc, err := ex.branch(ctx, run, b, x.Writes)
+		bc, err := ex.branch(ctx, run, b)
 		if err != nil {
 			return Explanation{}, err
 		}
@@ -569,11 +569,10 @@ func (ex *explainer) place(ctx context.Context, f *flowcfg.Flow, run flowrun.Run
 	return x, nil
 }
 
-// branch explains change branch b of a state that writes writes: its
-// guard's verdict and the written properties the guard reads. The subject
-// is read only when the branch has a guard.
-func (ex *explainer) branch(ctx context.Context, run flowrun.Run, b flowcfg.Branch,
-	writes []string) (BranchCheck, error) {
+// branch explains change branch b of a state: its guard's verdict and the
+// properties the guard reads. The subject is read only when the branch has
+// a guard.
+func (ex *explainer) branch(ctx context.Context, run flowrun.Run, b flowcfg.Branch) (BranchCheck, error) {
 	bc := BranchCheck{To: b.To, Fork: b.Fork, Label: b.Label, Roles: b.Roles, Holds: true}
 	if b.When == nil {
 		return bc, nil
@@ -585,12 +584,7 @@ func (ex *explainer) branch(ctx context.Context, run flowrun.Run, b flowcfg.Bran
 	}
 	ok, gerr := ex.e.g.holds(ctx, b.When, subj)
 	bc.Holds, bc.Failed = ok && gerr == nil, gerr != nil
-	read := b.When.Fields()
-	for _, w := range writes {
-		if slices.Contains(read, w) {
-			bc.Fields = append(bc.Fields, w)
-		}
-	}
+	bc.Reads = b.When.Fields()
 	return bc, nil
 }
 

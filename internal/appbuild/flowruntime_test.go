@@ -35,6 +35,7 @@ func writeFlowProject(t *testing.T) string {
 	writeMetamodelBody(t, root, read("schema.yaml"))
 	writePolicy(t, root, read("acl.yaml"))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "flows.yaml"), []byte(read("flows.yaml")), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "data-entry.yaml"), []byte(read("data-entry.yaml")), 0o600))
 	return root
 }
 

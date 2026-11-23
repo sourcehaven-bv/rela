@@ -29,10 +29,13 @@ export const FLOW_SEED = {
   /** The state labels the run card shows. */
   states: { collect: "Collect documents", finished: "Finished" },
   role: "hr",
-  /** The label of the property the collect step writes. */
-  writes: "Documents",
-  /** The step's fields as labelled: from the schema, or the property name. */
-  stepFields: ["Documents", "start_date"],
+  /**
+   * The label the collect step's form gives its one field. It differs from
+   * the schema label, so the spec proves the step renders the form.
+   */
+  stepField: "Documents received",
+  /** The step's fields as labelled: by the form, or by the property name. */
+  stepFields: ["Documents received", "start_date"],
   /** The collect step's guard, which only a manager sees. */
   guard: "entity.documents == true",
 } as const;
@@ -52,7 +55,7 @@ entities:
         type: enum
         values: [new, hired, active, left]
       documents:
-        label: ${FLOW_SEED.writes}
+        label: Documents
         type: boolean
       start_date:
         type: string
@@ -79,6 +82,12 @@ forms:
       - { property: name }
       - { property: status }
       - { property: documents }
+  collect_documents:
+    entity_type: person
+    title: "Collect documents"
+    fields:
+      - { property: documents, label: "${FLOW_SEED.stepField}" }
+      - { property: start_date }
 navigation:
   - { label: "Persons", list: persons }
 `;
@@ -119,7 +128,7 @@ flows:
       collect:
         label: ${FLOW_SEED.states.collect}
         waiting_for: [${FLOW_SEED.role}, applicant]
-        writes: [documents, start_date]
+        form: collect_documents
         on:
           change:
             - to: finished

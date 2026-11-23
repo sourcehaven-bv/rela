@@ -60,9 +60,9 @@ func (e requestEditor) Grants(role string, verb acl.Verb, entityType string, fac
 }
 
 // CheckTriggerACL judges an edit of the flows.yaml triggers made in the
-// Configure space by editor against acl.yaml. A trigger output runs as a cascade of
-// the write that fired it, without the row ACL or the field gate, so a
-// trigger edited there:
+// Configure space by editor against acl.yaml. A trigger output runs as a
+// cascade of the write that fired it, without the row ACL or the field gate,
+// so a trigger edited there:
 //
 //   - may not run a script, apply a template variant, replace existing
 //     records or link to a fixed record: none of these can be bounded;
@@ -76,35 +76,44 @@ func (e requestEditor) Grants(role string, verb acl.Verb, entityType string, fac
 //     the membership relation, a role or inherited relation, a relation with
 //     its own grant, the principal type), before or after the edit;
 //   - may not write what the editor could not write directly, nor what a
-//     flow's `outside_edits:` or a state's `writes:` locks;
+//     flow's `outside_edits:` locks or a state's step form edits;
 //   - may not make an unchanged trigger write any of that, or create a
 //     record read more widely than the edited trigger's subject, through a
 //     record it creates.
 //
-// A changed trigger is judged whole. When schema.yaml changes, an unchanged
-// trigger is refused only for what the schema change adds. The policy is
-// parsed from the bytes given and checked against each schema, so an
-// abstract or wildcard grant covers the types the draft adds.
+// An edit of data-entry.yaml alone is judged only when it changes what a
+// step form lets a step send. It is refused when it adds a property that
+// the flow's `outside_edits:` locks in the state of that step: a step's own
+// write passes its run's lock.
+//
+// A changed trigger is judged whole. When schema.yaml or data-entry.yaml
+// changes, an unchanged trigger is refused only for what the change adds.
+// The policy is parsed from the bytes given and checked against each schema,
+// so an abstract or wildcard grant covers the types the draft adds.
 //
 // An error means the edit could not be judged; the caller refuses it.
 func CheckTriggerACL(in configedit.TriggerEdit, editor TriggerEditor) ([]configedit.TriggerProblem, error) {
 	if editor == nil {
 		return nil, errors.New("no editor to judge the change for")
 	}
+	var out triggerProblems
+	if done, err := judgeFormEdit(in, &out); done {
+		return out.list, err
+	}
 	if len(bytes.TrimSpace(in.ACL)) == 0 {
 		return nil, errors.New("acl.yaml is absent or empty")
 	}
-	before, err := newTriggerJudge(in.ACL, in.SchemaBefore, in.FlowsBefore, editor)
+	before, err := newTriggerJudge(in.ACL, in.SchemaBefore, in.FlowsBefore, in.DataEntryBefore, editor)
 	if err != nil {
 		return nil, fmt.Errorf("the configuration as read: %w", err)
 	}
-	after, err := newTriggerJudge(in.ACL, in.SchemaAfter, in.FlowsAfter, editor)
+	after, err := newTriggerJudge(in.ACL, in.SchemaAfter, in.FlowsAfter, in.DataEntryAfter, editor)
 	if err != nil {
 		return nil, fmt.Errorf("the configuration as saved: %w", err)
 	}
-	schemaChanged := !bytes.Equal(in.SchemaBefore, in.SchemaAfter)
+	schemaChanged := !bytes.Equal(in.SchemaBefore, in.SchemaAfter) ||
+		!bytes.Equal(in.DataEntryBefore, in.DataEntryAfter)
 
-	var out triggerProblems
 	var judged []triggers.Rule
 	for _, r := range after.rules {
 		old, had := before.rule(r.Name)
@@ -136,8 +145,97 @@ func CheckTriggerACL(in configedit.TriggerEdit, editor TriggerEditor) ([]confige
 	return out.list, nil
 }
 
+// judgeFormEdit judges an edit of data-entry.yaml alone by what it
+// changes in the step forms. done reports that the edit needs no more
+// judging: it leaves every step as it was, out already refuses it, or err
+// says it could not be judged.
+func judgeFormEdit(in configedit.TriggerEdit, out *triggerProblems) (bool, error) {
+	if !bytes.Equal(in.SchemaBefore, in.SchemaAfter) || !bytes.Equal(in.FlowsBefore, in.FlowsAfter) ||
+		bytes.Equal(in.DataEntryBefore, in.DataEntryAfter) {
+
+		return false, nil
+	}
+	same, err := stepFormChange(in, out)
+	return same || len(out.list) > 0 || err != nil, err
+}
+
+// stepFormChange judges an edit of data-entry.yaml alone, as
+// [CheckTriggerACL] describes: same reports that every step may send what
+// it could before, and out gets a problem for each locked property a form
+// adds to a step.
+func stepFormChange(in configedit.TriggerEdit, out *triggerProblems) (bool, error) {
+	if len(bytes.TrimSpace(in.FlowsAfter)) == 0 {
+		return true, nil
+	}
+	meta, err := metamodel.Parse(in.SchemaAfter)
+	if err != nil {
+		return false, err
+	}
+	// The flows name roles that acl.yaml declares; without it they cannot
+	// be read, and the edit is refused as the full check would refuse it.
+	var policy *acl.Policy
+	if len(bytes.TrimSpace(in.ACL)) > 0 {
+		if policy, err = acl.ParsePolicy(in.ACL, "acl.yaml"); err != nil {
+			return false, err
+		}
+	}
+	flows, err := flowcfg.Parse(in.FlowsAfter, meta, policy)
+	if err != nil {
+		return false, err
+	}
+	if !namesForm(flows) {
+		return true, nil
+	}
+	before, err := stepFormsOf(flows, in.DataEntryBefore, meta)
+	if err != nil {
+		return false, fmt.Errorf("the configuration as read: %w", err)
+	}
+	after, err := stepFormsOf(flows, in.DataEntryAfter, meta)
+	if err != nil {
+		return false, fmt.Errorf("the configuration as saved: %w", err)
+	}
+	same := true
+	for _, f := range flows.Flows() {
+		for _, st := range f.States() {
+			name := st.Form()
+			for _, prop := range after.fields(name) {
+				if slices.Contains(before.fields(name), prop) {
+					continue
+				}
+				same = false
+				if f.OutsideEdits().Rule(st.Name, prop).Kind != flowcfg.EditAllow {
+					out.addForm(name, fmt.Sprintf("Form %q adds %q to the step of flow %q in state %q, where the "+
+						"flow's outside_edits lock it. A step writes past that lock, so this change is made in "+
+						"data-entry.yaml directly.", name, prop, f.Name(), st.Name))
+				}
+			}
+			if len(after.fields(name)) != len(before.fields(name)) {
+				same = false
+			}
+		}
+	}
+	return same, nil
+}
+
+// stepFormsOf resolves the step forms of flows against data-entry.yaml data.
+func stepFormsOf(flows *flowcfg.Compiled, data []byte, meta *metamodel.Metamodel) (stepForms, error) {
+	forms, err := parseForms(data)
+	if err != nil {
+		return nil, err
+	}
+	return resolveStepForms(flows, forms, meta)
+}
+
 // triggerProblems collects problems once each, in the order found.
 type triggerProblems struct{ list []configedit.TriggerProblem }
+
+// addForm adds a problem with the step form name.
+func (p *triggerProblems) addForm(name, msg string) {
+	got := configedit.TriggerProblem{Form: name, Message: msg}
+	if !slices.Contains(p.list, got) {
+		p.list = append(p.list, got)
+	}
+}
 
 func (p *triggerProblems) add(trigger, msg string) {
 	got := configedit.TriggerProblem{Trigger: trigger, Message: fmt.Sprintf("Automation %q %s", trigger, msg)}
@@ -160,7 +258,7 @@ type triggerJudge struct {
 	locked map[string]map[string]string
 }
 
-func newTriggerJudge(aclData, schema, flows []byte, editor TriggerEditor) (*triggerJudge, error) {
+func newTriggerJudge(aclData, schema, flows, dataEntry []byte, editor TriggerEditor) (*triggerJudge, error) {
 	meta, err := metamodel.Parse(schema)
 	if err != nil {
 		return nil, err
@@ -176,7 +274,7 @@ func newTriggerJudge(aclData, schema, flows []byte, editor TriggerEditor) (*trig
 	if err != nil {
 		return nil, err
 	}
-	locked, err := flowLocks(flows, meta, policy)
+	locked, err := flowLocks(flows, dataEntry, meta, policy)
 	if err != nil {
 		return nil, err
 	}
@@ -189,9 +287,11 @@ func newTriggerJudge(aclData, schema, flows []byte, editor TriggerEditor) (*trig
 // flowLocks returns, per entity type, the properties some flow over it
 // does not let an outside edit change, each with the flow's name: a
 // property its `outside_edits:` denies or puts behind a permission in some
-// state, or one a state `writes:`. A trigger writes as an outside edit
-// without that gate.
-func flowLocks(flows []byte, meta *metamodel.Metamodel, policy *acl.Policy) (map[string]map[string]string, error) {
+// state, or one a state's step form edits. A trigger writes as an outside
+// edit without that gate. dataEntry is data-entry.yaml, which declares the
+// step forms.
+func flowLocks(flows, dataEntry []byte, meta *metamodel.Metamodel,
+	policy *acl.Policy) (map[string]map[string]string, error) {
 	out := map[string]map[string]string{}
 	if len(bytes.TrimSpace(flows)) == 0 {
 		return out, nil
@@ -200,10 +300,20 @@ func flowLocks(flows []byte, meta *metamodel.Metamodel, policy *acl.Policy) (map
 	if err != nil {
 		return nil, err
 	}
+	forms := stepForms{}
+	if namesForm(compiled) {
+		all, perr := parseForms(dataEntry)
+		if perr != nil {
+			return nil, perr
+		}
+		if forms, err = resolveStepForms(compiled, all, meta); err != nil {
+			return nil, err
+		}
+	}
 	for _, f := range compiled.Flows() {
 		for _, typ := range metamodel.ExpandTypeNames(meta, []string{f.Subject()}) {
 			if def, ok := meta.GetEntityDef(typ); ok {
-				for _, prop := range flowLockedProperties(f, slices.Sorted(maps.Keys(def.Properties))) {
+				for _, prop := range flowLockedProperties(f, forms, slices.Sorted(maps.Keys(def.Properties))) {
 					if out[typ] == nil {
 						out[typ] = map[string]string{}
 					}
@@ -218,11 +328,11 @@ func flowLocks(flows []byte, meta *metamodel.Metamodel, policy *acl.Policy) (map
 }
 
 // flowLockedProperties lists the properties, of props, that f does not let
-// an outside edit change in some state, and those a state writes.
-func flowLockedProperties(f *flowcfg.Flow, props []string) []string {
+// an outside edit change in some state, and those a state's step form edits.
+func flowLockedProperties(f *flowcfg.Flow, forms stepForms, props []string) []string {
 	var out []string
 	for _, st := range f.States() {
-		out = append(out, st.Writes()...)
+		out = append(out, forms.fields(st.Form())...)
 		for _, prop := range props {
 			if f.OutsideEdits().Rule(st.Name, prop).Kind != flowcfg.EditAllow {
 				out = append(out, prop)

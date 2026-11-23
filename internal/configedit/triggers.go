@@ -27,27 +27,38 @@ type TriggerEdit struct {
 	ACL                       []byte
 	SchemaBefore, SchemaAfter []byte
 	FlowsBefore, FlowsAfter   []byte
+	// DataEntryBefore and DataEntryAfter are data-entry.yaml, whose forms a
+	// flow step edits: a trigger may not write what a step form edits.
+	DataEntryBefore, DataEntryAfter []byte
 }
 
-// TriggerProblem is why one trigger is refused.
+// TriggerProblem is why one trigger, or the change to one step form, is
+// refused.
 type TriggerProblem struct {
 	Trigger string
+	// Form names the data-entry.yaml form whose change is refused. Trigger
+	// is then empty.
+	Form    string
 	Message string
 }
 
 // triggerProblems asks the TriggerChecker about a save that changes
-// flows.yaml or schema.yaml. A schema change can widen what an unchanged
-// trigger fires on, so it is judged too. The answer is a refusal when the
-// checker cannot judge the edit.
+// flows.yaml or schema.yaml, or data-entry.yaml while flows.yaml exists. A
+// schema change can widen what an unchanged trigger fires on, and a form
+// change what a flow step locks, so they are judged too. The answer is a
+// refusal when the checker cannot judge the edit.
 func (s *Service) triggerProblems(ctx context.Context, cur *current, p *prepared) []Problem {
 	before := cur.flowsBytes()
-	if bytes.Equal(p.schema, cur.schema) && bytes.Equal(p.flows, before) && (p.flows == nil) == (before == nil) {
+	if bytes.Equal(p.schema, cur.schema) && bytes.Equal(p.flows, before) && (p.flows == nil) == (before == nil) &&
+		(before == nil || bytes.Equal(p.dataEntry, cur.dataEntry)) {
+
 		return nil
 	}
 	found, err := s.deps.Triggers.CheckTriggers(ctx, TriggerEdit{
 		ACL:          cur.acl,
 		SchemaBefore: cur.schema, SchemaAfter: p.schema,
 		FlowsBefore: before, FlowsAfter: p.flows,
+		DataEntryBefore: cur.dataEntry, DataEntryAfter: p.dataEntry,
 	})
 	if err != nil {
 		return []Problem{{
@@ -58,6 +69,12 @@ func (s *Service) triggerProblems(ctx context.Context, cur *current, p *prepared
 	}
 	out := make([]Problem, 0, len(found))
 	for _, f := range found {
+		if f.Form != "" {
+			out = append(out, Problem{
+				Code: "step_form", File: DataEntryFile, Path: "forms." + f.Form, Value: f.Form, Message: f.Message,
+			})
+			continue
+		}
 		out = append(out, Problem{
 			Code: "acl_trigger", File: FlowsFile, Path: triggersKey + "." + f.Trigger, Value: f.Trigger,
 			Message: f.Message,

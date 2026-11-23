@@ -99,6 +99,12 @@ func (c *FlowValidateCmd) validateFile(ctx context.Context, svc *readServices) e
 	for _, w := range flows.Warnings() {
 		out.WriteWarning("%s", w)
 	}
+	// The server refuses to build the flow engine when a step names an
+	// action or form data-entry.yaml cannot supply, so this checks it too.
+	if refErr := appbuild.CheckFlowDataEntry(ctx, flows, svc.Config, svc.Meta); refErr != nil {
+		out.WriteError("%s", refErr)
+		return fmt.Errorf("%s: %w", flowcfg.FileName, refErr)
+	}
 	// The server boot refuses a trigger that does not compile, so the
 	// command that answers "is flows.yaml valid?" checks them too.
 	if checkErr := appbuild.CheckTriggers(ctx, svc.Config, svc.Meta, svc.Store); checkErr != nil {

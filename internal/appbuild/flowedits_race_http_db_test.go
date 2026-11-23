@@ -43,7 +43,11 @@ func raceDataEntry(t *testing.T) (*appbuild.Services, http.Handler) {
 	require.Contains(t, string(schema), documents)
 	writeMetamodelBody(t, root, strings.Replace(string(schema), documents,
 		documents+"      scan:\n        type: file\n", 1))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "data-entry.yaml"), []byte("app:\n  name: Race\n"), 0o600))
+	// Keep the step forms the sample flows name.
+	forms, err := os.ReadFile(filepath.Join(root, "data-entry.yaml"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "data-entry.yaml"),
+		append([]byte("app:\n  name: Race\n"), forms...), 0o600))
 	svc, _ := outsideEditsProjectIn(t, root, "scan")
 
 	resolver, err := dataentry.ResolverFromServices(svc, appbuild.FlowEdits(svc))

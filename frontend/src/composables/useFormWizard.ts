@@ -114,8 +114,10 @@ export function useFormWizard(
   options: FormWizardOptions = {}
 ): FormWizard {
   const syncUrl = options.syncUrl !== false
-  const route = useRoute()
-  const router = useRouter()
+  // A URL-desynced wizard never reads the route, so it also works where no
+  // router is installed (a step form on a flow run card).
+  const route = syncUrl ? useRoute() : undefined
+  const router = syncUrl ? useRouter() : undefined
 
   // Every form is modelled as a list of steps. A single-page (flat) form is a
   // form with exactly one implicit, title-less step synthesised from its
@@ -245,7 +247,7 @@ export function useFormWizard(
   // `visible_when` — and clamp against a smaller visibleSteps would otherwise
   // strand the user on the wrong step.
   function seedFromUrl(): void {
-    if (!isMultiStep.value || !syncUrl) return
+    if (!isMultiStep.value || !route) return
     const raw = route.query.step
     const parsed = typeof raw === 'string' ? parseInt(raw, 10) : NaN
     currentStep.value = clamp(parsed)
@@ -255,7 +257,7 @@ export function useFormWizard(
   let lastWritten = ''
   function writeStep(i: number): void {
     // Single-step forms never touch the URL; nor do URL-desynced ones.
-    if (!isMultiStep.value || !syncUrl) return
+    if (!isMultiStep.value || !route || !router) return
     const value = String(i)
     lastWritten = value
     const query = { ...route.query, step: value }
@@ -264,16 +266,17 @@ export function useFormWizard(
 
   // External navigation (back/forward, deep link) restores the step; our own
   // writes are ignored via the echo guard.
-  watch(
-    () => route.query.step,
-    (raw) => {
-      if (!syncUrl) return
-      const incoming = typeof raw === 'string' ? raw : ''
-      if (incoming === lastWritten) return
-      const parsed = incoming ? parseInt(incoming, 10) : 0
-      currentStep.value = clamp(parsed)
-    }
-  )
+  if (route) {
+    watch(
+      () => route.query.step,
+      (raw) => {
+        const incoming = typeof raw === 'string' ? raw : ''
+        if (incoming === lastWritten) return
+        const parsed = incoming ? parseInt(incoming, 10) : 0
+        currentStep.value = clamp(parsed)
+      }
+    )
+  }
 
   // If the visible-step set shrinks under the current index (an earlier answer
   // hid a later step), clamp back into range.

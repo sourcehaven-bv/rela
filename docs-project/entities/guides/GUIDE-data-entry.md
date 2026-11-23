@@ -11450,15 +11450,22 @@ own access, and refuses one that:
 - writes what `acl.yaml` decides access by: a property or relation a grant
   condition names, a field with option grants, the membership relation, a
   relation that confers or passes on a role, or a user record;
-- writes something you may not write yourself, or a property a flow locks
-  against outside edits;
+- writes something you may not write yourself, a property a flow locks
+  against outside edits, or a property a flow step's form edits;
 - creates a record that fires another automation which writes one of
   these, or creates a record read more widely than the first record.
 
 Removing or changing an automation that writes what `acl.yaml` decides
 access by is refused too. A schema change is refused when it makes an
-existing automation break one of these rules. Edit such an automation in
+existing automation break one of these rules, and so is a `data-entry.yaml`
+change that adds a field to a flow step's form. Edit such an automation in
 `flows.yaml` directly.
+
+A `data-entry.yaml` change is checked this way only when it changes the
+fields of a flow step's form. It is also refused when it adds to a step's
+form a property the flow's `outside_edits:` locks in that step's state, or
+when it leaves a step's form unusable. Make such a change in
+`data-entry.yaml` directly.
 
 You may remove a whole item, such as a property or a form. The
 exception is an item that holds a setting that restricts access or uploads:

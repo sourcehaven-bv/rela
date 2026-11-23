@@ -181,6 +181,8 @@ func TestParse_JobProblems(t *testing.T) {
 			job, "final state"},
 		{"waiting for a person", [][2]string{{"      send:\n", "      send:\n        waiting_for: [hr]\n"}},
 			job, "not for a person"},
+		{"a step form", [][2]string{{"      send:\n", "      send:\n        form: collect\n"}},
+			job, "not for a person"},
 		{"a timer", [][2]string{{"      send:\n", "      send:\n        after:\n          t: { period: 1d, to: sent }\n"}},
 			job, "no after"},
 		{"a change event", [][2]string{{"done: { to: sent }", "done: { to: sent }\n          change: { to: sent }"}},

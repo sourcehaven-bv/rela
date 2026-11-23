@@ -88,8 +88,12 @@ export interface FlowWaiting {
   roles?: string[]
   /** The caller holds one of `roles` on the subject. */
   you_hold: boolean
-  /** The subject properties the step form edits. */
-  writes?: string[]
+  /** The data-entry.yaml form the step is done through. */
+  form?: string
+  /** The subject properties a step through `form` may send. */
+  fields?: string[]
+  /** Why `form` cannot be used; the server then refuses the step. */
+  form_problem?: string
   timers?: FlowTimer[]
   branches?: FlowBranch[]
   /** Set while the run writes the outputs of its state. */
@@ -340,7 +344,7 @@ export async function startFlowRun(flow: string, subject: string): Promise<strin
 /**
  * POST the step of a run. `generation` is the one the form was rendered at;
  * the server answers 409 when the run has moved on since. `properties` may
- * name only the state's `writes`.
+ * name only the run's `waiting.fields`.
  */
 export async function completeFlowStep(
   id: string,

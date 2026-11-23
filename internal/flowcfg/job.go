@@ -183,8 +183,8 @@ func (l jobLoader) jobState(key string, raw *rawState) {
 	case raw.Final:
 		l.add(key, "a final state ends the run; it cannot run a job")
 		return
-	case len(raw.WaitingFor) > 0 || len(raw.Writes) > 0:
-		l.add(key, "a job state waits for its job, not for a person: drop waiting_for: and writes:")
+	case len(raw.WaitingFor) > 0 || raw.Form != "":
+		l.add(key, "a job state waits for its job, not for a person: drop waiting_for: and form:")
 	case raw.After.Kind != 0:
 		l.add(key, "a job state has no after: timers; the job's retry: bounds it")
 	}

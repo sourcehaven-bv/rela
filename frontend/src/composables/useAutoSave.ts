@@ -32,6 +32,7 @@ import { useEntitiesStore } from '@/stores/entities'
 import { mergeProperty, mergeRelations, mergeText } from './autoSaveMerge'
 import { t } from '@/i18n'
 import { entityRef, refBareId, refFace } from '@/utils/entityRef'
+import { deepEqual } from '@/utils/deepEqual'
 
 // Sentinel for "unset this property" pending entries. Distinct from
 // undefined so we can tell apart "delete the key" from "set to
@@ -1512,23 +1513,4 @@ function backoff(attempt: number, signal: AbortSignal): Promise<void> {
       { once: true }
     )
   })
-}
-
-function deepEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true
-  if (a == null || b == null) return a === b
-  if (typeof a !== 'object' || typeof b !== 'object') return false
-  if (Array.isArray(a) !== Array.isArray(b)) return false
-  if (Array.isArray(a) && Array.isArray(b)) {
-    if (a.length !== b.length) return false
-    for (let i = 0; i < a.length; i++) if (!deepEqual(a[i], b[i])) return false
-    return true
-  }
-  const ao = a as Record<string, unknown>
-  const bo = b as Record<string, unknown>
-  const ak = Object.keys(ao)
-  const bk = Object.keys(bo)
-  if (ak.length !== bk.length) return false
-  for (const k of ak) if (!deepEqual(ao[k], bo[k])) return false
-  return true
 }

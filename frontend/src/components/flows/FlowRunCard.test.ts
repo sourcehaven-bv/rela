@@ -5,7 +5,7 @@ import FlowRunCard from './FlowRunCard.vue'
 import { ApiError } from '@/api/errors'
 import type { FlowRun } from '@/api/flows'
 import { useSchemaStore, useUIStore } from '@/stores'
-import type { EntityType } from '@/types'
+import type { EntityType, FormConfig } from '@/types'
 
 const getFlowRunMock = vi.fn()
 const completeFlowStepMock = vi.fn()
@@ -42,7 +42,8 @@ function run(over: Partial<FlowRun> = {}): FlowRun {
     waiting: {
       roles: ['hr'],
       you_hold: true,
-      writes: ['documents'],
+      form: 'collect_documents',
+      fields: ['documents'],
       timers: [{ name: 'stalled', label: 'Stalled', to: 'escalated', due: '2026-02-01T10:00:00Z' }],
       branches: [{ to: 'review', guard: 'entity.documents == true', holds: false }],
     },
@@ -77,6 +78,8 @@ describe('FlowRunCard', () => {
         name: { type: 'string' },
       },
     } as unknown as EntityType)
+    const form: FormConfig = { entity: 'person', fields: [{ property: 'documents' }] }
+    useSchemaStore().forms.set('collect_documents', form)
   })
 
   it('links the title to the run page only for a reader who manages the run', async () => {
@@ -157,7 +160,7 @@ describe('FlowRunCard', () => {
     expect(wrapper.find('[data-testid="flow-retry"]').exists()).toBe(false)
   })
 
-  it('completes the step with the generation and only the written properties', async () => {
+  it('completes the step with the generation and only the changed properties', async () => {
     completeFlowStepMock.mockResolvedValue({
       written: ['documents'],
       moved: true,
@@ -212,7 +215,8 @@ describe('FlowRunCard', () => {
         waiting: {
           roles: ['hr'],
           you_hold: true,
-          writes: ['documents', 'name'],
+          form: 'docs_and_name',
+          fields: ['documents', 'name'],
           branches: [
             {
               to: 'review',
@@ -231,6 +235,11 @@ describe('FlowRunCard', () => {
       problem: 'blocked',
       warnings: [{ field: 'name', message: 'Write capitals only.' }],
     })
+    const form: FormConfig = {
+      entity: 'person',
+      fields: [{ property: 'documents' }, { property: 'name' }],
+    }
+    useSchemaStore().forms.set('docs_and_name', form)
     // The run as read after the step: a fresh object.
     getFlowRunMock.mockResolvedValue(card())
     // Attached, so focus can move.
@@ -310,7 +319,8 @@ describe('FlowRunCard', () => {
         waiting: {
           roles: ['hr'],
           you_hold: true,
-          writes: ['country', 'terms', 'name'],
+          form: 'terms_form',
+          fields: ['country', 'terms', 'name'],
           branches: [
             {
               to: 'review',
@@ -329,6 +339,11 @@ describe('FlowRunCard', () => {
         name: { type: 'string', label: 'Name' },
       },
     } as unknown as EntityType)
+    const form: FormConfig = {
+      entity: 'person',
+      fields: [{ property: 'country' }, { property: 'terms' }, { property: 'name' }],
+    }
+    useSchemaStore().forms.set('terms_form', form)
     completeFlowStepMock.mockResolvedValue({
       written: [],
       moved: false,
@@ -480,7 +495,12 @@ describe('FlowRunCard', () => {
           state_label: 'IT',
           status: 'input_required',
           generation: 2,
-          waiting: { roles: ['hr'], you_hold: true, writes: ['documents'] },
+          waiting: {
+            roles: ['hr'],
+            you_hold: true,
+            form: 'collect_documents',
+            fields: ['documents'],
+          },
           complete: true,
         },
         {
@@ -556,6 +576,11 @@ describe('FlowRunCard for a reader who does not manage the flow', () => {
         vat_number: { type: 'string' },
       },
     } as unknown as EntityType)
+    const form: FormConfig = {
+      entity: 'account',
+      fields: [{ property: 'company_name' }, { property: 'vat_number' }],
+    }
+    useSchemaStore().forms.set('signup', form)
   })
 
   function mountDoer(r: FlowRun) {
@@ -569,7 +594,7 @@ describe('FlowRunCard for a reader who does not manage the flow', () => {
     const wrapper = mountDoer(
       run({
         _actions: doer,
-        waiting: { ...run().waiting!, writes: ['company_name', 'vat_number'] },
+        waiting: { ...run().waiting!, form: 'signup', fields: ['company_name', 'vat_number'] },
       })
     )
     await flushPromises()
@@ -583,7 +608,10 @@ describe('FlowRunCard for a reader who does not manage the flow', () => {
 
   it('labels each field from the schema, or with its name, one per row', async () => {
     const wrapper = mountDoer(
-      run({ _actions: doer, waiting: { you_hold: true, writes: ['company_name', 'vat_number'] } })
+      run({
+        _actions: doer,
+        waiting: { you_hold: true, form: 'signup', fields: ['company_name', 'vat_number'] },
+      })
     )
     await flushPromises()
     const fields = wrapper.find('.flow-step-form__fields')

@@ -592,18 +592,19 @@ the project has `flows.yaml`. Both servers offer them. See
 | Tool | Description | Parameters |
 |------|-------------|------------|
 | `list_flow_tasks` | The runs that wait for a role you hold on their subject, oldest first | `flow?`, `page?`, `per_page?` (at most 200) |
-| `show_flow_run` | One run: its state, why it waits, what a step writes, timers, branches and timeline | `run` |
+| `show_flow_run` | One run: its state, why it waits, the step's form and the fields it may send, timers, branches and timeline | `run` |
 | `complete_flow_step` | Write the step's properties on the subject as you, then move the run on | `run`, `generation`, `properties?` |
 
 `show_flow_run` answers the same reason the web app shows: the roles the
-state waits for and whether you hold one, the properties a step writes,
+state waits for and whether you hold one, the step's form and its fields,
 the timers and when each fires, each `change` branch and whether its guard
 holds now, and a failing output step. Its `_actions.complete` says whether
 `complete_flow_step` would be accepted.
 
 Pass `complete_flow_step` the `generation` that `show_flow_run` returned.
 A run that moved on since is refused; call `show_flow_run` again and
-decide anew. Every property must be one the state writes.
+decide anew. Every property must be in `waiting.fields`, the fields of
+the state's form.
 
 A run in [parallel branches](flows.md#parallel-branches) waits at its
 join. `show_flow_run` lists each branch under `parallel`, with its own

@@ -55,7 +55,9 @@ type FlowControl struct {
 	raw store.Store
 	// writer writes a step's values as the caller, through the field gate.
 	writer *entitymanager.Manager
-	now    func() time.Time
+	// forms bounds what a step may send, per data-entry.yaml form.
+	forms stepFormSource
+	now   func() time.Time
 }
 
 // orphanGrace is how long a header may wait for its run before a cancel
@@ -85,6 +87,7 @@ func FlowControlFor(s *Services) *FlowControl {
 	return &FlowControl{
 		eng: s.flowEngine, d: s.aclDeclarative, rows: reader, holders: holders, raw: s.store, meta: s.meta,
 		writer: entitymanager.FieldGated(s.entityManager), now: time.Now,
+		forms: stepFormSource{cfg: s.cfgLoader, meta: s.meta},
 	}
 }
 
