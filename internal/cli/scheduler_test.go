@@ -4,18 +4,13 @@ import (
 	"context"
 	"strings"
 	"testing"
-
-	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 )
 
-// otherWorkspace is a WorkspaceProvider that is not *appbuild.Services.
-type otherWorkspace struct{ scheduler.WorkspaceProvider }
-
-// Finding 8: a workspace the sync-backend check cannot inspect is refused
-// before the scheduler reads its config.
-func TestSchedulerCmd_RefusesUncheckableWorkspace(t *testing.T) {
-	err := (&SchedulerCmd{}).Run(context.Background(), otherWorkspace{}, nil)
-	if err == nil || !strings.Contains(err.Error(), "sync backend") {
-		t.Fatalf("err = %v, want the sync-backend refusal", err)
+// Finding 8: without project services there is nothing to check for a sync
+// backend, so the command refuses before the scheduler reads its config.
+func TestSchedulerCmd_RefusesWithoutServices(t *testing.T) {
+	err := (&SchedulerCmd{}).Run(context.Background(), nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "no project services") {
+		t.Fatalf("err = %v, want the missing-services refusal", err)
 	}
 }

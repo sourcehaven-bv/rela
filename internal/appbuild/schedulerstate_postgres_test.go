@@ -18,6 +18,6 @@ func TestSchedulerState_PostgresBackend(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 
-	_, ok := svc.SchedulerState().(*pgschedstate.Store)
-	require.True(t, ok, "SchedulerState = %T, want the postgres backend", svc.SchedulerState())
+	_, ok := svc.Scheduler().SchedulerState().(*pgschedstate.Store)
+	require.True(t, ok, "SchedulerState = %T, want the postgres backend", svc.Scheduler().SchedulerState())
 }

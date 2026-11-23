@@ -1419,7 +1419,7 @@ func newDesktopApp(fsys storage.FS, projCtx *project.Context, svc *appbuild.Serv
 func startBackground(
 	ctx context.Context, svc *appbuild.Services, bind func(context.Context) (context.Context, error),
 ) <-chan struct{} {
-	sched := scheduler.StartBackground(ctx, svc, bind, slog.Default())
+	sched := scheduler.StartBackground(ctx, svc.Scheduler(), bind, slog.Default())
 	leases := appbuild.WatchLeases(ctx, svc)
 	worker := appbuild.RunRealtimeWorker(ctx, svc)
 	flows := appbuild.RunFlowWorker(ctx, svc)

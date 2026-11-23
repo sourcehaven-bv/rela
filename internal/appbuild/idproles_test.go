@@ -79,7 +79,7 @@ func TestScheduledForEachPrincipal_StoredRoles(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			svc := idpRolesFixture(t, tc.property)
-			got, err := svc.ScheduledForEachPrincipal(t.Context(), tc.entity)
+			got, err := svc.Scheduler().ScheduledForEachPrincipal(t.Context(), tc.entity)
 			require.NoError(t, err)
 			require.Equal(t, tc.wantUser, got.User)
 			require.Equal(t, tc.wantRoles, got.Roles())
@@ -105,7 +105,7 @@ func TestScheduledForEachPrincipal_NoRoleStore(t *testing.T) {
 	t.Parallel()
 	svc := idpRolesFixture(t, "email")
 	svc.idpRoles = nil
-	got, err := svc.ScheduledForEachPrincipal(t.Context(), "PER-1")
+	got, err := svc.Scheduler().ScheduledForEachPrincipal(t.Context(), "PER-1")
 	require.NoError(t, err)
 	require.Equal(t, "PER-1", got.User)
 	require.Empty(t, got.Roles())

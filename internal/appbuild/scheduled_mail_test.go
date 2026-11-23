@@ -59,11 +59,11 @@ func TestRunScheduledTemplateSendsRenderedRecipientMessage(t *testing.T) {
 		mail: &mailRuntime{config: &mail.Config{BaseURL: "https://rela.example"}, sender: sender},
 	}
 
-	require.NoError(t, svc.RunScheduledTemplate(t.Context(), "digest", recipient.ID))
+	require.NoError(t, svc.Scheduler().RunScheduledTemplate(t.Context(), "digest", recipient.ID))
 	messages := sender.Messages()
 	require.Len(t, messages, 1)
 	require.Equal(t, recipient.ID, messages[0].RenderedFor)
 	require.Equal(t, "alice@example.test", messages[0].To[0].Email)
 	require.Contains(t, string(messages[0].Text), task.Properties["title"])
-	require.ErrorContains(t, svc.ValidateScheduledMailRecipients(t.Context()), "P-2")
+	require.ErrorContains(t, svc.Scheduler().ValidateScheduledMailRecipients(t.Context()), "P-2")
 }

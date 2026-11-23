@@ -137,7 +137,7 @@ func newFlowJobRunner(s *Services, as asIdentity) *flowJobRunner {
 	// name.
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &flowJobRunner{
-		svc: s, scripts: s.scriptEngine, cfg: s.cfgLoader, host: s.host, acl: s.aclDeclarative, as: as,
+		svc: s.Scheduler(), scripts: s.scriptEngine, cfg: s.cfgLoader, host: s.host, acl: s.aclDeclarative, as: as,
 		client: client, llm: s.llmActions,
 	}
 }

@@ -222,7 +222,7 @@ func runScheduler(t *testing.T, svc *appbuild.Services) {
 	cfg, err := scheduler.ParseConfig(data)
 	require.NoError(t, err)
 
-	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, appbuild.MustIdentityBinder(svc), discardTestLogger())
+	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc.Scheduler(), appbuild.MustIdentityBinder(svc), discardTestLogger())
 	require.NoError(t, err)
 
 	// Run executes due tasks immediately on start, so the first run lands
@@ -267,7 +267,7 @@ func runSchedulerTwice(t *testing.T, svc *appbuild.Services) {
 	cfg, err := scheduler.ParseConfig(data)
 	require.NoError(t, err)
 
-	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, appbuild.MustIdentityBinder(svc), discardTestLogger())
+	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc.Scheduler(), appbuild.MustIdentityBinder(svc), discardTestLogger())
 	require.NoError(t, err)
 
 	runUntil(t, s, func() bool { return schedulerSettled(svc) },
@@ -276,7 +276,7 @@ func runSchedulerTwice(t *testing.T, svc *appbuild.Services) {
 	// Prune with a cut-off in the future drops every idle record, so the task
 	// is due again on the same scheduler's first tick.
 	forgotten := time.Now()
-	_, err = svc.SchedulerState().Prune(context.Background(), forgotten.Add(time.Hour))
+	_, err = svc.Scheduler().SchedulerState().Prune(context.Background(), forgotten.Add(time.Hour))
 	require.NoError(t, err)
 
 	// Both conditions, for the reason given in TestSchedulerCmd_EndToEnd: the
@@ -290,7 +290,7 @@ func runSchedulerTwice(t *testing.T, svc *appbuild.Services) {
 // tickState returns the run-state of the "tick" task.
 func tickState(t *testing.T, svc *appbuild.Services) schedulerstate.TaskState {
 	t.Helper()
-	got, err := svc.SchedulerState().Load(context.Background(), []string{"tick"})
+	got, err := svc.Scheduler().SchedulerState().Load(context.Background(), []string{"tick"})
 	require.NoError(t, err)
 	return got["tick"]
 }
@@ -298,7 +298,7 @@ func tickState(t *testing.T, svc *appbuild.Services) schedulerstate.TaskState {
 // lastRunAfter reports whether the last successful run of "tick" started
 // strictly after want.
 func lastRunAfter(svc *appbuild.Services, want time.Time) bool {
-	got, err := svc.SchedulerState().Load(context.Background(), []string{"tick"})
+	got, err := svc.Scheduler().SchedulerState().Load(context.Background(), []string{"tick"})
 	if err != nil {
 		return false
 	}
@@ -309,7 +309,7 @@ func lastRunAfter(svc *appbuild.Services, want time.Time) bool {
 // schedulerSettled reports whether a run of "tick" has ended, successfully or
 // not.
 func schedulerSettled(svc *appbuild.Services) bool {
-	got, err := svc.SchedulerState().Load(context.Background(), []string{"tick"})
+	got, err := svc.Scheduler().SchedulerState().Load(context.Background(), []string{"tick"})
 	if err != nil {
 		return false
 	}

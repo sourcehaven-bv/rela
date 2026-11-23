@@ -18,15 +18,15 @@ import (
 
 // RunScheduledTemplate renders and sends one message under the principal
 // already installed by scheduler's recipient child handler.
-func (s *Services) RunScheduledTemplate(ctx context.Context, name, recipientID string) error {
-	if s.mail == nil || s.mail.sender == nil || s.mail.config == nil {
+func (w *SchedulerWorkspace) RunScheduledTemplate(ctx context.Context, name, recipientID string) error {
+	if w.mail == nil || w.mail.sender == nil || w.mail.config == nil {
 		return errors.New("mail is not configured")
 	}
-	data, err := s.cfgLoader.Load(ctx, mailtemplate.ConfigFile)
+	data, err := w.cfgLoader.Load(ctx, mailtemplate.ConfigFile)
 	if err != nil {
 		return fmt.Errorf("load %s: %w", mailtemplate.ConfigFile, err)
 	}
-	cfg, err := mailtemplate.Parse(data, s.meta)
+	cfg, err := mailtemplate.Parse(data, w.meta)
 	if err != nil {
 		return err
 	}
@@ -39,7 +39,7 @@ func (s *Services) RunScheduledTemplate(ctx context.Context, name, recipientID s
 	// never supplied to content rendering, which remains ACL-visible. It is
 	// the face the default world selects, the world scheduled mail iterates
 	// in (TKT-KQXVF7 D7).
-	recipient, found, err := s.defaultWorldRow(ctx, recipientID)
+	recipient, found, err := w.defaultWorldRow(ctx, recipientID)
 	if err != nil {
 		return err
 	}
@@ -61,16 +61,16 @@ func (s *Services) RunScheduledTemplate(ctx context.Context, name, recipientID s
 		return skipBadAddress(ctx, recipientID, tmpl.AddressProperty)
 	}
 
-	deps := s.ScheduledLuaWriteDeps()
-	world := s.worlds.DefaultWorld()
-	model, contributed, err := mailtemplate.Build(ctx, s.meta, deps.VisibleReader, world, tmpl, servicesNow(s))
+	deps := w.ScheduledLuaWriteDeps()
+	world := w.worlds.DefaultWorld()
+	model, contributed, err := mailtemplate.Build(ctx, w.meta, deps.VisibleReader, world, tmpl, w.clock())
 	if err != nil {
 		return err
 	}
 	if tmpl.RequireVisibleContent && contributed == 0 {
 		return skipEmptyContent(ctx, name, recipientID)
 	}
-	renderer, err := mailrender.New(&mailrender.Options{BaseURL: s.mail.config.BaseURL})
+	renderer, err := mailrender.New(&mailrender.Options{BaseURL: w.mail.config.BaseURL})
 	if err != nil {
 		return err
 	}
@@ -78,7 +78,7 @@ func (s *Services) RunScheduledTemplate(ctx context.Context, name, recipientID s
 	if err != nil {
 		return err
 	}
-	return s.mail.sender.Send(ctx, mail.Message{
+	return w.mail.sender.Send(ctx, mail.Message{
 		To:      []mail.Address{{Email: parsed.Address, Name: parsed.Name}},
 		Subject: model.Subject, HTML: html, Text: text, RenderedFor: recipientID,
 	})
@@ -128,9 +128,11 @@ func skipBadAddress(ctx context.Context, recipientID, property string) error {
 // addresses the envelope and is never rendered or returned to the principal,
 // and a recipient must be reachable even when the principal may not read the
 // face that holds the address.
-func (s *Services) defaultWorldRow(ctx context.Context, id string) (row *entity.Entity, found bool, err error) {
-	q := store.EntityQuery{IDs: []string{id}, Faces: store.InWorld(s.worlds.DefaultWorld())}
-	for e, lerr := range s.store.ListEntities(ctx, q) {
+func (w *SchedulerWorkspace) defaultWorldRow(
+	ctx context.Context, id string,
+) (row *entity.Entity, found bool, err error) {
+	q := store.EntityQuery{IDs: []string{id}, Faces: store.InWorld(w.worlds.DefaultWorld())}
+	for e, lerr := range w.store.ListEntities(ctx, q) {
 		if lerr != nil {
 			return nil, false, lerr
 		}

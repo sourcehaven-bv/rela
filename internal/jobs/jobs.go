@@ -364,7 +364,7 @@ type Lifecycle interface {
 // handler for the kinds it owns. Start and Close are absent, so no consumer
 // stops background work for everyone else by reaching for the obvious method.
 //
-// This is the type the composition root exposes (see appbuild.Services.Jobs).
+// This is the type the composition root exposes (see appbuild.SchedulerWorkspace.Jobs).
 // Prefer depending on [Enqueuer] alone where a subsystem only produces work.
 //
 // The narrowing is a signpost, not a wall: the concrete value still satisfies
