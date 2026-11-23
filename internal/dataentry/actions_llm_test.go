@@ -684,16 +684,23 @@ func TestLLMAction_Candidates(t *testing.T) {
 // A target the caller cannot read is neither sent to the model nor
 // accepted when the model names it anyway.
 func TestLLMAction_HiddenCandidate(t *testing.T) {
-	relate := dataentryconfig.LLMRelateOutput{Relation: "touches", Candidates: "entity.area == 'auth'"}
 	tests := []struct {
-		name, reply string
-		wantStatus  int
+		name, condition, reply string
+		wantStatus             int
 	}{
-		{name: "not offered", reply: `{"set":{"priority":null},"relate":{"touches":[]}}`, wantStatus: http.StatusOK},
-		{name: "refused when named", reply: `{"set":{"priority":null},"relate":{"touches":["CMP-1"]}}`, wantStatus: http.StatusBadGateway},
+		{name: "not offered", condition: "entity.area == 'auth'",
+			reply: `{"set":{"priority":null},"relate":{"touches":[]}}`, wantStatus: http.StatusOK},
+		{name: "refused when named", condition: "entity.area == 'auth'",
+			reply: `{"set":{"priority":null},"relate":{"touches":["CMP-1"]}}`, wantStatus: http.StatusBadGateway},
+		// No condition takes the bounded unconditioned read (TKT-C5H506O).
+		{name: "not offered without a condition",
+			reply: `{"set":{"priority":null},"relate":{"touches":[]}}`, wantStatus: http.StatusOK},
+		{name: "refused when named without a condition",
+			reply: `{"set":{"priority":null},"relate":{"touches":["CMP-1"]}}`, wantStatus: http.StatusBadGateway},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			relate := dataentryconfig.LLMRelateOutput{Relation: "touches", Candidates: tc.condition}
 			ents, edges := llmGraphSeed()
 			a := buildLLMApp(t, llmFixture{
 				meta: llmGraphMeta(t), seed: ents, edges: edges, read: []string{"ticket", "concept"},
