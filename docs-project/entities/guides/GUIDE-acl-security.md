@@ -1391,8 +1391,9 @@ Key properties:
   at most one page: `limit` rows, or 1000 without a `limit`, for free
   text and structured queries alike. `page` reads the next page;
   `meta.total` counts the visible matches and `meta.has_more` says a
-  later page holds rows. Free text ranks only its 1000 best hits;
-  `meta.capped` says it matched more.
+  later page holds rows. Free text ranks only its 1000 best hits, so
+  its `meta.total` is a lower bound; `meta.capped` is set when a page
+  reaches the 1000th hit and more hits matched.
   The bound counts *visible* hits. A
   pre-visibility cap would starve restricted principals — the top
   candidates may all be hidden while their own matches rank below.
