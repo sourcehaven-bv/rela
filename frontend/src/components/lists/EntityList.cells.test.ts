@@ -32,7 +32,7 @@ describe('EntityList cell rendering via widgets', () => {
 
   function seedSchema(
     properties: Record<string, unknown>,
-    columns: { property?: string; relation?: string; label?: string }[]
+    columns: { property?: string; relation?: string; label?: string; link?: string }[]
   ) {
     const schemaStore = useSchemaStore()
     schemaStore.lists.set(listId, {
@@ -445,5 +445,20 @@ describe('EntityList cell rendering via widgets', () => {
     expect(img.exists()).toBe(true)
     expect(img.attributes('loading')).toBe('lazy')
     expect(img.attributes('src')).toContain('/T-1/_attachments/logo/logo.png')
+  })
+
+  it('shows an image column listed before the name inside the name cell, once', async () => {
+    seedSchema({ title: { type: 'string' }, logo: { type: 'file', display: { image: true } } }, [
+      { property: 'logo', label: 'Logo' },
+      { property: 'title', label: 'Title', link: 'detail' },
+    ])
+    seedEntities([
+      { id: 'T-1', type: entityType, properties: { title: 'Acme', logo: ['attachments/T-1/logo/abc/logo.png'] } },
+    ])
+    const wrapper = await mountList()
+    expect(wrapper.findAll('.rl-table-row img.image-cell')).toHaveLength(1)
+    const name = wrapper.find('.rl-table-row__name')
+    expect(name.find('img.image-cell').exists()).toBe(true)
+    expect(name.html().indexOf('image-cell')).toBeLessThan(name.html().indexOf('Acme'))
   })
 })

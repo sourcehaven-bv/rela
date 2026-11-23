@@ -70,7 +70,7 @@ import RlBusyIndicator, {
   type BusyIndicatorEntry,
 } from 'rela-components/components/feedback/RlBusyIndicator.vue'
 import type { SortClickEvent, TableColumn } from 'rela-components/components/table/types'
-import { listColumnOf, nameColumn, toTableColumns, toTableNameColumn } from './tableColumns'
+import { leadingImageColumns, listColumnOf, nameColumn, toTableColumns, toTableNameColumn } from './tableColumns'
 import { fromPageQuery } from '@/utils/pageContext'
 
 const props = defineProps<{
@@ -878,6 +878,11 @@ const titleColumn = computed(
  * control. Without it the table renders a plain label and the title — the
  * column users most often sort by — cannot be sorted at all.
  */
+/** Image columns listed before the name; shown in the name cell, left of the title. */
+const leadingColumns = computed(() =>
+  leadingImageColumns(listConfig.value?.columns ?? [], titleColumn.value, entityType.value?.properties)
+)
+
 const tableNameColumn = computed(() => toTableNameColumn(titleColumn.value))
 
 /**
@@ -1610,6 +1615,18 @@ watch(searchQuery, () => {
           Two stretched overlays would fight, which is why this slot exists.
         -->
         <template #name="{ item }">
+          <template v-for="lead in leadingColumns" :key="lead.property">
+            <component
+              :is="resolveCell(item as Entity, lead)!.component"
+              v-if="resolveCell(item as Entity, lead)"
+              class="entity-list__lead"
+              :model-value="resolveCell(item as Entity, lead)!.modelValue"
+              :mode="'display'"
+              :property-name="resolveCell(item as Entity, lead)!.propertyName"
+              :entity-type="listConfig.entity"
+              :entity-id="entityRef(item as Entity)"
+            />
+          </template>
           <span v-if="titleColumn && isCellInaccessible(item as Entity, titleColumn)" class="inaccessible-cell" :title="t('list.inaccessible')">🔒</span>
           <RouterLink
             v-else-if="rowTargets.get(item.id)"
