@@ -106,6 +106,9 @@ components:
   changefeed:       { in: internal/changefeed }
   classification:   { in: internal/classification }
   mailrender:       { in: internal/mailrender }
+  # The app's accent colour and public logo for rendered mail. Reads config and
+  # the state store through its own narrow interfaces.
+  mailbrand:        { in: internal/mailbrand }
   # HTML <-> markdown for sync connectors (TKT-LAMZ8F). A leaf like mailrender.
   htmlmd:           { in: internal/htmlmd }
   # Hardened XML decoding (stdlib only) and the feed parser on top of it. Both
@@ -723,6 +726,8 @@ deps:
       - dataentryconfig
   dataentry:
     mayDependOn:
+      # mailbrand.Source: the app's look for mail.render in action scripts.
+      - mailbrand
       - actionproposal
       - ai
       - llmtask
@@ -1048,6 +1053,8 @@ deps:
       # edge.
       - mail
       - mailrender
+      # mailbrand.Source: the app's look for mail.render and scheduled mail.
+      - mailbrand
       - filter
       - flowcfg
       # The composition root picks the userstate backend, the same way it
@@ -1353,6 +1360,10 @@ deps:
       - goldmark
       - bluemonday
       - douceur
+  mailbrand:
+    mayDependOn:
+      - dataentryconfig
+      - mailrender
   feed:
     mayDependOn:
       - safexml

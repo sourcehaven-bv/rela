@@ -181,7 +181,7 @@ body, .wrap { background-color:{{.C.darkBg}} !important; }
 {{.MSOOpen}}
 <table class="card" role="presentation" cellpadding="0" cellspacing="0" border="0" width="{{.Width}}" style="width:{{.Width}}px; max-width:100%;">
 <tr><td class="bar" height="4">&nbsp;</td></tr>
-{{if .LogoCID}}<tr><td style="padding:20px 24px 0 24px;"><img class="logo" src="cid:{{.LogoCID}}" alt="{{.LogoAlt}}"{{if .LogoWidth}} width="{{.LogoWidth}}"{{end}}{{if .LogoHeight}} height="{{.LogoHeight}}"{{end}} /></td></tr>{{end}}
+{{if .LogoCID}}<tr><td style="padding:20px 24px 0 24px;"><img class="logo" src="cid:{{.LogoCID}}" alt="{{.LogoAlt}}"{{if .LogoWidth}} width="{{.LogoWidth}}"{{end}}{{if .LogoHeight}} height="{{.LogoHeight}}"{{end}} /></td></tr>{{else if .LogoURL}}<tr><td style="padding:20px 24px 0 24px;"><img class="logo" src="{{.LogoURL}}" alt="{{.LogoAlt}}" /></td></tr>{{end}}
 <tr><td class="pad">
 <h1>{{.Subject}}</h1>
 {{if .Intro}}<div class="prose">{{.Intro}}</div>{{end}}
@@ -239,6 +239,7 @@ type tmplDoc struct {
 	Footer     template.HTML
 	Sections   []tmplSection
 	LogoCID    string
+	LogoURL    string
 	LogoAlt    string
 	LogoWidth  int
 	LogoHeight int
@@ -280,6 +281,10 @@ func (r *Renderer) buildDocument(m *Message) (string, error) {
 		alt = "logo"
 	}
 
+	// A root-relative logo without a base URL has no address a mail client
+	// can fetch; safeHref drops it, and the message renders without a logo.
+	logoURL, _ := r.safeHref(r.opts.LogoURL)
+
 	lang, err := r.resolveLang(m.Lang)
 	if err != nil {
 		return "", err
@@ -293,6 +298,7 @@ func (r *Renderer) buildDocument(m *Message) (string, error) {
 		Footer:     template.HTML(footer), //nolint:gosec // G203: sanitized by bluemonday in markdownToSafeHTML
 		Sections:   sections,
 		LogoCID:    r.opts.LogoCID,
+		LogoURL:    logoURL,
 		LogoAlt:    alt,
 		LogoWidth:  r.opts.LogoWidth,
 		LogoHeight: r.opts.LogoHeight,

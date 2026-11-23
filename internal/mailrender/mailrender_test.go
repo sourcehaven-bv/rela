@@ -888,3 +888,56 @@ func TestRender_Button(t *testing.T) {
 	_, _, err := bare.Render(&mailrender.Message{Subject: "s", Button: &mailrender.Button{Label: "Go", URL: "/x"}})
 	require.ErrorIs(t, err, mailrender.ErrButton)
 }
+
+// TestRender_LogoURL pins the public-address logo: a root-relative path is made
+// absolute by the base URL, and without one the message has no logo.
+func TestRender_LogoURL(t *testing.T) {
+	t.Parallel()
+	msg := &mailrender.Message{Subject: "Hi"}
+
+	html, _ := render(t, newRenderer(t, &mailrender.Options{
+		BaseURL: "https://app.example.test", LogoURL: "/_custom/logo.png", LogoAlt: "Acme",
+	}), msg)
+	require.Contains(t, html, `src="https://app.example.test/_custom/logo.png"`)
+	require.Contains(t, html, `alt="Acme"`)
+
+	html, _ = render(t, newRenderer(t, &mailrender.Options{LogoURL: "/_custom/logo.png"}), msg)
+	require.NotContains(t, html, `class="logo"`)
+
+	html, _ = render(t, newRenderer(t, &mailrender.Options{
+		LogoCID: "logo@rela", LogoURL: "https://cdn.example.test/logo.png",
+	}), msg)
+	require.Contains(t, html, `src="cid:logo@rela"`)
+	require.NotContains(t, html, "cdn.example.test")
+}
+
+func TestValidateLogoURL(t *testing.T) {
+	t.Parallel()
+	for _, ok := range []string{"", "/logo.png", "https://x.test/logo.webp?v=2", "http://x.test/l.jpg"} {
+		require.NoError(t, mailrender.ValidateLogoURL(ok), ok)
+	}
+	for _, bad := range []string{
+		"javascript:alert(1)", "//evil.test/logo.png", "logo.png", "/logo.svg",
+		"https://x.test/logo.SVG?v=1", "/logo.png\r\nX: y", "data:image/png;base64,AA",
+	} {
+		require.Error(t, mailrender.ValidateLogoURL(bad), bad)
+		_, err := mailrender.New(&mailrender.Options{LogoURL: bad})
+		require.Error(t, err, bad)
+	}
+}
+
+// TestRender_TextPartKeepsEmailAddresses pins that the plain-text part keeps
+// an address written bare, as an autolink, or as a mailto: link.
+func TestRender_TextPartKeepsEmailAddresses(t *testing.T) {
+	t.Parallel()
+	r := newRenderer(t, &mailrender.Options{})
+	_, text := render(t, r, &mailrender.Message{
+		Subject: "Contact",
+		Intro: "Write to support@example.test or <billing@example.test>.\n\n" +
+			"[Mail us](mailto:hello@example.test?subject=Hi) or <mailto:sales@example.test>.",
+	})
+	require.Contains(t, text, "Write to support@example.test or billing@example.test.")
+	require.Contains(t, text, "Mail us (hello@example.test)")
+	require.Contains(t, text, "sales@example.test")
+	require.NotContains(t, text, "mailto:")
+}

@@ -148,7 +148,7 @@ func registerMailModule(r *Runtime) {
 	// mail.render is pure formatting with no transport, so it is registered on
 	// the same terms as send and works even when mail is unconfigured — see
 	// the doc on mailrender.go.
-	r.L.SetField(tbl, "render", r.L.NewFunction(mailRenderFunc(r.mailSender)))
+	r.L.SetField(tbl, "render", r.L.NewFunction(r.mail.render))
 	r.L.SetGlobal("mail", tbl)
 }
 
@@ -184,7 +184,7 @@ func (r *Runtime) luaMailSend(ls *lua.LState) int {
 
 	opts := ls.CheckTable(1)
 
-	sender := r.mailSender
+	sender := r.mail.sender
 	if sender == nil {
 		return pushMailError(ls, "not_configured", errMailNotConfigured.Error())
 	}
