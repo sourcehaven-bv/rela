@@ -76,7 +76,7 @@ func TestV1EntityRelations_OutgoingOrderableSorted(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/recipes/"+recipeID+"/relations", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1EntityRelations(rec, req, "recipe", recipeID)
+	app.entities.handleV1EntityRelations(rec, req, "recipe", recipeID)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -106,7 +106,7 @@ func TestV1GetRelationType_OutgoingOrderableSorted(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/recipes/"+recipeID+"/relations/has-step", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetRelationType(rec, req, "recipe", recipeID, "has-step")
+	app.entities.handleV1GetRelationType(rec, req, "recipe", recipeID, "has-step")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -135,7 +135,7 @@ func TestV1EntityRelations_NonOrderable_NotSortedByOrderProperty(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/recipes/"+recipeID+"/relations", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1EntityRelations(rec, req, "recipe", recipeID)
+	app.entities.handleV1EntityRelations(rec, req, "recipe", recipeID)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}

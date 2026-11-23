@@ -146,7 +146,7 @@ func TestRelationOrder_PositionWalksRelationOrder(t *testing.T) {
 	q := url.Values{"id": {"STP-X"}, "scope": {string(scope)}}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_position?"+q.Encode(), http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1EntityPosition(rec, req)
+	app.entities.handleV1EntityPosition(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var pos v1.Position
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &pos))

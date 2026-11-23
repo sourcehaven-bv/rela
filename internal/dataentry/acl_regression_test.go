@@ -26,7 +26,7 @@ func TestACLRegression_NopACL_GetUnchanged(t *testing.T) {
 	// readGateFromContext returning nopReadGate.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("NopACL GET: got %d, want 200; body=%s", rec.Code, rec.Body)
@@ -46,7 +46,7 @@ func TestACLRegression_NopACL_NonExistentStill404(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-NONEXISTENT", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-NONEXISTENT")
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-NONEXISTENT")
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("NopACL nonexistent: got %d, want 404", rec.Code)

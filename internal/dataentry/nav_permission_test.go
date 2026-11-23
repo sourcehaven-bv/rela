@@ -299,7 +299,7 @@ func TestNavPermission_FilterIsPresentationOnly(t *testing.T) {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody).WithContext(ctx)
 		rec := httptest.NewRecorder()
-		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("list: got %d, want 200; body=%s", rec.Code, rec.Body)
 		}

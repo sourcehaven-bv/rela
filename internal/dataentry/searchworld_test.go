@@ -135,7 +135,7 @@ func TestSearch_DeniedWorldFindsNothing(t *testing.T) {
 			ctx := withWorld(withReadGate(aliceCtx(), nopReadGate{}),
 				worldHandle{name: "published", denied: true})
 			rec := httptest.NewRecorder()
-			app.handleV1Search(rec, req.WithContext(ctx))
+			app.entities.handleV1Search(rec, req.WithContext(ctx))
 			if rec.Code != http.StatusOK {
 				t.Fatalf("got %d %s", rec.Code, rec.Body)
 			}

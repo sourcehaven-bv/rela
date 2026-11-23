@@ -205,7 +205,7 @@ func dashboardTable(
 		if sorted && sort != "" {
 			query["sort"] = []string{sort}
 		}
-		rows, total, _, err := a.listPage(ctx, listCfg.EntityType, query, 1, limit)
+		rows, total, _, err := a.lists.listPage(ctx, listCfg.EntityType, query, 1, limit)
 		return rows, total, err
 	}
 	raw, total, err := read(true)

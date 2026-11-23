@@ -32,7 +32,7 @@ func listIDs(t *testing.T, app *App, url string) []string {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, url, http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	var resp v1.ListResponse
@@ -97,7 +97,7 @@ func TestViewCondition_TotalMatchesTheFilteredPopulation(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?list_id=open_only&per_page=2", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	var resp v1.ListResponse

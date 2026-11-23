@@ -278,7 +278,7 @@ func configuredListRows(
 		return ctx, nil, err
 	}
 	gated.reach = reach
-	rows, _, err := scopedSortedEntitiesScoped(ctx, a, typeName, gated, scope)
+	rows, _, err := a.lists.scopedSortedEntitiesScoped(ctx, typeName, gated, scope)
 	if err != nil {
 		return ctx, nil, err
 	}

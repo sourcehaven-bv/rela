@@ -57,7 +57,7 @@ func TestV1Search_DateVariables(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?q="+url.QueryEscape(tc.q), http.NoBody)
 			req = req.WithContext(readtime.With(req.Context(), readAt))
 			rec := httptest.NewRecorder()
-			app.handleV1Search(rec, req)
+			app.entities.handleV1Search(rec, req)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status %d: %s", rec.Code, rec.Body)
 			}

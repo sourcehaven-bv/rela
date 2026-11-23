@@ -68,7 +68,7 @@ func getRelationsAs(t *testing.T, app *App, d *acl.Declarative,
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/"+plural+"/"+entityID+"/relations", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1EntityRelations(rec, req, typeName, entityID)
+	app.entities.handleV1EntityRelations(rec, req, typeName, entityID)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET %s/%s/relations: %d %s", plural, entityID, rec.Code, rec.Body)
 	}
@@ -93,7 +93,7 @@ func getRelationTypeAs(t *testing.T, app *App, d *acl.Declarative,
 	req := httptest.NewRequest(http.MethodGet, url, http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1GetRelationType(rec, req, typeName, entityID, relType)
+	app.entities.handleV1GetRelationType(rec, req, typeName, entityID, relType)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET %s/%s/relations/%s: %d %s", plural, entityID, relType, rec.Code, rec.Body)
 	}
@@ -254,7 +254,7 @@ func TestACLNeighborReadLeakInvariant(t *testing.T) {
 				req := httptest.NewRequest(http.MethodGet, "/api/v1/features/FEAT-VIS/relations", http.NoBody)
 				req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 				rec := httptest.NewRecorder()
-				app.handleV1EntityRelations(rec, req, "feature", "FEAT-VIS")
+				app.entities.handleV1EntityRelations(rec, req, "feature", "FEAT-VIS")
 				return rec.Body.String()
 			},
 		},
@@ -267,7 +267,7 @@ func TestACLNeighborReadLeakInvariant(t *testing.T) {
 					"/api/v1/features/FEAT-VIS/relations/implements?direction=incoming", http.NoBody)
 				req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 				rec := httptest.NewRecorder()
-				app.handleV1GetRelationType(rec, req, "feature", "FEAT-VIS", "implements")
+				app.entities.handleV1GetRelationType(rec, req, "feature", "FEAT-VIS", "implements")
 				return rec.Body.String()
 			},
 		},
@@ -280,7 +280,7 @@ func TestACLNeighborReadLeakInvariant(t *testing.T) {
 					"/api/v1/tickets/TKT-VIS/relations/implements", http.NoBody)
 				req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 				rec := httptest.NewRecorder()
-				app.handleV1GetRelationType(rec, req, "ticket", "TKT-VIS", "implements")
+				app.entities.handleV1GetRelationType(rec, req, "ticket", "TKT-VIS", "implements")
 				return rec.Body.String()
 			},
 		},

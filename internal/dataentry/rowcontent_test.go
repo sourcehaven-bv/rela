@@ -79,7 +79,7 @@ func TestSearchRows_OmitContentUnlessRequested(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?"+tc.query, http.NoBody)
 			req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 			rec := httptest.NewRecorder()
-			app.handleV1Search(rec, req)
+			app.entities.handleV1Search(rec, req)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status %d: %s", rec.Code, rec.Body)
 			}

@@ -227,7 +227,7 @@ func searchIDsUnderWorld(t *testing.T, app *App, q string, h worldHandle) []stri
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q="+q, http.NoBody)
 	ctx := withWorld(withReadGate(aliceCtx(), nopReadGate{}), h)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req.WithContext(ctx), "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req.WithContext(ctx), "ticket", "tickets")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list under world: got %d %s", rec.Code, rec.Body)
 	}

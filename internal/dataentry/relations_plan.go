@@ -304,28 +304,3 @@ func edgeKeyOf(entityID, relType string, s edgeSlot, incoming bool) entity.Relat
 func readableIncoming(ctx context.Context, r entityReader, v visibleReader, id string) ([]*entity.Relation, error) {
 	return v.readableRelations(ctx, r.incomingRelations(ctx, id))
 }
-
-// markIncomingFace adds `face` and `editable` to the wire row of an incoming
-// edge whose tail is a face. Such an edge belongs to that face of its source,
-// so a client addresses it as `ID@face`; editable reports whether the
-// principal may remove it. The server re-authorizes every write.
-func (a *App) markIncomingFace(
-	ctx context.Context, row map[string]any, pathEntity *entity.Entity, edge *entity.Relation,
-) {
-	if edge.FromFace.IsImplicit() {
-		return
-	}
-	row["face"] = string(edge.FromFace)
-	row["editable"] = false
-	req := translateRelationDelete(a.Meta(), edge.Type, a.reader.entityType(ctx, edge.From), edge.From, edge.FromFace)
-	if !a.affordances.acl().AuthorizeWrite(ctx, req).Allow {
-		return
-	}
-	sources, err := a.affordances.relationSources(ctx, pathEntity,
-		entity.Ref{ID: edge.From, Face: edge.FromFace}, string(DirectionIncoming), edge.Type)
-	if err != nil {
-		return
-	}
-	_, denial := a.affordances.relationOpDenial(ctx, sources, edge.Type, RelationOpRemove)
-	row["editable"] = denial == nil
-}

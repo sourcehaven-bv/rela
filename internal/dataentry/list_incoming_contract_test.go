@@ -52,7 +52,7 @@ func TestListEndpoint_IncomingEdge_InverseKey_ODHV2DContract(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/features?include=*", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "feature", "features")
+	app.entities.handleV1ListEntities(rec, req, "feature", "features")
 	if rec.Code != 200 {
 		t.Fatalf("list features: status %d, body %s", rec.Code, rec.Body)
 	}

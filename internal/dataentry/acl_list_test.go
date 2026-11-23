@@ -305,7 +305,7 @@ func TestACLList_QueryErrorMapping(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
@@ -343,7 +343,7 @@ func TestACLPosition_SearchScopeGated(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_position?id=TKT-001&scope="+scope, http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1EntityPosition(rec, req)
+	app.entities.handleV1EntityPosition(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("position: %d %s", rec.Code, rec.Body)
@@ -363,7 +363,7 @@ func TestACLPosition_SearchScopeGated(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/_position?id=FEAT-001&scope="+scope, http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 	rec = httptest.NewRecorder()
-	app.handleV1EntityPosition(rec, req)
+	app.entities.handleV1EntityPosition(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("hidden id in search scope: got %d, want 404 not_in_scope", rec.Code)
 	}
@@ -379,7 +379,7 @@ func TestACLList_AllowAllLoadErrorSurfaces(t *testing.T) {
 	// No gate on ctx → nopReadGate → AllowAll path.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
@@ -443,7 +443,7 @@ func listEntitiesAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarat
 	req := httptest.NewRequest(http.MethodGet, url, http.NoBody)
 	req = req.WithContext(gateCtxFor(ctx, t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, typeName, plural)
+	app.entities.handleV1ListEntities(rec, req, typeName, plural)
 
 	var resp v1.ListResponse
 	if rec.Code == http.StatusOK {

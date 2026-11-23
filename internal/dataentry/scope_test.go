@@ -29,7 +29,7 @@ func getPosition(t *testing.T, app *App, id string, scope ScopeDescriptor) (*htt
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, positionURL(t, id, scope), http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1EntityPosition(rec, req)
+	app.entities.handleV1EntityPosition(rec, req)
 	var pos v1.Position
 	if rec.Code == http.StatusOK {
 		if err := json.NewDecoder(rec.Body).Decode(&pos); err != nil {
@@ -277,7 +277,7 @@ func TestV1PositionBadRequest(t *testing.T) {
 			}
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/_position?"+q.Encode(), http.NoBody)
 			rec := httptest.NewRecorder()
-			app.handleV1EntityPosition(rec, req)
+			app.entities.handleV1EntityPosition(rec, req)
 			if rec.Code != tc.want {
 				t.Errorf("status: got %d, want %d", rec.Code, tc.want)
 			}
@@ -295,7 +295,7 @@ func TestV1PositionMatchesListOrdering(t *testing.T) {
 	// The ordered set the list endpoint produces for sort=title.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=title", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 	var list v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
 		t.Fatal(err)

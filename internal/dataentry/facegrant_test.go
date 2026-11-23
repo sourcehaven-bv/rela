@@ -276,6 +276,6 @@ func relationsAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarative
 		"/api/v1/"+plural+"/"+entityID+"/relations", http.NoBody)
 	req = req.WithContext(gateCtxFor(ctx, t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1EntityRelations(rec, req, typeName, entityID)
+	app.entities.handleV1EntityRelations(rec, req, typeName, entityID)
 	return rec
 }

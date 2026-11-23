@@ -184,7 +184,7 @@ func TestRetiredRedirect_WritesNotRedirected(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1SingleEntity(rec, req, "ticket", "tickets", "TKT-OLD")
+	app.entities.handleV1SingleEntity(rec, req, "ticket", "tickets", "TKT-OLD")
 	if rec.Code == http.StatusTemporaryRedirect || rec.Header().Get("Location") != "" {
 		t.Fatalf("PATCH on a retired id redirected: %d %q", rec.Code, rec.Header().Get("Location"))
 	}

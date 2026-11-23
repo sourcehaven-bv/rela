@@ -365,10 +365,10 @@ func TestEntityETag_FoldsTheServedFaceNotTheWorld(t *testing.T) {
 	})
 	wctx := withWorld(ctx, worldHandle{name: "published", scope: scope})
 
-	if a, b := app.computeEntityETag(ctx, draft), app.computeEntityETag(wctx, draft); a != b {
+	if a, b := app.entities.computeEntityETag(ctx, draft), app.entities.computeEntityETag(wctx, draft); a != b {
 		t.Errorf("the same face under two worlds must share a validator: %s vs %s", a, b)
 	}
-	if a, b := app.computeEntityETag(ctx, draft), app.computeEntityETag(ctx, published); a == b {
+	if a, b := app.entities.computeEntityETag(ctx, draft), app.entities.computeEntityETag(ctx, published); a == b {
 		t.Errorf("two faces must not share a validator")
 	}
 }

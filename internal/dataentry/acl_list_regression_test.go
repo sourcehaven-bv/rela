@@ -24,7 +24,7 @@ func TestACLListRegression_NopACL_ListUnchanged(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?per_page=2&page=1", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("NopACL list: got %d, want 200; body=%s", rec.Code, rec.Body)
@@ -64,7 +64,7 @@ func TestACLListRegression_NopACL_FreeTextStillWorks(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=alpha", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.entities.handleV1ListEntities(rec, req, "ticket", "tickets")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("NopACL list q=: got %d, want 200; body=%s", rec.Code, rec.Body)

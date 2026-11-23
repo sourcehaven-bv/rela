@@ -77,7 +77,7 @@ func computeETagForTest(t *testing.T, app *App, entityID string) string {
 	if !found {
 		t.Fatalf("computeETagForTest: %s not in store", entityID)
 	}
-	return app.computeEntityETag(t.Context(), e)
+	return app.entities.computeEntityETag(t.Context(), e)
 }
 
 // TestACLWrite_DeleteOnHiddenIs404 pins AC3 for DELETE.

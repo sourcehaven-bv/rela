@@ -75,14 +75,14 @@ func navItemsFor(
 	}
 	limit := from.EffectiveLimit()
 	query := navItemsListQuery(from.List, listCfg)
-	rows, total, _, err := a.listPage(ctx, listCfg.EntityType, query, 1, limit)
+	rows, total, _, err := a.lists.listPage(ctx, listCfg.EntityType, query, 1, limit)
 	if refusal, ok := errors.AsType[*propertyNotVisibleError](err); ok && refusal.use == "sort" {
 		// The list sorts or groups on a property this reader cannot see on
 		// every row. The group's entries are still the list's rows, so drop
 		// the order and read again, as the SPA list does (withSortFallback).
 		// A refused filter stands: dropping it would widen the group.
 		delete(query, "sort")
-		rows, total, _, err = a.listPage(ctx, listCfg.EntityType, query, 1, limit)
+		rows, total, _, err = a.lists.listPage(ctx, listCfg.EntityType, query, 1, limit)
 	}
 	if err != nil {
 		return v1.NavItemList{}, err

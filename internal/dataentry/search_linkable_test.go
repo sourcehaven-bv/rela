@@ -81,10 +81,10 @@ type linkableRead struct {
 
 var linkableReads = map[string]linkableRead{
 	"search": {"/api/v1/_search?q=type:policy&type=policy", func(app *App, rec *httptest.ResponseRecorder, req *http.Request) {
-		app.handleV1Search(rec, req)
+		app.entities.handleV1Search(rec, req)
 	}},
 	"list": {"/api/v1/policys?per_page=100", func(app *App, rec *httptest.ResponseRecorder, req *http.Request) {
-		app.handleV1ListEntities(rec, req, "policy", "policys")
+		app.entities.handleV1ListEntities(rec, req, "policy", "policys")
 	}},
 }
 
@@ -353,7 +353,7 @@ func TestSearch_IdentityLinkableIgnoresHiddenFaces(t *testing.T) {
 					linkableReads["search"].url+"&relation=implements&direction=incoming", http.NoBody))
 				req = req.WithContext(withWorld(req.Context(), faceWorld("published")))
 				rec := httptest.NewRecorder()
-				app.handleV1Search(rec, req)
+				app.entities.handleV1Search(rec, req)
 				if rec.Code != http.StatusOK {
 					t.Fatalf("search = %d %s", rec.Code, rec.Body)
 				}

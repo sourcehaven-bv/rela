@@ -1,7 +1,6 @@
 package dataentry
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -157,71 +156,6 @@ func scopeFromParam(raw string, meta entityTypeChecker) (scope ScopeDescriptor, 
 	return d, true, ""
 }
 
-// resolveScope produces the fully ordered entity set a scope refers to,
-// dispatching on Source. A list scope runs the shared list pipeline
-// (single-type, property-sorted). A search scope runs executeQuery — the same
-// relevance-ordered, possibly-mixed-type pipeline the search view uses — then
-// narrows to Type when one was supplied. Routing search through executeQuery
-// (not scopedSortedEntities) is what makes prev/next correct across mixed-type
-// search results: position is found within the exact set the user saw.
-//
-// Both branches end gated: the list pipeline resolves the read scope
-// internally, and executeQuery gates the search pipeline internally
-// since TKT-BA8BSX (it routes through search.VisibleSearcher; the
-// external readableSubset patch this branch used in the interim is
-// retired). Without the gate a denied principal reads hidden
-// cardinality from Total and harvests hidden {ID, Type} pairs from
-// prev/next — the exact leak shape TKT-VMD8 closes on the list path
-// (CRIT finding, TKT-VMD8 review).
-//
-// A pile scope is the pile's readable items in the request's world, newest
-// first, exactly the rows GET /_piles/{id} lists. Another user's pile is
-// [piles.ErrNotFound], like a missing one.
-func (a *App) resolveScope(ctx context.Context, scope ScopeDescriptor) ([]*entityPkg.Entity, error) {
-	switch scope.Source {
-	case "pile":
-		return a.piles.scopeEntities(ctx, scope.Pile)
-	case "search":
-		entities, err := a.queries.executeQuery(ctx, scope.Q)
-		if err != nil {
-			return nil, err
-		}
-		if scope.Type != "" {
-			filtered := entities[:0]
-			for _, e := range entities {
-				if e.Type == scope.Type {
-					filtered = append(filtered, e)
-				}
-			}
-			entities = filtered
-		}
-		return entities, nil
-	default:
-		query := scope.toQuery()
-		rows, err := a.scopedSortedEntities(ctx, scope.Type, query)
-		if err != nil {
-			return nil, err
-		}
-		return scopeListCondition(ctx, a, scope.Type, query, rows)
-	}
-}
-
-// scopeListCondition narrows a list scope's rows by the `condition:` of the
-// list its `list_id` names, as listPage does for the list's own page: after
-// the row gate and every filter, so the position and total describe the rows
-// the list shows. Rows pass unchanged when no list is named or the list has
-// no condition.
-func scopeListCondition(
-	ctx context.Context, a *App, typeName string, query url.Values, rows []*entityPkg.Entity,
-) ([]*entityPkg.Entity, error) {
-	ctx, n, err := resolveListNarrowing(ctx, a, a.State(), typeName, query)
-	if err != nil || n.cond == nil {
-		return rows, err
-	}
-	ctx = primeVerdicts(ctx, a.fieldResolver, rows)
-	return applyViewCondition(ctx, rows, n.cond, suggestionRedactor(a.affordances), a.Services().Store)
-}
-
 // entityTypeChecker is the narrow capability scopeFromParam needs: confirm a
 // type name exists in the metamodel. Declared at the consumer per the
 // call-site-interface rule in CLAUDE.md.
@@ -257,79 +191,6 @@ func (d ScopeDescriptor) toQuery() url.Values {
 		q.Set(scopeAnchorParam, d.Anchor)
 	}
 	return q
-}
-
-// handleV1EntityPosition resolves an entity's position within a scope. It
-// reproduces the scope's ordered set via resolveScope (the list pipeline for
-// source=list, the search pipeline for source=search) then locates the id,
-// returning {prev, next, current, total}. This supersedes the old client-side
-// approach where useScopeNavigation fetched per_page=1000 and scanned the
-// array — which silently truncated once the set exceeded the pagination cap
-// (issue #844).
-//
-//	GET /api/v1/_position?id=<entityID>&scope=<urlencoded-json>
-//	→ 200 {prev,next,current,total} | 400 bad scope | 404 id not in scope
-//
-//archplan:auth=authz
-func (a *App) handleV1EntityPosition(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-		return
-	}
-
-	query := r.URL.Query()
-
-	id := strings.TrimSpace(query.Get("id"))
-	if id == "" {
-		writeV1Error(w, r, http.StatusBadRequest, "bad_request", "id is required", "")
-		return
-	}
-
-	scope, ok, reason := scopeFromParam(query.Get("scope"), a.Meta())
-	if !ok {
-		writeV1Error(w, r, http.StatusBadRequest, "bad_scope", "Invalid scope", reason)
-		return
-	}
-
-	if pos, handled := storePosition(a, w, r, scope, id); handled {
-		if pos != nil {
-			writeV1JSON(w, http.StatusOK, *pos)
-		}
-		return
-	}
-	if pos, handled := searchStorePosition(a, w, r, scope, id); handled {
-		if pos != nil {
-			writeV1JSON(w, http.StatusOK, *pos)
-		}
-		return
-	}
-
-	entities, err := a.resolveScope(r.Context(), scope)
-	if err != nil {
-		if scope.Source == "pile" {
-			writePilesError(w, r, err)
-			return
-		}
-		writeListPipelineError(w, r, err)
-		return
-	}
-
-	idx := scopeIndex(scope, entities, id)
-	if idx == -1 {
-		writeV1Error(w, r, http.StatusNotFound, "not_in_scope", "Entity not found in scope", "")
-		return
-	}
-
-	pos := v1.Position{Current: idx + 1, Total: len(entities)}
-	if idx > 0 {
-		pos.Prev = scopePositionRef(scope, entities[idx-1])
-	}
-	if idx < len(entities)-1 {
-		pos.Next = scopePositionRef(scope, entities[idx+1])
-	}
-
-	writeV1JSON(w, http.StatusOK, pos)
 }
 
 // storePosition answers a list-sourced position from the store when the

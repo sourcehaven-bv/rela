@@ -277,7 +277,7 @@ func TestDashboardPermission_FilterIsPresentationOnly(t *testing.T) {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?q=visible", http.NoBody).WithContext(ctx)
 		rec := httptest.NewRecorder()
-		app.handleV1Search(rec, req)
+		app.entities.handleV1Search(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("search: got %d, want 200; body=%s", rec.Code, rec.Body)
 		}

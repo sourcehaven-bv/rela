@@ -103,7 +103,7 @@ func newNextActionHandler(app *App) *nextActionHandler {
 		fields:       func() FieldVerdictResolver { return app.fieldResolver },
 		affordances:  func() affordanceService { return app.affordances },
 		store:        func() store.GraphQueryer { return app.store },
-		scoped:       app.scopedSortedEntities,
+		scoped:       app.lists.scopedSortedEntities,
 		inWorld: func(ctx context.Context, entityType, id string) (*entityPkg.Entity, bool, error) {
 			return app.visibleReader.inWorld(ctx, entityType, id)
 		},

@@ -119,7 +119,7 @@ func listTaken(t *testing.T, app *App, query url.Values) []string {
 	}
 	req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "taak", "taaks")
+	app.entities.handleV1ListEntities(rec, req, "taak", "taaks")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list status: got %d, body %s", rec.Code, rec.Body.String())
 	}
@@ -335,7 +335,7 @@ func TestV1ListRelationFilterOperatorFailsClosed(t *testing.T) {
 			path := "/api/v1/taaks?" + q.Encode()
 			req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
 			rec := httptest.NewRecorder()
-			app.handleV1ListEntities(rec, req, "taak", "taaks")
+			app.entities.handleV1ListEntities(rec, req, "taak", "taaks")
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("expected 400, got %d (body %s)", rec.Code, rec.Body.String())
 			}
@@ -457,7 +457,7 @@ func TestV1ListRelationFilterACL(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
 		req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 		rec := httptest.NewRecorder()
-		app.handleV1ListEntities(rec, req, "taak", "taaks")
+		app.entities.handleV1ListEntities(rec, req, "taak", "taaks")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("list status: got %d, body %s", rec.Code, rec.Body.String())
 		}

@@ -202,7 +202,7 @@ func searchLinkable(t *testing.T, app *App, d *acl.Declarative) bool {
 		linkableReads["search"].url+"&relation=implements&direction=incoming", http.NoBody))
 	req = req.WithContext(withWorld(req.Context(), faceWorld("published")))
 	rec := httptest.NewRecorder()
-	app.handleV1Search(rec, req)
+	app.entities.handleV1Search(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("search = %d %s", rec.Code, rec.Body)
 	}

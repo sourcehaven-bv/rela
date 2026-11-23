@@ -105,7 +105,7 @@ func fetchActions(t *testing.T, app *App, typeName, plural, id string) map[strin
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/"+plural+"/"+id, http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, typeName, plural, id)
+	app.entities.handleV1GetEntity(rec, req, typeName, plural, id)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET %s returned %d: %s", id, rec.Code, rec.Body.String())
 	}

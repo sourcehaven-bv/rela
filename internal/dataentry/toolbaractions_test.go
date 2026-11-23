@@ -51,7 +51,7 @@ func (d detailApp) listActions(t *testing.T, user, typeName, plural string) map[
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/"+plural, http.NoBody).
 		WithContext(gateCtxFor(principalCtx(user), t, d.decl))
 	rec := httptest.NewRecorder()
-	d.app.handleV1ListEntities(rec, req, typeName, plural)
+	d.app.entities.handleV1ListEntities(rec, req, typeName, plural)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET %s as %s: %d %s", plural, user, rec.Code, rec.Body)
 	}

@@ -169,6 +169,8 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// Built here as well as in the constructors: some tests assemble an App
 	// literal and call rebindApp directly.
 	app.analyzeAPI = newAnalyzeHandler(app)
+	app.lists = newListPipeline(app)
+	app.entities = newEntityReadHandler(app)
 	app.analyzeAPI.svc = analyzeService{reads: gatedReader, tracer: lateGatedTracer{app: app}, validator: app.validator}
 	app.schemaAPI = newSchemaHandler(app, svc.Templater())
 	app.conflictsAPI = newConflictsHandler(app)
@@ -335,7 +337,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		audit:          func() audit.Audit { return app.auditSink },
 		visible:        app.visibleReader,
 		denyAfford:     app.denyAffordance,
-		computeETag:    app.computeEntityETag,
+		computeETag:    app.entities.computeEntityETag,
 		faceEdges:      app.faceEdges,
 		readVisible: func(ctx context.Context, typeName string, ref entity.Ref) (*entity.Entity, bool, error) {
 			return app.visibleReader.addressRef(ctx, typeName, ref)

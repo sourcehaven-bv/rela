@@ -25,7 +25,7 @@ func positionFor(t *testing.T, app *App, id string, scope ScopeDescriptor) *http
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_position?"+q.Encode(), http.NoBody).
 		WithContext(principalCtx("alice"))
 	rec := httptest.NewRecorder()
-	app.handleV1EntityPosition(rec, req)
+	app.entities.handleV1EntityPosition(rec, req)
 	return rec
 }
 

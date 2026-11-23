@@ -46,7 +46,7 @@ type ganttHandler struct {
 	// extra reads. Edge properties never reach the response — relation meta
 	// carries no redaction on this path (TKT-0RBFN0).
 	store store.Store
-	// scoped is App.scopedSortedEntities: the ACL-scoped entity lister.
+	// scoped is listPipeline.scopedSortedEntities: the ACL-scoped entity lister.
 	// Going through it (not the raw store) is what makes step 1 structural.
 	scoped func(ctx context.Context, typeName string, query map[string][]string) ([]*entity.Entity, error)
 
@@ -380,7 +380,7 @@ func newGanttHandler(app *App, st store.Store) *ganttHandler {
 	return &ganttHandler{
 		schema: app.State,
 		store:  st,
-		scoped: app.scopedSortedEntities,
+		scoped: app.lists.scopedSortedEntities,
 		scopedHeaders: func(ctx context.Context, typeName string) ([]store.EntityHeader, bool, error) {
 			rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 			return scopedHeaders(ctx, app.Services(), rqr, scopeRequest{Type: typeName, Faces: rqr.Faces})

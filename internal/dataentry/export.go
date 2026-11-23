@@ -127,7 +127,7 @@ func newExportHandler(app *App) (*exportHandler, error) {
 		resolver:       visReader.Resolver(),
 		redactor:       redactor,
 		documents:      app.documents,
-		scopedEntities: app.scopedSortedEntities,
+		scopedEntities: app.lists.scopedSortedEntities,
 		viewCondition: func(listID string) ViewConditionMatcher {
 			return viewCondition(app.viewConditions, app.State(), viewKindList, listID)
 		},

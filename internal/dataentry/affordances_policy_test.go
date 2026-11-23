@@ -80,7 +80,7 @@ func getAs(t *testing.T, app *App, user, id string) v1.Entity {
 	req = req.WithContext(acltest.Bind(principal.With(req.Context(),
 		principal.Principal{User: user, Tool: principal.ToolDataEntry}), t, app.acl))
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "ticket", "tickets", id)
+	app.entities.handleV1GetEntity(rec, req, "ticket", "tickets", id)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET %s: got %d, want 200; body=%s", id, rec.Code, rec.Body.String())
 	}

@@ -27,7 +27,7 @@ func searchLimited(
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?"+params.Encode(), http.NoBody)
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
-	app.handleV1Search(rec, req)
+	app.entities.handleV1Search(rec, req)
 
 	var resp v1.ListResponse
 	if rec.Code == http.StatusOK {
@@ -135,7 +135,7 @@ func TestSearchTypeParam_ScopesFreeText(t *testing.T) {
 			params := url.Values{"q": {"alpha"}, "type": {tc.typ}}
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?"+params.Encode(), http.NoBody)
 			rec := httptest.NewRecorder()
-			app.handleV1Search(rec, req)
+			app.entities.handleV1Search(rec, req)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("GET /_search: %d %s", rec.Code, rec.Body)
 			}
@@ -168,7 +168,7 @@ func TestSearchLimit_FreeTextTypeClauseKeepsTheParamType(t *testing.T) {
 	params := url.Values{"q": {"type:feature alpha"}, "type": {"ticket"}, "limit": {"2"}}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?"+params.Encode(), http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Search(rec, req)
+	app.entities.handleV1Search(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /_search: %d %s", rec.Code, rec.Body)
 	}

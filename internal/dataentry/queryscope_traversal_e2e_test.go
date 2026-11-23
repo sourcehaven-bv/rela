@@ -187,7 +187,7 @@ func scopeListIDsFor(t *testing.T, app *App, typeName, plural, rawQuery string) 
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/"+plural+"?"+rawQuery, http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, typeName, plural)
+	app.entities.handleV1ListEntities(rec, req, typeName, plural)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list: %d %s", rec.Code, rec.Body)
 	}

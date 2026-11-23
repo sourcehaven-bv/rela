@@ -199,7 +199,7 @@ func getAsAlice(t *testing.T, app *App, d *acl.Declarative) *httptest.ResponseRe
 	t.Helper()
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/tickets/TKT-1", nil)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, asAlice(t, d, req), "ticket", "tickets", "TKT-1")
+	app.entities.handleV1GetEntity(rec, asAlice(t, d, req), "ticket", "tickets", "TKT-1")
 	return rec
 }
 

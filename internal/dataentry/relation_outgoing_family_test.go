@@ -21,7 +21,7 @@ func relationAffordanceOf(t *testing.T, app *App, d *acl.Declarative, addr, relT
 	req := asAlice(t, d, httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		"/api/v1/policys/"+addr, http.NoBody))
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, "policy", "policys", addr)
+	app.entities.handleV1GetEntity(rec, req, "policy", "policys", addr)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET %s = %d %s", addr, rec.Code, rec.Body)
 	}

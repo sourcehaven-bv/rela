@@ -350,7 +350,8 @@ func mustReadPkgFile(t *testing.T, name string) string {
 }
 
 // TestLeaseAttachPointsStayThree guards where `_lease` is set (TKT-4YPG4Q,
-// TKT-MHXH87). It may ride only the single-entity GET (api_v1.go), list rows
+// TKT-MHXH87). It may ride only the single-entity GET
+// (entity_read_handler.go), list rows
 // (serveRowLeases in leases_handler.go) and a view's entry
 // (views_handler.go): each sets it on an entity the caller has just read
 // through the row gate, from one lease read. Other surfaces (view sections,
@@ -359,7 +360,7 @@ func mustReadPkgFile(t *testing.T, name string) string {
 // and keeps the cost at one lease read per page.
 func TestLeaseAttachPointsStayThree(t *testing.T) {
 	const needle = ".Lease ="
-	allowed := map[string]int{"api_v1.go": 1, "leases_handler.go": 1, "views_handler.go": 1}
+	allowed := map[string]int{"entity_read_handler.go": 1, "leases_handler.go": 1, "views_handler.go": 1}
 
 	root, err := os.Getwd()
 	if err != nil {
