@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
@@ -55,6 +56,11 @@ type Column struct {
 	// counts: the where keys, the min/max/sum property and latest_by. The
 	// pick is not among them; a hidden pick withholds the value only.
 	Reads []string
+	// Records names the record type a roll-up over records reads
+	// (TKT-VMSWSWP); the relation fields above are then empty. Value is the
+	// record field, Window the age limit of the rows (zero for all).
+	Records string
+	Window  time.Duration
 }
 
 // Hop is one step of a roll-up path before the last: the canonical relation
@@ -78,7 +84,7 @@ func (c Column) StoreFunc() store.RollupFunc {
 		return store.RollupSum
 	case metamodel.RollupLatest:
 		return store.RollupLatest
-	case metamodel.RollupCount, metamodel.RollupExists:
+	case metamodel.RollupCount, metamodel.RollupExists, metamodel.RollupAvg, metamodel.RollupLatestRow:
 	}
 	return store.RollupCount
 }
@@ -92,7 +98,8 @@ func (c Column) ValueOf(res store.RollupResult) (any, bool) {
 		return res.Count, true
 	case metamodel.RollupExists:
 		return res.Count > 0, true
-	case metamodel.RollupMin, metamodel.RollupMax, metamodel.RollupSum, metamodel.RollupLatest:
+	case metamodel.RollupMin, metamodel.RollupMax, metamodel.RollupSum, metamodel.RollupLatest,
+		metamodel.RollupAvg, metamodel.RollupLatestRow:
 	}
 	return res.Value, res.Value != nil
 }
@@ -167,6 +174,15 @@ func compileColumn(
 	if !ok {
 		// The loader reports the shape; nothing more to check.
 		return Column{}, []string{at + " must declare exactly one function"}
+	}
+	if r.Records != "" {
+		return compileRecordsColumn(meta, typeName, name, pd, at)
+	}
+	switch fn {
+	case metamodel.RollupAvg, metamodel.RollupLatestRow:
+		return Column{}, []string{fmt.Sprintf("%s: %s is only valid with records", at, fn)}
+	case metamodel.RollupCount, metamodel.RollupExists, metamodel.RollupMin, metamodel.RollupMax,
+		metamodel.RollupSum, metamodel.RollupLatest:
 	}
 	path := make([]string, len(r.Via))
 	for i, v := range r.Via {
@@ -246,7 +262,7 @@ func compileFunc(
 	related func(role, p string) (metamodel.PropertyDef, bool), problems *[]string, at string,
 ) {
 	switch fn {
-	case metamodel.RollupCount, metamodel.RollupExists:
+	case metamodel.RollupCount, metamodel.RollupExists, metamodel.RollupAvg, metamodel.RollupLatestRow:
 	case metamodel.RollupMin, metamodel.RollupMax:
 		if rp, ok := related(string(fn), prop); ok {
 			switch {
@@ -368,4 +384,74 @@ func sameType(rollup, picked metamodel.PropertyDef) string {
 		return fmt.Sprintf("has type %q, which a roll-up cannot pick", picked.Type)
 	}
 	return ""
+}
+
+// compileRecordsColumn checks a roll-up over a record type: the type is owned
+// by typeName and the field is numeric and fits the declared type. A
+// declaration that reads no rows of the owner would silently be empty, so it
+// is refused.
+func compileRecordsColumn(
+	meta *metamodel.Metamodel, typeName, name string, pd metamodel.PropertyDef, at string,
+) (col Column, problems []string) {
+	r := pd.Rollup
+	fn, field, _ := r.Func()
+	field = strings.TrimSpace(field)
+	recType := strings.TrimSpace(r.Records)
+	rec, ok := meta.Records[recType]
+	if !ok {
+		return Column{}, []string{fmt.Sprintf("%s: records %q is not a record type", at, r.Records)}
+	}
+	if rec.Owner != typeName {
+		problems = append(problems, fmt.Sprintf(
+			"%s: record type %q is owned by %q, not %q", at, recType, rec.Owner, typeName))
+	}
+	fp, ok := rec.Fields[field]
+	switch {
+	case !ok:
+		problems = append(problems, fmt.Sprintf(
+			"%s: %s %q is not a field of record type %q", at, fn, field, recType))
+	case !metamodel.IsNumericType(fp.Type):
+		problems = append(problems, fmt.Sprintf("%s: %s %q has type %q; it needs integer or decimal", at, fn, field, fp.Type))
+	case fp.Type == metamodel.PropertyTypeDecimal && fp.Scale == nil:
+		// Without a declared scale a fold shows the most places any owner
+		// on the page has, so a value would change with its neighbors.
+		problems = append(problems, fmt.Sprintf("%s: %s %q needs a declared scale on record type %q",
+			at, fn, field, r.Records))
+	case fn == metamodel.RollupAvg && pd.Type != metamodel.PropertyTypeDecimal:
+		problems = append(problems, fmt.Sprintf("%s: avg needs type decimal, not %q", at, pd.Type))
+	case fn != metamodel.RollupAvg && fp.Type != pd.Type:
+		problems = append(problems, fmt.Sprintf("%s: %s %q has type %q, but the roll-up is declared %q",
+			at, fn, field, fp.Type, pd.Type))
+	}
+	window, err := metamodel.ParseRetention(r.Window)
+	if err != nil {
+		problems = append(problems, fmt.Sprintf("%s: window: %s", at, err))
+	}
+	return Column{Property: name, Func: fn, Records: recType, Value: field, Window: window,
+		Numeric: pd.Type == metamodel.PropertyTypeInteger, Decimal: pd.Type == metamodel.PropertyTypeDecimal}, problems
+}
+
+// RecordQuery asks for one roll-up over a record type, for a batch of owners
+// (TKT-VMSWSWP).
+type RecordQuery struct {
+	// Type is the record type and Field the numeric field it folds.
+	Type, Field string
+	// Func is sum, avg or latest.
+	Func metamodel.RollupFunc
+	// Owners are the entities whose rows fold. The answerer drops the ones
+	// the caller may not read.
+	Owners []string
+	// From and To bound the rows to [From, To); zero is unbounded. A window
+	// ends now, so a row dated in the future does not count.
+	From, To time.Time
+}
+
+// RecordQuery returns the query of a roll-up over records for owners, with
+// its window counted back from now.
+func (c Column) RecordQuery(owners []string, now time.Time) RecordQuery {
+	q := RecordQuery{Type: c.Records, Field: c.Value, Func: c.Func, Owners: owners}
+	if c.Window > 0 {
+		q.From, q.To = now.Add(-c.Window), now
+	}
+	return q
 }

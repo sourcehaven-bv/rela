@@ -206,6 +206,13 @@ line runs it, besides the hourly job. See [MCP server](mcp-server.md#record-tool
 [Lua scripting](lua-scripting.md#read-records-relalist_records-and-relaaggregate_records)
 and [the CLI reference](cli-reference.md#rela-records).
 
+## Roll-ups over records
+
+An owner type can show a value computed from its rows as a property: the
+`latest` value of a field, or its `sum` or `avg` over a `window`. See
+[roll-ups over records](metamodel.md#roll-up-properties). The value is
+computed on read with the reader's access, one record read per page.
+
 ## Trend charts
 
 A trend such as "control coverage per quarter" is a value computed over the

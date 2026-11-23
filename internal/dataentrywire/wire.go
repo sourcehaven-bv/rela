@@ -191,6 +191,9 @@ func wireOptionalStores(app *dataentry.App, svc *appbuild.Services) error {
 		if err := dataentry.SetRecords(app, rs, appbuild.LuaRecords(svc)); err != nil {
 			return fmt.Errorf("wire records: %w", err)
 		}
+		if err := dataentry.SetRecordRollups(app, appbuild.RecordRollups(svc)); err != nil {
+			return fmt.Errorf("wire record roll-ups: %w", err)
+		}
 	}
 
 	// Without a database audit log (the fs and memory tiers) the audit

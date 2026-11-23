@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -40,6 +41,9 @@ type Rollups struct {
 	st     store.Store
 	rows   ReadQueryProvider
 	fields FieldScoper
+	// recs and now serve roll-ups over record types; see [Rollups.WithRecords].
+	recs RecordAggregator
+	now  func() time.Time
 }
 
 // NewRollups builds the roll-up reader.
@@ -119,7 +123,12 @@ func (r *Rollups) Values(
 			slog.Warn("visibility: roll-up left out", "type", entityType, "property", col.Property, "err", err)
 			continue
 		}
-		results, err := r.column(ctx, col, ids, world)
+		var results map[string]store.RollupResult
+		if col.Records != "" {
+			results, err = r.recordColumn(ctx, col, ids)
+		} else {
+			results, err = r.column(ctx, col, ids, world)
+		}
 		if err != nil {
 			slog.Warn("visibility: roll-up left out", "type", entityType, "property", col.Property, "err", err)
 			continue
