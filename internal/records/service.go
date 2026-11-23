@@ -504,7 +504,9 @@ func (s *Service) Reverse(ctx context.Context, typ, group string) ([]Record, err
 	if d.Ledger == nil {
 		return nil, fmt.Errorf("%w: %s is not a ledger", ErrInvalid, typ)
 	}
-	if err := s.canAppend(ctx, typ); err != nil {
+	// A reversal reads the transaction and returns its negation, so it
+	// needs both permissions, as a change to a mutable row does.
+	if err := errors.Join(s.canAppend(ctx, typ), s.canRead(ctx, typ)); err != nil {
 		s.deniedAppend(ctx, err, typ, group)
 		return nil, err
 	}

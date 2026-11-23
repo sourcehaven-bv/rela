@@ -22,6 +22,15 @@ const permSchema = mutableSchema + `
     permissions: {read: "gated:read", append: "gated:append"}
     fields:
       kwh: {type: decimal}
+  gledger:
+    owner: account
+    permissions: {read: "gl:read", append: "gl:append"}
+    ledger:
+      amount: amount
+      group_by: txn
+    fields:
+      amount: {type: decimal, scale: 2, required: true}
+      txn: {type: string, required: true}
 `
 
 type heldPerms map[string]bool
@@ -36,6 +45,7 @@ func newPermService(t *testing.T, held heldPerms) *records.Service {
 	require.NoError(t, err)
 	o := &owners{types: map[string]string{"SITE-1": "site"}, props: map[string]map[string]any{},
 		hidden: map[string]bool{}, readOnly: map[string]bool{}}
+	o.types["ACC-1"], o.types["ACC-2"] = "account", "account"
 	s, err := records.NewService(records.Deps{Store: st, Owners: o, Meta: meta, Audit: audit.NewMemory(),
 		Permissions: held, Now: func() time.Time { return t0 }})
 	require.NoError(t, err)
@@ -94,4 +104,26 @@ func TestMetamodel_RecordPermissionName(t *testing.T) {
 `
 	_, err := metamodel.Parse([]byte(bad))
 	require.Error(t, err)
+}
+
+func TestPermissions_ReverseNeedsReadAndAppend(t *testing.T) {
+	ctx := context.Background()
+	legs := []records.Input{
+		{Owner: "ACC-1", Fields: map[string]any{"amount": "5.00", "txn": "t1"}},
+		{Owner: "ACC-2", Fields: map[string]any{"amount": "-5.00", "txn": "t1"}},
+	}
+	for name, held := range map[string]heldPerms{
+		"append only": {"gl:append": true},
+		"read only":   {"gl:read": true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			full := newPermService(t, heldPerms{"gl:read": true, "gl:append": true})
+			_, err := full.Append(ctx, "gledger", legs)
+			require.NoError(t, err)
+			// The same store is not shared, so post as the caller itself.
+			s := newPermService(t, held)
+			_, err = s.Reverse(ctx, "gledger", "t1")
+			require.ErrorIs(t, err, records.ErrForbidden)
+		})
+	}
 }
