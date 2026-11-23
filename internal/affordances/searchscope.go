@@ -210,7 +210,7 @@ func (c *fieldScopeCompiler) globalFieldGrants(roles []string) []search.FieldGra
 		}
 	}
 	if len(unconditional) > 0 {
-		out = append(out, search.FieldGrant{Fields: dedupe(unconditional)})
+		out = append(out, search.FieldGrant{Fields: slices.Compact(slices.Sorted(slices.Values(unconditional)))})
 	}
 	return out
 }
@@ -242,7 +242,7 @@ func (c *fieldScopeCompiler) localFieldGrants(locals []localRole) []search.Field
 			}
 			if len(unconditional) > 0 {
 				out = append(out, search.FieldGrant{
-					Fields: dedupe(unconditional),
+					Fields: slices.Compact(slices.Sorted(slices.Values(unconditional))),
 					When: &store.GraphQuery{
 						EntityType: c.entityType, Faces: store.AllFaces(), Related: []store.DirectedRelation{held},
 					},
@@ -395,7 +395,7 @@ func gatedFields(universe []string, ceiling acl.FieldCeiling) []string {
 	out := slices.Clone(universe)
 	out = append(out, ceiling.Visible...)
 	out = append(out, ceiling.Redact...)
-	return dedupe(out)
+	return slices.Compact(slices.Sorted(slices.Values(out)))
 }
 
 // ceilingNarrower returns the function that removes what a client ceiling
@@ -415,10 +415,4 @@ func ceilingNarrower(c acl.FieldCeiling) func([]string) []string {
 	default:
 		return func(fields []string) []string { return fields }
 	}
-}
-
-func dedupe(in []string) []string {
-	out := slices.Clone(in)
-	slices.Sort(out)
-	return slices.Compact(out)
 }

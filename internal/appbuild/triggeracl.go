@@ -305,7 +305,7 @@ func (j *triggerJudge) readViolations(r triggers.Rule) []string {
 			}
 		}
 	}
-	return dedupe(out)
+	return slices.Compact(slices.Sorted(slices.Values(out)))
 }
 
 // actionReads returns the properties of the subject an output reads, and
@@ -414,7 +414,7 @@ func (j *triggerJudge) writeViolations(r triggers.Rule, withEditor bool) []strin
 			out = append(out, j.createViolations(r, a.CreateEntity, withEditor)...)
 		}
 	}
-	return dedupe(out)
+	return slices.Compact(slices.Sorted(slices.Values(out)))
 }
 
 // createViolations is writeViolations for one create output.
@@ -865,15 +865,5 @@ func ruleShape(r triggers.Rule) ruleShapeT {
 func sortedTypes(meta *metamodel.Metamodel) []string {
 	out := metamodel.ExpandTypeNames(meta, meta.EntityTypes())
 	slices.Sort(out)
-	return out
-}
-
-func dedupe(in []string) []string {
-	var out []string
-	for _, s := range in {
-		if !slices.Contains(out, s) {
-			out = append(out, s)
-		}
-	}
 	return out
 }

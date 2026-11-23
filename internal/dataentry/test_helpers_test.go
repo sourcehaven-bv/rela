@@ -53,17 +53,6 @@ func (f *fixture) AddNode(e *entity.Entity) { f.entities = append(f.entities, e)
 // AddEdge appends a relation. Kept named AddEdge for drop-in compat.
 func (f *fixture) AddEdge(r *entity.Relation) { f.relations = append(f.relations, r) }
 
-// NodesByType returns all entities of the given type in fixture order.
-func (f *fixture) NodesByType(entityType string) []*entity.Entity {
-	var out []*entity.Entity
-	for _, e := range f.entities {
-		if e.Type == entityType {
-			out = append(out, e)
-		}
-	}
-	return out
-}
-
 // seedFromFixture ingests every entity and relation of a fixture into
 // the given store.
 func seedFromFixture(st store.Store, f *fixture) {

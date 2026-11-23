@@ -63,9 +63,6 @@ func New(id string, action dataentryconfig.Action, meta *metamodel.Metamodel) (*
 	return &Task{id: id, subject: subject, cfg: *action.LLM, meta: meta, def: def}, nil
 }
 
-// Subject is the entity type the task runs on.
-func (t *Task) Subject() string { return t.subject }
-
 // Config is the task's `llm:` block.
 func (t *Task) Config() dataentryconfig.LLMAction { return t.cfg }
 

@@ -18,12 +18,6 @@ func newAutomation(name ...string) *AutomationBuilder {
 	return b
 }
 
-// Name sets the automation name.
-func (b *AutomationBuilder) Name(name string) *AutomationBuilder {
-	b.auto.Name = name
-	return b
-}
-
 // OnCreate triggers when entities of the given types are created.
 func (b *AutomationBuilder) OnCreate(entityTypes ...string) *AutomationBuilder {
 	b.auto.On.Entity = entityTypes

@@ -45,9 +45,6 @@ func DefaultLimits() Limits {
 	}
 }
 
-// WithLimits overrides the per-command resource ceilings.
-func WithLimits(l Limits) Option { return func(r *Runner) { r.limits = l } }
-
 // applyLimits sets the platform's resource ceilings and process-group placement
 // on cmd before it starts. Implemented per-GOOS: rlimits are Linux-only in Go's
 // SysProcAttr, while process-group isolation (so a timeout kills the whole tree,

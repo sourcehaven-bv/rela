@@ -100,9 +100,6 @@ func NewEngine() *Engine {
 	return &Engine{runner: runner}
 }
 
-// Describe reports the confinement posture for the startup log.
-func (e *Engine) Describe() string { return e.runner.Describe() }
-
 // Probe reports a checker whose binary is not on PATH, so a missing tool is a
 // startup warning rather than a surprise on the first check.
 func (e *Engine) Probe(def metamodel.CheckerDef) error { return e.runner.Probe(def.Command) }

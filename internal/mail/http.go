@@ -81,15 +81,6 @@ func WithHTTPBaseURL(u string) HTTPOption {
 	return func(s *HTTPSender) { s.baseURL = strings.TrimSuffix(u, "/") }
 }
 
-// WithHTTPClient replaces the HTTP client. For tests.
-func WithHTTPClient(c *http.Client) HTTPOption {
-	return func(s *HTTPSender) {
-		if c != nil {
-			s.client = c
-		}
-	}
-}
-
 // NewHTTPSender returns a sender for cfg.
 //
 // Nil: a nil config is rejected. The config is re-validated here rather than

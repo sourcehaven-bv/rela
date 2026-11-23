@@ -95,9 +95,6 @@ type Option func(*Runner)
 // [PurposeTransform].
 func WithPurpose(p Purpose) Option { return func(r *Runner) { r.purpose = p } }
 
-// WithTempDir sets the directory for {in}/{out} temp files.
-func WithTempDir(dir string) Option { return func(r *Runner) { r.tempDir = dir } }
-
 // WithMaxConcurrent bounds how many commands may run at once. Per-command
 // limits cap a single process; this caps the aggregate, so N simultaneous
 // export/upload requests cannot multiply resource use N-fold. Callers past the
