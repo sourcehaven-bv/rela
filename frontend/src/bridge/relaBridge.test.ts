@@ -38,6 +38,20 @@ describe('relaBridge dispatcher', () => {
     expect(entities.listEntities).toHaveBeenCalledWith('ticket', { per_page: 5 })
   })
 
+  it('maps search → searchEntities with the page, and rejects a bad page', async () => {
+    vi.mocked(entities.searchEntities).mockResolvedValue({ data: [], meta: {} } as never)
+    const res = await dispatchBridgeRequest({
+      id: 9,
+      method: 'search',
+      params: { query: 'type:ticket', page: 2 },
+    })
+    expect(res.ok).toBe(true)
+    expect(entities.searchEntities).toHaveBeenCalledWith('type:ticket', { type: undefined, page: 2 })
+
+    const bad = await dispatchBridgeRequest({ id: 10, method: 'search', params: { query: 'x', page: 0 } })
+    expect(bad.error?.code).toBe('invalid_params')
+  })
+
   it('maps create → createEntity', async () => {
     vi.mocked(entities.createEntity).mockResolvedValue({ id: 'X-1' } as never)
     const res = await dispatchBridgeRequest({

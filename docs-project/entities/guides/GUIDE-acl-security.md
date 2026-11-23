@@ -1388,7 +1388,12 @@ Key properties:
   from `schema.yaml` while its files remain) is hidden from
   search rather than leaked.
 - **The result limit applies after visibility.** `/_search` returns
-  up to 1000 results; the bound counts *visible* hits. A
+  at most one page: `limit` rows, or 1000 without a `limit`, for free
+  text and structured queries alike. `page` reads the next page;
+  `meta.total` counts the visible matches and `meta.has_more` says a
+  later page holds rows. Free text ranks only its 1000 best hits;
+  `meta.capped` says it matched more.
+  The bound counts *visible* hits. A
   pre-visibility cap would starve restricted principals — the top
   candidates may all be hidden while their own matches rank below.
   Both gate placement and limit placement are pinned by conformance

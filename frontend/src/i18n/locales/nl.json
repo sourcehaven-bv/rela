@@ -1038,6 +1038,8 @@
     "introTitle": "Items zoeken",
     "introDescription": "Vind items op titel of inhoud en verfijn de resultaten met filters.",
     "resultCount": "{n} resultaat gevonden | {n} resultaten gevonden",
+    "resultCountTruncated": "De eerste {n} van {total} resultaten. Verfijn de zoekopdracht om de rest te zien.",
+    "resultCountCapped": "De {n} beste resultaten; er zijn er meer. Verfijn de zoekopdracht om ze te beperken.",
     "addResultsToPile": "Resultaten aan stapel toevoegen",
     "newPileFromResults": "Nieuwe stapel met de resultaten…",
     "inOwner": "in {title}",

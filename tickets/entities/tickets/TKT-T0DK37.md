@@ -5,7 +5,9 @@ title: Bound the structured search path the way free-text already is
 kind: enhancement
 priority: medium
 effort: s
-status: backlog
+started: "2026-11-23"
+completed: "2026-11-23"
+status: done
 ---
 
 ## What

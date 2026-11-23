@@ -516,10 +516,11 @@ type freeTextIDsForTypeResult struct {
 	HasFilter bool
 }
 
-// maxFreeTextSearchResults caps the number of hits the searcher is asked to
-// return. Hoisted to a package constant so executeQuery and the list-search
-// path stay in lockstep on the bound.
-const maxFreeTextSearchResults = 1000
+// maxSearchResults is the one bound on a search result. It caps the hits
+// the searcher is asked to return, so executeQuery and the list-search path
+// stay in lockstep, and it is the page size of a /_search read without a
+// limit, free text or structured (TKT-T0DK37).
+const maxSearchResults = 1000
 
 // freeTextIDs issues an ACL-scoped search from a parsed SearchQuery under
 // world scope w, and returns the matching entity IDs. Phrases are re-quoted so
