@@ -1624,11 +1624,17 @@ watch(searchQuery, () => {
             image, so titles line up. Decorative (the title names the row), so
             hidden from assistive technology.
           -->
-          <span v-for="(lead, i) in leadingColumns" :key="i" class="entity-list__lead" aria-hidden="true">
-            <template v-if="isCellInaccessible(item as Entity, lead)">🔒</template>
+          <span
+            v-for="(lead, i) in leadingColumns"
+            :key="i"
+            class="entity-list__lead"
+            :class="{ 'entity-list__lead--locked': isCellInaccessible(item as Entity, lead) }"
+            :title="isCellInaccessible(item as Entity, lead) ? t('list.inaccessible') : undefined"
+            aria-hidden="true"
+          >
             <component
               :is="resolveCell(item as Entity, lead)!.component"
-              v-else-if="resolveCell(item as Entity, lead)"
+              v-if="!isCellInaccessible(item as Entity, lead) && resolveCell(item as Entity, lead)"
               :model-value="resolveCell(item as Entity, lead)!.modelValue"
               :mode="'display'"
               :property-name="resolveCell(item as Entity, lead)!.propertyName"
@@ -1949,6 +1955,11 @@ watch(searchQuery, () => {
 
 .rl-table-row .entity-list__lead::after {
   display: none;
+}
+
+/* The lock, as generated content so the string is not hard-coded text. */
+.rl-table-row .entity-list__lead--locked::before {
+  content: '\1F512';
 }
 
 .empty-state {
