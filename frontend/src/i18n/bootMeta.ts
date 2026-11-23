@@ -7,7 +7,7 @@
  * `bootShell` in internal/dataentry/staticshell.go). The pages for a
  * suspended or archived workspace come from the same shell, so their logo,
  * account links, contact text and address, and page texts are there too. A shell without them reads
- * null.
+ * null. The read-only banner's text (`account.read_only_text`) is there too.
  */
 export type BootMetaName =
   | 'rela-app-name'
@@ -19,6 +19,7 @@ export type BootMetaName =
   | 'rela-contact-email'
   | 'rela-suspended-text'
   | 'rela-archived-text'
+  | 'rela-read-only-text'
 
 /** The content of the boot meta `name`, or null when absent or empty. */
 export function bootMeta(name: BootMetaName): string | null {

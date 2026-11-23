@@ -125,7 +125,7 @@ export const AccountMenu: Story = {
           <RlMenuSeparator />
           <RlMenuItem icon="user" href="#profile">Profile</RlMenuItem>
           <RlMenuItem icon="settings" href="#account">Account</RlMenuItem>
-          <RlMenuItem icon="organization" href="#orgs">Switch org</RlMenuItem>
+          <RlMenuItem icon="organization" href="#orgs">Switch organisation</RlMenuItem>
           <RlMenuSeparator />
           <RlMenuItem icon="sign-out" href="#sign-out">Sign out</RlMenuItem>
         </RlMenu>

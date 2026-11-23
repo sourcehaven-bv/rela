@@ -1157,6 +1157,10 @@
       "contact": "Neem bij vragen contact op met degene die het abonnement van je organisatie beheert.",
       "openAccount": "Naar je account",
       "tryAgain": "Opnieuw proberen",
+      "suspendedTab": "Werkruimte opgeschort",
+      "archivedTab": "Werkruimte gearchiveerd",
+      "noIdentityTab": "Kan je niet identificeren",
+      "unknownTab": "Werkruimte niet beschikbaar",
       "readOnlyBanner": "Deze werkruimte is alleen-lezen. Aanmaken en bewerken staan uit."
     }
   },

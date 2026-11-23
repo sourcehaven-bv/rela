@@ -49,6 +49,9 @@ type AccountConfig struct {
 	// shows the app's own text.
 	SuspendedText string `yaml:"suspended_text,omitempty" json:"suspended_text,omitempty"`
 	ArchivedText  string `yaml:"archived_text,omitempty" json:"archived_text,omitempty"`
+	// ReadOnlyText replaces the app's own text on the banner of a read-only
+	// workspace. Plain text; empty shows the app's own text.
+	ReadOnlyText string `yaml:"read_only_text,omitempty" json:"read_only_text,omitempty"`
 
 	// Admin is the proxy's administration page. Nil: accepted, means no admin
 	// link.
@@ -82,8 +85,9 @@ type AccountAdminLink struct {
 // MaxAccountContactRunes caps account.contact: it is one line on a page.
 const MaxAccountContactRunes = 200
 
-// MaxAccountPageTextRunes caps account.suspended_text and
-// account.archived_text: they are a short paragraph on a page.
+// MaxAccountPageTextRunes caps account.suspended_text,
+// account.archived_text and account.read_only_text: they are a short
+// paragraph on a page.
 const MaxAccountPageTextRunes = 500
 
 // accountKeys and accountAdminKeys are the keys the account block accepts.
@@ -91,7 +95,7 @@ const MaxAccountPageTextRunes = 500
 // `signout:` would silently drop a sign-out link; the block checks its own.
 var (
 	accountKeys = []string{"account", "admin", "archived_text", "avatar_property", "contact", "contact_email",
-		"sign_out", "suspended_text", "switch_org"}
+		"read_only_text", "sign_out", "suspended_text", "switch_org"}
 	accountAdminKeys = []string{"role", "url"}
 )
 
@@ -132,6 +136,7 @@ func validateAccount(data []byte, cfg *Config, meta *metamodel.Metamodel) []stri
 	for _, f := range []struct{ key, value string }{
 		{"account.suspended_text", acc.SuspendedText},
 		{"account.archived_text", acc.ArchivedText},
+		{"account.read_only_text", acc.ReadOnlyText},
 	} {
 		if len([]rune(f.value)) > MaxAccountPageTextRunes {
 			errs = append(errs, fmt.Sprintf("%s: longer than %d characters", f.key, MaxAccountPageTextRunes))

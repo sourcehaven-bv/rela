@@ -76,7 +76,7 @@ describe('AccountMenu', () => {
     expect(rows()).toEqual([
       { label: 'Profile', href: '/entity/person/PERS-1' },
       { label: 'Account', href: '/pratique/admin/account' },
-      { label: 'Switch org', href: '/pratique/auth/select-tenant' },
+      { label: 'Switch organisation', href: '/pratique/auth/select-tenant' },
       { label: 'Admin', href: '/pratique/admin/' },
       { label: 'Sign out', href: '/pratique/auth/logout' },
     ])

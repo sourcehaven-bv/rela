@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 import { REFUSAL, type AccessRefusal } from '@/api/workspaceAccess'
+import { usePageTitle } from '@/composables/useDocumentTitle'
 
 /**
  * What the app shows when the server refuses the session or the workspace
@@ -27,6 +28,10 @@ import { REFUSAL, type AccessRefusal } from '@/api/workspaceAccess'
  * suspended and archived explanations and the contact text, and add a
  * contact address. The values come from the shell
  * (`bootMeta`), because the workspace refuses its config.
+ *
+ * A page that replaces the app also names the browser tab, so the tab says
+ * "Workspace suspended · <app>" and not the app name alone. The session dialog
+ * leaves the tab to the page underneath.
  */
 const props = defineProps<{
   refusal: AccessRefusal
@@ -75,6 +80,17 @@ const text = computed(() => {
     default:
       return { title: t('shell.access.unknownTitle'), body: t('shell.access.unknownBody') }
   }
+})
+
+const TAB_TITLES: Partial<Record<AccessRefusal, string>> = {
+  [REFUSAL.noIdentity]: 'shell.access.noIdentityTab',
+  [REFUSAL.suspended]: 'shell.access.suspendedTab',
+  [REFUSAL.archived]: 'shell.access.archivedTab',
+  [REFUSAL.unknownWorkspace]: 'shell.access.unknownTab',
+}
+usePageTitle(() => {
+  const key = TAB_TITLES[props.refusal]
+  return key ? t(key) : null
 })
 
 const CONTACT_REFUSALS: readonly AccessRefusal[] = [

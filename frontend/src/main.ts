@@ -5,6 +5,7 @@ import App from './App.vue'
 import router from './router'
 import { installVisibleRefetch } from './composables/visibleRefetch'
 import { i18n } from './i18n'
+import { loadWorkspaceStatus } from './api/workspaceReadOnly'
 // rela-components tokens and shared classes FIRST: it declares the --rl-*
 // palette that everything below resolves against, tokens.css included — that
 // file is now a set of aliases onto it, not a palette of its own.
@@ -120,7 +121,14 @@ app.use(createPinia())
 // do not all hit the server in the same second (TASK-550RD).
 app.use(PiniaColada, { queryOptions: { refetchOnWindowFocus: false, refetchOnReconnect: false } })
 app.runWithContext(() => installVisibleRefetch(useQueryCache()))
-app.use(router)
-app.use(i18n)
-
-app.mount('#app')
+// The workspace status first: a suspended or archived workspace refuses every
+// other request, so the app shows its page without sending any of them, and a
+// read-only one shows its banner from the start (see api/workspaceReadOnly.ts).
+// The router goes in after it: installing it starts the first navigation,
+// whose guard can ask the server. The read never fails and gives up after
+// STATUS_TIMEOUT_MS.
+void loadWorkspaceStatus().finally(() => {
+  app.use(router)
+  app.use(i18n)
+  app.mount('#app')
+})

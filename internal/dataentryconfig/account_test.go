@@ -45,6 +45,8 @@ func TestValidateConfig_Account(t *testing.T) {
 		{"contact email two recipients", "account: {contact_email: 'a@example.com,b@example.com'}", "account.contact_email:"},
 		{"contact email no domain dot", "account: {contact_email: a@localhost}", "account.contact_email:"},
 		{"page texts", "account: {suspended_text: 'Paused.', archived_text: 'Closed.'}", ""},
+		{"read-only text", "account: {read_only_text: 'Look only.'}", ""},
+		{"read-only text too long", "account: {read_only_text: " + strings.Repeat("x", 501) + "}", "account.read_only_text: longer than 500"},
 		{"suspended text too long", "account: {suspended_text: " + strings.Repeat("x", 501) + "}", "account.suspended_text: longer than 500"},
 		{"archived text too long", "account: {archived_text: " + strings.Repeat("x", 501) + "}", "account.archived_text: longer than 500"},
 		{"app logo", "app: {logo: https://cdn.example.com/logo.svg}", ""},
