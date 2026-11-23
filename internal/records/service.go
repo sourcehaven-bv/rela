@@ -44,6 +44,14 @@ type Owners interface {
 	Writable(ctx context.Context, id string) (Owner, error)
 }
 
+// Permissions answers whether the caller holds a named permission. It is
+// the per-type `permissions:` of a record type (TKT-XUYQAWC). It resolves the
+// principal on ctx per call and fails closed without one.
+type Permissions interface {
+	// Holds reports whether the caller holds perm through a global role.
+	Holds(ctx context.Context, perm string) bool
+}
+
 // WriteLock runs the owner check and the insert of one append as a unit
 // that entity writes cannot interleave with. A wiring that keeps the rows in
 // the entity store's database implements it with one store transaction, so
@@ -63,6 +71,11 @@ type Deps struct {
 	Store  Store
 	Owners Owners
 	Meta   *metamodel.Metamodel
+	// Permissions decides the `permissions:` of record types.
+	//
+	// Nil: accepted only when no record type declares a permission;
+	// otherwise rejected, because a gate nobody can answer must not open.
+	Permissions Permissions
 	// Lock orders appends against entity writes.
 	//
 	// Nil: accepted. The owner check and the insert then run one after the
@@ -88,7 +101,14 @@ type Deps struct {
 // owner. An aggregate gates its owner set first and
 // only then folds, so no hidden owner's value reaches a result; results are
 // per caller and never cached.
+//
+// A record type may also name `permissions:`. They narrow the owner rules:
+// a caller without the read permission lists, folds and reads nothing of the
+// type, and a caller without the append permission may not append, reverse,
+// change or delete, even when it may update the owner. The check is on the
+// type, so it tells nothing about any entity; the refusal is [ErrForbidden].
 type Service struct {
+	perms  Permissions
 	store  Store
 	owners Owners
 	meta   *metamodel.Metamodel
@@ -106,6 +126,9 @@ func NewService(d Deps) (*Service, error) {
 		return nil, errors.New("records: NewService requires Store, Owners, Meta and Audit")
 	}
 	for _, k := range d.Meta.RecordKeys() {
+		if len(d.Meta.Records[k].Permissions.Names()) > 0 && d.Permissions == nil {
+			return nil, fmt.Errorf("records: record type %s declares permissions, and no Permissions is wired", k)
+		}
 		if !d.Meta.Records[k].Mutable {
 			continue
 		}
@@ -116,7 +139,7 @@ func NewService(d Deps) (*Service, error) {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	return &Service{store: d.Store, owners: d.Owners, meta: d.Meta, lock: d.Lock, audit: d.Audit, now: d.Now}, nil
+	return &Service{perms: d.Permissions, store: d.Store, owners: d.Owners, meta: d.Meta, lock: d.Lock, audit: d.Audit, now: d.Now}, nil
 }
 
 // locked runs fn under the write lock, or on the store directly when none is
@@ -186,6 +209,23 @@ func typeInfo(key string, d metamodel.RecordTypeDef) TypeInfo {
 		FieldOrder: d.FieldNames(), Retention: d.Retention, Ledger: d.Ledger, Mutable: d.Mutable}
 }
 
+// require returns [ErrForbidden] unless the caller holds perm, when the type
+// declares one.
+func (s *Service) require(ctx context.Context, perm, what, typ string) error {
+	if perm == "" || s.perms.Holds(ctx, perm) {
+		return nil
+	}
+	return fmt.Errorf("%w: %s records of %s needs permission %q", ErrForbidden, what, typ, perm)
+}
+
+func (s *Service) canRead(ctx context.Context, typ string) error {
+	return s.require(ctx, s.meta.Records[typ].Permissions.Read, "reading", typ)
+}
+
+func (s *Service) canAppend(ctx context.Context, typ string) error {
+	return s.require(ctx, s.meta.Records[typ].Permissions.Append, "writing", typ)
+}
+
 func (s *Service) def(typ string) (metamodel.RecordTypeDef, error) {
 	d, ok := s.meta.Records[typ]
 	if !ok {
@@ -209,6 +249,10 @@ type Input struct {
 func (s *Service) Append(ctx context.Context, typ string, in []Input) ([]Record, error) {
 	d, err := s.def(typ)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.canAppend(ctx, typ); err != nil {
+		s.deniedAppend(ctx, err, typ, "")
 		return nil, err
 	}
 	if len(in) == 0 {
@@ -460,6 +504,10 @@ func (s *Service) Reverse(ctx context.Context, typ, group string) ([]Record, err
 	if d.Ledger == nil {
 		return nil, fmt.Errorf("%w: %s is not a ledger", ErrInvalid, typ)
 	}
+	if err := s.canAppend(ctx, typ); err != nil {
+		s.deniedAppend(ctx, err, typ, group)
+		return nil, err
+	}
 	if group == "" {
 		return nil, fmt.Errorf("%w: group is required", ErrInvalid)
 	}
@@ -579,6 +627,9 @@ func (s *Service) Transaction(ctx context.Context, typ, group string) ([]Record,
 	if d.Ledger == nil {
 		return nil, fmt.Errorf("%w: %s is not a ledger", ErrInvalid, typ)
 	}
+	if err := s.canRead(ctx, typ); err != nil {
+		return nil, err
+	}
 	rows, err := groupRows(ctx, s.store, typ, group)
 	if err != nil {
 		return nil, err
@@ -616,6 +667,9 @@ func (s *Service) List(ctx context.Context, typ, owner string, q ListQuery) (Pag
 	if _, err := s.def(typ); err != nil {
 		return Page{}, err
 	}
+	if err := s.canRead(ctx, typ); err != nil {
+		return Page{}, err
+	}
 	if err := s.readableOwner(ctx, owner); err != nil {
 		return Page{}, err
 	}
@@ -647,6 +701,9 @@ func (s *Service) readableOwner(ctx context.Context, owner string) error {
 func (s *Service) Aggregate(ctx context.Context, q AggregateQuery) ([]Point, error) {
 	d, err := s.def(q.Type)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.canRead(ctx, q.Type); err != nil {
 		return nil, err
 	}
 	scale := 0

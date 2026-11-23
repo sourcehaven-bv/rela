@@ -62,6 +62,7 @@ records:
 | `retention` | How long rows are kept, such as `90d` or `24h`. Without it, rows are kept for ever. A ledger cannot have a retention. |
 | `ledger` | Makes the type a double-entry ledger. See below. |
 | `mutable` | Lets a row be changed or deleted. See "Changing rows" below. A ledger cannot be mutable. |
+| `permissions` | Optional `read` and `append` permission names. A caller needs the permission and the usual owner access. `read` covers list, aggregate, roll-ups and ledger transactions. `append` covers append, reverse, and changing or deleting a row. A role grants the permission in `acl.yaml`; it is held globally. |
 
 A record type cannot share its key with an entity type. The field names
 `id`, `type`, `owner`, `ts`, `recorded_at`, `recorded_by`, `group`,
