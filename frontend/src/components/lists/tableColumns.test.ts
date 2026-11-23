@@ -105,8 +105,8 @@ describe('toTableColumns', () => {
       { property: 'title', link: 'detail' },
       { property: 'status' },
     ]
-    const result = toTableColumns(cols, cols[1])
-    expect(result.map((c) => c.key)).toEqual(['prop:logo', 'prop:status'])
+    expect(toTableColumns(cols, cols[1]).map((c) => c.key)).toEqual(['prop:logo', 'prop:status'])
+    expect(toTableColumns(cols).map((c) => c.key)).toEqual(['prop:logo', 'prop:status'])
   })
 
   it('gives every column a distinct key', () => {
@@ -166,6 +166,11 @@ describe('nameColumn', () => {
   it('is the first column, by the convention the card layout already uses', () => {
     const columns: ListColumn[] = [{ property: 'title' }, { property: 'status' }]
     expect(nameColumn(columns)).toBe(columns[0])
+  })
+
+  it('is the column that carries link, even when it is not the first', () => {
+    const columns: ListColumn[] = [{ property: 'logo' }, { property: 'title', link: 'detail' }]
+    expect(nameColumn(columns)).toBe(columns[1])
   })
 
   it('is undefined when the list declares no columns', () => {

@@ -6,7 +6,8 @@ kind: chore
 priority: medium
 effort: s
 started: "2026-11-21"
-status: backlog
+completed: "2026-11-22"
+status: done
 ---
 
 ## Description
