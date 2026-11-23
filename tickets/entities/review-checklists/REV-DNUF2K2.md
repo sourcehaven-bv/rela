@@ -33,7 +33,7 @@ status: done
 - Fluid mail card: PASS (compat_test, golden file)
 - app.languages: PASS (language_test, staticshell_test, language.test, LanguageSetting.test, useShellAppConfig.test)
 - Neutral notification text: PASS (manual check)
-- App Info for configurers only: PASS (manual check)
+- App Info for settings editors only: PASS (settings-gating e2e)
 - Empty sidebar group: PASS (sidebarNav.test)
 - Not-found title once: PASS (EntityList.empty.test)
 - Create sheet at 375 px: PASS (mobile-layout e2e)

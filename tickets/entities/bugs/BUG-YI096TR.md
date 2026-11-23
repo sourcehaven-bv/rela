@@ -33,7 +33,7 @@ Found in the ninth browser test of the saas-dev setup (pool and harbourmaster).
 - [x] The mail card is at most 600 px and fills a narrower screen, with less padding below 480 px; Outlook keeps its 600 px table.
 - [x] `app.languages` limits the languages the app shows and offers; with one language the Settings page offers no choice.
 - [x] The notification text does not name the product.
-- [x] Only a user who may configure the app sees App Info.
+- [x] Only a user who may edit the shared settings (settings:edit) sees App Info.
 - [x] An empty generated sidebar group with a create says "None yet" once its list has loaded.
 - [x] The not-found page shows "Page not found" once.
 - [x] At 375 px the create sheet fits the screen and does not scroll sideways.
