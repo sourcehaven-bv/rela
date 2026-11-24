@@ -481,8 +481,7 @@ func (c Column) RecordQuery(owners []string, now time.Time) RecordQuery {
 // compileBodyTasksColumn is a roll-up over the entity's own body
 // (TKT-SQ8O0EQ). Nothing is related; the count and the type are checked
 // again in case the metamodel did not come through the loader.
-func compileBodyTasksColumn(name, count string, pd metamodel.PropertyDef, at string) (Column, []string) {
-	var problems []string
+func compileBodyTasksColumn(name, count string, pd metamodel.PropertyDef, at string) (col Column, problems []string) {
 	switch count {
 	case metamodel.BodyTasksDone, metamodel.BodyTasksOpen, metamodel.BodyTasksTotal:
 	default:
