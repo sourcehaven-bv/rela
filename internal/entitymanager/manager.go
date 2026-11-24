@@ -437,6 +437,10 @@ type Deps struct {
 	// writeRules is the compiled `enforce: write` validation rules of Meta.
 	// [New] compiles it, so no wiring site can forget it.
 	writeRules *writerule.Set
+
+	// scopes is the compiled `within:` relations of Meta (TKT-5GK80Q9).
+	// [New] compiles it. Nil: accepted — the schema declares none.
+	scopes *scopeIndex
 }
 
 // FieldWriteGate answers whether the ctx principal may write the named
@@ -673,6 +677,7 @@ func New(d Deps) (*Manager, error) {
 		return nil, fmt.Errorf("entitymanager: New: %w", err)
 	}
 	d.writeRules = rules
+	d.scopes = newScopeIndex(d.Meta)
 	if d.FieldGate == nil {
 		return nil, errors.New(
 			"entitymanager: New: FieldGate is required (use entitymanager.AllowAllFieldGate{} to opt out)")
@@ -1800,7 +1805,9 @@ func (m *Manager) updateCore(
 	// written in the same transaction.
 	joined := joinedFor(ctx, e.ID)
 	if joined != nil {
-		txCheck = chainTxChecks(txCheck, joined.check)
+		// The replace is checked first, so the update's relation rules see the
+		// edges its scope check clears (afterEdges).
+		txCheck = chainTxChecks(joined.check, txCheck)
 		write = joined.after(write)
 	}
 	if err := writeChecked(ctx, m.deps, e, e.ID, txCheck, write); err != nil {
@@ -3373,23 +3380,44 @@ func (m *Manager) CreateRelation(
 	// create is the real guard, and a conflict surfaces as
 	// ErrRelationAlreadyExists (BUG-ZWTDH9).
 	ruled := relationWritesChecked(m.deps, key)
+	scoped := m.deps.scopes.touches(key)
+	adds := []entity.RelationKey{key}
+	var clears scopeClears
+	if scoped {
+		if err := clears.prepass(ctx, m, adds, nil); err != nil {
+			return nil, err
+		}
+	}
 	create := func(ctx context.Context, st store.Store) error {
-		if ruled {
-			if err := checkRelationRules(ctx, m.deps, st, []entity.RelationKey{key}, nil); err != nil {
+		var cleared []entity.RelationKey
+		if scoped {
+			var err error
+			if cleared, err = clears.decide(ctx, m, st, adds, nil); err != nil {
+				return err
+			}
+		}
+		if ruled || relationWritesChecked(m.deps, cleared...) {
+			if err := checkRelationRules(ctx, m.deps, st, adds, cleared); err != nil {
 				return err
 			}
 		}
 		if err := writeRelationCreate(ctx, st, m.deps.Meta, key, rel, nil); err != nil {
 			return err
 		}
-		return m.recordRelationAudit(ctx, st, audit.OpCreateRelation, rel, "created")
+		if err := m.recordRelationAudit(ctx, st, audit.OpCreateRelation, rel, "created"); err != nil {
+			return err
+		}
+		return clears.apply(ctx, m, st)
 	}
 	// An owning edge reads its neighbors' edges to decide whether it may
-	// exist, and a relation rule reads the ends' edges, so the reads and the
-	// write share one Tx for the same reason.
+	// exist, and a relation rule or a scope reads the ends' edges, so the
+	// reads and the write share one Tx for the same reason.
 	inTx := relTypeIsOrdered(m.deps.Meta, key.Type) || relTypeHasMax(m.deps.Meta, key.Type) ||
-		metamodel.IsOwning(m.deps.Meta, key.Type) || ruled
+		metamodel.IsOwning(m.deps.Meta, key.Type) || ruled || scoped
 	createErr := auditTx(ctx, m.deps, inTx, create)
+	if createErr == nil {
+		clears.version(ctx, m)
+	}
 	if createErr != nil {
 		if errors.Is(createErr, store.ErrConflict) {
 			return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists,
@@ -3698,7 +3726,7 @@ func deleteRelation(ctx context.Context, m *Manager, key entity.RelationKey, exp
 	}
 	// A sink that records in the transaction takes the transactional path,
 	// which reads, deletes and records on one view.
-	if expect != "" || relationWritesChecked(m.deps, key) || auditsInTx(m.deps) {
+	if expect != "" || relationWritesChecked(m.deps, key) || m.deps.scopes.touches(key) || auditsInTx(m.deps) {
 		return deleteRelationIfVersion(ctx, m, key, expect)
 	}
 	// Fetch pre-delete AFTER authz (BUG-K6FEVB: a denied delete must return

@@ -92,6 +92,10 @@ func (w schemaJSONWriter) writeRelationDetail(name string, def *metamodel.Relati
 	if def.Owning {
 		data["owning"] = true
 	}
+	if def.Within != "" {
+		data["within"] = def.Within
+		data["on_change"] = string(def.OnChange)
+	}
 	if minOut := def.MinOutgoing; minOut != nil {
 		data["min_outgoing"] = *minOut
 	}

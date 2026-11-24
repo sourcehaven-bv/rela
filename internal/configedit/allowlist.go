@@ -383,7 +383,7 @@ var locked = map[File][]string{
 		"copies.**", "conversions.**", "task_item_conversions.**", "default_world", "worlds.**", "entities.*.faces.**",
 		"entities.*.properties.*.computed", "relations.*.properties.*.computed",
 		"entities.*.properties.*.rollup.**", "relations.*.properties.*.rollup.**",
-		"relations.*.scope", "relations.*.owning",
+		"relations.*.scope", "relations.*.owning", "relations.*.within", "relations.*.on_change",
 		"validations.[].faces.**",
 	},
 	FlowsFile: {

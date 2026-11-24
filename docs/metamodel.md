@@ -1624,6 +1624,8 @@ Relations define how entity types can be connected:
 | `max_incoming` | Maximum incoming relations per to-side entity; new edges over it are refused (see Concepts) |
 | `scope`        | `identity` (default) or `content` — what the relation attaches to under content states (see below) |
 | `owning`       | `true` if the source owns the target, which is then shown as part of it (see below) |
+| `within`       | A scope relation: targets must be owned by the target of that relation (see below) |
+| `on_change`    | Required with `within`: `clear` or `reject`, what a change of the scope does to a stale edge |
 
 ### Relation scope (`scope:`)
 
@@ -1811,6 +1813,64 @@ write rules. `rela analyze owning` reports those entities. The detail page
 then shows such an entity on its own page, because it has no single owner to
 show it under. Only owners the principal can read count, so an owner the
 principal cannot see is never revealed.
+
+### Scoped Relations (`within:`)
+
+A scoped relation may only point to a target that the source's scope owns.
+A to-do that is in a project may only sit under a heading of that same
+project:
+
+```yaml
+relations:
+  in_project:
+    from: [todo]
+    to: [project]
+    max_outgoing: 1
+  has_heading:
+    from: [project]
+    to: [heading]
+    owning: true
+  under_heading:
+    from: [todo]
+    to: [heading]
+    within: in_project
+    on_change: clear
+```
+
+`within:` names the scope relation. The owner of a target is the source of
+the target's incoming owning edge. Only that one edge counts; rela does not
+walk further up.
+
+`on_change:` is required and has no default. It says what happens to an edge
+that a change of the scope leaves pointing outside it:
+
+- `clear` removes the stale edge in the same transaction. The removal is
+  audited and versioned like any other. It runs no automations.
+- `reject` refuses the write. The caller must first change or remove the
+  scoped edge.
+
+A new edge to a target outside the scope is always refused, whatever
+`on_change` says. A refusal answers 422 and names the rule. Removing the
+scope edge counts as a change, so `clear` removes the scoped edges and
+`reject` refuses. Deleting an entity is not checked: its edges go with it.
+A clear needs the same delete permission as removing the edge by hand.
+
+The loader refuses a schema where:
+
+- `on_change` is missing or not `clear` or `reject`;
+- the scope relation is unknown, is itself scoped, or lacks `max_outgoing: 1`;
+- the scope relation's `from` does not include every type of the scoped
+  relation's `from`;
+- a target type has no owning relation, or more than one, so it cannot
+  resolve to an owner;
+- the scoped relation is owning, symmetric or content-scoped;
+- `within` forms a cycle. The message names the cycle.
+
+In the data-entry form the picker offers only targets the selected scope
+owns, before the form is saved. It is disabled while the scope is empty.
+Changing the scope empties the scoped field under `clear` and flags it under
+`reject`. The schema API serves `within`, `on_change` and `scope_owners`,
+the owning relation of each target type.
 
 ### Ordered Relations (`orderable:`)
 
