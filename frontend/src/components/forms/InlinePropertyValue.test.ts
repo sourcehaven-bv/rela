@@ -8,6 +8,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import InlinePropertyValue from './InlinePropertyValue.vue'
 import SelectWidget from '@/widgets/SelectWidget.vue'
 import MultiSelectWidget from '@/widgets/MultiSelectWidget.vue'
+import DateWidget from '@/widgets/DateWidget.vue'
 import TextWidget from '@/widgets/TextWidget.vue'
 import CheckboxWidget from '@/widgets/CheckboxWidget.vue'
 import type { PropertyDef } from '@/types'
@@ -231,6 +232,18 @@ describe('InlinePropertyValue', () => {
       expect(wrapper.emitted('update')).toBeUndefined()
       await wrapper.find('input').trigger('keydown', { key: 'Enter' })
       expect(wrapper.emitted('update')).toEqual([['b']])
+    })
+
+    it('keeps the edit open when the date phrase box refuses Enter (TKT-ICADEGW)', async () => {
+      const def = { type: 'date' } as PropertyDef
+      const wrapper = mountValue({ widget: DateWidget, value: '2026-11-24', propertyDef: def })
+      await openEdit(wrapper)
+      const box = wrapper.find('input[type="text"]')
+      await box.setValue('next banana')
+      await box.trigger('keydown', { key: 'Enter' })
+      expect(wrapper.find('input[type="text"]').exists()).toBe(true)
+      expect(wrapper.emitted('update')).toBeUndefined()
+      wrapper.unmount()
     })
 
     it('does not emit a kept edit that changed nothing', async () => {

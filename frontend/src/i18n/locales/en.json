@@ -770,6 +770,13 @@
     },
     "fileCell": {
       "count": "{n} file | {n} files"
+    },
+    "date": {
+      "natural": {
+        "label": "Date in words",
+        "placeholder": "e.g. next friday",
+        "invalid": "Not a date we understand. Try \"tomorrow\", \"next friday\" or \"5 march\"."
+      }
     }
   },
   "form": {
