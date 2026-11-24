@@ -39,7 +39,7 @@ import { getCellValue, formatCellValue } from '@/utils/format'
 import { isDenseEmpty } from '@/widgets/viewRouting'
 import { denseCell, denseEntry, type DenseCell, type DenseEntry } from '@/utils/denseCell'
 import type { Entity, ListMeta, ListParams, ListResponse, FilterState, PageScope } from '@/types'
-import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
+import { LIST_ORDER_MANUAL, viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
 import SearchBox from './SearchBox.vue'
@@ -457,7 +457,7 @@ const relationOrdered = computed(() => tabScope.relationOrdered.value && !orderW
 // The reader's manual order applies: the list declares it, no relation order
 // takes precedence, and the reader has not sorted.
 const manualOrdered = computed(
-  () => listConfig.value?.order === 'manual' && !relationOrdered.value && sortSpecs.value.length === 0
+  () => listConfig.value?.order === LIST_ORDER_MANUAL && !relationOrdered.value && sortSpecs.value.length === 0
 )
 const createModal = useCreateModal(async (entity) => {
   await tabScope.linkCreated(entity)

@@ -452,8 +452,11 @@ export interface ListConfig {
    * `manual` lets each user drag the rows into their own order
    * (TKT-AVNEX5T). Absent means the list sort.
    */
-  order?: 'manual'
+  order?: typeof LIST_ORDER_MANUAL
 }
+
+/** The list `order:` value that turns on the per-user manual order. */
+export const LIST_ORDER_MANUAL = 'manual'
 
 /** The relative date buckets, in the order their sections appear. */
 export type DateBucket = 'overdue' | 'today' | 'tomorrow' | 'next_7_days' | 'later' | 'no_date'
