@@ -371,6 +371,14 @@ func TestScoped_CreateLinked(t *testing.T) {
 				Entity: hd, RelateType: "under_heading", RelateFrom: loose,
 			})
 			requireScopeRefusal(t, err, "under_heading")
+
+			// A new todo has no scope edge, so no heading is in its scope.
+			td := entity.New("", "todo")
+			td.SetString("title", "new")
+			_, err = entitymanager.CreateLinked(ctx, f.mgr, entitymanager.LinkedCreate{
+				Entity: td, RelateType: "under_heading", RelateTo: h,
+			})
+			requireScopeRefusal(t, err, "under_heading")
 		})
 	}
 }

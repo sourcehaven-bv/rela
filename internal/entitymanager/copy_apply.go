@@ -23,7 +23,7 @@ import (
 // this function reads nothing it did not already decide, so there is no
 // temptation to reach for a handle it should not use.
 func applyCopy(
-	ctx context.Context, meta *metamodel.Metamodel, view store.Store, plan *copyPlan,
+	ctx context.Context, meta *metamodel.Metamodel, scopes *scopeIndex, view store.Store, plan *copyPlan,
 ) (*CopyResult, error) {
 	// The plan's unique check ran outside the transaction; this one is the
 	// check that holds, because it runs on the view with the write.
@@ -34,6 +34,11 @@ func applyCopy(
 	// not roll a failed Tx back.
 	if err := checkCopyCapacity(ctx, meta, view, plan); err != nil {
 		return nil, err
+	}
+	// Scoped relations (TKT-5GK80Q9): a copy does not clear, so an edge it
+	// would leave out of scope refuses it.
+	if err := checkCopyScopes(ctx, scopes, view, plan); err != nil {
+		return nil, fmt.Errorf("entitymanager: copy %q: %w", plan.name, err)
 	}
 	if plan.created {
 		if err := view.CreateEntity(ctx, plan.entity); err != nil {
@@ -128,6 +133,20 @@ func applyCopyEdges(ctx context.Context, meta *metamodel.Metamodel, view store.S
 		}
 	}
 	return nil
+}
+
+// checkCopyScopes runs the scope check on the edges a copy creates and the
+// edges its `replace` removes.
+func checkCopyScopes(ctx context.Context, scopes *scopeIndex, view store.Store, plan *copyPlan) error {
+	adds := make([]entity.RelationKey, 0, len(plan.edges))
+	for _, e := range plan.edges {
+		adds = append(adds, entity.RelationKey{From: plan.targetID, FromFace: plan.targetTail, Type: e.relType, To: e.to})
+	}
+	removes := make([]entity.RelationKey, 0, len(plan.removable))
+	for k := range plan.removable {
+		removes = append(removes, entity.RelationKey{From: plan.targetID, FromFace: plan.targetTail, Type: k.relType, To: k.to})
+	}
+	return checkScopesNoClear(ctx, scopes, view, adds, removes)
 }
 
 // checkCopyCapacity refuses a copy whose new edges would give the target

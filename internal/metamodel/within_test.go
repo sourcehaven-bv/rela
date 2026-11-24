@@ -346,3 +346,32 @@ func TestScopeOwner_NotScoped(t *testing.T) {
 		t.Error("ScopeChange.IsValid wrong")
 	}
 }
+
+// TestParse_CopyCannotCarryScopedRelation pins why an entity copy never
+// changes a scoped edge: a copy carries only content-scoped relations, and a
+// scoped relation cannot be content-scoped. The copy path still runs the
+// scope check as a guard (checkCopyScopes).
+func TestParse_CopyCannotCarryScopedRelation(t *testing.T) {
+	src := strings.Replace(withinHead,
+		`  todo: {label: Todo, id_prefix: "TODO-", properties: {title: {type: string}}}`,
+		`  todo: {label: Todo, id_prefix: "TODO-", faces: {live: {}, review: {}}, properties: {title: {type: string}}}`,
+		1) + withinBase + `  under_heading:
+    label: under heading
+    from: [todo]
+    to: [heading]
+    within: in_project
+    on_change: clear
+copies:
+  stage:
+    from: todo@live
+    to: todo@review
+    fields: all
+    relations:
+      under_heading: replace
+    guard:
+      permission: stage
+`
+	if _, err := Parse([]byte(src)); err == nil || !strings.Contains(err.Error(), "identity-scoped") {
+		t.Fatalf("Parse err = %v, want the identity-scoped copy refusal", err)
+	}
+}

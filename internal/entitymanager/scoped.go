@@ -153,6 +153,13 @@ func checkScopes(
 	if !x.touches(slices.Concat(adds, removes)...) {
 		return nil, nil
 	}
+	// A scoped edge from an entity the same write creates: that entity has no
+	// scope edge yet, so no target is in its scope.
+	for _, k := range adds {
+		if s, ok := x.scoped[k.Type]; ok && k.From == "" {
+			return nil, scopeRefusal(s)
+		}
+	}
 	d := newEdgeDelta(adds, removes)
 	pairs, err := x.affected(ctx, view, slices.Concat(adds, removes))
 	if err != nil {
@@ -200,7 +207,14 @@ func checkScopes(
 // scope is refused, whatever `on_change:` says, so a trigger never deletes
 // an edge as a side effect the operator did not write down.
 func checkCascadeScope(ctx context.Context, x *scopeIndex, view store.Store, key entity.RelationKey) error {
-	clears, err := checkScopes(ctx, x, view, []entity.RelationKey{key}, nil)
+	return checkScopesNoClear(ctx, x, view, []entity.RelationKey{key}, nil)
+}
+
+// checkScopesNoClear is [checkScopes] for a writer that does not clear: an
+// automation, or an entity copy. A write that would leave a stored edge out
+// of scope is refused, whatever `on_change:` says.
+func checkScopesNoClear(ctx context.Context, x *scopeIndex, view store.Store, adds, removes []entity.RelationKey) error {
+	clears, err := checkScopes(ctx, x, view, adds, removes)
 	if err != nil {
 		return err
 	}
