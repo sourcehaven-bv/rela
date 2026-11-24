@@ -82,10 +82,11 @@ GET /api/v1/todos?field_verdicts=status,flagged
 ```
 
 Each row then carries `_fields` (sparse, as on a per-entity response) and
-`_redacted`, both restricted to the named properties, so they are partial. Names past the 16th and names that are not properties are ignored. The page answers them
-from one batch of verdicts, never one query per row. A list with toggle
-columns asks for their properties. The map is a UI hint; a write is
-authorized again.
+`_redacted`, both restricted to the named properties, so they are partial. Names
+past the 16th and names that are not properties are ignored. The page answers
+them from one batch of verdicts, never one query per row. A list with toggle
+columns asks for their properties. The map is a UI hint; a write is authorized
+again.
 
 A toggle also needs to know whether the state machine of an enum allows the
 move. `GET /api/v1/_schema` serves each custom type that declares
