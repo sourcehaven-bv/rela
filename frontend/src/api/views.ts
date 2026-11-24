@@ -1,5 +1,12 @@
 import { api } from './client'
-import type { Entity, EntityOwner, EntityWorld, FieldAffordance, Mention, RelationOrder } from '@/types'
+import type {
+  Entity,
+  EntityOwner,
+  EntityWorld,
+  FieldAffordance,
+  Mention,
+  RelationOrder,
+} from '@/types'
 
 // Field data for view sections
 export interface ViewSectionField {
@@ -206,6 +213,10 @@ export interface ViewSection {
   create?: ViewSectionCreate
   // Entry properties shown under a table section (TKT-4Q2EIVZ).
   totals?: SectionTotal[]
+  // `hide_type` / `hide_id`: leave the type label and the entity ID off the
+  // rows. A row with no title keeps its ID. Presentation only.
+  hideType?: boolean
+  hideId?: boolean
 }
 
 /**
@@ -279,6 +290,8 @@ export interface ViewResponse {
    * backlinks in its own section, or the operator turned the panel off.
    */
   hideMentionedByPanel?: boolean
+  /** `mentioned_by_hide_id`: the panel leaves the entity ID off its rows. */
+  hideMentionedByID?: boolean
 }
 
 // Fetch executed view data for an entity. The backend looks up the
@@ -301,7 +314,7 @@ export async function fetchView(
   entityType: string,
   entityId: string,
   world?: string,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<ViewResponse> {
   const params = world ? { world } : undefined
   return api.get<ViewResponse>(`/_views/${entityType}/${entityId}`, params, signal)

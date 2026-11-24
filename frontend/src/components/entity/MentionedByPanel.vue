@@ -17,6 +17,8 @@ const props = defineProps<{
   entityType: string
   /** The address on screen (`POL-1@draft`). */
   entityId: string
+  /** Leave the address off the rows (`mentioned_by_hide_id`). A row with no title keeps it. */
+  hideId?: boolean
   /**
    * Bumped by the page after it ran an action, so the list is read again
    * in place (BUG-UZGMHIK). The list on screen stays until the answer lands.
@@ -115,7 +117,7 @@ onBeforeUnmount(() => controller?.abort())
       <li v-for="s in items" :key="sourceAddress(s)" :data-entity-id="s.id">
         <RouterLink :to="sourceTarget(s)" class="mention-link">
           <span class="entity-title">{{ s.title }}</span>
-          <span class="entity-id">{{ sourceAddress(s) }}</span>
+          <span v-if="!hideId || !s.title" class="entity-id">{{ sourceAddress(s) }}</span>
         </RouterLink>
       </li>
     </ul>

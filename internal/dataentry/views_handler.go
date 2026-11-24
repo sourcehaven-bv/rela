@@ -1026,6 +1026,7 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	resp.Mentions = collectMentions(
 		r.Context(), h.viewReader, s.Meta, viewContentBlobs(result.Entry, sections)...)
 	resp.HideMentionedByPanel = hideMentionedByPanel(s.Cfg, viewCfg)
+	resp.HideMentionedByID = hideMentionedByID(s.Cfg, viewCfg)
 
 	writeV1JSON(w, http.StatusOK, resp)
 }
@@ -1061,6 +1062,8 @@ func viewSectionToV1(sec SectionData, owner map[string]*v1.EntityOwner) v1.ViewS
 		HasContent:   sec.HasContent,
 		// Already wire-shaped; nil for a section not in relation order.
 		RelationOrder: sec.RelationOrder,
+		HideType:      sec.hideType,
+		HideID:        sec.hideID,
 	}
 
 	// The opt-in create affordance. Nil for every section that did not
@@ -1171,6 +1174,15 @@ func hideMentionedByPanel(cfg *Config, view ViewConfig) bool {
 		}
 	}
 	return false
+}
+
+// hideMentionedByID reports whether the "Mentioned by" panel leaves the entity
+// ID off its rows for an entry of view's type.
+func hideMentionedByID(cfg *Config, view ViewConfig) bool {
+	if cfg == nil {
+		return false
+	}
+	return cfg.EntityViews[view.Entry.Type].MentionedByHideID
 }
 
 // viewContentBlobs gathers every markdown body that will be rendered by

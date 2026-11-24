@@ -1762,9 +1762,18 @@ type ViewResponse struct {
 	// `entity_views.<type>.mentioned_by_panel` is false. Decided by the server
 	// from the view it executed, so the SPA does not re-derive view selection.
 	HideMentionedByPanel bool `json:"hideMentionedByPanel,omitempty"`
+
+	// HideMentionedByID tells the panel to leave the entity ID off its rows,
+	// from `entity_views.<type>.mentioned_by_hide_id`. Presentation only.
+	HideMentionedByID bool `json:"hideMentionedByID,omitempty"`
 }
 
 // ViewSection represents a section with resolved data.
+//
+// The plimsoll directive is a wire mirror: the section's config keys travel
+// as flat fields, and `hide_type` and `hide_id` raised it from 20 to 22.
+//
+//plimsoll:max-fields=22
 type ViewSection struct {
 	Heading      string         `json:"heading"`
 	SectionID    string         `json:"sectionId"`
@@ -1824,6 +1833,12 @@ type ViewSection struct {
 	// (TKT-4Q2EIVZ). The values are not repeated here: a client reads them
 	// from the entry, which is already gated for the reader.
 	Totals []SectionTotal `json:"totals,omitempty"`
+
+	// HideType and HideID ask a list, cards, content or nested section to
+	// leave the type label and the entity ID off its rows (`hide_type`,
+	// `hide_id`). Presentation only; omitted when false.
+	HideType bool `json:"hideType,omitempty"`
+	HideID   bool `json:"hideId,omitempty"`
 }
 
 // SectionTotal is one line of [ViewSection.Totals].

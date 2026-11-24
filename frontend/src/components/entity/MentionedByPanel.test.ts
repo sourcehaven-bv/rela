@@ -66,6 +66,22 @@ describe('MentionedByPanel', () => {
     expect(wrapper.text()).toContain('POL-1@draft')
   })
 
+  it('leaves the address off the rows with hideId, unless the row has no title', async () => {
+    getMentionedByMock.mockResolvedValue({
+      items: [
+        { id: 'TKT-1', type: 'ticket', title: 'A ticket' },
+        { id: 'TKT-2', type: 'ticket', title: '' },
+      ],
+    })
+    const wrapper = mount(MentionedByPanel, {
+      props: { entityType: 'feature', entityId: 'FEAT-1', hideId: true },
+      global: { stubs: { RouterLink: RouterLinkStub } },
+    })
+    await flushPromises()
+    const ids = wrapper.findAll('li').map((li) => li.find('.entity-id').exists())
+    expect(ids).toEqual([false, true])
+  })
+
   it('appends the next page on Show more', async () => {
     getMentionedByMock
       .mockResolvedValueOnce({

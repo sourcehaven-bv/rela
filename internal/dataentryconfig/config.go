@@ -230,6 +230,11 @@ type EntityViewConfig struct {
 	// aside when the type's view collects backlinks itself through a
 	// `mentioned_by` traverse step, so the backlinks never show twice.
 	MentionedByPanel *bool `yaml:"mentioned_by_panel,omitempty" json:"mentioned_by_panel,omitempty"`
+
+	// MentionedByHideID leaves the entity ID off the rows of the built-in
+	// "Mentioned by" panel. False keeps the ID, as before. Presentation only:
+	// the ID is still in the link and the API.
+	MentionedByHideID bool `yaml:"mentioned_by_hide_id,omitempty" json:"mentioned_by_hide_id,omitempty"`
 }
 
 // DuplicateConfig narrows what the Duplicate affordance copies from a source
@@ -2493,8 +2498,14 @@ const (
 
 // ViewSection defines a section within a view.
 //
+// The plimsoll directive is the format-mirror exception documented on
+// [Config]: each exported field is one documented YAML key of a section.
+// `hide_type` and `hide_id` raised it from 20 to 22.
+//
 // Render sets the default render mode for this section's fields; an
 // individual field's own Render overrides it. Empty means RenderDisplay.
+//
+//plimsoll:max-fields=22
 type ViewSection struct {
 	Heading      string             `yaml:"heading,omitempty" json:"heading,omitempty"`
 	Source       string             `yaml:"source" json:"source"`
@@ -2505,6 +2516,15 @@ type ViewSection struct {
 	GroupBy      string             `yaml:"group_by,omitempty" json:"group_by,omitempty"`
 	EmptyMessage string             `yaml:"empty_message,omitempty" json:"empty_message,omitempty"`
 	Link         string             `yaml:"link,omitempty" json:"link,omitempty"`
+
+	// HideType and HideID leave the entity type label and the entity ID off
+	// the rows of a `list`, `cards` or `content` section; `nested` rows show
+	// no type, so only HideID applies there. False keeps the label and ID,
+	// so no existing project changes. Presentation only, not access control:
+	// the type and ID stay in the link and in the API. A row with no title
+	// still shows its ID, so the row stays identifiable.
+	HideType bool `yaml:"hide_type,omitempty" json:"hide_type,omitempty"`
+	HideID   bool `yaml:"hide_id,omitempty" json:"hide_id,omitempty"`
 
 	// SectionVisibility holds the keys that leave the section out of the page
 	// for some readers: hide_empty and permission.

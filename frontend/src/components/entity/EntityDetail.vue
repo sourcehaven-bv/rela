@@ -3125,9 +3125,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                     class="card-header-link"
                     v-bind="entityTarget(ent) ? { to: entityTarget(ent) } : {}"
                   >
-                    <span class="entity-type">{{ ent.type }}</span>
+                    <span v-if="!section.hideType" class="entity-type">{{ ent.type }}</span>
                     <span class="entity-title">{{ ent.title }}</span>
-                    <span class="entity-id">{{ ent.id }}</span>
+                    <span v-if="!section.hideId || !ent.title" class="entity-id">{{ ent.id }}</span>
                   </component>
                   <!--
                   Per-neighbour provenance (RULING 12/14). Each collection
@@ -3171,9 +3171,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                     class="card-header-link"
                     v-bind="entityTarget(ent) ? { to: entityTarget(ent) } : {}"
                   >
-                    <span class="entity-type">{{ ent.type }}</span>
+                    <span v-if="!section.hideType" class="entity-type">{{ ent.type }}</span>
                     <span class="entity-title">{{ ent.title }}</span>
-                    <span class="entity-id">{{ ent.id }}</span>
+                    <span v-if="!section.hideId || !ent.title" class="entity-id">{{ ent.id }}</span>
                   </component>
                   <!-- Per-neighbour provenance; see the first WorldBadge above. -->
                   <WorldBadge :world="ent._world" :entity-type="ent.type" />
@@ -3246,9 +3246,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                   class="list-link"
                   v-bind="entityTarget(ent) ? { to: entityTarget(ent) } : {}"
                 >
-                  <span class="entity-type">{{ ent.type }}</span>
+                  <span v-if="!section.hideType" class="entity-type">{{ ent.type }}</span>
                   <span class="entity-title">{{ ent.title }}</span>
-                  <span class="entity-id">{{ ent.id }}</span>
+                  <span v-if="!section.hideId || !ent.title" class="entity-id">{{ ent.id }}</span>
                 </component>
                 <!-- Per-neighbour provenance; see the first WorldBadge above. -->
                 <WorldBadge :world="ent._world" :entity-type="ent.type" />
@@ -3485,7 +3485,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                       @click.stop
                     >
                       <span class="entity-title">{{ node.entity.title }}</span>
-                      <span class="entity-id">{{ node.entity.id }}</span>
+                      <span v-if="!section.hideId || !node.entity.title" class="entity-id">{{
+                        node.entity.id
+                      }}</span>
                     </component>
                     <WorldBadge :world="node.entity._world" :entity-type="node.entity.type" />
                     <span class="nested-values">
@@ -3517,7 +3519,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                         "
                       >
                         <span class="entity-title">{{ child.entity.title }}</span>
-                        <span class="entity-id">{{ child.entity.id }}</span>
+                        <span v-if="!section.hideId || !child.entity.title" class="entity-id">{{
+                          child.entity.id
+                        }}</span>
                       </component>
                       <WorldBadge :world="child.entity._world" :entity-type="child.entity.type" />
                       <span class="nested-values">
@@ -3565,6 +3569,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           :entity-type="entityType"
           :entity-id="entityRef(entry)"
           :revision="panelRevision"
+          :hide-id="viewData.hideMentionedByID"
         />
 
         <!-- Flow runs on this entity (TKT-ZAXRXND). Self-gating: renders

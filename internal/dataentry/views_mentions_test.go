@@ -187,6 +187,25 @@ func TestViewMentions_PanelSwitch(t *testing.T) {
 	}
 }
 
+func TestViewMentions_HideIdentityPassthrough(t *testing.T) {
+	app, d := mentionedByApp(t, "ticket", "feature")
+	app.Cfg().Views["fv"] = backlinksView("", ViewSection{Display: "list", HideType: true, HideID: true})
+	got := featureView(t, app, d)
+	if got.HideMentionedByID {
+		t.Error("hideMentionedByID set without entity_views.feature.mentioned_by_hide_id")
+	}
+	if sec := got.Sections[0]; !sec.HideType || !sec.HideID {
+		t.Errorf("section flags = %v %v, want both true", sec.HideType, sec.HideID)
+	}
+	if app.Cfg().EntityViews == nil {
+		app.Cfg().EntityViews = map[string]dataentryconfig.EntityViewConfig{}
+	}
+	app.Cfg().EntityViews["feature"] = dataentryconfig.EntityViewConfig{MentionedByHideID: true}
+	if !featureView(t, app, d).HideMentionedByID {
+		t.Error("hideMentionedByID not set from mentioned_by_hide_id")
+	}
+}
+
 // faultyMentions fails every backlink read.
 type faultyMentions struct{ store.Store }
 

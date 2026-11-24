@@ -413,6 +413,25 @@ func hasCreateForm(cfg *Config, entityType string) bool {
 	return false
 }
 
+// validateSectionHideIdentity refuses `hide_type` and `hide_id` on a section
+// that renders no such label, so the key is never silently dead.
+func validateSectionHideIdentity(viewID string, i int, s ViewSection) []string {
+	if !s.HideType && !s.HideID {
+		return nil
+	}
+	rowDisplay := s.Display == "list" || s.Display == "cards" || s.Display == "content" || s.Display == DisplayNested
+	if s.Source == "entry" || !rowDisplay {
+		return []string{fmt.Sprintf(
+			"view %q: section[%d] sets hide_type or hide_id, which only apply to a "+
+				"list, cards, content or nested section over a collection", viewID, i)}
+	}
+	if s.HideType && s.Display == DisplayNested {
+		return []string{fmt.Sprintf(
+			"view %q: section[%d] sets hide_type on a nested section, which shows no type label", viewID, i)}
+	}
+	return nil
+}
+
 // validateSectionHideEmpty refuses `hide_empty` (TKT-JT101B) where it contradicts the
 // rest of the section. Each refusal names the conflicting key, because the
 // alternative is a section that silently does one of the two things the
@@ -865,6 +884,11 @@ func validateSidePanelSections(formID string, panel *SidePanelConfig) []string {
 				"form %q: side_panel section[%d] sets hide_empty, which a side panel does not support",
 				formID, i))
 		}
+		if sec.HideType || sec.HideID {
+			errs = append(errs, fmt.Sprintf(
+				"form %q: side_panel section[%d] sets hide_type or hide_id, which a side panel does not support",
+				formID, i))
+		}
 		if sec.Permission != "" {
 			errs = append(errs, fmt.Sprintf(
 				"form %q: side_panel section[%d] sets permission, which a side panel does not support",
@@ -1233,7 +1257,7 @@ func validateEntityViews(cfg *Config, meta *metamodel.Metamodel) []string {
 		// declared — otherwise the error's own advice ("omit the entry") would
 		// tell an operator to delete config that is doing something.
 		if ev.DetailView == "" {
-			if ev.Duplicate == nil && ev.MentionedByPanel == nil {
+			if ev.Duplicate == nil && ev.MentionedByPanel == nil && !ev.MentionedByHideID {
 				errs = append(errs, fmt.Sprintf(
 					"entity_views[%q]: entry declares nothing (omit the entry instead)", entityType))
 			}
@@ -1927,6 +1951,7 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			// wrong regardless of whether its source collection resolves.
 			errs = append(errs, validateSectionCreate(viewID, i, s, view, cfg, meta)...)
 			errs = append(errs, validateSectionHideEmpty(viewID, i, s)...)
+			errs = append(errs, validateSectionHideIdentity(viewID, i, s)...)
 
 			// Spans are checked unconditionally — deliberately NOT inside the
 			// `sourceType != ""` guard below, which only runs when the source
