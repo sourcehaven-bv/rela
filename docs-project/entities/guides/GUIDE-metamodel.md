@@ -2059,23 +2059,39 @@ index on the final entity type, so the filter does not scan every row of that
 type. This covers query scopes and view and next-action conditions. An `id`
 constraint derives no index: the store looks the named entity up by its key.
 
-A list page answers the whole scope in the store query when the scope is a
-plain conjunction. Every part joined by `and` must be one of these:
+A list page answers the whole scope in the store query when every part of it
+is one of these, combined with `and`, `or` and `not` at any depth:
 
-- `related(...)`;
-- an equality between a string-shaped property, as defined above, and a
-  non-empty string;
-- `entity.x == current_user.id` or `is_current_user(entity.x)`.
+- `related(...)` or `not related(...)`;
+- `==` or `~=` between a string-shaped property, as defined above, and a
+  string;
+- `<`, `<=`, `>` or `>=` between a string-shaped property that is not a date
+  or datetime and a string;
+- any of these comparisons between an integer property and an integer;
+- `entity.x == current_user.id`, `is_current_user(entity.x)` or
+  `has_current_user(entity.list)`.
 
-Each property may appear in only one equality. The page and its total then
-cost the same at any list size.
+A list `condition:` follows the same rule. For example, this list of tickets
+without a project runs as one store query:
 
-Any other scope, for example one with `not`, `or` or an ordered comparison, is
-still correct. It is evaluated after the store read, and its cost grows with
-the number of rows of the type. The same slower path applies when the rest of
-the request does not suit the store, for example with free-text search, a view
-`condition:`, a relation filter, or a sort on a property that is not
-string-shaped.
+```yaml
+lists:
+  inbox:
+    entity_type: ticket
+    condition: "not related(entity, 'in_project')"
+```
+
+On PostgreSQL and SQLite, `not related(...)` is a `NOT EXISTS` subquery. It
+applies the same read rules as `related(...)`, so an entity the reader may not
+see does not stop a row matching. The page and its total then cost the same
+at any list size.
+
+Any other scope, for example one with an ordered comparison of a date, is still correct. It is
+evaluated after the store read, and its cost grows with the number of rows of
+the type. The same slower path applies when the rest of the request does not
+suit the store, for example with free-text search, a relation filter, or a
+sort on a property that is not string-shaped. A list `condition:` that reads
+a property the reader cannot see on every row also takes the slower path.
 
 ### Which surfaces apply scopes
 
