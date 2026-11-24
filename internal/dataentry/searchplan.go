@@ -228,29 +228,44 @@ type searchTypeQuery struct {
 	errClass error
 }
 
-// page reads the first limit rows of the plan's result and the number of
-// rows it matches in all. limit 0 reads every match, as the Go path does
-// when the caller sets no limit.
+// page reads up to limit rows of the plan's result, starting offset rows
+// into it, and the number of rows it matches in all. limit must be
+// positive: searchPage sets it, so no read is unbounded.
 //
-// The types are read in order, each with what is left of limit, so at most
-// limit rows are read in all. The total is counted only when the page is
-// full, since a short page holds every match.
+// The result is the types' results in order. With an offset, each type is
+// counted first, so a type wholly before the offset is skipped without a
+// read and the first type read starts at what is left of the offset. Each
+// type then reads what is left of limit, so at most limit rows are read in
+// all. Without an offset the total is counted only when the page is full,
+// since a short page holds every match.
 func (p searchPlan) page(
-	ctx context.Context, svc Services, scope map[string]search.TypeScope, limit int,
+	ctx context.Context, svc Services, scope map[string]search.TypeScope, limit, offset int,
 ) (rows []*entity.Entity, total int, err error) {
 	queries, err := p.searchQueries(ctx, scope)
 	if err != nil {
 		return nil, 0, err
 	}
-	rows = make([]*entity.Entity, 0, min(max(limit, 0), maxFreeTextSearchResults))
-	for _, tq := range queries {
-		if limit > 0 && len(rows) == limit {
+	var counts []int
+	if offset > 0 {
+		if counts, err = countQueries(ctx, svc, queries); err != nil {
+			return nil, 0, err
+		}
+	}
+	rows = make([]*entity.Entity, 0, min(limit, maxSearchResults))
+	skip := offset
+	for i, tq := range queries {
+		if len(rows) == limit {
 			break
 		}
 		q := tq.query
-		if limit > 0 {
-			q.Limit = limit - len(rows)
+		if counts != nil {
+			if skip >= counts[i] {
+				skip -= counts[i]
+				continue
+			}
+			q.Offset, skip = skip, 0
 		}
+		q.Limit = limit - len(rows)
 		for h, err := range store.GraphQueryHeaders(ctx, svc.Store, q) {
 			if err != nil {
 				return nil, 0, fmt.Errorf("%w: %w", tq.errClass, err)
@@ -258,19 +273,37 @@ func (p searchPlan) page(
 			rows = append(rows, headerEntity(h))
 		}
 	}
-	if limit <= 0 || len(rows) < limit {
+	if counts == nil && len(rows) < limit {
 		return rows, len(rows), nil
 	}
-	for _, tq := range queries {
-		n, err := store.CountMatched(ctx, svc.Store, tq.query)
-		if err != nil {
-			return nil, 0, fmt.Errorf("%w: %w", tq.errClass, err)
+	if counts == nil {
+		if counts, err = countQueries(ctx, svc, queries); err != nil {
+			return nil, 0, err
 		}
+	}
+	for _, n := range counts {
 		total += n
 	}
 	// The page and the count are separate reads; a delete between them
-	// must not report fewer matches than rows served.
-	return rows, max(total, len(rows)), nil
+	// must not report fewer matches than rows served. An empty page past
+	// the end serves none, so the count stands.
+	if len(rows) > 0 {
+		total = max(total, offset+len(rows))
+	}
+	return rows, total, nil
+}
+
+// countQueries returns the number of rows each of queries matches, in order.
+func countQueries(ctx context.Context, svc Services, queries []searchTypeQuery) ([]int, error) {
+	out := make([]int, len(queries))
+	for i, tq := range queries {
+		n, err := store.CountMatched(ctx, svc.Store, tq.query)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", tq.errClass, err)
+		}
+		out[i] = n
+	}
+	return out, nil
 }
 
 // position answers where id sits in the plan's result, for a plan over one

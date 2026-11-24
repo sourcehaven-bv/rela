@@ -158,19 +158,19 @@ func assertSearchPlanMatchesGoPath(t *testing.T, newApp func(*testing.T) *App) {
 			ctx, _ = restrictSearchPlanApp(t, app)
 		}
 		for _, tc := range searchPlanCases {
-			for _, limit := range []int{0, 1, 3} {
-				name := fmt.Sprintf("%s/%s/%s/limit=%d", principal, tc.query, tc.exactType, limit)
+			for _, pg := range searchPlanPages {
+				name := fmt.Sprintf("%s/%s/%s/limit=%d/offset=%d", principal, tc.query, tc.exactType, pg.limit, pg.offset)
 				t.Run(name, func(t *testing.T) {
 					_, ok := planSearch(app.State().Meta, searchparser.ParseQuery(tc.query), tc.exactType)
 					if ok != tc.plans {
 						t.Fatalf("planSearch ok = %v, want %v", ok, tc.plans)
 					}
-					opts := queryOptions{limit: limit, exactType: tc.exactType}
-					got, gotTotal, err := app.queries.searchPage(ctx, tc.query, opts)
+					opts := queryOptions{limit: pg.limit, exactType: tc.exactType, offset: pg.offset}
+					got, gotTotal, _, err := app.queries.searchPage(ctx, tc.query, opts)
 					if err != nil {
 						t.Fatal(err)
 					}
-					want, err := app.queries.executeQueryWith(ctx, tc.query, opts)
+					want, err := app.queries.executeQueryWith(ctx, tc.query, queryOptions{exactType: tc.exactType})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -178,9 +178,11 @@ func assertSearchPlanMatchesGoPath(t *testing.T, newApp func(*testing.T) *App) {
 						want = slices.DeleteFunc(want, func(e *entity.Entity) bool { return e.Type != tc.exactType })
 					}
 					wantTotal := len(want)
-					if limit > 0 && len(want) > limit {
-						want = want[:limit]
+					size := pg.limit
+					if size == 0 {
+						size = maxSearchResults
 					}
+					want = want[min(pg.offset, len(want)):min(pg.offset+size, len(want))]
 					if g, w := entityIDs(got), entityIDs(want); !slices.Equal(g, w) {
 						t.Errorf("rows\n got %v\nwant %v", g, w)
 					}
@@ -191,6 +193,15 @@ func assertSearchPlanMatchesGoPath(t *testing.T, newApp func(*testing.T) *App) {
 			}
 		}
 	}
+}
+
+// searchPlanPages are the pages the differential test reads of every case:
+// no limit, small limits, and offsets that start inside the first type,
+// on the boundary between the tasks and the bugs, inside the second type
+// and past the end.
+var searchPlanPages = []struct{ limit, offset int }{
+	{0, 0}, {1, 0}, {3, 0},
+	{3, 2}, {0, 4}, {5, 12}, {3, 13}, {2, 16}, {3, 40},
 }
 
 // TestSearchPlan_PositionMatchesGoPath pins the search scope's store
@@ -264,7 +275,7 @@ func TestSearchPlan_HidesUnreadableRows(t *testing.T) {
 
 	t.Run("page and total", func(t *testing.T) {
 		for _, limit := range []int{0, 1} {
-			rows, total, err := app.queries.searchPage(alice, query, queryOptions{limit: limit})
+			rows, total, _, err := app.queries.searchPage(alice, query, queryOptions{limit: limit})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -300,7 +311,7 @@ func TestSearchPlan_HidesUnreadableRows(t *testing.T) {
 		"no gate": withACLEnforced(aliceCtx()),
 	} {
 		t.Run(name, func(t *testing.T) {
-			rows, total, err := app.queries.searchPage(ctx, query, queryOptions{})
+			rows, total, _, err := app.queries.searchPage(ctx, query, queryOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}

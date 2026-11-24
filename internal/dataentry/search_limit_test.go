@@ -211,14 +211,17 @@ func TestFreeTextLimit(t *testing.T) {
 		opts  queryOptions
 		want  int
 	}{
-		{"no limit", "alpha", queryOptions{}, maxFreeTextSearchResults},
+		{"no limit", "alpha", queryOptions{}, maxSearchResults},
 		{"limit", "alpha", queryOptions{limit: 50}, 50},
-		{"limit above the cap", "alpha", queryOptions{limit: 5000}, maxFreeTextSearchResults},
-		{"sort clause", "alpha sort:title", queryOptions{limit: 50}, maxFreeTextSearchResults},
-		{"property filter", "alpha prop:status=open", queryOptions{limit: 50}, maxFreeTextSearchResults},
-		{"exact type, no type clause", "alpha", queryOptions{limit: 50, exactType: "ticket"}, maxFreeTextSearchResults},
+		// One hit past the cap, so the caller can tell the cap cut the result.
+		{"limit above the cap", "alpha", queryOptions{limit: 5000}, maxSearchResults + 1},
+		{"limit above the cap, sort clause", "alpha sort:title", queryOptions{limit: 5000}, maxSearchResults + 1},
+		{"limit at the cap", "alpha", queryOptions{limit: maxSearchResults}, maxSearchResults},
+		{"sort clause", "alpha sort:title", queryOptions{limit: 50}, maxSearchResults},
+		{"property filter", "alpha prop:status=open", queryOptions{limit: 50}, maxSearchResults},
+		{"exact type, no type clause", "alpha", queryOptions{limit: 50, exactType: "ticket"}, maxSearchResults},
 		{"exact type equals the clause", "type:ticket alpha", queryOptions{limit: 50, exactType: "ticket"}, 50},
-		{"exact type and another clause", "type:ticket type:feature alpha", queryOptions{limit: 50, exactType: "ticket"}, maxFreeTextSearchResults},
+		{"exact type and another clause", "type:ticket type:feature alpha", queryOptions{limit: 50, exactType: "ticket"}, maxSearchResults},
 		{"type clause without exact type", "type:ticket,feature alpha", queryOptions{limit: 50}, 50},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

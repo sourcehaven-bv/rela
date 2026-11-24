@@ -481,6 +481,10 @@ type ListMeta struct {
 	Page    int  `json:"page"`
 	PerPage int  `json:"per_page"`
 	HasMore bool `json:"has_more"`
+	// Capped says a free-text /_search matched more hits than its
+	// relevance cap of 1000: Total counts the hits within the cap, and no
+	// page reaches the rest. Only /_search sets it.
+	Capped bool `json:"capped,omitempty"`
 	// RelationOrder is set when the rows are shown in relation order.
 	//
 	// Nil: the rows follow the request's sort, or no sort at all.

@@ -10754,7 +10754,7 @@ promise-based, closed set of methods that forward to the REST API over the
 | `rela.schema()` / `rela.config()` | metamodel + data-entry config |
 | `rela.list({type, params})` | list entities of a type |
 | `rela.get({type, id, params})` | fetch one entity |
-| `rela.search({query, type})` | full-text search |
+| `rela.search({query, type, page?})` | search; one page of at most 1000 rows, `meta.has_more` says a later `page` holds more |
 | `rela.analyze()` | run the analysis checks |
 | `rela.templates({type})` | entity templates |
 | `rela.position({id, scope})` | prev/next within an ordered set |
