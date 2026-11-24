@@ -37,8 +37,8 @@ for (const [file, count] of Object.entries(counts)) {
 }
 for (const [file, allowed] of Object.entries(baseline)) {
   if ((counts[file] ?? 0) < allowed) {
-    problems.push(
-      `${file}: ${counts[file] ?? 0} findings, baseline says ${allowed}; run \`npm run lint:comments:update\``
+    console.error(
+      `note: ${file} has ${counts[file] ?? 0} findings, baseline says ${allowed}; \`npm run lint:comments:update\` locks in the gain`
     )
   }
 }

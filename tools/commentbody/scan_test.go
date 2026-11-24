@@ -58,7 +58,7 @@ func TestCompare(t *testing.T) {
 		{"equal", map[string]int{"a.go": 2}, map[string]int{"a.go": 2}, 0},
 		{"new comment fails", map[string]int{"a.go": 2}, map[string]int{"a.go": 1}, 3},
 		{"new file fails", map[string]int{"a.go": 2}, map[string]int{}, 3},
-		{"improvement must be locked in", map[string]int{}, map[string]int{"a.go": 2}, 1},
+		{"improvement does not fail", map[string]int{}, map[string]int{"a.go": 2}, 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -11,6 +11,7 @@
 // escape hatch for the rare fact no name can carry.
 //
 // Existing findings are held in baseline.json as a per-file count that may
-// only shrink: a higher count fails, and so does a lower one until the
-// baseline is regenerated with -update, so progress cannot be undone later.
+// only shrink: a higher count fails. A lower count only prints a
+// note, so a PR that removes comments cannot break an unrelated PR; run
+// -update to lock the gain in.
 package main

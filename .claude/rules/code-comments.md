@@ -19,7 +19,8 @@ paths:
 - **Existing findings sit in a baseline that may only shrink:**
   `tools/commentbody/baseline.json` (`just comment-body`) and
   `frontend/comment-body-baseline.json` (`npm run lint:comments`). Counts are
-  per file. A higher count fails. A lower one fails too, until you run
-  `just comment-body-update` or `npm run lint:comments:update`, so a cleanup
-  cannot be undone later. Do not raise a count to make a build pass.
+  per file. A higher count fails. A lower one only prints a note, so a cleanup
+  cannot break an unrelated PR; run `just comment-body-update` or
+  `npm run lint:comments:update` to lock the gain in. Do not raise a count to
+  make a build pass.
 - Test files, generated files and `frontend/e2e` are out of scope.

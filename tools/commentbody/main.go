@@ -35,6 +35,9 @@ func run(root string, update bool) error {
 	if err != nil {
 		return err
 	}
+	for _, note := range improvements(counts, baseline) {
+		fmt.Fprintln(os.Stderr, note)
+	}
 	problems := compare(counts, baseline, found)
 	if len(problems) > 0 {
 		for _, p := range problems {
@@ -55,14 +58,19 @@ func compare(counts, baseline map[string]int, found map[string][]finding) []stri
 			}
 		}
 	}
+	return problems
+}
+
+func improvements(counts, baseline map[string]int) []string {
+	var notes []string
 	for _, file := range sortedKeys(baseline) {
 		if counts[file] < baseline[file] {
-			problems = append(problems, fmt.Sprintf(
-				"%s: %d findings, baseline says %d; run `just comment-body-update` to lock in the improvement",
+			notes = append(notes, fmt.Sprintf(
+				"note: %s has %d findings, baseline says %d; `just comment-body-update` locks in the gain",
 				file, counts[file], baseline[file]))
 		}
 	}
-	return problems
+	return notes
 }
 
 func sortedKeys(m map[string]int) []string {
