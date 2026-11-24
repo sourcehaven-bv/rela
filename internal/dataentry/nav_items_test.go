@@ -320,3 +320,25 @@ func TestNavItems_RefusedSortIsDroppedRefusedFilterStands(t *testing.T) {
 	items, _ := navItemsAs(principalCtx("alice"), t, app)
 	require.NotContains(t, items, "0", "a refused filter must not be dropped")
 }
+
+func TestNavItemsListQuery_GroupSortFollowsBucketOrder(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		buckets *dataentryconfig.ListBuckets
+		want    string
+	}{
+		{name: "relative", buckets: &dataentryconfig.ListBuckets{Scheme: "relative"}, want: "due,title"},
+		{name: "calendar asc", buckets: &dataentryconfig.ListBuckets{By: "month"}, want: "due,title"},
+		{name: "calendar desc", buckets: &dataentryconfig.ListBuckets{By: "month", Order: "desc"}, want: "-due,title"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q := navItemsListQuery("l", dataentryconfig.List{
+				GroupBy: &dataentryconfig.ListGroupBy{Property: "due", Buckets: tc.buckets},
+				Sort:    []dataentryconfig.SortSpec{{Property: "title"}},
+			})
+			if got := q["sort"]; len(got) != 1 || got[0] != tc.want {
+				t.Fatalf("sort = %v, want %s", got, tc.want)
+			}
+		})
+	}
+}

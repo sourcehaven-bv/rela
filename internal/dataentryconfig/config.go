@@ -496,6 +496,13 @@ type AppConfig struct {
 	// one of [SupportedUILanguages]. A region (nl-BE) is kept for date and
 	// number formatting.
 	Language string `yaml:"language,omitempty"`
+	// Languages are the interface languages a user may pick on the Settings
+	// page, as base languages from [SupportedUILanguages] ("en", "nl"). Empty
+	// means all of them. The app shows only these, whatever the browser
+	// prefers, and with a single one the Settings page offers no choice.
+	// The first is the fallback when nothing else matches. Validated at
+	// load; app.language must be one of them.
+	Languages []string `yaml:"languages,omitempty"`
 	// Logo is an image of the app for the pages shown before a workspace
 	// loads, such as a suspended workspace, where the logo uploaded on the
 	// Settings page cannot be read. A root-relative path or an https URL,

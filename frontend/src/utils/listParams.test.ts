@@ -46,6 +46,15 @@ describe('sortParam', () => {
 })
 
 describe('groupedSort', () => {
+  it('reads newest-first calendar sections descending', () => {
+    expect(
+      groupedSort(
+        { property: 'done_on', buckets: { by: 'month', order: 'desc' }, max_rows: 500 },
+        []
+      )
+    ).toEqual([{ property: 'done_on', direction: 'desc' }])
+  })
+
   it('sorts by the group property first, so each section arrives together', () => {
     expect(
       groupedSort({ property: 'status', max_rows: 500 }, [

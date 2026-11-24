@@ -26,7 +26,7 @@ func TestScheduledForEachPrincipal_FacedUser(t *testing.T) {
 	svc := &Services{store: st, aclPolicy: &acl.Policy{UserEntityType: "person"}}
 
 	for id, want := range map[string]string{"U-1": "U-1", "U-F": "U-F", "T-1": "", "NOPE": ""} {
-		got, err := svc.ScheduledForEachPrincipal(t.Context(), id)
+		got, err := svc.Scheduler().ScheduledForEachPrincipal(t.Context(), id)
 		require.NoError(t, err)
 		require.Equal(t, want, got.User, "principal for %s", id)
 	}
@@ -61,6 +61,6 @@ func TestRunScheduledTemplate_FacedRecipientInDefaultWorld(t *testing.T) {
 		mail: &mailRuntime{config: &mail.Config{BaseURL: "https://rela.example"}, sender: sender},
 	}
 
-	require.NoError(t, svc.RunScheduledTemplate(t.Context(), "digest", "P-F"))
+	require.NoError(t, svc.Scheduler().RunScheduledTemplate(t.Context(), "digest", "P-F"))
 	require.Empty(t, sender.Messages())
 }

@@ -37,6 +37,9 @@ vi.mock('@/composables/useWorld', () => ({
 }))
 
 const searchEntitiesMock = vi.fn<(query: string) => Promise<ListResponse<Entity>>>()
+// Breakdown and table cards read every page. beforeEach makes it answer
+// through searchEntitiesMock, so a test that sets only that covers both.
+const searchAllEntitiesMock = vi.fn<(query: string) => Promise<ListResponse<Entity>>>()
 const analyzeMock = vi.fn<() => Promise<AnalyzeResult>>()
 const getDashboardMock = vi.fn<(name?: string) => Promise<DashboardResponse>>()
 const getDashboardCardMock =
@@ -52,6 +55,7 @@ vi.mock('@/api', async () => {
   const { ApiError } = await import('@/api/errors')
   return {
     searchEntities: (query: string) => searchEntitiesMock(query),
+    searchAllEntities: (query: string) => searchAllEntitiesMock(query),
     analyze: () => analyzeMock(),
     getDashboard: (name?: string) => getDashboardMock(name),
     // The anchor is passed on only when set, so the assertions written for
@@ -103,8 +107,24 @@ describe('DashboardView', () => {
       data: [],
       meta: { total: 0, page: 1, per_page: 50, has_more: false },
     })
+    searchAllEntitiesMock.mockImplementation((query) => searchEntitiesMock(query))
     analyzeMock.mockResolvedValue({ errors: 0, warnings: 0, issues: [], byCheck: {} })
     world.value = undefined
+  })
+
+  // TKT-T0DK37: one /_search page holds at most 1000 rows, so a card that
+  // computes over the rows reads every page, and a count reads one.
+  it('reads every page for a breakdown or a table, one page for a count', async () => {
+    seedDashboard([
+      card({ title: 'Count', query: 'q-count' }),
+      card({ title: 'By status', query: 'q-breakdown', display: 'breakdown', group_by: 'status' }),
+      card({ title: 'Rows', query: 'q-table', display: 'table' }),
+    ])
+
+    await mountView()
+
+    expect(searchAllEntitiesMock.mock.calls.map((c) => c[0]).sort()).toEqual(['q-breakdown', 'q-table'])
+    expect(searchEntitiesMock.mock.calls.map((c) => c[0])).toContain('q-count')
   })
 
   // The wiring assertion this file exists for (TKT-53KICM): the view must

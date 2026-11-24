@@ -84,7 +84,13 @@ function exportAs(tr: TransformInfo) {
       </RlButton>
     </template>
 
-    <RlMenuItem v-for="tr in offered" :key="tr.name" class="export-menu-item" @click="exportAs(tr)">
+    <RlMenuItem
+      v-for="tr in offered"
+      :key="tr.name"
+      class="export-menu-item"
+      :class="{ 'export-menu-format': !more }"
+      @click="exportAs(tr)"
+    >
       {{ more ? t('entity.exportAs', { format: tr.name }) : tr.name }}
     </RlMenuItem>
   </RlMenu>
@@ -92,11 +98,12 @@ function exportAs(tr: TransformInfo) {
 
 <style scoped>
 /*
- * Transform names are short format identifiers (pdf, docx), so they read as
- * labels rather than prose. Everything else the list used to declare -- the
+ * A bare transform name is a short format identifier (pdf, docx), so it reads
+ * as a label. In "more" mode the item is a sentence ("Export as docx"), which
+ * must keep its own case. Everything else the list used to declare -- the
  * panel box, its position, the item hover -- is RlMenu's and RlMenuItem's.
  */
-.export-menu-item {
+.export-menu-format {
   text-transform: uppercase;
 }
 </style>

@@ -965,6 +965,25 @@ func parseSearchLimit(raw string) (int, bool) {
 	return n, true
 }
 
+// maxSearchPage bounds the `page` parameter of /_search, and with it how
+// deep an offset a request can ask the store to skip: at most about ten
+// million rows, past any search a client pages through.
+const maxSearchPage = 10000
+
+// parseSearchPage reads the optional `page` parameter of /_search. An empty
+// value is page 1. The second result is false for a value that is not an
+// integer in [1, maxSearchPage].
+func parseSearchPage(raw string) (int, bool) {
+	if raw == "" {
+		return 1, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > maxSearchPage {
+		return 0, false
+	}
+	return n, true
+}
+
 // --- Helper Functions ---
 
 // applyV1Filters applies `filter[...]` query params to the entity slice. Pure

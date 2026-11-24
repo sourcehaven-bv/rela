@@ -162,9 +162,26 @@ Any other value is a `400 invalid_limit`.
 For a free-text search with no property filter and no `sort:` clause, the
 limit also bounds the search itself: the server stops after `limit` visible
 hits instead of reading up to 1000. A `type` parameter keeps this only when
-every `type:` clause in the query names that same type. In all other cases
-the limit shrinks the response, not the server's work: the query still reads
-and sorts every matching row before the cut.
+every `type:` clause in the query names that same type. A structured query
+that the server hands to the store reads only the requested page. Other
+shapes still read and sort every matching row before the cut.
+
+### Pages
+
+A search returns one page. Without `limit` a page holds 1000 rows. `page`
+(an integer from 1 to 10000, default 1) selects a later page; any other
+value is a `400 invalid_page`. The response `meta` says where the page sits:
+
+- `total`: the number of visible matches. For free text it is a lower
+  bound, because free text ranks only its 1000 best hits.
+- `page` and `per_page`: the page served and its size.
+- `has_more`: a later page holds rows. Read pages until it is false.
+- `capped`: free text matched more than 1000 hits and this page reaches
+  the 1000th. No page past that hit is served.
+
+```text
+GET /api/v1/_search?q=type:ticket&page=2
+```
 
 ```text
 GET /api/v1/_search?q=type:ticket,feature sort:modified:desc&limit=8

@@ -7,7 +7,8 @@ export function sortParam(specs: SortSpec[]): string {
 }
 
 /**
- * The sort a grouped list is read in: the group property first, ascending,
+ * The sort a grouped list is read in: the group property first, ascending
+ * (descending for `buckets: {order: desc}`),
  * then the given sort within each group.
  *
  * Ascending on the group property is what makes each section's rows arrive
@@ -21,7 +22,13 @@ export function groupedSort(groupBy: ListGroupBy | undefined, specs: SortSpec[])
   // is no property for the server to sort the sections by.
   if (!groupBy?.property) return specs
   return [
-    { property: groupBy.property, direction: 'asc' },
+    // Newest-first calendar sections read the property descending, so a
+    // truncated list drops the oldest rows (navItemsListQuery does the same).
+    {
+      property: groupBy.property,
+      direction:
+        typeof groupBy.buckets === 'object' && groupBy.buckets.order === 'desc' ? 'desc' : 'asc',
+    },
     ...specs.filter((s) => s.property !== groupBy.property),
   ]
 }
@@ -79,7 +86,9 @@ export function listBaseParams(
  * Spread into a view's list params, and into its export URL, so every read
  * of the tab shows the same rows.
  */
-export function pageScopeParams(scope: PageScope | undefined): Pick<ListParams, 'scope_page' | 'scope_tab' | 'anchor'> {
+export function pageScopeParams(
+  scope: PageScope | undefined
+): Pick<ListParams, 'scope_page' | 'scope_tab' | 'anchor'> {
   if (!scope) return {}
   return { scope_page: scope.page, scope_tab: scope.tab, anchor: scope.entity }
 }
@@ -89,7 +98,10 @@ export function pageScopeParams(scope: PageScope | undefined): Pick<ListParams, 
  * relation-ordered tab, otherwise the list's `default_sort`, as a `sort`
  * param or undefined.
  */
-export function defaultSortParam(config: ListConfig | undefined, relationOrdered: boolean): string | undefined {
+export function defaultSortParam(
+  config: ListConfig | undefined,
+  relationOrdered: boolean
+): string | undefined {
   if (relationOrdered || !config?.default_sort?.length) return undefined
   return sortParam(config.default_sort)
 }

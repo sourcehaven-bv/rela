@@ -31,6 +31,7 @@ describe('SearchView: Add results to pile', () => {
     piles.listPiles.mockReset().mockResolvedValue({ piles: [], icons: [] })
     searchEntitiesMock.mockReset().mockResolvedValue({
       data: [{ id: 'POL-1', type: 'policy', properties: { title: 'Policy one' } }],
+      meta: { total: 1, page: 1, per_page: 1000, has_more: false },
     })
     router = createRouter({
       history: createWebHistory(),
@@ -64,6 +65,27 @@ describe('SearchView: Add results to pile', () => {
   it('offers Add results to pile by default', async () => {
     const w = await mountSearch(true)
     expect(w.find('[data-testid="add-to-pile"]').exists()).toBe(true)
+  })
+
+  // TKT-T0DK37: a result cut to its first page says so, with the total.
+  it('says when it shows only the first page of the result', async () => {
+    searchEntitiesMock.mockResolvedValue({
+      data: [{ id: 'POL-1', type: 'policy', properties: { title: 'Policy one' } }],
+      meta: { total: 1500, page: 1, per_page: 1000, has_more: true },
+    })
+    const w = await mountSearch(false)
+    expect(w.find('.results-count').text()).toContain('1500')
+  })
+
+  it('says when free text matched more hits than the server ranks', async () => {
+    const plain = (await mountSearch(false)).find('.results-count').text()
+    wrapper?.unmount()
+    searchEntitiesMock.mockResolvedValue({
+      data: [{ id: 'POL-1', type: 'policy', properties: { title: 'Policy one' } }],
+      meta: { total: 1, page: 1, per_page: 1000, has_more: false, capped: true },
+    })
+    const capped = (await mountSearch(false)).find('.results-count').text()
+    expect(capped).not.toBe(plain)
   })
 
   it('leaves it out when list_buttons hides it', async () => {

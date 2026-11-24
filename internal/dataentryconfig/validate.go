@@ -3315,6 +3315,7 @@ func validateCommandScope(cmdID string, scope CommandScope, cfg *Config, meta *m
 func validateApp(cfg *Config, meta *metamodel.Metamodel) []string {
 	errs := validateDefaultWorldAlias(cfg.App.DefaultWorld, meta)
 	errs = append(errs, validateAppLanguage(cfg.App.Language)...)
+	errs = append(errs, validateAppLanguages(cfg.App.Languages, cfg.App.Language)...)
 	errs = append(errs, validateWorldSwitcher(cfg.App.WorldSwitcher)...)
 	errs = append(errs, validateAbout(cfg.App.About)...)
 	if logo := cfg.App.Logo; logo != "" {
@@ -3346,6 +3347,38 @@ func validateWorldSwitcher(v string) []string {
 // file for, one per frontend/src/i18n/locales/<lang>.json.
 // TestSupportedUILanguagesMatchLocaleFiles keeps the two in step.
 var SupportedUILanguages = []string{"en", "nl"}
+
+// validateAppLanguages checks app.languages: each entry a supported base
+// language in lower case, without a region, listed once. A default language
+// outside the list would show a language the users cannot pick, so
+// app.language must be one of them.
+func validateAppLanguages(langs []string, def string) []string {
+	if len(langs) == 0 {
+		return nil
+	}
+	var errs []string
+	seen := map[string]bool{}
+	for _, l := range langs {
+		switch {
+		case !slices.Contains(SupportedUILanguages, l):
+			errs = append(errs, fmt.Sprintf("app.languages: %q is not a supported interface language; supported: %s",
+				l, strings.Join(SupportedUILanguages, ", ")))
+		case seen[l]:
+			errs = append(errs, fmt.Sprintf("app.languages: %q is listed twice", l))
+		}
+		seen[l] = true
+	}
+	if def != "" {
+		if tag, err := language.Parse(def); err == nil {
+			base, _ := tag.Base()
+			if !seen[base.String()] {
+				errs = append(errs, fmt.Sprintf("app.language: %q is not one of app.languages (%s)",
+					def, strings.Join(langs, ", ")))
+			}
+		}
+	}
+	return errs
+}
 
 // validateAppLanguage checks app.language: a well-formed BCP 47 tag whose
 // base language has a message file. A typo would otherwise fall through to

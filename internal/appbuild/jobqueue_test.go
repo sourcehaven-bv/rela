@@ -14,14 +14,14 @@ import (
 // job queue.
 //
 // The failure this guards against is a nil queue reaching a producer: enqueue
-// sites call svc.Jobs().Enqueue(...) directly, so a nil would surface as a
+// sites call svc.Scheduler().Jobs().Enqueue(...) directly, so a nil would surface as a
 // panic deep in a handler rather than as a wiring error at startup.
 func TestServices_JobsIsWired(t *testing.T) {
 	svc, err := discover(t, writeMinimalProject(t))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 
-	q := svc.Jobs()
+	q := svc.Scheduler().Jobs()
 	require.NotNil(t, q, "assembled Services must carry a job queue")
 
 	// Usable, not merely non-nil: register and round-trip one job. Handlers
@@ -62,5 +62,5 @@ func TestJobQueueFor_NoDSNStillAssembles(t *testing.T) {
 	require.NoError(t, err, "assembly without a DSN must not fail")
 	t.Cleanup(func() { _ = svc.Close() })
 
-	require.NotNil(t, svc.Jobs(), "assembly without a DSN must still yield a usable queue")
+	require.NotNil(t, svc.Scheduler().Jobs(), "assembly without a DSN must still yield a usable queue")
 }

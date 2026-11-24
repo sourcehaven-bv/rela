@@ -13,9 +13,6 @@ import (
 // sections appear. The SPA's utils/dateBuckets.ts holds the same set.
 var DateBucketKeys = []string{"overdue", "today", "tomorrow", "next_7_days", "later", "no_date"}
 
-// bucketsRelative is the one bucketing scheme.
-const bucketsRelative = "relative"
-
 // Row caps for a grouped list. The default matches the size a reader can
 // still scan in sections; the ceiling keeps one page load bounded, since a
 // grouped list is fetched whole rather than paged.
@@ -52,28 +49,22 @@ func validateListGroupBy(
 	if g.MaxRows < 0 || g.MaxRows > maxGroupMaxRows {
 		errs = append(errs, fmt.Sprintf("%s: max_rows %d is out of range (1..%d)", prefix, g.MaxRows, maxGroupMaxRows))
 	}
-	if len(g.Groups) > 0 && g.Buckets != "" {
+	if len(g.Groups) > 0 && g.Buckets != nil {
 		errs = append(errs, prefix+": groups and buckets cannot both be set "+
-			"(groups restyles enum values, buckets sorts dates into relative sections)")
+			"(groups restyles enum values, buckets sorts dates into date sections)")
 	}
-	if g.Buckets != "" && g.Buckets != bucketsRelative {
-		errs = append(errs, fmt.Sprintf("%s: buckets %q is not valid (valid: %s)", prefix, g.Buckets, bucketsRelative))
-	}
-	if len(g.Labels) > 0 && g.Buckets == "" {
+	if len(g.Labels) > 0 && g.Buckets == nil {
 		errs = append(errs, prefix+": labels only apply with buckets")
 	}
-	for _, key := range slices.Sorted(maps.Keys(g.Labels)) {
-		if !slices.Contains(DateBucketKeys, key) {
-			errs = append(errs, fmt.Sprintf("%s: labels has unknown bucket %q (valid: %s)",
-				prefix, key, strings.Join(DateBucketKeys, ", ")))
-		}
+	if g.Buckets != nil {
+		errs = append(errs, validateListBuckets(prefix, g)...)
 	}
 
 	if g.Relation != "" {
 		if g.Property != "" {
 			errs = append(errs, prefix+": property and relation are mutually exclusive")
 		}
-		if len(g.Groups) > 0 || g.Buckets != "" {
+		if len(g.Groups) > 0 || g.Buckets != nil {
 			errs = append(errs, prefix+": groups and buckets do not apply to a relation")
 		}
 		return append(errs, validateRelationColumns(prefix, entityType, relationColumnsSource{
@@ -99,12 +90,98 @@ func validateListGroupBy(
 			prefix, g.Property))
 	}
 
-	if g.Buckets != "" && propDef.Type != metamodel.PropertyTypeDate && propDef.Type != metamodel.PropertyTypeDatetime {
+	isDate := propDef.Type == metamodel.PropertyTypeDate || propDef.Type == metamodel.PropertyTypeDatetime
+	if g.Buckets != nil && !isDate {
 		errs = append(errs, fmt.Sprintf("%s: buckets needs a date or datetime property, %q is %s",
 			prefix, g.Property, propDef.Type))
 	}
 	errs = append(errs, validateListGroups(prefix, g, propDef, meta)...)
 	return errs
+}
+
+// validateListBuckets checks `buckets:` and the `labels:` keys it allows.
+func validateListBuckets(prefix string, g *ListGroupBy) []string {
+	b := g.Buckets
+	var errs []string
+	if !b.Calendar() && b.Scheme != BucketsRelative {
+		errs = append(errs, fmt.Sprintf("%s: buckets %q is not valid (valid: %s, or a mapping with by)",
+			prefix, b.Scheme, BucketsRelative))
+	}
+	if b.Calendar() {
+		errs = append(errs, validateCalendarBuckets(prefix, *b)...)
+	}
+	allowed := BucketLabelKeys(*b)
+	for _, key := range slices.Sorted(maps.Keys(g.Labels)) {
+		if !slices.Contains(allowed, key) {
+			errs = append(errs, fmt.Sprintf("%s: labels has unknown bucket %q (valid: %s)",
+				prefix, key, strings.Join(allowed, ", ")))
+		}
+	}
+	return errs
+}
+
+// validateCalendarBuckets checks the mapping form of `buckets:`.
+func validateCalendarBuckets(prefix string, b ListBuckets) []string {
+	var errs []string
+	units := strings.Join(BucketUnits, ", ")
+	switch {
+	case b.By == "":
+		errs = append(errs, prefix+": buckets.by is required (valid: "+units+")")
+	case !slices.Contains(BucketUnits, b.By):
+		errs = append(errs, fmt.Sprintf("%s: buckets.by %q is not valid (valid: %s)", prefix, b.By, units))
+	}
+	if _, ok := b.ForDays(); !ok {
+		errs = append(errs, fmt.Sprintf("%s: buckets.for %q is not valid (a number of days from 1 to %d, such as 7d)",
+			prefix, b.For, maxBucketForDays))
+	}
+	if b.For != "" && b.By != BucketUnitDay {
+		errs = append(errs, prefix+": buckets.for needs by: day")
+	}
+	if b.Then != "" {
+		if b.For == "" {
+			errs = append(errs, prefix+": buckets.then needs for")
+		}
+		if !slices.Contains(BucketUnits[1:], b.Then) {
+			errs = append(errs, fmt.Sprintf("%s: buckets.then %q is not valid (valid: %s)",
+				prefix, b.Then, strings.Join(BucketUnits[1:], ", ")))
+		}
+	}
+	switch b.Order {
+	case "", BucketOrderAsc:
+	case BucketOrderDesc:
+		if b.For != "" {
+			errs = append(errs, prefix+": buckets.order desc cannot take for (the window runs forward from today)")
+		}
+	default:
+		errs = append(errs, fmt.Sprintf("%s: buckets.order %q is not valid (valid: %s, %s)",
+			prefix, b.Order, BucketOrderAsc, BucketOrderDesc))
+	}
+	return errs
+}
+
+// BucketLabelKeys returns the section keys `labels:` may rename for b, in
+// section order. The relative scheme has its fixed buckets. The calendar
+// form names only its fixed sections; the per-day, per-week and per-month
+// sections take titles from the calendar.
+func BucketLabelKeys(b ListBuckets) []string {
+	if !b.Calendar() {
+		return DateBucketKeys
+	}
+	var keys []string
+	if b.For != "" {
+		keys = append(keys, "overdue")
+	}
+	if b.By == BucketUnitDay {
+		keys = append(keys, "today")
+		// A one-day window holds only today, so tomorrow has no section.
+		if days, _ := b.ForDays(); days != 1 {
+			keys = append(keys, "tomorrow")
+		}
+	}
+	if b.For != "" && b.Then == "" {
+		keys = append(keys, "later")
+	}
+	return append(keys, "no_date")
 }
 
 // validateListGroups checks `groups:` entries: each value must be one the

@@ -603,10 +603,40 @@ func TestQueryBudget_SearchIsSizeIndependent(t *testing.T) {
 		t.Helper()
 		budgetSearch(ctx, t, app, d, "q=type%3Aticket")
 	})
-	// Calls only, by design: a search without a limit returns every match,
-	// so its rows grow with the matches. The filtered and limited budgets
-	// below show the store reads no row it does not serve.
+	// Calls only, by design: below maxSearchResults a search without a
+	// limit returns every match, so its rows grow with the matches. The
+	// bounded budget below pins the rows past the bound; the filtered and
+	// limited budgets show the store reads no row it does not serve.
 	assertCallBudget(t, "search", b, searchBudget, detail)
+}
+
+// A structured search without a limit over more matches than one page
+// holds (TKT-T0DK37): one page of maxSearchResults rows and one count,
+// whether the store holds one page and a bit or two pages and more. The
+// response says the page was cut.
+func TestQueryBudget_SearchUnlimitedIsBounded(t *testing.T) {
+	n := budgetSizes[0]
+	measure := func(pad int) (storetest.Cost, string) {
+		app, counting, d, ctx := newBudgetAppPadded(t, n, pad, memstore.New(), budgetMeta())
+		var resp v1.ListResponse
+		if err := json.Unmarshal([]byte(budgetSearch(ctx, t, app, d, "q=type%3Aticket")), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if len(resp.Data) != maxSearchResults || resp.Meta.Total != n+pad || !resp.Meta.HasMore ||
+			resp.Meta.PerPage != maxSearchResults {
+
+			t.Fatalf("pad %d: %d rows, meta %+v; want %d rows of %d, has_more",
+				pad, len(resp.Data), resp.Meta, maxSearchResults, n+pad)
+		}
+		return counting.Cost(), counting.String()
+	}
+	small, large := maxSearchResults+200, 2*maxSearchResults+400
+	cs, ds := measure(small)
+	cl, dl := measure(large)
+	storetest.AssertSameCost(t, small, cs, ds, large, cl, dl)
+	if cl.Calls != searchLimitBudget {
+		t.Errorf("store reads = %d, pinned budget %d (%s)", cl.Calls, searchLimitBudget, dl)
+	}
 }
 
 // A filtered structured search: the filter runs in the store, inside the

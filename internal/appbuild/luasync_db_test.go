@@ -91,7 +91,7 @@ func newSyncServices(t *testing.T) *appbuild.Services {
 func syncLua(ctx context.Context, t *testing.T, svc *appbuild.Services, src string) (map[string]string, error) {
 	t.Helper()
 	var out strings.Builder
-	rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out, lua.WithContext(ctx),
+	rt := lua.NewWriter(svc.Scheduler().ScheduledLuaWriteDeps(), &out, lua.WithContext(ctx),
 		lua.WithPrincipal(principal.From(ctx)), lua.WithExternalRefWrites())
 	defer rt.Close()
 	err := rt.RunString(src) //nolint:contextcheck // the runtime carries ctx via lua.WithContext

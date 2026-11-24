@@ -80,7 +80,7 @@ func TestScheduledLuaWriteDeps_ReadsAreACLBound(t *testing.T) {
 		t.Fatalf("IdentityBinder: %v", bindErr)
 	}
 	var out strings.Builder
-	rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out,
+	rt := lua.NewWriter(svc.Scheduler().ScheduledLuaWriteDeps(), &out,
 		lua.WithContext(taskCtx), lua.WithPrincipal(principal.From(taskCtx)))
 	defer rt.Close()
 
@@ -116,7 +116,7 @@ func TestScheduledLuaWriteDeps_WritePrepStaysRaw(t *testing.T) {
 	svc := appbuildtest.New(schedMeta(), appbuildtest.WithStore(st), appbuildtest.WithDeclarative(d))
 	defer svc.Close()
 
-	deps := svc.ScheduledLuaWriteDeps()
+	deps := svc.Scheduler().ScheduledLuaWriteDeps()
 	if deps.VisibleReader == nil {
 		t.Fatal("VisibleReader is nil — scheduled script reads would deny outright")
 	}

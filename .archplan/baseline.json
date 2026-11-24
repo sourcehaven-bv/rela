@@ -2876,6 +2876,12 @@
       "reason": "Detector gap: the refusal is tested in internal/dataentry/sse_acl_test.go. Id changed when TKT-3KUIROC moved the handler to a new receiver.",
       "at": "2026-11-21T16:00:00Z",
       "title": "No test shows handleSSE refusing a caller."
+    },
+    "concepts.data_clump-d25c425bb7fe": {
+      "state": "accepted",
+      "reason": "Design: the wire AppConfig and the SPA type mirror app: in data-entry.yaml on purpose. BUG-YI096TR added app.languages.",
+      "at": "2026-11-23T12:45:00Z",
+      "title": "The fields about, default_world, description, language, languages and world_switcher appear together in 3 types across 3 components."
     }
   },
   "labels": {},
