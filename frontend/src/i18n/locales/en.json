@@ -945,6 +945,9 @@
     "noItems": "Nothing found.",
     "createOne": "Create one",
     "inaccessible": "inaccessible",
+    "toggle": {
+      "label": "{field}: {title}"
+    },
     "moveFailed": "Could not move the row",
     "pagination": {
       "summary": "Showing {first} - {last} of {total}"

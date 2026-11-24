@@ -324,6 +324,20 @@ export const useSchemaStore = defineStore('schema', () => {
     })
   }
 
+  // The declared transition edges of a state-machine property, value → the
+  // values it may move to (TKT-M0AT73B), or undefined when any move is legal.
+  // A UI hint: the write path enforces the machine and its guards.
+  function movesForProperty(
+    property: string,
+    entityType?: string | EntityType,
+  ): Record<string, string[]> | undefined {
+    return scanPropertyDefs(property, entityType, (def) => {
+      if (!def) return undefined
+      const ct = def.type ? customTypes.value.get(def.type) : undefined
+      return ct?.moves
+    })
+  }
+
   // Shared resolution scaffold for the per-property lookups above/below:
   // walk the property defs named `property` (given entityType first, then
   // entity then relation types) and return the first def the extractor
@@ -668,6 +682,7 @@ export const useSchemaStore = defineStore('schema', () => {
 
     // Getters
     getEntityType,
+    movesForProperty,
     pluralLabel,
     getRelationType,
     worldReadable,

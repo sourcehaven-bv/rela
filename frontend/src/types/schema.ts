@@ -253,6 +253,9 @@ export interface CustomType {
   // Optional display labels keyed by value. Display-only; see PropertyDef.labels.
   labels?: Record<string, string>
   default?: string
+  // The declared transition edges, value → values it may move to, for a type
+  // that is a state machine (TKT-M0AT73B). A UI hint.
+  moves?: Record<string, string[]>
 }
 
 export interface SortSpec {

@@ -367,7 +367,7 @@ func routeShape(p string, words routeWords, maxLen int) (string, bool) {
 // Anything else is logged as "*".
 var queryKeyWords = map[string]bool{
 	"page": true, "per_page": true, "cursor": true, "sort": true, "fields": true, "include": true,
-	"include_content": true, "comment_counts": true, "world": true, "list_id": true,
+	"include_content": true, "field_verdicts": true, "comment_counts": true, "world": true, "list_id": true,
 	"query_scope": true, "scope_page": true, "scope_tab": true, "anchor": true, "relation": true,
 	"direction": true, "q": true, "type": true, "types": true, "limit": true, "offset": true,
 	"view": true, "depth": true, "last_event_id": true, "format": true, "face": true, "busy": true,

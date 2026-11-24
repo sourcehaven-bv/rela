@@ -71,6 +71,27 @@ unchanged: they always carry `content`, as do ETags computed over it. A row
 whose entity has an empty body looks the same with or without the flag, which
 is the reason the field is omitted rather than sent empty.
 
+## Field verdicts on list rows
+
+A list row carries no `_fields` or `_redacted` by default; only per-entity
+responses do. `field_verdicts` names the properties whose verdicts each row
+should carry, comma-separated, at most 16 (TKT-M0AT73B):
+
+```text
+GET /api/v1/todos?field_verdicts=status,flagged
+```
+
+Each row then carries `_fields` (sparse, as on a per-entity response) and
+`_redacted`, both restricted to the named properties, so they are partial. Names past the 16th and names that are not properties are ignored. The page answers them
+from one batch of verdicts, never one query per row. A list with toggle
+columns asks for their properties. The map is a UI hint; a write is
+authorized again.
+
+A toggle also needs to know whether the state machine of an enum allows the
+move. `GET /api/v1/_schema` serves each custom type that declares
+`transitions:` with `moves`, the declared edges as value → target values.
+Transition labels, help, guards and preconditions stay off the wire.
+
 ## Comment counts on list rows
 
 `GET /api/v1/{plural}` accepts `comment_counts=true` (any value
