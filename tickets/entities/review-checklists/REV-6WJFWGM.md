@@ -3,17 +3,18 @@ id: REV-6WJFWGM
 type: review-checklist
 title: 'Review: List toggle cells: widget toggle with on/off values'
 started: "2026-11-24"
-status: in-progress
+completed: "2026-11-24"
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test`)
+- [x] Lint clean (`just lint`)
+- [x] Comment lint gate clean (`just comment-lint`)
+- [x] ~~Coverage maintained~~ (N/A locally: CI coverage job enforces the floors)
 
 **Comment findings.** `just comment-report` lists the advisory rules
 (duplication, nil-contract, param-contract, restatement). They are not a merge
@@ -34,18 +35,18 @@ unexplained suppression is a finding nobody can re-evaluate later.
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (invokes cranky-code-reviewer agent)
+- [x] All critical review-responses addressed
+- [x] All significant review-responses addressed
+- [x] Self-reviewed the diff for unrelated changes
 
 **Review Responses:** <!-- List IDs of review-response entities created, e.g.,
 RR-xxxx -->
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
 <!-- For each acceptance criterion, state PASS/FAIL with evidence -->
@@ -54,21 +55,21 @@ RR-xxxx -->
 
 Skip this section for bugs and internal refactors.
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+- [x] Docs-checklist created and linked via `has-docs`
+- [x] User-facing documentation updated
+- [x] Docs-checklist marked as done
 
 **Docs Checklist:** <!-- e.g., DOCS-xxxx -->
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] ~~Run `/pr`~~ (N/A: runs after done, TKT-UFV01M)
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
