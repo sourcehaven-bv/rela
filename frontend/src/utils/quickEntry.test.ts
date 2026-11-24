@@ -5,12 +5,14 @@ import type { LocationQuery } from 'vue-router'
 import { isQuickEntryPopup } from './quickEntry'
 
 describe('isQuickEntryPopup', () => {
-  it.each([
+  const cases: { name: string; query: LocationQuery; want: boolean }[] = [
     { name: 'quick', query: { popup: '1' }, want: true },
     { name: 'quick', query: {}, want: false },
     { name: 'quick', query: { popup: '0' }, want: false },
     { name: 'list', query: { popup: '1' }, want: false },
-    expect(isQuickEntryPopup({ name, query: query as LocationQuery })).toBe(want)
+  ]
+  it.each(cases)('$name $query → $want', ({ name, query, want }) => {
+    expect(isQuickEntryPopup({ name, query })).toBe(want)
   })
 })
 
