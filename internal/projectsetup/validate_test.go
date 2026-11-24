@@ -503,7 +503,7 @@ func TestCheckDataEntry_QuickEntryShortcut(t *testing.T) {
 	}
 	const tmpl = "forms:\n  new_todo:\n    entity_type: todo\n    fields:\n      - property: title\n" +
 		"quick_entry:\n  form: new_todo\n  shortcut: %s\n"
-	if err := projectsetup.CheckDataEntry(fmt.Appendf(nil, tmpl, "CmdOrCtrl+Shift+Space"), mm); err != nil {
+	if err = projectsetup.CheckDataEntry(fmt.Appendf(nil, tmpl, "CmdOrCtrl+Shift+Space"), mm); err != nil {
 		t.Fatalf("valid shortcut refused: %v", err)
 	}
 	err = projectsetup.CheckDataEntry(fmt.Appendf(nil, tmpl, "Cmd+V"), mm)
