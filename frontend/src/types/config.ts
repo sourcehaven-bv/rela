@@ -1,4 +1,3 @@
-import type { ColorName } from '@/utils/styleColors'
 import type {
   ChannelMessageCards,
   ChannelMessageDisplay,
@@ -803,6 +802,25 @@ export type CalendarViewKind = 'month' | 'week'
 export type CalendarWeekStart = 'monday' | 'sunday'
 
 /** A named palette token; the theme owns what the colour actually is. */
+/**
+ * A colour name data-entry.yaml accepts: a hue or one of its aliases. The
+ * server's ColorNames (internal/dataentryconfig/colors.go) holds the same
+ * names; NAMED_COLORS in utils/styleColors.ts maps each to its dot colour.
+ */
+export type ColorName =
+  | 'grey'
+  | 'gray'
+  | 'slate'
+  | 'red'
+  | 'orange'
+  | 'amber'
+  | 'yellow'
+  | 'green'
+  | 'teal'
+  | 'blue'
+  | 'purple'
+  | 'violet'
+
 export type CalendarColor = ColorName
 
 /**

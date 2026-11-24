@@ -1,4 +1,5 @@
 import type { DotColor, StatusColor } from 'rela-components/types'
+import type { ColorName } from '@/types/config'
 
 /**
  * The bare-hue style classes (`styles:` in data-entry.yaml, served as
@@ -156,10 +157,7 @@ export const NAMED_COLORS = {
   blue: 'blue',
   purple: 'purple',
   violet: 'purple',
-} as const satisfies Record<string, DotColor>
-
-/** A colour name from NAMED_COLORS. */
-export type ColorName = keyof typeof NAMED_COLORS
+} as const satisfies Record<ColorName, DotColor>
 
 /** The dot colour of a colour name; undefined for a name the server does not accept. */
 export function namedColor(name: string | undefined): DotColor | undefined {
