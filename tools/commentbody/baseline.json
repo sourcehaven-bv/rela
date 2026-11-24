@@ -474,7 +474,7 @@
   "internal/dataentryconfig/sankey.go": 2,
   "internal/dataentryconfig/summary.go": 2,
   "internal/dataentryconfig/theme.go": 6,
-  "internal/dataentryconfig/validate.go": 124,
+  "internal/dataentryconfig/validate.go": 123,
   "internal/dataentryconfig/validate_caldav.go": 23,
   "internal/dataentryconfig/validate_calendars.go": 9,
   "internal/dataentryconfig/validate_feeds.go": 7,
