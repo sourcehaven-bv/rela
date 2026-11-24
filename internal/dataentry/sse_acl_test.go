@@ -110,6 +110,19 @@ func runSSEConn(ctx context.Context, t *testing.T, app *App) (send chan<- testEv
 // settle waits for one flush window plus slack so coalesced frames land.
 func settle() { time.Sleep(sseFlushInterval + 80*time.Millisecond) }
 
+// waitForFrame blocks until the sink holds needle, so a slow event path is not
+// mistaken for a missing frame.
+func waitForFrame(t *testing.T, sink *sseSink, needle string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(sink.String(), needle) {
+		if time.Now().After(deadline) {
+			t.Fatalf("no %q frame within 10s", needle)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // sseData returns the data payloads in an SSE transcript, one per frame.
 func sseData(out string) []string {
 	var data []string
@@ -240,6 +253,9 @@ func TestSSEACL_Debounce(t *testing.T) {
 	for range 20 {
 		send <- testEvent{EntityType: "ticket"}
 	}
+	// Wait for the first frame (a loaded runner can delay the feed past one
+	// flush window), then a full window more so a second frame would show.
+	waitForFrame(t, sink, "event: entity:changed")
 	settle()
 
 	if n := strings.Count(sink.String(), "event: entity:changed"); n != 1 {
