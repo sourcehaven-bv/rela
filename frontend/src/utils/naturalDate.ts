@@ -56,27 +56,16 @@ for (const [i, names] of [
   for (const n of names) MONTHS[n] = i
 }
 
-const UNITS: Record<string, 'd' | 'w' | 'm' | 'y'> = {
-  d: 'd',
-  day: 'd',
-  days: 'd',
-  dag: 'd',
-  dagen: 'd',
-  w: 'w',
-  week: 'w',
-  weeks: 'w',
-  weken: 'w',
-  m: 'm',
-  month: 'm',
-  months: 'm',
-  maand: 'm',
-  maanden: 'm',
-  y: 'y',
-  j: 'y',
-  year: 'y',
-  years: 'y',
-  jaar: 'y',
-  jaren: 'y',
+type Unit = 'd' | 'w' | 'm' | 'y'
+
+const UNITS: Record<string, Unit> = {}
+for (const [unit, names] of [
+  ['d', ['d', 'day', 'days', 'dag', 'dagen']],
+  ['w', ['w', 'week', 'weeks', 'weken']],
+  ['m', ['m', 'month', 'months', 'maand', 'maanden']],
+  ['y', ['y', 'j', 'year', 'years', 'jaar', 'jaren']],
+] as [Unit, string[]][]) {
+  for (const n of names) UNITS[n] = unit
 }
 
 const WORDS: Record<string, number> = {
@@ -131,7 +120,7 @@ function addMonths(day: Day, n: number): Day {
   return { y, m, d: Math.min(day.d, daysIn(y, m)) }
 }
 
-function offset(day: Day, n: number, unit: 'd' | 'w' | 'm' | 'y'): Day {
+function offset(day: Day, n: number, unit: Unit): Day {
   switch (unit) {
     case 'd':
       return addDays(day, n)
