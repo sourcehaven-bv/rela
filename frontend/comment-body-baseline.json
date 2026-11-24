@@ -78,7 +78,7 @@
   "src/components/forms/InlinePropertyValue.vue": 1,
   "src/components/forms/InlineRelationValue.vue": 1,
   "src/components/forms/RelationCards.vue": 20,
-  "src/components/forms/RelationPicker.vue": 21,
+  "src/components/forms/RelationPicker.vue": 22,
   "src/components/forms/SectionEditForm.vue": 2,
   "src/components/forms/SidePanel.vue": 2,
   "src/components/forms/StatusControl.vue": 1,
