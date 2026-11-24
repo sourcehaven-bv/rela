@@ -55,7 +55,7 @@ type TemplateLoader interface {
 //   - Create: createCore (validate → write) → triggers.Process →
 //     apply property changes → re-write if changed → cascade.
 //     Engine.Process runs here (not inside Runner) because
-//     PropertiesSet must land on the entity and be persisted before
+//     the property writes must land on the entity and be persisted before
 //     cascade dispatches.
 //   - Update: validate → engine.Process(if oldEntity != nil) →
 //     apply property changes → write → cascade.
@@ -456,7 +456,7 @@ type Deps struct {
 // should carry whatever structured denial detail the surface needs.
 //
 // **Scope: caller-authored changes only.** Automation-derived properties
-// ([triggers.Result.PropertiesSet]) are system writes and are
+// ([triggers.Result.Writes]) are system writes and are
 // deliberately NOT passed through this gate. The gate enforces parity with
 // what the affordance resolver would surface to this principal on a read —
 // and automation is the system acting, not the principal. Gating it would
@@ -1121,7 +1121,7 @@ func createFollowUps(
 		Type:   triggers.EventEntityCreated,
 		Entity: created,
 	})
-	if len(autoResult.PropertiesSet) > 0 {
+	if autoResult.HasWrites() {
 		// A compare-and-swap onto the stored row, not a write of `created`:
 		// a concurrent patch that landed after createCore must survive. The
 		// unique constraint is re-enforced against the POST-automation values
@@ -1134,7 +1134,7 @@ func createFollowUps(
 		// `enforce: write` that the automation's values break) leaves the
 		// row createCore stored, without the automation's values. The error
 		// says so, so a caller does not retry and create a second row.
-		written, err := writeAutomationProperties(ctx, m.deps, created, autoResult.PropertiesSet, nil)
+		written, err := writeAutomationProperties(ctx, m.deps, created, autoResult.Writes(), nil)
 		if err != nil {
 			return result, &KeptEntityError{Entity: created, Err: err}
 		}
@@ -1232,8 +1232,8 @@ func (m *Manager) ValidateCreate(
 // when an old state is available, applies property changes, persists,
 // and dispatches the cascade.
 //
-// **Caller-entity mutation.** When automation sets properties via
-// [triggers.Result.PropertiesSet], UpdateEntity mutates the supplied
+// **Caller-entity mutation.** When automation sets or removes properties via
+// [triggers.Result.Writes], UpdateEntity mutates the supplied
 // `*entity.Entity` in place before writing. Callers that need to
 // preserve the pre-call state should clone first.
 //
@@ -1747,7 +1747,7 @@ func (m *Manager) updateCore(
 		return nil, err
 	}
 	if ranAutomation {
-		if len(autoResult.PropertiesSet) > 0 {
+		if autoResult.HasWrites() {
 			// Properties changed — validate the post-automation state.
 			finalErrs = metaValidator.ValidateEntity(e.ID, e.Type, e.Properties)
 		}
@@ -1859,18 +1859,21 @@ func (m *Manager) processUpdateAutomation(
 		Entity:    e,
 		OldEntity: oldEntity,
 	})
-	if len(result.PropertiesSet) == 0 {
+	if !result.HasWrites() {
 		return result, true, nil
 	}
-	if err := rejectComputedPresent(m.deps, e.Type, stringMapAny(result.PropertiesSet)); err != nil {
+	writes := result.Writes()
+	if err := rejectComputedPresent(m.deps, e.Type, writeNames(writes)); err != nil {
 		return nil, true, err
 	}
-	if err := rejectExternalRefPresent(m.deps.Meta, e.Type, stringMapAny(result.PropertiesSet)); err != nil {
+	if err := rejectExternalRefPresent(m.deps.Meta, e.Type, writeNames(writes)); err != nil {
 		return nil, true, err
 	}
-	for prop, val := range result.PropertiesSet {
-		e.SetString(prop, val)
-	}
+	// Folded into the write in flight: e is the entity this update persists,
+	// already merged against the raw stored row, so a removal here is the
+	// same MetaUnset a caller's patch would carry. It runs after the caller's
+	// changes, so the automation wins over a caller who set the property.
+	writes.Apply(e)
 	if err := m.deps.Computed.Evaluate(ctx, e); err != nil {
 		return nil, true, err
 	}

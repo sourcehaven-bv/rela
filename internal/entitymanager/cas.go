@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -44,25 +45,26 @@ func casBackoff(ctx context.Context, attempt int) error {
 	}
 }
 
-// writeAutomationProperties persists an on-create automation's PropertiesSet
+// writeAutomationProperties persists an on-create automation's property writes
 // onto a just-created entity and returns the row as written.
 //
 // It is a compare-and-swap against the stored row, not a write of the caller's
 // in-memory copy: the row is re-read, only set is applied, and the write is
 // pinned to the version read. A concurrent writer that patched the entity
-// after its create keeps its change; the retry re-applies set on top of it.
+// after its create keeps its change; the retry re-applies the writes on top
+// of it. A removal is a MetaUnset on the stored row.
 //
 // check runs on each attempt's candidate after computed properties are
 // re-evaluated and before the write; the two callers differ in what they
 // enforce there.
 func writeAutomationProperties(
-	ctx context.Context, deps Deps, created *entity.Entity, set map[string]string,
+	ctx context.Context, deps Deps, created *entity.Entity, set triggers.PropertyWrites,
 	check func(stored, next *entity.Entity) error,
 ) (*entity.Entity, error) {
-	if err := rejectComputedPresent(deps, created.Type, stringMapAny(set)); err != nil {
+	if err := rejectComputedPresent(deps, created.Type, writeNames(set)); err != nil {
 		return nil, err
 	}
-	if err := rejectExternalRefPresent(deps.Meta, created.Type, stringMapAny(set)); err != nil {
+	if err := rejectExternalRefPresent(deps.Meta, created.Type, writeNames(set)); err != nil {
 		return nil, err
 	}
 	for attempt := 1; ; attempt++ {
@@ -71,9 +73,7 @@ func writeAutomationProperties(
 			return nil, fmt.Errorf("read entity after automation: %w", err)
 		}
 		next := stored.Clone()
-		for prop, val := range set {
-			next.SetString(prop, val)
-		}
+		set.Apply(next)
 		if evalErr := deps.Computed.Evaluate(ctx, next); evalErr != nil {
 			return nil, evalErr
 		}

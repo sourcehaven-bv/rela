@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -115,7 +116,7 @@ func (h *cascadeHost) CreateEntity(
 // reason ("the create path must not be the weaker one" — see CreateEntity);
 // without them here, an automation could silently persist a duplicate of a
 // `unique:` natural key, or a value validation would reject.
-func (h *cascadeHost) WriteEntity(ctx context.Context, e *entity.Entity, set map[string]string) error {
+func (h *cascadeHost) WriteEntity(ctx context.Context, e *entity.Entity, set triggers.PropertyWrites) error {
 	if e == nil { // coverage-ignore: defensive: Runner only calls WriteEntity with an entity it created earlier in the
 		// same cascade; never nil
 		return nil

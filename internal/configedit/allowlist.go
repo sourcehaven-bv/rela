@@ -159,6 +159,7 @@ var editable = map[File][]string{
 		"triggers.*.on.when",
 		"triggers.*.on.where.[]",
 		"triggers.*.outputs.[].set.properties.*",
+		"triggers.*.outputs.[].set.unset.[]",
 		"triggers.*.outputs.[].create.properties.*",
 		"triggers.*.outputs.[].create.relate.from",
 		"triggers.*.outputs.[].create.relate.type",
