@@ -2,6 +2,7 @@ import { ref, onMounted, onBeforeUnmount, computed, type Ref } from 'vue'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { useScriptErrorStore } from '@/stores/scriptError'
 import { updateEntity } from '@/api/entities'
+import { postAssign } from '@/api/assign'
 import { runAction } from '@/api/actions'
 import { isInputFocused } from '@/utils/dom'
 import { getScriptError } from '@/api/errors'
@@ -77,6 +78,30 @@ export function useActionFanout() {
   ): Promise<{ successCount: number; errorCount: number }> {
     if (targets.length === 0) return { successCount: 0, errorCount: 0 }
     processing.value = true
+
+    // An `assign:` action applies a list's assign block (TKT-FGE5G3I): one
+    // request for every target, answered per row.
+    if (action.assign) {
+      let ok = 0
+      let outside = 0
+      try {
+        const res = await postAssign({ list: action.assign }, targets.map((x) => x.address))
+        ok = res.filter((r) => r.ok).length
+        outside = res.filter((r) => r.ok && r.matches === false).length
+      } catch {
+        // Counted below: nothing was written.
+      }
+      processing.value = false
+      const failed = targets.length - ok
+      if (failed > 0) {
+        uiStore.error(t('list.action.partial', { label: action.label, failed, succeeded: ok }))
+      } else if (outside > 0) {
+        uiStore.showToast('warning', t('assign.notInList', { count: outside }, outside))
+      } else {
+        uiStore.success(t('list.action.done', { label: action.label, n: ok }))
+      }
+      return { successCount: ok, errorCount: failed }
+    }
 
     const results = await Promise.allSettled(
       targets.map(({ address, type }) => {

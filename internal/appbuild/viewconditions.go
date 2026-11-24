@@ -2,6 +2,7 @@ package appbuild
 
 import (
 	"context"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/conditionlint"
@@ -133,4 +134,13 @@ func bindPage(
 		}
 		return bound(e.ID)
 	}, nil
+}
+
+// AssignExpr evaluates a list or page `assign:` value expression
+// (TKT-FGE5G3I), bridging conditionlint to the seam internal/dataentry
+// declares, as [ViewConditions] does for list conditions.
+func AssignExpr(
+	ctx context.Context, meta *metamodel.Metamodel, def *metamodel.PropertyDef, expr string, now time.Time,
+) (any, error) {
+	return conditionlint.EvalAssignExpr(ctx, meta, def, expr, now)
 }

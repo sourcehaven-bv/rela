@@ -204,6 +204,7 @@ var routerWalkProbes = []routerWalkProbe{
 	{http.MethodGet, "/api/v1/_copies", "/api/v1/_copies", 0, ""},
 	{http.MethodPost, "/api/v1/_copies/{name}", "/api/v1/_copies/publish", 0, ""},
 	{http.MethodPost, "/api/v1/_action/{name}", "/api/v1/_action/close", 0, ""},
+	{http.MethodGet, assignPath, assignPath + "?list=nope", http.StatusNotFound, ""},
 	{http.MethodGet, "/api/v1/_apps/{app}/{path...}", "/api/v1/_apps/some-app/", 0, ""},
 	{"REPORT", "/api/v1/_caldav/{path...}", "/api/v1/_caldav/principal/calendars/tickets/", 0, skipCalDAV},
 	{http.MethodPost, "/api/v1/_mcp", "/api/v1/_mcp", 0, skipMCP},

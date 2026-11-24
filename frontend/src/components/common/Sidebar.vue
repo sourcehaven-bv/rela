@@ -38,6 +38,7 @@ import {
 import { usePiles } from '@/composables/usePiles'
 import NewPileDialog from '@/components/piles/NewPileDialog.vue'
 import { useNavStatus } from '@/composables/useNavStatus'
+import { useAssignDrop } from '@/composables/useAssign'
 import { useInboxSummary } from '@/composables/useInboxSummary'
 import { useFlowList } from '@/composables/useFlowList'
 import { useChannelSchema } from '@/stores/channelSchema'
@@ -146,8 +147,11 @@ const shownGroups = computed(() =>
   ])
 )
 
+// Entries whose list or page has an `assign:` accept dropped rows (TKT-FGE5G3I).
+const { dropAttrs } = useAssignDrop()
+
 const configNavGroups = computed(() =>
-  toNavGroups(shownGroups.value, RouterLink, onFlyoutClick, navStatus.statusFor)
+  toNavGroups(shownGroups.value, RouterLink, onFlyoutClick, navStatus.statusFor, dropAttrs)
 )
 
 // The user's piles (TKT-K3RJLH), first among the groups, since they are the
@@ -669,5 +673,13 @@ async function handleAction(item: SidebarItem, ev?: Event) {
   max-height: 28px;
   max-width: 100%;
   object-fit: contain;
+}
+</style>
+
+<style>
+/* A sidebar entry a dragged row would be assigned to (TKT-FGE5G3I). */
+[data-assign-drop='over'] {
+  outline: 2px dashed var(--color-primary, currentColor);
+  outline-offset: -2px;
 }
 </style>

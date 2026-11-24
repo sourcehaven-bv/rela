@@ -538,6 +538,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateDashboard(cfg, meta)...)
 	errs = append(errs, validateCommands(cfg, meta)...)
 	errs = append(errs, validateActions(cfg, meta)...)
+	errs = append(errs, validateAssigns(cfg, meta)...)
 	errs = append(errs, validateWebhooks(cfg, meta)...)
 	errs = append(errs, validateApp(cfg, meta)...)
 	errs = append(errs, validateDocuments(cfg)...)
@@ -2865,6 +2866,13 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 
 		hasScript := action.Script != ""
 		hasSet := len(action.Set) > 0
+		if action.Assign != "" {
+			if e := assignActionModeError(id, action); e != "" {
+				errs = append(errs, e)
+				continue
+			}
+			hasSet = true // a declarative row write, like set
+		}
 
 		if action.LLM != nil {
 			errs = append(errs, validateLLMAction(id, action, meta)...)

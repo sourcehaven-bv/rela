@@ -75,7 +75,8 @@ export function toNavGroups(
   groups: SidebarGroup[],
   routerLink: Component,
   onFlyoutClick?: FlyoutClickHandler,
-  statusFor?: NavStatusLookup
+  statusFor?: NavStatusLookup,
+  dropAttrs?: NavDropAttrs
 ): NavGroup[] {
   const seen = new Set<string>()
 
@@ -91,7 +92,7 @@ export function toNavGroups(
     // looks like a link and goes nowhere is worse than an absent one.
     items: group.items
       .filter(isNavigable)
-      .map((item) => toNavItem(item, routerLink, seen, onFlyoutClick, statusFor)),
+      .map((item) => toNavItem(item, routerLink, seen, onFlyoutClick, statusFor, dropAttrs)),
   }))
 }
 
@@ -105,12 +106,19 @@ export type FlyoutClickHandler = (item: SidebarItem, id: string, event: MouseEve
 /** Resolves an entry's `status_key` to its current marker, if it has one. */
 export type NavStatusLookup = (key: string | undefined) => NavItemStatus | undefined
 
+/**
+ * Drag-and-drop handlers for a link entry, by its href: the entries whose list
+ * or page has an `assign:` accept dropped rows (TKT-FGE5G3I).
+ */
+export type NavDropAttrs = (href: string) => Record<string, unknown> | undefined
+
 function toNavItem(
   item: SidebarItem,
   routerLink: Component,
   seen: Set<string>,
   onFlyoutClick?: FlyoutClickHandler,
-  statusFor?: NavStatusLookup
+  statusFor?: NavStatusLookup,
+  dropAttrs?: NavDropAttrs
 ): NavItem {
   let id = navId(item)
   // Malformed config can repeat the placeholder, and an operator can point two
@@ -123,6 +131,7 @@ function toNavItem(
   }
   seen.add(id)
   const status = statusFor?.(item.status_key)
+  const drop = !item.action && !item.pile && item.href ? dropAttrs?.(item.href) : undefined
 
   return {
     id,
@@ -133,7 +142,7 @@ function toNavItem(
     icon: item.icon,
     ...(item.action || item.pile
       ? { as: 'button' as const }
-      : { as: routerLink, attrs: { to: item.href } }),
+      : { as: routerLink, attrs: { to: item.href, ...drop } }),
     ...(item.pile ? { opensFlyout: true } : {}),
     // Still a link to the list's page, so a modified click opens it in a new
     // tab; only the plain click is taken over.
@@ -142,6 +151,7 @@ function toNavItem(
           opensFlyout: true,
           attrs: {
             to: item.href,
+            ...drop,
             onClickCapture: (event: MouseEvent) => onFlyoutClick(item, id, event),
           },
         }

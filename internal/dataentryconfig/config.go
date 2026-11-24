@@ -264,6 +264,10 @@ type Action struct {
 	Key         string            `yaml:"key,omitempty" json:"key,omitempty"`
 	Confirm     ActionConfirm     `yaml:"confirm,omitempty" json:"confirm,omitzero"`
 	Set         map[string]string `yaml:"set,omitempty" json:"set,omitempty"`
+	// Assign names a list whose `assign:` the action applies to the selected
+	// rows, as a drop on that list's sidebar entry does. A third mode beside
+	// Set and Script, exclusive with both.
+	Assign string `yaml:"assign,omitempty" json:"assign,omitempty"`
 
 	// LLM makes this a declarative LLM action (TKT-4USH1HO), the third mode
 	// next to Set and Script. It requires AvailableOn with one entity type
@@ -978,7 +982,7 @@ type RelationProperty struct {
 // The plimsoll directive is the format-mirror exception documented on
 // [Config]: each exported field is one key of a list in data-entry.yaml.
 //
-//plimsoll:max-fields=22
+//plimsoll:max-fields=23
 type List struct {
 	EntityType  string `yaml:"entity_type" json:"entity"`
 	Title       string `yaml:"title" json:"title"`
@@ -1084,6 +1088,10 @@ type List struct {
 	// overriding next_action_surfaces. Nil: accepted, means inherit. See
 	// [Config.NextActionsEnabled].
 	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
+	// Assign is what an item gets when it enters this list: the create
+	// form's prefill, a drop on the list's sidebar entry, and an action's
+	// `assign:`. Nil: the list assigns nothing. See [Assign].
+	Assign *Assign `yaml:"assign,omitempty" json:"assign,omitempty"`
 }
 
 // ListColumn defines a column in a list view. A column is one of four

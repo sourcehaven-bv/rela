@@ -115,6 +115,7 @@ func CompileViewConditions(
 	compileActionConditions(ev, meta, cfg, programs, &problems)
 	compileLLMCandidateConditions(ev, meta, cfg, programs, &problems)
 	compileTraverseConditions(ev, meta, cfg, programs, &problems)
+	problems = append(problems, assignExprProblems(cfg, meta)...)
 
 	sort.Strings(problems)
 	if len(programs) == 0 {

@@ -1,0 +1,370 @@
+version: "1.0"
+app:
+  name: "To-do app"
+  description: "A personal to-do list app"
+styles:
+  todo_status:
+    open: blue
+    completed: green
+    canceled: gray
+  when_list:
+    today: yellow
+    evening: purple
+    anytime: blue
+    someday: gray
+
+forms:
+  # Quick entry: the title is the only field.
+  quick_todo:
+    entity_type: todo
+    title: "New To-Do"
+    fields:
+      - property: title
+        label: "Title"
+        placeholder: "New To-Do"
+        required: true
+  todo:
+    entity_type: todo
+    title: "To-Do"
+    mode: edit
+    body: true
+    fields:
+      - { property: title, label: "Title", required: true }
+      - { property: status, label: "Status", span: 4 }
+      - { property: when, label: "When", span: 4 }
+      - { property: start_date, label: "Start date", span: 4 }
+      - { property: deadline, label: "Deadline", span: 6 }
+      - { property: completed_on, label: "Completed", span: 6 }
+    relations:
+      - { relation: in_project, label: "Project" }
+      - { relation: in_area, label: "Area", target_type: area }
+      - { relation: under_heading, label: "Heading" }
+      - { relation: tagged, label: "Tags", target_type: tag }
+  project:
+    entity_type: project
+    title: "Project"
+    body: true
+    fields:
+      - { property: title, label: "Title", required: true }
+      - { property: status, label: "Status", span: 6 }
+      - { property: deadline, label: "Deadline", span: 6 }
+    relations:
+      - { relation: in_area, label: "Area", target_type: area }
+      - { relation: has_heading, label: "Headings" }
+  heading:
+    entity_type: heading
+    title: "Heading"
+    fields:
+      - { property: title, label: "Title", required: true }
+  area:
+    entity_type: area
+    title: "Area"
+    fields:
+      - { property: title, label: "Title", required: true }
+  tag:
+    entity_type: tag
+    title: "Tag"
+    fields:
+      - { property: title, label: "Title", required: true }
+
+actions:
+  complete:
+    label: "Complete"
+    key: "c"
+    set: { status: completed }
+  cancel:
+    label: "Cancel"
+    key: "x"
+    set: { status: canceled }
+  move-today:
+    label: "Today"
+    key: "t"
+    assign: today
+  move-evening:
+    label: "This Evening"
+    key: "v"
+    set: { when: evening }
+  move-anytime:
+    label: "Anytime"
+    key: "a"
+    assign: anytime
+  move-someday:
+    label: "Someday"
+    key: "s"
+    assign: someday
+
+lists:
+  inbox:
+    entity_type: todo
+    title: "Inbox"
+    empty_message: "Inbox Zero."
+    condition: >-
+      entity.status == 'open' and entity.when == nil and entity.start_date == nil
+      and not related(entity, 'in_project') and not related(entity, 'in_area')
+    columns:
+      - { property: title, label: "Title", link: detail }
+      - { property: deadline, label: "Deadline" }
+    sort: [{ property: title }]
+    create_form: quick_todo
+    edit_form: todo
+    actions: [complete, cancel, move-today, move-evening, move-anytime, move-someday]
+  today:
+    entity_type: todo
+    title: "Today"
+    condition: >-
+      entity.status == 'open' and (entity.when == 'today' or entity.when == 'evening'
+      or (entity.start_date ~= nil and entity.start_date <= today())
+      or (entity.deadline ~= nil and entity.deadline <= today()))
+    columns:
+      - { property: title, label: "Title", link: detail }
+      - { relation: in_project, label: "Project" }
+      - { relation: in_area, label: "Area" }
+      - { relation: tagged, label: "Tags" }
+      - { property: deadline, label: "Deadline" }
+    group_by:
+      property: when
+      groups:
+        - { value: today, label: "Today", color: amber }
+        - { value: evening, label: "This Evening", color: purple }
+        - { value: anytime, label: "Deadline today", color: red }
+    sort: [{ property: deadline }, { property: title }]
+    # What a row gets when it is added here, dropped on the Today entry or
+    # moved here with the "t" key.
+    assign:
+      properties: { when: today }
+    create_form: quick_todo
+    edit_form: todo
+    actions: [complete, cancel, move-evening, move-anytime, move-someday]
+  upcoming:
+    entity_type: todo
+    title: "Upcoming"
+    filters:
+      - { property: status, operator: "=", value: open }
+      - { property: start_date, operator: ">", value: $today }
+    columns:
+      - { property: title, label: "Title", link: detail }
+      - { relation: in_project, label: "Project" }
+      - { relation: in_area, label: "Area" }
+      - { property: deadline, label: "Deadline" }
+    group_by: start_date
+    sort: [{ property: start_date }, { property: title }]
+    create_form: todo
+    edit_form: todo
+    actions: [complete, cancel, move-today]
+  anytime:
+    entity_type: todo
+    title: "Anytime"
+    condition: >-
+      entity.status == 'open' and entity.when ~= 'someday'
+      and (entity.start_date == nil or entity.start_date <= today())
+      and (entity.when ~= nil or entity.start_date ~= nil
+           or related(entity, 'in_project') or related(entity, 'in_area'))
+    columns:
+      - { property: title, label: "Title", link: detail }
+      - { property: when, label: "When" }
+      - { relation: in_area, label: "Area" }
+      - { relation: tagged, label: "Tags" }
+      - { property: deadline, label: "Deadline" }
+    group_by:
+      relation: in_project
+    sort: [{ property: title }]
+    assign:
+      properties: { when: anytime }
+    create_form: quick_todo
+    edit_form: todo
+    actions: [complete, cancel, move-today, move-someday]
+  someday:
+    entity_type: todo
+    title: "Someday"
+    filters:
+      - { property: status, operator: "=", value: open }
+      - { property: when, operator: "=", value: someday }
+    assign:
+      properties: { when: someday }
+    columns:
+      - { property: title, label: "Title", link: detail }
+      - { relation: in_project, label: "Project" }
+      - { relation: in_area, label: "Area" }
+    sort: [{ property: title }]
+    create_form: quick_todo
+    edit_form: todo
+    actions: [complete, cancel, move-today, move-anytime]
+  logbook:
+    entity_type: todo
+    title: "Logbook"
+    filters:
+      - { property: status, operator: in, value: "completed,canceled" }
+    columns:
+      - { property: title, label: "Title", link: detail }
+      - { property: status, label: "Status" }
+      - { relation: in_project, label: "Project" }
+      - { property: completed_on, label: "Completed" }
+    sort: [{ property: completed_on, direction: desc }, { property: title }]
+    edit_form: todo
+  # Rows of an area or project page.
+  area_todos:
+    entity_type: todo
+    title: "To-Dos"
+    filters: [{ property: status, operator: "=", value: open }]
+    columns:
+      - { property: title, label: "Title", link: detail }
+      - { property: when, label: "When" }
+      - { property: start_date, label: "Start" }
+      - { property: deadline, label: "Deadline" }
+    create_form: quick_todo
+    edit_form: todo
+    actions: [complete, cancel, move-today, move-someday]
+  area_projects:
+    entity_type: project
+    title: "Projects"
+    query_scope: active
+    columns:
+      - { property: title, label: "Title", link: detail }
+      - { property: deadline, label: "Deadline" }
+    create_form: project
+    edit_form: project
+  project_todos:
+    entity_type: todo
+    title: "To-Dos"
+    filters: [{ property: status, operator: "=", value: open }]
+    columns:
+      - { property: title, label: "Title", link: detail }
+      - { property: when, label: "When" }
+      - { property: start_date, label: "Start" }
+      - { property: deadline, label: "Deadline" }
+      - { relation: tagged, label: "Tags" }
+    group_by:
+      relation: under_heading
+      offered_by: has_heading
+    create_form: quick_todo
+    edit_form: todo
+    actions: [complete, cancel, move-today, move-someday]
+  project_logbook:
+    entity_type: todo
+    title: "Logbook"
+    filters: [{ property: status, operator: in, value: "completed,canceled" }]
+    columns:
+      - { property: title, label: "Title", link: detail }
+      - { property: completed_on, label: "Completed" }
+    sort: [{ property: completed_on, direction: desc }]
+  # Sidebar sources: one per area, because nested groups do not exist.
+  home_projects:
+    entity_type: project
+    query_scope: active
+    condition: "related(entity, 'in_area', { id = 'home' })"
+    columns: [{ property: title }]
+    sort: [{ property: title }]
+  work_projects:
+    entity_type: project
+    query_scope: active
+    condition: "related(entity, 'in_area', { id = 'work' })"
+    columns: [{ property: title }]
+    sort: [{ property: title }]
+  health_projects:
+    entity_type: project
+    query_scope: active
+    condition: "related(entity, 'in_area', { id = 'health' })"
+    columns: [{ property: title }]
+    sort: [{ property: title }]
+  tags:
+    entity_type: tag
+    title: "Tags"
+    columns: [{ property: title, link: detail }]
+    sort: [{ property: title }]
+    create_form: tag
+    edit_form: tag
+
+calendars:
+  upcoming_calendar:
+    title: "Upcoming"
+    default_view: month
+    week_start: monday
+    sources:
+      - entity_type: todo
+        label: "Starts"
+        where: ["status=open"]
+        date: start_date
+        summary: title
+        color: blue
+      - entity_type: todo
+        label: "Deadlines"
+        where: ["status=open"]
+        date: deadline
+        summary: title
+        color: red
+      - entity_type: project
+        label: "Project deadlines"
+        where: ["status=open"]
+        date: deadline
+        summary: title
+        color: violet
+    event:
+      fields:
+        - { relation: in_project, label: "Project" }
+    edit_form: todo
+    create_form: todo
+
+pages:
+  # One sidebar entry for the upcoming to-dos, as a list and as a calendar.
+  upcoming:
+    label: Upcoming
+    icon: calendar
+    tabs:
+      - { id: list, label: "List", list: upcoming }
+      - { id: calendar, label: "Calendar", calendar: upcoming_calendar }
+  area:
+    entity_type: area
+    label: Area
+    # A to-do dropped on an area's sidebar entry joins that area.
+    assign:
+      entity_type: todo
+      relations: { in_area: target }
+    tabs:
+      - { id: todos, label: "To-Dos", list: area_todos, scope: { relation: in_area, direction: incoming } }
+      - { id: projects, label: "Projects", list: area_projects, scope: { relation: in_area, direction: incoming } }
+  project:
+    entity_type: project
+    label: Project
+    badge: status
+    assign:
+      entity_type: todo
+      relations: { in_project: target }
+    tabs:
+      - { id: todos, label: "To-Dos", list: project_todos, scope: { relation: in_project, direction: incoming } }
+      - { id: logbook, label: "Logbook", list: project_logbook, scope: { relation: in_project, direction: incoming } }
+
+navigation:
+  - label: "Inbox"
+    list: inbox
+    icon: inbox
+    status:
+      - { tone: info, label: "{count}" }
+  - label: "Today"
+    list: today
+    icon: star
+    status:
+      - { tone: error, label: "{count}", condition: "entity.deadline ~= nil and entity.deadline <= today()" }
+      - { tone: new, label: "{count}" }
+  - page: upcoming
+  - label: "Anytime"
+    list: anytime
+    icon: layers
+  - label: "Someday"
+    list: someday
+    icon: archive
+  - label: "Logbook"
+    list: logbook
+    icon: calendar-check
+  - group: "Home"
+    items_from: { list: home_projects, page: project, create: true }
+  - group: "Work"
+    items_from: { list: work_projects, page: project, create: true }
+  - group: "Health"
+    items_from: { list: health_projects, page: project, create: true }
+  - group: "Areas"
+    items:
+      - entities: area
+  - group: "More"
+    items:
+      - { label: "Tags", list: tags }
+      - { label: "Search", search: true }
