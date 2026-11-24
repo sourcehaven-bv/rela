@@ -5,7 +5,9 @@ title: Give the whole-set scopedHeaders callers their own read function
 kind: chore
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-23"
+completed: "2026-11-24"
+status: done
 ---
 
 ## Description

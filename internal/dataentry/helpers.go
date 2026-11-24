@@ -457,7 +457,7 @@ func visibleListByTypes(
 		if !ok {
 			continue // denied type
 		}
-		got, err := visibleEntitiesOfType(ctx, svc, typ, ts, props)
+		got, err := visibleEntitiesOfType(ctx, svc, typ, ts, props, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -480,7 +480,7 @@ func visibleListByTypes(
 //     gate allows. errACLListQuery, because a failure here IS a gate failure.
 func visibleEntitiesOfType(
 	ctx context.Context, svc Services, typ string,
-	ts search.TypeScope, props []store.PropPredicate,
+	ts search.TypeScope, props []store.PropPredicate, offset int,
 ) ([]*entity.Entity, error) {
 	// A search TypeScope is an ACL read verdict in a different shape: same
 	// AllowAll/Query pair and face allowlist, minus DenyAll
@@ -491,18 +491,34 @@ func visibleEntitiesOfType(
 	// and the world ranks withheld faces too, serving their titles
 	// (BUG-SMPOZB review). It narrows the candidates before the world ranks
 	// them, as on the list path.
-	return visibleEntitiesOfTypeWindow(ctx, svc, typ, ts, props, 0, 0)
+	//
+	// The read is every visible row of the type after offset, in id order:
+	// the structured search Go path for the shapes planSearch declines, and
+	// the tail of firstNByTypes. TKT-PSBGQLY pushes those shapes into the
+	// store.
+	rqr := acl.ReadQueryResult{AllowAll: ts.AllowAll, Query: ts.Query, Faces: ts.Faces}
+	req := scopeRequest{Type: typ, Props: props, Faces: ts.Faces}
+	q, errClass, withheld, err := scopedQuery(ctx, rqr, req)
+	if withheld || err != nil {
+		return nil, err
+	}
+	q.Offset = offset
+	headers, err := scanHeaders(ctx, svc, q, errClass, req)
+	if err != nil {
+		return nil, err
+	}
+	return headerEntities(headers), nil
 }
 
 // visibleEntitiesOfTypeWindow is visibleEntitiesOfType reading one window of
-// the type's visible rows in id order: limit rows after offset, or every row
-// when limit is 0. The window is cut after the row gate, in the store query.
+// the type's visible rows in id order: limit rows after offset. limit must be
+// positive. The window is cut after the row gate, in the store query.
 func visibleEntitiesOfTypeWindow(
 	ctx context.Context, svc Services, typ string,
 	ts search.TypeScope, props []store.PropPredicate, limit, offset int,
 ) ([]*entity.Entity, error) {
 	rqr := acl.ReadQueryResult{AllowAll: ts.AllowAll, Query: ts.Query, Faces: ts.Faces}
-	entities, _, err := scopedEntities(ctx, svc, rqr, scopeRequest{
+	entities, err := scopedEntities(ctx, svc, rqr, scopeRequest{
 		Type: typ, Props: props, Faces: ts.Faces, Limit: limit, Offset: offset,
 	})
 	return entities, err

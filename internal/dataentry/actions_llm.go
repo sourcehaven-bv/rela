@@ -373,19 +373,31 @@ func (o actionOps) collectCandidates(
 		return false, nil
 	}
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, target)
-	if m != nil {
-		frag, empty, lowered := lowerViewCondition(ctx, s.Meta, m, o.h.affordances.resolver(), target)
-		switch {
-		case lowered && empty:
-			return false, nil
-		case lowered:
-			return o.collectLoweredCandidates(ctx, s, subjectID, target, rqr, frag, r, existing, cands)
-		}
+	if m == nil {
+		// No condition: every readable row is a candidate, so one bounded
+		// page serves it, as for a condition the store applies. The empty
+		// fragment adds nothing to the gated query.
+		var noCondition store.GraphQuery
+		return o.collectLoweredCandidates(ctx, s, subjectID, target, rqr, noCondition, r, existing, cands)
 	}
-	// The list path's gated header read: row-gated in the store query, in
-	// the request's world, with no bodies. Each page is redacted once
-	// before the condition sees it.
-	headers, _, err := scopedHeaders(ctx, Services{Store: o.h.store}, rqr, scopeRequest{Type: target, Faces: rqr.Faces})
+	frag, empty, lowered := lowerViewCondition(ctx, s.Meta, m, o.h.affordances.resolver(), target)
+	switch {
+	case lowered && empty:
+		return false, nil
+	case lowered:
+		return o.collectLoweredCandidates(ctx, s, subjectID, target, rqr, frag, r, existing, cands)
+	}
+	// A condition that does not lower runs in Go, so the read is every
+	// readable header of the type: row-gated in the store query, in the
+	// request's world, with no bodies. Each page is redacted once before
+	// the condition sees it. TKT-08JN7C3 lowers ordered comparisons, the
+	// commonest shape that still comes here.
+	req := scopeRequest{Type: target, Faces: rqr.Faces}
+	q, errClass, withheld, err := scopedQuery(ctx, rqr, req)
+	if withheld || err != nil {
+		return false, err
+	}
+	headers, err := scanHeaders(ctx, Services{Store: o.h.store}, q, errClass, req)
 	if err != nil {
 		return false, fmt.Errorf("llm action: read %s candidates: %w", target, err)
 	}
@@ -409,9 +421,10 @@ func (o actionOps) collectCandidates(
 }
 
 // collectLoweredCandidates is collectCandidates for a `candidates:`
-// condition that lowers exactly (lowerViewCondition): the store applies it,
-// so the read is one bounded page of the rows still needed, plus one to
-// skip the subject and one to tell a full list from a truncated one. Every
+// condition that lowers exactly (lowerViewCondition), or for no condition
+// (an empty frag). The store applies the condition, so the read is one
+// bounded page of the rows still needed, plus one to skip the subject and
+// one to tell a full list from a truncated one. Every
 // field the condition reads is visible to the caller on every row, so the
 // store judges the same value the Go path would judge on the redacted row.
 func (o actionOps) collectLoweredCandidates(
