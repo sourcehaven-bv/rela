@@ -13,6 +13,7 @@ import { useBatchAction, isBatchAction } from '@/composables/useBatchAction'
 import LLMBatchProposalDialog from '@/components/entity/LLMBatchProposalDialog.vue'
 import { useToolbarActions } from '@/composables/useToolbarActions'
 import { useListReorder } from '@/composables/useListReorder'
+import { useManualReorder } from '@/composables/useManualReorder'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { useWorld } from '@/composables/useWorld'
 import { useCreateTarget } from '@/composables/useCreateTarget'
@@ -71,7 +72,7 @@ import RlTable from 'rela-components/components/table/RlTable.vue'
 import RlBusyIndicator, {
   type BusyIndicatorEntry,
 } from 'rela-components/components/feedback/RlBusyIndicator.vue'
-import type { SortClickEvent, TableColumn } from 'rela-components/components/table/types'
+import type { RowMove, SortClickEvent, TableColumn } from 'rela-components/components/table/types'
 import { leadingImageColumns, listColumnOf, nameColumn, toTableColumns, toTableNameColumn } from './tableColumns'
 import { fromPageQuery } from '@/utils/pageContext'
 
@@ -453,6 +454,11 @@ const tabScope = usePageTabScope(() => props.pageScope)
 const orderWithheld = ref(false)
 watch(() => props.pageScope, () => (orderWithheld.value = false))
 const relationOrdered = computed(() => tabScope.relationOrdered.value && !orderWithheld.value)
+// The reader's manual order applies: the list declares it, no relation order
+// takes precedence, and the reader has not sorted.
+const manualOrdered = computed(
+  () => listConfig.value?.order === 'manual' && !relationOrdered.value && sortSpecs.value.length === 0
+)
 const createModal = useCreateModal(async (entity) => {
   await tabScope.linkCreated(entity)
   refreshAfterCreate()
@@ -698,6 +704,10 @@ const queryParams = computed((): ListParams => {
   // list query, the grouped loader and the live path all read these params.
   if (busyType.value) params.busy = busyType.value
 
+  // A list with `order: manual` shows the reader's own order until they sort
+  // it themselves (TKT-AVNEX5T). A relation-ordered tab keeps that order.
+  if (manualOrdered.value) params.manual_order = 1
+
   Object.assign(params, tabScope.params.value)
 
   return params
@@ -940,13 +950,27 @@ const tableSections = computed(() =>
 // Dragging rows on a tab shown in relation order. Only while the reader
 // sees that order: their own sort, or a grouping, puts the rows elsewhere,
 // and a row dropped there would jump back on the next read.
-const reorder = useListReorder({
+const relationReorder = useListReorder({
   order: () => meta.value.relation_order,
   active: () => relationOrdered.value && sortSpecs.value.length === 0 && !grouping.grouped.value,
   rows: () => entities.value,
   key: () => listKey.value,
   type: () => listConfig.value?.entity ?? '',
 })
+// Dragging rows of a list with `order: manual`, inside their section.
+const manualReorder = useManualReorder({
+  active: () => manualOrdered.value && meta.value.manual_order === true,
+  rows: () => entities.value,
+  sections: () => (grouping.grouped.value ? grouping.sections.value : [{ items: entities.value }]),
+  params: () => queryParams.value,
+  key: () => listKey.value,
+  type: () => listConfig.value?.entity ?? '',
+})
+const reorder = {
+  reorderable: computed(() => relationReorder.reorderable.value || manualReorder.reorderable.value),
+  onReorder: (move: RowMove) =>
+    relationReorder.reorderable.value ? relationReorder.onReorder(move) : manualReorder.onReorder(move),
+}
 const reorderableRow = computed(() => (reorder.reorderable.value ? () => true : undefined))
 
 function onSectionCollapse(section: { id: string }, collapsed: boolean) {

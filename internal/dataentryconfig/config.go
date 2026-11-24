@@ -1074,6 +1074,9 @@ type List struct {
 	// GroupBy splits the list into sections by one property. Nil means the
 	// list is flat and paged. See [ListGroupBy].
 	GroupBy *ListGroupBy `yaml:"group_by,omitempty" json:"group_by,omitempty"`
+	// Order is the list's `order:`. [ListOrderManual] lets each user drag
+	// the rows into their own order (TKT-AVNEX5T). Empty: the list sort.
+	Order string `yaml:"order,omitempty" json:"order,omitempty"`
 	// Suggestions switches next-action suggestions on or off for this view,
 	// overriding next_action_surfaces. Nil: accepted, means inherit. See
 	// [Config.NextActionsEnabled].

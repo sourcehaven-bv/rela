@@ -568,6 +568,24 @@ export async function moveRelation(
   })
 }
 
+/**
+ * Moves row `id` of a manual list next to a neighbour in the reader's own
+ * order (TKT-AVNEX5T). `params` are the params of the list read on screen,
+ * so the server judges the move against the rows the reader sees.
+ */
+export async function moveListRow(
+  params: ListParams,
+  id: string,
+  position: { before: string } | { after: string }
+): Promise<void> {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (key === 'page' || key === 'per_page' || value === undefined || value === '') continue
+    query.set(key, String(value))
+  }
+  return api.post(`/_list_order?${query.toString()}`, { id, ...position })
+}
+
 export async function deleteRelation(
   type: string,
   entityId: string,

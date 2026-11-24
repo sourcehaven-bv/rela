@@ -448,6 +448,11 @@ export interface ListConfig {
   toolbar_actions?: string[]
   /** Splits the list into sections. Absent means a flat, paged list. */
   group_by?: ListGroupBy
+  /**
+   * `manual` lets each user drag the rows into their own order
+   * (TKT-AVNEX5T). Absent means the list sort.
+   */
+  order?: 'manual'
 }
 
 /** The relative date buckets, in the order their sections appear. */

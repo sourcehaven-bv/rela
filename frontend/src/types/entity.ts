@@ -479,6 +479,8 @@ export interface ListMeta {
   // Set when the rows are in the order of one orderable relation of the
   // tab's anchor; see RelationOrder.
   relation_order?: RelationOrder
+  /** The rows are in the reader's own manual order (TKT-AVNEX5T). */
+  manual_order?: boolean
 }
 
 /**
@@ -541,6 +543,12 @@ export interface ListQueryScope {
   // already free to name. Omitting it is not an error — the server then
   // applies no condition and returns the ACL-scoped superset.
   list_id?: string
+  /**
+   * Asks a list with `order: manual` for the reader's stored order. Sent
+   * while the reader has not sorted; a grouped list always sends its group
+   * sort, so the sort cannot be the signal.
+   */
+  manual_order?: 1
   /**
    * query_scope selects which rows are MEMBERS of the result, from the entity
    * type's declared `query_scopes:`. Orthogonal to `world`, which selects

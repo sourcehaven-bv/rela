@@ -2330,6 +2330,40 @@ under an ACL policy; otherwise it answers 403 `permission_required`.
 `audit.global` reports whether the caller holds it. Each page served writes
 an `audit-read` audit record.
 
+## Manual list order: POST /api/v1/_list_order
+
+Moves one row of a list with `order: manual` in the caller's own order
+(TKT-AVNEX5T). See "Manual order" in the data-entry guide for the
+configuration.
+
+A list read shows the caller's order when it names the list in `list_id` and
+sends `manual_order=1`. Its `meta.manual_order` is then true, if the caller
+is a user who can hold an order. An anonymous caller sees the list sort. Without the
+parameter the read is sorted as usual.
+
+The move takes the same query parameters as the list read on screen, so the
+server judges it against the rows the caller sees. The body names the row and
+exactly one neighbour:
+
+```json
+{ "id": "TODO-3", "before": "TODO-1" }
+```
+
+The server stores the order of the rows from the top through the moved row,
+or through the lowest row placed before, whichever is lower. Rows below keep
+the list sort. A placed row that a filter hides, or that leaves the list,
+keeps its place but takes no slot while it is not shown. Each user holds at
+most 500 placed rows per list; the lowest are dropped first. The route always
+judges the move against the stored order, so `manual_order=1` is optional.
+
+| Status | When |
+|--------|------|
+| 204 | The move was stored |
+| 400 | Invalid JSON, no neighbour, both neighbours, or the row is its own neighbour |
+| 403 | The caller has no user identity |
+| 404 | The list is not manual, or the row or neighbour is not among the caller's rows |
+| 413 | The body is larger than 4 KiB |
+
 ## Assign: GET/POST /api/v1/_assign
 
 Applies a list or page `assign:` block (TKT-FGE5G3I). See "Moving items into

@@ -331,6 +331,9 @@ type App struct {
 	// [SetLeases], which is the "feature absent" signal; its methods accept
 	// a nil receiver.
 	leases *leasesHandler
+	// listOrder stores each user's manual list order (TKT-AVNEX5T). Nil
+	// until [SetListOrder], which is the "feature absent" signal.
+	listOrder listOrderStore
 	// records owns the record routes (TKT-J7Q9C4K). Nil until [SetRecords],
 	// which is the "feature absent" signal; its methods accept a nil
 	// receiver.

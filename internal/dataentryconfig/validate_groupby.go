@@ -31,6 +31,7 @@ func validateListsGroupBy(cfg *Config, meta *metamodel.Metamodel) []string {
 			continue
 		}
 		errs = append(errs, validateListGroupBy(listID, list.EntityType, list.GroupBy, entDef, meta)...)
+		errs = append(errs, checkListOrder(listID, list)...)
 	}
 	return errs
 }
