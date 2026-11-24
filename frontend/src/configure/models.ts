@@ -357,14 +357,11 @@ function outputModel(output: TreeValue): OutputModel {
   }
   const set = get(output, 'set')
   if (isMap(set)) {
-    const props = entries(get(set, 'properties'))
-    return {
-      kind: 'set',
-      summary: props.length
-        ? props.map(([k, v]) => `Set ${k} to ${str(v) ?? '…'}`).join(', ')
-        : 'Set …',
-      locked: false,
-    }
+    const parts = [
+      ...entries(get(set, 'properties')).map(([k, v]) => `Set ${k} to ${str(v) ?? '…'}`),
+      ...strList(get(set, 'unset')).map((k) => `Remove ${k}`),
+    ]
+    return { kind: 'set', summary: parts.length ? parts.join(', ') : 'Set …', locked: false }
   }
   const relate = get(output, 'relate')
   if (isMap(relate)) {
@@ -516,7 +513,9 @@ export function automationsUsing(
     if (property === undefined) return true
     const rule = get(get(flows, 'triggers'), a.name)
     const writes = mapItems(get(rule, 'outputs')).some(
-      (o) => get(getIn(o, ['set', 'properties']), property) !== undefined
+      (o) =>
+        get(getIn(o, ['set', 'properties']), property) !== undefined ||
+        strList(getIn(o, ['set', 'unset'])).includes(property)
     )
     const filters = triggerWhereClauses(rule).some((c) => filterProperty(c) === property)
     return a.property === property || writes || filters || mentions(rule, property)

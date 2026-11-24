@@ -19,6 +19,7 @@ import (
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 )
 
 // Host is what Runner needs from its caller to execute a cascade.
@@ -43,15 +44,15 @@ type Host interface {
 	// validation, minus the post-write automation event."
 	CreateEntity(ctx context.Context, entityType string, opts CreateEntityOptions) (*entity.Entity, error)
 
-	// WriteEntity persists set — the [automation.Result.PropertiesSet] of
-	// an on-create automation — onto e, an entity that already went through
+	// WriteEntity persists set — the [triggers.Result.Writes] of an
+	// on-create automation — onto e, an entity that already went through
 	// [Host.CreateEntity] earlier in the cascade. No ID generation, no
 	// template, no automation.
 	//
 	// It takes the property set rather than a whole entity because the row
 	// may have changed since the cascade created it: the host applies set to
 	// the STORED row, so a concurrent writer's change is kept.
-	WriteEntity(ctx context.Context, e *entity.Entity, set map[string]string) error
+	WriteEntity(ctx context.Context, e *entity.Entity, set triggers.PropertyWrites) error
 
 	// EntityType returns the type of the entity id names, reading its
 	// family: a relation target is an entity, and a faced type stores no

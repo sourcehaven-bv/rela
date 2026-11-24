@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 )
 
 // ComputedWriteError reports an attempt to author a read-only property: a
@@ -130,6 +131,17 @@ func slicesCompact(in []string) []string {
 		if len(out) == 0 || out[len(out)-1] != s {
 			out = append(out, s)
 		}
+	}
+	return out
+}
+
+// writeNames maps every property an automation sets or removes to a value,
+// for the checks that refuse a computed or external-ref name whatever the
+// write does to it.
+func writeNames(w triggers.PropertyWrites) map[string]any {
+	out := stringMapAny(w.Set)
+	for _, name := range w.Unset {
+		out[name] = nil
 	}
 	return out
 }

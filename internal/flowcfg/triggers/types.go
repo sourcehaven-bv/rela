@@ -88,8 +88,11 @@ type Trigger struct {
 
 // Action specifies an operation to perform.
 type Action struct {
-	Set            string
-	Value          string
+	Set   string
+	Value string
+	// Unset names a property the action removes from the entity (`set:
+	// unset:`). An action carries Set or Unset, never both.
+	Unset          string
 	CreateRelation *CreateRelationAction
 	CreateEntity   *CreateEntityAction
 	AddToPile      *AddToPileAction
@@ -294,6 +297,11 @@ type Result struct {
 	// PropertiesSet contains properties that were automatically set.
 	PropertiesSet map[string]string
 
+	// PropertiesUnset names properties that were automatically removed
+	// (`set: unset:`), in render order. A name is never in both PropertiesSet and
+	// PropertiesUnset: the output rendered last wins.
+	PropertiesUnset []string `json:",omitempty"`
+
 	// RelationsToCreate contains relations that should be created, each
 	// tagged with the automation that produced it.
 	RelationsToCreate []RelationToCreate
@@ -336,3 +344,36 @@ func (r *Result) AllMessages() []string {
 	msgs = append(msgs, r.Warnings...)
 	return msgs
 }
+
+// PropertyWrites is the property part of a [Result]: what the triggers set
+// and what they removed. The entitymanager folds it into the write the
+// triggers fired on.
+type PropertyWrites struct {
+	Set   map[string]string
+	Unset []string
+}
+
+// Empty reports whether w changes no property.
+func (w PropertyWrites) Empty() bool { return len(w.Set) == 0 && len(w.Unset) == 0 }
+
+// Apply writes w onto e: each Set value as a string, each Unset name
+// removed. Removing an absent property is a no-op.
+func (w PropertyWrites) Apply(e *entity.Entity) {
+	for prop, val := range w.Set {
+		e.SetString(prop, val)
+	}
+	for _, prop := range w.Unset {
+		delete(e.Properties, prop)
+	}
+}
+
+// Writes returns the property part of r.
+func (r *Result) Writes() PropertyWrites {
+	if r == nil {
+		return PropertyWrites{}
+	}
+	return PropertyWrites{Set: r.PropertiesSet, Unset: r.PropertiesUnset}
+}
+
+// HasWrites reports whether the triggers set or removed any property.
+func (r *Result) HasWrites() bool { return !r.Writes().Empty() }

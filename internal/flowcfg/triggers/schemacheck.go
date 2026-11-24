@@ -181,3 +181,62 @@ func externalRefErrors(meta *metamodel.Metamodel, r Rule) []string {
 	}
 	return errs
 }
+
+// unsetSchemaErrors checks each `set: unset:` name against every type the
+// rule fires on. The name must be a declared property, and one a trigger may
+// remove: not required and not a state machine (the write would then fail
+// on every firing), not
+// computed (the manager owns its value), not a file (attachments change only
+// through their API) and not an external ref (only sync and scripts write
+// one). A rule without `on.entity:` is checked against every type that
+// declares the property, and an unknown name there is one no type declares.
+func unsetSchemaErrors(meta *metamodel.Metamodel, r Rule) []string {
+	if meta == nil {
+		return nil
+	}
+	var errs []string
+	for _, a := range r.Do {
+		if a.Unset == "" {
+			continue
+		}
+		at := fmt.Sprintf("%s: `set.unset` %q", ruleWhere(r), a.Unset)
+		types := r.On.Entity
+		if len(types) == 0 {
+			types = slices.DeleteFunc(metamodel.EntityTypeNames(meta), func(t string) bool {
+				def, ok := meta.GetEntityDef(t)
+				_, has := def.Properties[a.Unset]
+				return !ok || !has
+			})
+			if len(types) == 0 {
+				errs = append(errs, at+" is not a property of any entity type")
+				continue
+			}
+		}
+		for _, t := range types {
+			def, ok := meta.GetEntityDef(t)
+			if !ok {
+				continue // reported by the entity-type checks
+			}
+			prop, ok := def.Properties[a.Unset]
+			switch {
+			case !ok:
+				errs = append(errs, fmt.Sprintf("%s is not a property of %q", at, t))
+			case prop.Required:
+				errs = append(errs, fmt.Sprintf("%s is required on %q; removing it would fail every write", at, t))
+			case prop.Rollup == nil && len(meta.Types[prop.Type].Transitions) > 0:
+				errs = append(errs, fmt.Sprintf(
+					"%s has state machine %q on %q; removing it is not a declared transition", at, prop.Type, t))
+			case prop.Computed != "":
+				errs = append(errs, fmt.Sprintf("%s is computed on %q; its value is derived on every write", at, t))
+			case slices.Contains(metamodel.FileProperties(meta, t), a.Unset):
+				errs = append(errs, fmt.Sprintf(
+					"%s is a file property of %q; file values change only through the attachments API", at, t))
+			default:
+				if _, ext := metamodel.ExternalRefSystem(meta, t, a.Unset); ext {
+					errs = append(errs, fmt.Sprintf("%s is an external ref on %q; only a script may write a ref", at, t))
+				}
+			}
+		}
+	}
+	return errs
+}
