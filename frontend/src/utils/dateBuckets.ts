@@ -58,18 +58,24 @@ const NEXT_DAYS = 7
 
 const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/
 
-interface CalendarDay {
+export interface CalendarDay {
   year: number
   /** 1-based. */
   month: number
   day: number
 }
 
-function dayNumber(d: CalendarDay): number {
+export function dayNumber(d: CalendarDay): number {
   return Date.UTC(d.year, d.month - 1, d.day) / 86_400_000
 }
 
-function dayOfInstant(epochMs: number, tz: string): CalendarDay {
+/** The calendar day of a day number; the inverse of dayNumber. */
+export function dayFromNumber(n: number): CalendarDay {
+  const d = new Date(n * 86_400_000)
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() }
+}
+
+export function dayOfInstant(epochMs: number, tz: string): CalendarDay {
   const zoned = new TZDate(epochMs, tz)
   return { year: zoned.getFullYear(), month: zoned.getMonth() + 1, day: zoned.getDate() }
 }
@@ -112,7 +118,7 @@ export function calendarDayOf(value: unknown, tz: string): CalendarDay | null {
  * read as an instant that lands on the previous day west of UTC. Only the
  * property's type can tell the two apart, so the caller says which it is.
  */
-function asDateValue(value: unknown, dateOnly: boolean): unknown {
+export function asDateValue(value: unknown, dateOnly: boolean): unknown {
   if (!dateOnly || typeof value !== 'string') return value
   return /^\d{4}-\d{2}-\d{2}/.test(value) ? value.slice(0, 10) : value
 }
@@ -173,7 +179,10 @@ export function bucketMeta(
       const wall = new Date(`${(value as string).slice(0, 19)}Z`)
       return wall.toLocaleTimeString(locale, { timeStyle: 'short', timeZone: 'UTC' })
     }
-    return new Date(value as string).toLocaleTimeString(locale, { timeStyle: 'short', timeZone: tz })
+    return new Date(value as string).toLocaleTimeString(locale, {
+      timeStyle: 'short',
+      timeZone: tz,
+    })
   }
   // Formatted from the calendar day at UTC noon in UTC, so the zone cannot
   // move it onto a neighbouring day.

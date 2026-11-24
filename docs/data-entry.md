@@ -2778,7 +2778,7 @@ lists:
 |------------|--------|-------------|
 | `property` | string | The property to group by. Required. It must be a single value, not a `list: true` property. |
 | `groups`   | list   | Optional. Per value: `value` (required, must be one of the enum's values), `label`, and `color` (`green`, `amber`, `red`, `grey`, `blue` or `purple`). Needs an enum property. |
-| `buckets`  | string | `relative` groups a date by how far away it is. See [Date buckets](#date-buckets). |
+| `buckets`  | string or map | `relative` groups a date by how far away it is; a map such as `{ by: month }` groups it by calendar unit. See [Date buckets](#date-buckets). |
 | `labels`   | map    | Section titles for the date buckets. Only with `buckets`. |
 | `max_rows` | int    | How many rows the list loads, from 1 to 2000. Default 500. |
 
@@ -2854,6 +2854,59 @@ buckets move on at midnight without a reload.
 The **Add** button of **Today** and **Tomorrow** fills in that date on a `date`
 property. The other buckets span more than one day, and a `datetime` needs a
 time as well, so they fill in nothing.
+
+### Calendar buckets
+
+A mapping under `buckets:` gives one section per calendar day, week, month or
+year:
+
+```yaml
+lists:
+  upcoming:
+    entity: todo
+    group_by:
+      property: start
+      buckets: { by: day, for: 7d, then: month }
+  logbook:
+    entity: todo
+    filters:
+      - { property: completed, operator: "!=", value: "" }
+    group_by:
+      property: completed
+      buckets: { by: month, order: desc }
+```
+
+| Key     | Description |
+|---------|-------------|
+| `by`    | `day`, `week`, `month` or `year`. Required. |
+| `for`   | A number of days, such as `7d`, from 1 to 366. Only with `by: day`. Each day from today to the last day of the window gets a section. An earlier date goes in **Overdue**. A later date goes in the `then` sections, or in one **Later** section. |
+| `then`  | `week`, `month` or `year`: the sections after the `for` window. Needs `for`. |
+| `order` | `asc` (the default) or `desc`, for newest first. `desc` cannot take `for`. |
+
+Without `for`, every date gets a section of its unit, past dates included.
+
+- A week starts on Monday. Its section is titled with its Monday, such as
+  "Week of 23 Nov".
+- A day section is titled **Today**, **Tomorrow**, or with the date, such as
+  "Thu 26 Nov". A month is titled "November 2026", a year "2026". A date in
+  another year shows its year.
+- The first `then` section can be partial: after a 7-day window it holds only
+  the rest of its month.
+- `labels:` can rename only the fixed sections: `no_date`, `today` and
+  `tomorrow` with `by: day` (no `tomorrow` with `for: 1d`), `overdue` with
+  `for`, and `later` with `for` and no `then`. Another key is a config error.
+- `{ by: day }` without `for` still names today's and tomorrow's sections
+  **Today** and **Tomorrow**, also with `order: desc`.
+- **Add** in a day section fills in that date on a `date` property.
+- Sections follow the same time zone rule as relative buckets.
+
+The list loads at most `max_rows` rows, in the order of the sections. Two
+cases can fill that with rows you did not want:
+
+- With `order: desc`, rows without a date are loaded first. Filter them out,
+  as the logbook above does, when the list is long.
+- With `for`, all overdue rows are loaded before today's. Filter old dates out
+  with a `condition:` when there can be many.
 
 > **Note**: The buckets are worked out in the browser, in the reader's time
 > zone. A `condition:` that uses `days_between(entity.due, today())` is worked
