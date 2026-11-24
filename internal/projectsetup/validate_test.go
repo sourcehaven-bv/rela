@@ -491,3 +491,23 @@ func TestValidateWithFS_DeprecatedDataEntry(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckDataEntry_QuickEntryShortcut pins that the check Configure runs
+// on a draft (TKT-24L1H36) rejects an OS-wide shortcut before it can be
+// saved and registered by the desktop app.
+func TestCheckDataEntry_QuickEntryShortcut(t *testing.T) {
+	t.Parallel()
+	mm, err := metamodel.Parse([]byte("entities:\n  todo:\n    label: Todo\n    id_type: manual\n    properties:\n      title: {type: string}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const tmpl = "forms:\n  new_todo:\n    entity_type: todo\n    fields:\n      - property: title\n" +
+		"quick_entry:\n  form: new_todo\n  shortcut: %s\n"
+	if err := projectsetup.CheckDataEntry(fmt.Appendf(nil, tmpl, "CmdOrCtrl+Shift+Space"), mm); err != nil {
+		t.Fatalf("valid shortcut refused: %v", err)
+	}
+	err = projectsetup.CheckDataEntry(fmt.Appendf(nil, tmpl, "Cmd+V"), mm)
+	if err == nil || !strings.Contains(err.Error(), "Shift or Alt") {
+		t.Fatalf("Cmd+V accepted or wrong error: %v", err)
+	}
+}

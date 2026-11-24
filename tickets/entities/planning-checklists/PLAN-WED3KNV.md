@@ -182,3 +182,8 @@ Effort: m.
 - [x] All critical/significant findings addressed in plan
 
 **Design Review Findings:** see the review-responses linked to TKT-24L1H36.
+
+**Threat model addendum (Configure path).** `quick_entry.**` is editable through Configure by `config:edit`
+holders. A draft runs `projectsetup.CheckDataEntry`, which calls `validateQuickEntry`, before it is saved,
+so a bad or OS-wide shortcut (for example `Cmd+V`) is refused before the desktop app registers it.
+Pinned by `TestCheckDataEntry_QuickEntryShortcut`.
