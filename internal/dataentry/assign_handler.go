@@ -164,7 +164,9 @@ func resolveAssign(
 
 // assignBlock finds the block. A missing list or page is a 404 naming the
 // config key: config is not secret.
-func assignBlock(s *Schema, req assignRequest) (block *dataentryconfig.Assign, itemType, targetType string, fail *assignFailure) {
+func assignBlock(
+	s *Schema, req assignRequest,
+) (block *dataentryconfig.Assign, itemType, targetType string, fail *assignFailure) {
 	switch {
 	case req.List != "" && req.Page == "":
 		l, ok := s.Cfg.Lists[req.List]
@@ -186,7 +188,9 @@ func assignBlock(s *Schema, req assignRequest) (block *dataentryconfig.Assign, i
 	}
 }
 
-func assignValuesOf(ctx context.Context, a *App, s *Schema, block *dataentryconfig.Assign, itemType, targetType, target string, now time.Time,
+func assignValuesOf(
+	ctx context.Context, a *App,
+	s *Schema, block *dataentryconfig.Assign, itemType, targetType, target string, now time.Time,
 ) (assignValues, *assignFailure) {
 	vals := assignValues{EntityType: itemType, Properties: map[string]any{}}
 	entDef, _ := s.Meta.GetEntityDef(itemType)
@@ -215,7 +219,9 @@ func assignValuesOf(ctx context.Context, a *App, s *Schema, block *dataentryconf
 	return vals, nil
 }
 
-func assignProperty(ctx context.Context, a *App, s *Schema, def metamodel.PropertyDef, v dataentryconfig.AssignValue, now time.Time,
+func assignProperty(
+	ctx context.Context, a *App,
+	s *Schema, def metamodel.PropertyDef, v dataentryconfig.AssignValue, now time.Time,
 ) (any, error) {
 	if v.Expr == "" {
 		return dataentryconfig.TypedLiteral(&def, v.Literal)
