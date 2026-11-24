@@ -199,18 +199,7 @@ func compileColumn(
 	}
 	switch fn {
 	case metamodel.RollupBodyTasks:
-		// Nothing is related; the count and the type are checked again in
-		// case the metamodel did not come through the loader.
-		count := strings.TrimSpace(prop)
-		switch count {
-		case metamodel.BodyTasksDone, metamodel.BodyTasksOpen, metamodel.BodyTasksTotal:
-		default:
-			problems = append(problems, fmt.Sprintf("%s: body_tasks %q is not done, open or total", at, count))
-		}
-		if pd.Type != metamodel.PropertyTypeInteger {
-			problems = append(problems, fmt.Sprintf("%s: body_tasks needs type integer, not %q", at, pd.Type))
-		}
-		return Column{Property: name, Func: fn, BodyTasks: count, Numeric: true}, problems
+		return compileBodyTasksColumn(name, strings.TrimSpace(prop), pd, at)
 	case metamodel.RollupAvg, metamodel.RollupLatestRow:
 		return Column{}, []string{fmt.Sprintf("%s: %s is only valid with records", at, fn)}
 	case metamodel.RollupCount, metamodel.RollupExists, metamodel.RollupMin, metamodel.RollupMax,
@@ -487,4 +476,20 @@ func (c Column) RecordQuery(owners []string, now time.Time) RecordQuery {
 		q.From, q.To = now.Add(-c.Window), now
 	}
 	return q
+}
+
+// compileBodyTasksColumn is a roll-up over the entity's own body
+// (TKT-SQ8O0EQ). Nothing is related; the count and the type are checked
+// again in case the metamodel did not come through the loader.
+func compileBodyTasksColumn(name, count string, pd metamodel.PropertyDef, at string) (Column, []string) {
+	var problems []string
+	switch count {
+	case metamodel.BodyTasksDone, metamodel.BodyTasksOpen, metamodel.BodyTasksTotal:
+	default:
+		problems = append(problems, fmt.Sprintf("%s: body_tasks %q is not done, open or total", at, count))
+	}
+	if pd.Type != metamodel.PropertyTypeInteger {
+		problems = append(problems, fmt.Sprintf("%s: body_tasks needs type integer, not %q", at, pd.Type))
+	}
+	return Column{Property: name, Func: metamodel.RollupBodyTasks, BodyTasks: count, Numeric: true}, problems
 }

@@ -49,7 +49,7 @@ func (f recordFold) FoldRecords(ctx context.Context, q rollup.RecordQuery) (map[
 		case metamodel.RollupLatestRow:
 			text = p.Latest
 		case metamodel.RollupCount, metamodel.RollupExists, metamodel.RollupMin, metamodel.RollupMax,
-			metamodel.RollupSum, metamodel.RollupLatest:
+			metamodel.RollupSum, metamodel.RollupLatest, metamodel.RollupBodyTasks:
 		}
 		if text != "" {
 			out[p.Owner] = text
