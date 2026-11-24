@@ -112,6 +112,5 @@ function onCancelled() {
 }
 .quick-entry--popup :deep(.form-actions .rl-button) {
   flex: 0 0 auto;
-  min-height: 0;
 }
 </style>
