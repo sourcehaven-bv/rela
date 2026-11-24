@@ -113,6 +113,9 @@ func writeBaseline(path string, counts map[string]int) error {
 func checkAgainst(ref string) error {
 	var problems []string
 	for _, path := range baselinePaths {
+		if introducedBy(ref, path) {
+			continue
+		}
 		out, err := exec.Command("git", "show", ref+":"+path).Output()
 		if err != nil {
 			return fmt.Errorf("git show %s:%s: %w", ref, path, err)
@@ -136,6 +139,10 @@ func checkAgainst(ref string) error {
 		return fmt.Errorf("commentbody: baseline grew against %s; remove the comments instead of raising the count", ref)
 	}
 	return nil
+}
+
+func introducedBy(ref, path string) bool {
+	return exec.Command("git", "cat-file", "-e", ref+":"+path).Run() != nil
 }
 
 func grew(old, current map[string]int) []string {
