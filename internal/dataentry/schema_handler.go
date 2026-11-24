@@ -465,6 +465,7 @@ func (h *schemaHandler) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Styles:           s.StyleMap,
 		Forms:            forms,
 		Channels:         s.Cfg.Channels,
+		QuickEntry:       s.Cfg.QuickEntry,
 		Lists:            resolveListDirections(s, s.Cfg.Lists),
 		Views:            s.Cfg.Views,
 		EntityViews:      s.Cfg.EntityViews,

@@ -1255,7 +1255,8 @@
     "editEntity": "Edit entity",
     "deleteEntity": "Delete entity",
     "submit": "Save / submit",
-    "cancelBack": "Cancel and go back"
+    "cancelBack": "Cancel and go back",
+    "quickEntry": "Quick entry"
   },
   "piles": {
     "itemCount": "{n} item | {n} items",
@@ -1734,5 +1735,11 @@
     "refused": "{count} item could not be moved | {count} items could not be moved",
     "notInList": "Moved, but {count} item does not match the list's condition | Moved, but {count} items do not match the list's condition",
     "wrongType": "This entry does not accept that kind of item"
+  },
+  "quickEntry": {
+    "title": "Quick entry",
+    "saved": "Saved",
+    "notConfigured": "Quick entry is not configured.",
+    "noDefaults": "The list defaults could not be loaded. The new item may not appear in the list."
   }
 }

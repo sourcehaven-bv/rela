@@ -12,12 +12,20 @@ export interface ResolvedPalette {
   darkDisabled?: boolean
 }
 
+export interface QuickEntryConfig {
+  form: string
+  list?: string
+  shortcut?: string
+}
+
 export interface Config {
   app: AppConfig
   /** Deployment description for the global "About" help (TKT-DUQBD0). */
   about_description?: string
   styles?: Record<string, Record<string, string>>
   palette?: ResolvedPalette
+  /** The data-entry.yaml `quick_entry:` block (TKT-24L1H36). */
+  quick_entry?: QuickEntryConfig
   forms: Record<string, FormConfig>
   /**
    * How the channel composer and messages present the message types of

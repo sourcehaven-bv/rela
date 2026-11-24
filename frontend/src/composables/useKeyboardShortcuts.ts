@@ -2,6 +2,8 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { isInputFocused } from '@/utils/dom'
 import { isAnyModalOpen } from './modalStack'
+import { useSchemaStore } from '@/stores/schema'
+import { leaveQuickEntry } from '@/utils/quickEntry'
 
 /**
  * Shared state for keyboard shortcuts modal.
@@ -25,6 +27,7 @@ export const paletteOpen = ref(false)
 export function useKeyboardShortcuts() {
   const router = useRouter()
   const route = useRoute()
+  const schemaStore = useSchemaStore()
 
   // G-sequence state
   let gPending = false
@@ -66,6 +69,10 @@ export function useKeyboardShortcuts() {
         return
       }
       // On form page, go back
+      if (route.name === 'quick') {
+        leaveQuickEntry(router, route)
+        return
+      }
       if (isFormPage()) {
         router.back()
         return
@@ -99,6 +106,12 @@ export function useKeyboardShortcuts() {
         router.push('/analyze')
         return
       }
+      return
+    }
+
+    // q = quick entry, when data-entry.yaml configures it (TKT-24L1H36).
+    if (e.key === 'q' && !e.metaKey && !e.ctrlKey && !e.altKey && schemaStore.quickEntry) {
+      router.push('/quick')
       return
     }
 

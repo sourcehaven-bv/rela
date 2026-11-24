@@ -19,6 +19,7 @@ import type {
   EntityViewConfig,
   CalendarConfig,
   GanttConfig,
+  QuickEntryConfig,
   SankeyConfig,
   KanbanConfig,
   DashboardResponse,
@@ -80,6 +81,7 @@ export const useSchemaStore = defineStore('schema', () => {
   const kanbans = ref<Map<string, KanbanConfig>>(new Map())
   const calendars = ref<Map<string, CalendarConfig>>(new Map())
   const gantts = ref<Map<string, GanttConfig>>(new Map())
+  const quickEntry = ref<QuickEntryConfig>()
   const sankeys = ref<Map<string, SankeyConfig>>(new Map())
   const documents = ref<Map<string, DocumentConfig>>(new Map())
   const apps = ref<Map<string, AppEntry>>(new Map())
@@ -533,6 +535,7 @@ export const useSchemaStore = defineStore('schema', () => {
       kanbans.value = new Map(Object.entries(configData.kanbans || {}))
       calendars.value = new Map(Object.entries(configData.calendars || {}))
       gantts.value = new Map(Object.entries(configData.gantts || {}))
+      quickEntry.value = configData.quick_entry
       sankeys.value = new Map(Object.entries(configData.sankeys || {}))
       documents.value = new Map(Object.entries(configData.documents || {}))
       apps.value = new Map(Object.entries(configData.apps || {}))
@@ -648,6 +651,7 @@ export const useSchemaStore = defineStore('schema', () => {
     kanbans,
     calendars,
     gantts,
+    quickEntry,
     sankeys,
     documents,
     apps,

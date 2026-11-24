@@ -120,6 +120,7 @@ type Desktop struct {
 	menu             *menuBar             // the menu bar; nil until main builds it
 	settings         *ProjectSettings     // the Project Settings service; nil until main builds it
 	notify           *notifyHub           // notifications and Dock badge; nil in tests
+	quick            *quickEntryHotkey    // the quick entry shortcut; nil until main builds it
 	stopScheduler    context.CancelFunc
 	leasesDone       <-chan struct{} // closed once the scheduler and lease watcher stopped; nil when none runs
 }
@@ -371,6 +372,7 @@ func (d *Desktop) releaseLoadedProject() {
 	d.stopScheduler = nil
 	d.leasesDone = nil
 	d.mu.Unlock()
+	syncQuickEntry(d)
 
 	// Scheduler and lease watcher first, so no in-flight tick or poll lands
 	// on a closing store.
@@ -478,6 +480,7 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 	d.leasesDone = startBackground(schedCtx, svc, bind, cards)
 	d.mu.Unlock()
 	handedOff = true
+	syncQuickEntry(d)
 
 	// Register it so /p/<id>/ can reach it, and so a later Open Project on the
 	// same directory can focus this project rather than loading a second copy.
@@ -1149,6 +1152,8 @@ func main() {
 		},
 	})
 	d.wails = app
+	d.quick = newQuickEntryHotkey(app, d)
+	syncQuickEntry(d)
 
 	d.newMainWindow(title)
 	registerContextMenus(d.wails, d.OpenWindow)
