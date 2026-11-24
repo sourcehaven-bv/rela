@@ -65,6 +65,35 @@ export function columnHeader(column: ListColumn): string {
  */
 export const BUSY_COLUMN_WIDTH = 160
 
+/** The width of an image column: the 32px thumbnail plus the cell padding. */
+export const IMAGE_COLUMN_WIDTH = 64
+
+/** True for a `file` property marked `display: {image: true}`. */
+export function isImageProperty(property: PropertyDef | undefined): boolean {
+  return property?.type === 'file' && !property.list && property.display?.image === true
+}
+
+/**
+ * The image columns listed before the name column. The library's table puts
+ * the name first and cannot place a column before it, so these render inside
+ * the name cell, left of the title, like an avatar. `toTableColumns` drops
+ * them so they are not repeated as ordinary columns.
+ */
+export function leadingImageColumns(
+  columns: ListColumn[],
+  name: ListColumn | undefined,
+  properties: Record<string, PropertyDef> = {}
+): ListColumn[] {
+  const at = name ? columns.indexOf(name) : -1
+  if (at <= 0) return []
+  const seen = new Set<string>()
+  return columns.slice(0, at).filter((column) => {
+    if (!column.property || !isImageProperty(properties[column.property]) || seen.has(column.property)) return false
+    seen.add(column.property)
+    return true
+  })
+}
+
 /**
  * A property column's preferred and minimum width, by the property's type.
  *
@@ -78,6 +107,9 @@ export function propertyColumnSize(
   property: PropertyDef | undefined
 ): Pick<TableColumn, 'width' | 'minWidth'> | undefined {
   if (!property || property.list) return undefined
+  // An image shows as a 32px thumbnail (ImageCellWidget), so the column is the
+  // thumbnail plus the cell's padding, not the text width.
+  if (isImageProperty(property)) return { width: IMAGE_COLUMN_WIDTH, minWidth: IMAGE_COLUMN_WIDTH }
   if (property.type === 'enum' || (property.values?.length ?? 0) > 0) return { width: 128, minWidth: 96 }
   switch (property.type) {
     case 'date':
@@ -104,8 +136,9 @@ export function propertyColumnSize(
  *
  * `name` is the column taken out, as `nameColumn` picks it; the caller still
  * needs it to render the title cell's contents through the `name` slot. Any
- * other column, including a first one that is not the name (a `logo`, say),
- * is an ordinary column and renders as configured.
+ * other column is an ordinary column and renders as configured, except an
+ * image column listed before the name (`leadingImageColumns`), which renders
+ * inside the name cell.
  */
 export function toTableColumns(
   columns: ListColumn[],
@@ -113,8 +146,9 @@ export function toTableColumns(
   properties: Record<string, PropertyDef> = {}
 ): TableColumn[] {
   const seen = new Set<string>()
+  const leading = new Set(leadingImageColumns(columns, name, properties))
   return columns
-    .filter((column) => column !== name)
+    .filter((column) => column !== name && !leading.has(column))
     .map((column) => {
       let key = columnKey(column)
       // Malformed config can repeat the placeholder. Duplicate keys would make

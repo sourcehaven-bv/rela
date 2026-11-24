@@ -1,7 +1,16 @@
 import { describe, it, expect } from 'vitest'
 import type { ListColumn } from '@/types/config'
 import type { PropertyDef } from '@/types'
-import { columnHeader, columnKey, listColumnOf, nameColumn, propertyColumnSize, toTableColumns } from './tableColumns'
+import {
+  IMAGE_COLUMN_WIDTH,
+  columnHeader,
+  columnKey,
+  leadingImageColumns,
+  listColumnOf,
+  nameColumn,
+  propertyColumnSize,
+  toTableColumns,
+} from './tableColumns'
 
 /**
  * The column key is the one thing here that fails silently when it is wrong.
@@ -218,5 +227,43 @@ describe('column widths', () => {
       expect(column.width).toBeUndefined()
       expect(column.minWidth).toBeUndefined()
     }
+  })
+})
+
+describe('image columns', () => {
+  const properties: Record<string, PropertyDef> = {
+    title: { type: 'string' },
+    logo: { type: 'file', display: { image: true } },
+    doc: { type: 'file' },
+  }
+
+  it('sizes an image column to its thumbnail, narrower than the default', () => {
+    const size = propertyColumnSize(properties.logo)
+    expect(size).toEqual({ width: IMAGE_COLUMN_WIDTH, minWidth: IMAGE_COLUMN_WIDTH })
+    expect(IMAGE_COLUMN_WIDTH).toBeLessThan(150)
+  })
+
+  it('leaves a plain file column at the default width', () => {
+    expect(propertyColumnSize(properties.doc)).toBeUndefined()
+  })
+
+  it('leads with an image column listed before the linked name', () => {
+    const columns: ListColumn[] = [{ property: 'logo' }, { property: 'title', link: 'detail' }, { property: 'doc' }]
+    const name = nameColumn(columns)
+    expect(leadingImageColumns(columns, name, properties)).toEqual([columns[0]])
+    expect(toTableColumns(columns, name, properties).map((c) => c.key)).toEqual(['prop:doc'])
+  })
+
+  it('keeps an image column after the name as an ordinary sized column', () => {
+    const columns: ListColumn[] = [{ property: 'title', link: 'detail' }, { property: 'logo' }]
+    expect(leadingImageColumns(columns, nameColumn(columns), properties)).toEqual([])
+    const [logo] = toTableColumns(columns, nameColumn(columns), properties)
+    expect(logo.key).toBe('prop:logo')
+    expect(logo.width).toBe(IMAGE_COLUMN_WIDTH)
+  })
+
+  it('does not lead with a non-image column before the name', () => {
+    const columns: ListColumn[] = [{ property: 'doc' }, { property: 'title', link: 'detail' }]
+    expect(leadingImageColumns(columns, nameColumn(columns), properties)).toEqual([])
   })
 })
