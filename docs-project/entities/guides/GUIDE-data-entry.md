@@ -6569,8 +6569,62 @@ navigation:
 | `initial`   | A letter badge in front of each entry. Set `property` for the first letter of one of the row's properties, or `relation` for the first letter of a related entity's title, such as the owner. `direction` picks the side of the relation, and is needed only when the relation connects the type to itself. |
 | `create`    | Show a "+" on the group heading that creates a row of the list. It opens the list's `create_form:`, or else the type's create form, and then the new entity's page. It is shown only to a user who may create the type. A group that offers it stays in the sidebar when it has no entries, so the first one can be made. In a read-only workspace there is no "+", so an empty group is left out. |
 
+| `status`    | A count on each entry: the number of rows of another list related to the entry. See [Counts and children](#counts-and-children). |
+| `children`  | One level of entries under each entry: the rows of another list related to it. See [Counts and children](#counts-and-children). |
+
 A group with `items_from` cannot also have `items`, and cannot have `status:`.
 `items_from` is only allowed on a group.
+
+#### Counts and children
+
+An entry can show a count, and can have entries of its own one level down:
+
+```yaml
+navigation:
+  - group: Areas
+    items_from:
+      list: areas
+      page: area
+      status: { list: open_todos, via: in_area, tone: info, label: "{count}" }
+      children:
+        list: active_projects
+        via: in_area
+        page: project
+        limit: 10
+        status: { list: open_todos, via: in_project, tone: info, label: "{count}" }
+```
+
+`children` has these fields:
+
+| Field       | Description |
+| ----------- | ----------- |
+| `list`      | The list whose rows become child entries, in the list's order. Required. |
+| `via`       | The relation between a child row and its parent row. Required. |
+| `direction` | The side of `via`, seen from the child row. Needed only when the relation connects a type to itself. |
+| `page`      | An entity page for the child list's type. Without it, a child opens the entity's detail view. |
+| `limit`     | The most children per entry, from 1 to 50. The default is 20. An entry with more ends with a **Show all** child that opens the entry. |
+| `status`    | A count on each child entry. |
+
+There is one child level: `children` has no `children`, `initial` or
+`create`.
+
+`status` has these fields:
+
+| Field       | Description |
+| ----------- | ----------- |
+| `list`      | The list whose rows are counted. Required. Its filters, `condition:` and scope decide which rows count. |
+| `via`       | The relation between a counted row and the entry. Required. |
+| `direction` | The side of `via`, seen from the counted row, as for `children`. |
+| `tone`      | `new`, `info`, `warning`, `error` or `success`, as for [status indicators](#status-indicators). |
+| `label`     | The marker's text. `{count}` is the only variable. |
+
+A count of zero shows nothing. Children and counts follow the same access
+rules as the entries: only rows the user may read are shown or counted. A
+child's count covers only the children the entry shows.
+
+The server reads the children and counts in a fixed number of queries per
+group, whatever the number of entries. The rows it reads grow with the number
+of related rows.
 
 The entries follow the same access rules as the list. A user sees only the rows
 the list shows them, and a title they may not read shows as the entity id. An
@@ -6590,7 +6644,10 @@ The entries are not in the sidebar response. The SPA fetches them from
   "items": {
     "1": {
       "entries": [
-        { "id": "TOPIC-1", "type": "topic", "label": "Gezondheid", "initial": "J" }
+        { "id": "TOPIC-1", "type": "topic", "label": "Gezondheid", "initial": "J",
+          "status": { "tone": "info", "label": "3", "count": 3 },
+          "children": [{ "id": "PRJ-1", "type": "project", "label": "Launch" }],
+          "children_truncated": false }
       ],
       "truncated": true
     }
@@ -7376,7 +7433,8 @@ item, and to choose which types it offers once the page's entity has loaded:
 A group with [`items_from`](#generated-items-items_from) has three more fields
 and no `items`: `items_key` names its entries in `/api/v1/_nav_items`,
 `items_list` is the list behind it, and `items_page` is the page an entry
-opens. `items_page` is left out when the user can see no tab of that page; the
+opens. `items_child_page` is the page a child entry opens, under the same rule
+as `items_page`. `items_page` is left out when the user can see no tab of that page; the
 entries then open the entity's detail view. A group with `create: true` has
 `items_create` (`type`, `label`, `form`) when the user may create the type and a
 form resolves for it. The create endpoint checks access again.

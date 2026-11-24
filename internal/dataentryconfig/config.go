@@ -1948,6 +1948,58 @@ type NavItemsFrom struct {
 	// create_form, else the type's create form, and is offered only to a
 	// principal who may create the list's type.
 	Create bool `yaml:"create,omitempty" json:"create,omitempty"`
+	// Status puts a count on each entry: the rows of another list related
+	// to the entry. See [NavItemsStatus].
+	//
+	// Nil: accepted, means no count.
+	Status *NavItemsStatus `yaml:"status,omitempty" json:"status,omitempty"`
+	// Children puts one level of entries under each entry: the rows of
+	// another list related to it. See [NavItemsChildren].
+	//
+	// Nil: accepted, means a flat group.
+	Children *NavItemsChildren `yaml:"children,omitempty" json:"children,omitempty"`
+}
+
+// NavItemsChildren is the child level of a generated group: under each
+// entry, the rows of List related to the entry through Via. One level only.
+type NavItemsChildren struct {
+	// List names the list whose rows become child entries, in its order.
+	List string `yaml:"list" json:"list"`
+	// Via is the relation between a child row and its parent row.
+	Via string `yaml:"via" json:"via"`
+	// Direction is from the child row's side, inferred when left out.
+	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"`
+	// Page names an entity page for the child list's type.
+	Page string `yaml:"page,omitempty" json:"page,omitempty"`
+	// Limit caps the children per parent, as [NavItemsFrom.Limit] does.
+	Limit int `yaml:"limit,omitempty" json:"limit,omitempty"`
+	// Status puts a count on each child entry.
+	//
+	// Nil: accepted, means no count.
+	Status *NavItemsStatus `yaml:"status,omitempty" json:"status,omitempty"`
+}
+
+// EffectiveLimit returns Limit, or [NavItemsDefaultLimit] when it is zero.
+func (c NavItemsChildren) EffectiveLimit() int {
+	if c.Limit == 0 {
+		return NavItemsDefaultLimit
+	}
+	return c.Limit
+}
+
+// NavItemsStatus is the count on a generated entry: the number of rows of
+// List (its filters, scope, `condition:` and read gate) related to the entry
+// through Via. A zero count shows nothing. The counted list's own condition
+// decides what counts, so there are no per-rule conditions.
+type NavItemsStatus struct {
+	List string `yaml:"list" json:"list"`
+	Via  string `yaml:"via" json:"via"`
+	// Direction is from the counted row's side, inferred when left out.
+	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"`
+	// Tone is one of the NavStatusTone* values.
+	Tone string `yaml:"tone" json:"tone"`
+	// Label is the marker's text; {count} is the one variable.
+	Label string `yaml:"label" json:"label"`
 }
 
 // NavItemsInitial says where an entry's letter badge comes from: the first

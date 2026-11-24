@@ -731,6 +731,10 @@ func setNavItemsFrom(
 	if from.Page != "" && showsNavEntry(ctx, aclImpl, cfg, dataentryconfig.NavigationEntry{Page: from.Page}) {
 		group.ItemsPage = from.Page
 	}
+	if c := from.Children; c != nil && c.Page != "" &&
+		showsNavEntry(ctx, aclImpl, cfg, dataentryconfig.NavigationEntry{Page: c.Page}) {
+		group.ItemsChildPage = c.Page
+	}
 }
 
 // sidebarNavItemsEntries returns the groups with `items_from:` that the
