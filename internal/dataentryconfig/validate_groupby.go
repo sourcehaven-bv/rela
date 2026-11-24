@@ -3,6 +3,7 @@ package dataentryconfig
 import (
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -98,7 +99,7 @@ func validateListGroupBy(
 		errs = append(errs, prefix+": offered_by, order_by and style_from need relation")
 	}
 	if g.Property == "" {
-		return append(errs, prefix+": property or relation is required")
+		return append(errs, validateComputedGroups(prefix, g)...)
 	}
 	propDef, ok := entDef.Properties[g.Property]
 	if !ok {
@@ -129,6 +130,12 @@ func validateListGroups(
 	if len(g.Groups) == 0 {
 		return nil
 	}
+	for i, grp := range g.Groups {
+		if grp.ID != "" || grp.Condition != "" {
+			return []string{fmt.Sprintf("%s: groups[%d] has id or condition; "+
+				"a computed grouping has no property or relation", prefix, i)}
+		}
+	}
 	values := GetValidEnumValues(propDef, meta)
 	if len(values) == 0 {
 		return []string{fmt.Sprintf("%s: groups needs an enum property, %q is %s", prefix, g.Property, propDef.Type)}
@@ -148,6 +155,56 @@ func validateListGroups(
 			errs = append(errs, fmt.Sprintf("%s: groups[%d] duplicates groups[%d] (%q)", prefix, i, j, grp.Value))
 		} else {
 			seen[grp.Value] = i
+		}
+		if grp.Color != "" && !ValidGroupColors[grp.Color] {
+			errs = append(errs, fmt.Sprintf("%s: groups[%d] has unknown color %q (valid: %s)",
+				prefix, i, grp.Color, strings.Join(slices.Sorted(maps.Keys(ValidGroupColors)), ", ")))
+		}
+	}
+	return errs
+}
+
+// maxComputedGroups caps a computed grouping. Each group costs one batched
+// condition pass over the served page, so the cap bounds that work.
+const maxComputedGroups = 20
+
+// validGroupID is the allowlist for a computed group's id, which the server
+// stamps on every row.
+var validGroupID = regexp.MustCompile(`^[a-z0-9_-]+$`)
+
+// validateComputedGroups checks a grouping by condition: declared groups,
+// each with an id and a condition, except one fallback that comes last.
+// The conditions themselves compile in conditionlint.
+func validateComputedGroups(prefix string, g *ListGroupBy) []string {
+	if len(g.Groups) == 0 {
+		return []string{prefix + ": property, relation or groups with conditions is required"}
+	}
+	var errs []string
+	if g.Buckets != "" {
+		errs = append(errs, prefix+": buckets needs a date property")
+	}
+	if len(g.Groups) > maxComputedGroups {
+		errs = append(errs, fmt.Sprintf("%s: %d groups is more than the limit of %d",
+			prefix, len(g.Groups), maxComputedGroups))
+	}
+	seen := map[string]int{}
+	for i, grp := range g.Groups {
+		if grp.Value != "" {
+			errs = append(errs, fmt.Sprintf("%s: groups[%d] has value %q; "+
+				"value needs property, a computed group uses id and condition", prefix, i, grp.Value))
+		}
+		if !validGroupID.MatchString(grp.ID) {
+			errs = append(errs, fmt.Sprintf("%s: groups[%d] id %q must match %s",
+				prefix, i, grp.ID, validGroupID.String()))
+		}
+		if j, dup := seen[grp.ID]; dup {
+			errs = append(errs, fmt.Sprintf("%s: groups[%d] duplicates groups[%d] (%q)", prefix, i, j, grp.ID))
+		} else {
+			seen[grp.ID] = i
+		}
+		if grp.Condition == "" && i != len(g.Groups)-1 {
+			errs = append(errs, fmt.Sprintf("%s: groups[%d] has no condition; "+
+				"only the last group may be the fallback", prefix, i))
 		}
 		if grp.Color != "" && !ValidGroupColors[grp.Color] {
 			errs = append(errs, fmt.Sprintf("%s: groups[%d] has unknown color %q (valid: %s)",

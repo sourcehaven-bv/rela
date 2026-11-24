@@ -202,6 +202,10 @@ type Activity struct {
 	// status working, which the caller may read. Nil is absent ("not
 	// served"); an empty slice is `[]` ("none busy that you may see").
 	Busy []BusyChannel `json:"_busy,omitzero"`
+	// Group is the id of the computed group (TKT-QS024L0) the row falls in,
+	// set on list rows when the request names a list whose group_by is
+	// computed. Empty means the row matched no group.
+	Group string `json:"_group,omitempty"`
 	// Updated is when the row last changed, in RFC 3339, set on the
 	// per-entity responses only. It is absent when any property of the row
 	// is hidden from or inaccessible to the caller, because the time says

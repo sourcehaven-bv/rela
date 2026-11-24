@@ -72,7 +72,44 @@ func TestValidateListGroupBy(t *testing.T) {
 			groupBy: &ListGroupBy{Property: "due", Buckets: "relative", Labels: map[string]string{"overdue": "Te laat", "today": "Vandaag"}},
 		},
 		{name: "datetime buckets", groupBy: &ListGroupBy{Property: "at", Buckets: "relative"}},
-		{name: "missing property", groupBy: &ListGroupBy{}, wantErr: "property or relation is required"},
+		{name: "missing property", groupBy: &ListGroupBy{}, wantErr: "property, relation or groups with conditions is required"},
+		{
+			name: "computed groups",
+			groupBy: &ListGroupBy{Groups: []ListGroup{
+				{ID: "doing", Condition: "entity.status == 'doing'", Label: "Doing", Color: "green"},
+				{ID: "rest"},
+			}},
+		},
+		{
+			name:    "computed fallback not last",
+			groupBy: &ListGroupBy{Groups: []ListGroup{{ID: "rest"}, {ID: "doing", Condition: "true"}}},
+			wantErr: "only the last group may be the fallback",
+		},
+		{
+			name:    "computed duplicate id",
+			groupBy: &ListGroupBy{Groups: []ListGroup{{ID: "a", Condition: "true"}, {ID: "a", Condition: "true"}}},
+			wantErr: "duplicates groups[0]",
+		},
+		{
+			name:    "computed bad id",
+			groupBy: &ListGroupBy{Groups: []ListGroup{{ID: "A#b", Condition: "true"}}},
+			wantErr: "must match",
+		},
+		{
+			name:    "computed group with value",
+			groupBy: &ListGroupBy{Groups: []ListGroup{{ID: "a", Value: "doing", Condition: "true"}}},
+			wantErr: "value needs property",
+		},
+		{
+			name:    "computed with buckets",
+			groupBy: &ListGroupBy{Buckets: "relative", Groups: []ListGroup{{ID: "a", Condition: "true"}}},
+			wantErr: "buckets needs a date property",
+		},
+		{
+			name:    "condition on an enum group",
+			groupBy: &ListGroupBy{Property: "status", Groups: []ListGroup{{Value: "doing", Condition: "true"}}},
+			wantErr: "a computed grouping has no property or relation",
+		},
 		{name: "unknown property", groupBy: &ListGroupBy{Property: "nope"}, wantErr: `property "nope" not in metamodel`},
 		{name: "list property", groupBy: &ListGroupBy{Property: "tags"}, wantErr: "is a list"},
 		{

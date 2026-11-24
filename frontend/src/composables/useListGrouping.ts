@@ -18,6 +18,11 @@
  *   arrive.
  * A row with no value goes in a trailing "(none)" section, shown only when a
  * row needs it.
+ *
+ * A computed grouping (`groups:` with conditions and no property) is decided
+ * by the server, which stamps each row's `_group`. Its sections come in
+ * declared order, empty ones left out; a row in no group goes in a trailing
+ * "Other" section.
  */
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import { useRelationColumns, OTHER_COLUMN } from '@/composables/useRelationColumns'
@@ -102,6 +107,8 @@ export function groupRows(
   entityType: EntityType | undefined,
   options: GroupOptions
 ): ListSection[] {
+  // Mirrors ListGroupBy.Computed on the server.
+  if (!groupBy.property && !groupBy.relation) return computedSections(rows, groupBy)
   const property = groupBy.property ?? ''
   const def = entityType?.properties[property]
   if (groupBy.buckets) return bucketSections(rows, groupBy, options, def?.type === 'date')
@@ -152,6 +159,24 @@ export function groupRows(
       (includeEmpty && filtersAdmit(options.filterParams, property, s.id.slice('value:'.length)))
   )
   if (none.items.length > 0) sections.push(none)
+  return sections
+}
+
+const OTHER_ID = 'other'
+
+/** Sections for a computed grouping; see the file comment. */
+function computedSections(rows: Entity[], groupBy: ListGroupBy): ListSection[] {
+  const byId = new Map<string, ListSection>()
+  for (const g of groupBy.groups ?? []) {
+    if (!g.id) continue
+    byId.set(g.id, { id: `group:${g.id}`, title: g.label || g.id, color: g.color, items: [] })
+  }
+  const other: ListSection = { id: OTHER_ID, title: t('list.group.other'), items: [] }
+  for (const row of rows) {
+    ;((row._group && byId.get(row._group)) || other).items.push(row)
+  }
+  const sections = [...byId.values()].filter((s) => s.items.length > 0)
+  if (other.items.length > 0) sections.push(other)
   return sections
 }
 

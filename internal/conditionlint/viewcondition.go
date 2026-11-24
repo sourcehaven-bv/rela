@@ -45,6 +45,12 @@ const (
 	// output (TKT-4USH1HO), keyed by dataentryconfig.LLMCandidateConditionID:
 	// one program per target type of the relation.
 	ViewConditionLLMCandidate ViewConditionKind = "llm_candidates"
+
+	// ViewConditionListGroup is the `condition:` of one computed group of a
+	// list's `group_by` (TKT-QS024L0), keyed by
+	// dataentryconfig.ListGroupConditionID. It is compiled against the list's
+	// entity type.
+	ViewConditionListGroup ViewConditionKind = "list_groups"
 )
 
 // ViewConditionKey identifies one compiled view condition.
@@ -91,6 +97,16 @@ func CompileViewConditions(
 	for id, v := range cfg.Lists {
 		key := ViewConditionKey{ViewConditionList, id}
 		compileOne(ev, meta, key, key.String(), v.EntityType, v.Condition, programs, &problems)
+	}
+	for id, v := range cfg.Lists {
+		if !v.GroupBy.Computed() {
+			continue
+		}
+		for _, g := range v.GroupBy.Groups {
+			key := ViewConditionKey{ViewConditionListGroup, dataentryconfig.ListGroupConditionID(id, g.ID)}
+			name := fmt.Sprintf("lists[%q].group_by.groups[%s]", id, g.ID)
+			compileOne(ev, meta, key, name, v.EntityType, g.Condition, programs, &problems)
+		}
 	}
 	for id, v := range cfg.Kanbans {
 		key := ViewConditionKey{ViewConditionKanban, id}
@@ -354,6 +370,8 @@ func entityTypeFor(cfg *dataentryconfig.Config, key ViewConditionKey) string {
 		return cfg.Lists[key.ID].EntityType
 	case ViewConditionKanban:
 		return cfg.Kanbans[key.ID].EntityType
+	case ViewConditionListGroup:
+		return cfg.Lists[dataentryconfig.ListGroupConditionList(key.ID)].EntityType
 	case ViewConditionAction:
 		_, et, _ := dataentryconfig.SplitActionConditionID(key.ID)
 		return et

@@ -225,21 +225,9 @@ func applyViewCondition(
 	if m == nil || len(rows) == 0 {
 		return rows, nil
 	}
-	candidates := rows
-	if redact != nil {
-		candidates = make([]*entityPkg.Entity, len(rows))
-		for i, e := range rows {
-			candidates[i] = redact(ctx, e)
-		}
-	}
-	verdicts, err := m.MatchPage(ctx, candidates, traversalGateFromContext(ctx).GateTraversal,
-		pageMatch(st))
+	verdicts, err := matchPage(ctx, redactAll(ctx, rows, redact), m, st)
 	if err != nil {
 		return nil, err
-	}
-	if len(verdicts) != len(rows) {
-		// coverage-ignore: invariant: MatchPage returns one verdict per row
-		return nil, fmt.Errorf("view condition: %d verdicts for %d rows", len(verdicts), len(rows))
 	}
 	kept := make([]*entityPkg.Entity, 0, len(rows))
 	for i, e := range rows {
@@ -248,6 +236,38 @@ func applyViewCondition(
 		}
 	}
 	return kept, nil
+}
+
+// redactAll returns the rows as the condition must judge them: redacted
+// copies when redact is set, the rows themselves otherwise. See
+// [applyViewCondition] for why a condition judges redacted values only.
+func redactAll(
+	ctx context.Context, rows []*entityPkg.Entity, redact func(context.Context, *entityPkg.Entity) *entityPkg.Entity,
+) []*entityPkg.Entity {
+	if redact == nil {
+		return rows
+	}
+	out := make([]*entityPkg.Entity, len(rows))
+	for i, e := range rows {
+		out[i] = redact(ctx, e)
+	}
+	return out
+}
+
+// matchPage judges already-redacted rows in one batch and returns one verdict
+// per row.
+func matchPage(
+	ctx context.Context, candidates []*entityPkg.Entity, m ViewConditionMatcher, st store.GraphQueryer,
+) ([]bool, error) {
+	verdicts, err := m.MatchPage(ctx, candidates, traversalGateFromContext(ctx).GateTraversal, pageMatch(st))
+	if err != nil {
+		return nil, err
+	}
+	if len(verdicts) != len(candidates) {
+		// coverage-ignore: invariant: MatchPage returns one verdict per row
+		return nil, fmt.Errorf("view condition: %d verdicts for %d rows", len(verdicts), len(candidates))
+	}
+	return verdicts, nil
 }
 
 // pageMatch answers a traversal for rows the page already read. It keeps the
