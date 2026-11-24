@@ -103,7 +103,7 @@ func TestValidateListGroupBy(t *testing.T) {
 			wantErr: `unknown bucket "today" (valid: no_date)`,
 		},
 		{name: "calendar buckets on an enum", groupBy: &ListGroupBy{Property: "status", Buckets: &ListBuckets{By: "day"}}, wantErr: "buckets needs a date or datetime property"},
-				{name: "missing property", groupBy: &ListGroupBy{}, wantErr: "property, relation or groups with conditions is required"},
+		{name: "missing property", groupBy: &ListGroupBy{}, wantErr: "property, relation or groups with conditions is required"},
 		{
 			name: "computed groups",
 			groupBy: &ListGroupBy{Groups: []ListGroup{
