@@ -385,7 +385,7 @@ func TestRecords_LuaAppendUsesOwnerGate(t *testing.T) {
 	run := func(ctx context.Context) string {
 		t.Helper()
 		var out bytes.Buffer
-		rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out, lua.WithContext(ctx),
+		rt := lua.NewWriter(svc.Scheduler().ScheduledLuaWriteDeps(), &out, lua.WithContext(ctx),
 			lua.WithPrincipal(principal.From(ctx)))
 		defer rt.Close()
 		//nolint:contextcheck // the runtime carries ctx via lua.WithContext
@@ -425,7 +425,7 @@ entities:
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 	require.Nil(t, appbuild.LuaRecords(svc))
-	require.Nil(t, svc.ScheduledLuaWriteDeps().Records)
+	require.Nil(t, svc.Scheduler().ScheduledLuaWriteDeps().Records)
 }
 
 // The binding's row limit is the service's batch limit, so a script meets the
@@ -450,7 +450,7 @@ func TestRecords_LuaReadsUseOwnerGate(t *testing.T) {
 	run := func(ctx context.Context) string {
 		t.Helper()
 		var out bytes.Buffer
-		rt := lua.NewReader(svc.ScheduledLuaWriteDeps().ReadDeps, &out, lua.WithContext(ctx),
+		rt := lua.NewReader(svc.Scheduler().ScheduledLuaWriteDeps().ReadDeps, &out, lua.WithContext(ctx),
 			lua.WithPrincipal(principal.From(ctx)))
 		defer rt.Close()
 		//nolint:contextcheck // the runtime carries ctx via lua.WithContext

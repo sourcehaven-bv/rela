@@ -122,7 +122,7 @@ func TestFieldGate_LuaUpdateRaises(t *testing.T) {
 	svc := fieldGateServices(t)
 	locked := createTask(t, svc, "locked")
 	var out strings.Builder
-	rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out, lua.WithContext(asAlice(t, svc)),
+	rt := lua.NewWriter(svc.Scheduler().ScheduledLuaWriteDeps(), &out, lua.WithContext(asAlice(t, svc)),
 		lua.WithPrincipal(principal.From(asAlice(t, svc))))
 	defer rt.Close()
 	err := rt.RunString(`rela.update_entity("` + locked + `", {status = "done"})`)

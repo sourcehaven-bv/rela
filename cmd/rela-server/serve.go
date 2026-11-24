@@ -353,8 +353,8 @@ func (s *server) startScheduler(g *generation) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	g.schedStop = cancel
-	// *appbuild.Services satisfies scheduler.WorkspaceProvider structurally.
-	sched := scheduler.StartBackground(ctx, g.svc, bind, slog.Default(), scheduler.WithCards(cards))
+	// *appbuild.SchedulerWorkspace satisfies scheduler.WorkspaceProvider.
+	sched := scheduler.StartBackground(ctx, g.svc.Scheduler(), bind, slog.Default(), scheduler.WithCards(cards))
 	leases := appbuild.WatchLeases(ctx, g.svc)
 	worker := appbuild.RunRealtimeWorker(ctx, g.svc)
 	flows := appbuild.RunFlowWorker(ctx, g.svc)

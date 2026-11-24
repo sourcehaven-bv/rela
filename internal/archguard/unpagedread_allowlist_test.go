@@ -53,9 +53,9 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/appbuild/realtime_triggers.go#entitySource.Scan": {1, batchJob,
 		"realtime trigger engine: one unpaged header scan of a type, handed to the engine in batches of " +
 			"triggerScanPage when it (re)baselines a trigger"},
-	"internal/appbuild/scheduled_mail_validate.go#Services.ValidateScheduledMailRecipients": {1, batchJob,
+	"internal/appbuild/scheduled_mail_validate.go#SchedulerWorkspace.ValidateScheduledMailRecipients": {1, batchJob,
 		"operator validation of scheduled-mail tasks: scans each task's for_each type for invalid addresses"},
-	"internal/appbuild/scheduler_foreach.go#Services.ScheduledForEachEntities": {1, batchJob,
+	"internal/appbuild/scheduler_foreach.go#SchedulerWorkspace.ScheduledForEachEntities": {1, batchJob,
 		"scheduled task for_each: selects the task's subjects from its entity type"},
 
 	// apptest: `rela test`.

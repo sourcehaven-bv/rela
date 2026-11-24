@@ -95,11 +95,11 @@ subscriptions:
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 
-	cfg, err := scheduler.LoadWorkspaceConfig(context.Background(), svc)
+	cfg, err := scheduler.LoadWorkspaceConfig(context.Background(), svc.Scheduler())
 	require.NoError(t, err)
 	// One scheduler for both runs: a Services carries at most one, since a
 	// second registers the same job kinds.
-	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, appbuild.MustIdentityBinder(svc), discardTestLogger())
+	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc.Scheduler(), appbuild.MustIdentityBinder(svc), discardTestLogger())
 	require.NoError(t, err)
 
 	runSubscriptionOnce(t, svc, s)
@@ -113,7 +113,7 @@ subscriptions:
 	require.Equal(t, feed.URL+"/p/1", articles[0].Properties["link"])
 
 	// Forget the run so the task is due again, as runSchedulerTwice does.
-	_, err = svc.SchedulerState().Prune(context.Background(), time.Now().Add(time.Hour))
+	_, err = svc.Scheduler().SchedulerState().Prune(context.Background(), time.Now().Add(time.Hour))
 	require.NoError(t, err)
 	runSubscriptionOnce(t, svc, s)
 
@@ -125,7 +125,7 @@ subscriptions:
 func runSubscriptionOnce(t *testing.T, svc *appbuild.Services, s *scheduler.Scheduler) {
 	t.Helper()
 	runUntil(t, s, func() bool {
-		got, err := svc.SchedulerState().Load(context.Background(), []string{"subscription:news"})
+		got, err := svc.Scheduler().SchedulerState().Load(context.Background(), []string{"subscription:news"})
 		if err != nil {
 			return false
 		}
@@ -133,7 +133,7 @@ func runSubscriptionOnce(t *testing.T, svc *appbuild.Services, s *scheduler.Sche
 		return ok && ts.Active == nil && (!ts.LastRun.IsZero() || ts.Failures > 0)
 	}, "the subscription did not finish a run")
 
-	got, err := svc.SchedulerState().Load(context.Background(), []string{"subscription:news"})
+	got, err := svc.Scheduler().SchedulerState().Load(context.Background(), []string{"subscription:news"})
 	require.NoError(t, err)
 	require.Zero(t, got["subscription:news"].Failures, "the poll failed")
 }
@@ -190,10 +190,10 @@ entities:
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 
-	cfg, err := scheduler.LoadWorkspaceConfig(context.Background(), svc)
+	cfg, err := scheduler.LoadWorkspaceConfig(context.Background(), svc.Scheduler())
 	require.NoError(t, err)
 	require.Empty(t, cfg.Tasks)
-	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, appbuild.MustIdentityBinder(svc), discardTestLogger())
+	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc.Scheduler(), appbuild.MustIdentityBinder(svc), discardTestLogger())
 	require.NoError(t, err)
 	s.WatchConfig()
 
