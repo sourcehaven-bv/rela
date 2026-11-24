@@ -6569,8 +6569,8 @@ navigation:
 | `initial`   | A letter badge in front of each entry. Set `property` for the first letter of one of the row's properties, or `relation` for the first letter of a related entity's title, such as the owner. `direction` picks the side of the relation, and is needed only when the relation connects the type to itself. |
 | `create`    | Show a "+" on the group heading that creates a row of the list. It opens the list's `create_form:`, or else the type's create form, and then the new entity's page. It is shown only to a user who may create the type. A group that offers it stays in the sidebar when it has no entries, so the first one can be made. In a read-only workspace there is no "+", so an empty group is left out. |
 
-| `status`    | A count on each entry: the number of rows of another list related to the entry. See [Counts and children](#counts-and-children). |
-| `children`  | One level of entries under each entry: the rows of another list related to it. See [Counts and children](#counts-and-children). |
+| `status`    | A count of related rows on each entry. See [Counts and children](#counts-and-children). |
+| `children`  | Related rows one level under each entry. See [Counts and children](#counts-and-children). |
 
 A group with `items_from` cannot also have `items`, and cannot have `status:`.
 `items_from` is only allowed on a group.
