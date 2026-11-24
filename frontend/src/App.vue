@@ -569,6 +569,12 @@ body {
   }
 }
 
+.quick-popup-frame {
+  min-height: 100vh;
+  background: var(--rl-color-bg);
+  color: var(--rl-color-text);
+}
+
 .boot-screen {
   display: flex;
   min-height: 100vh;

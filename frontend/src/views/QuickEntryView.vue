@@ -5,19 +5,25 @@
  * (`?popup=1`) a save closes the window; on the web it shows a toast and
  * opens a fresh form.
  */
-import { computed, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import DynamicForm from '@/components/forms/DynamicForm.vue'
 import { getAssign, type AssignValues } from '@/api/assign'
 import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
-import { closeQuickEntryPopup, leaveQuickEntry } from '@/utils/quickEntry'
+import { closeQuickEntryPopup, fitQuickEntryPopup, leaveQuickEntry } from '@/utils/quickEntry'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const popup = computed(() => route.query.popup === '1')
+const root = ref<HTMLElement | null>(null)
+let stopFit = () => {}
+onMounted(() => {
+  if (popup.value && root.value) stopFit = fitQuickEntryPopup(root.value)
+})
+onBeforeUnmount(() => stopFit())
 const schemaStore = useSchemaStore()
 const ui = useUIStore()
 
@@ -66,7 +72,7 @@ function onCancelled() {
 </script>
 
 <template>
-  <div class="quick-entry" :class="{ 'quick-entry--popup': popup }">
+  <div ref="root" class="quick-entry" :class="{ 'quick-entry--popup': popup }">
     <h1 class="quick-entry-title">{{ t('quickEntry.title') }}</h1>
     <p v-if="!cfg">{{ t('quickEntry.notConfigured') }}</p>
     <DynamicForm
@@ -96,16 +102,20 @@ function onCancelled() {
 .quick-entry--popup {
   max-width: none;
   margin: 0;
-  padding: calc(28px + var(--space-sm)) var(--space-md) var(--space-md);
+  padding: calc(28px + var(--space-sm)) var(--space-md) 0;
 }
 .quick-entry--popup .quick-entry-title {
   font-size: var(--font-size-lg);
   --wails-draggable: drag;
 }
 .quick-entry--popup :deep(.form-actions) {
-  position: static;
-  margin: 0;
-  padding: var(--space-md) 0 0;
+  /* Stays in view when a tall form scrolls inside the capped window. */
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: 0 calc(0px - var(--space-md));
+  padding: var(--space-md);
+  background: var(--rl-color-bg);
   border-top: none;
   box-shadow: none;
   justify-content: flex-end;

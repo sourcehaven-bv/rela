@@ -30,3 +30,34 @@ describe('App.vue popup branch', () => {
     expect(branch).not.toMatch(/RlAppShell|Sidebar|mobile-menu/)
   })
 })
+
+describe('fitQuickEntryPopup', () => {
+  it('sizes the window to the content, capped at the maximum', async () => {
+    const { fitQuickEntryPopup, QUICK_ENTRY_POPUP_MAX_HEIGHT } = await import('./quickEntry')
+    const calls: [number, number][] = []
+    const w = window as unknown as { wails?: unknown }
+    w.wails = {
+      Window: { SetSize: (a: number, b: number) => (calls.push([a, b]), Promise.resolve()) },
+    }
+    const observers: (() => void)[] = []
+    globalThis.ResizeObserver = class {
+      constructor(cb: () => void) {
+        observers.push(cb)
+      }
+      observe() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver
+    const el = document.createElement('div')
+    let h = 300
+    Object.defineProperty(el, 'scrollHeight', { get: () => h })
+    const stop = fitQuickEntryPopup(el)
+    h = 5000
+    observers[0]()
+    stop()
+    delete w.wails
+    expect(calls).toEqual([
+      [480, 300],
+      [480, QUICK_ENTRY_POPUP_MAX_HEIGHT],
+    ])
+  })
+})
