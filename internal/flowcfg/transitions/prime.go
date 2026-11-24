@@ -13,8 +13,11 @@ type primedTraversals struct {
 	owner      *Transitions
 	entityType string
 	ids        map[string]bool
-	bound      func(rowID string) predicate.TraversalFunc
-	err        error
+	// progs are the programs the bind answered; a caller whose whens are
+	// not all among them binds on its own.
+	progs map[*predicate.Program]bool
+	bound func(rowID string) predicate.TraversalFunc
+	err   error
 }
 
 type primedTraversalsKey struct{}
@@ -47,7 +50,13 @@ func (s *Transitions) PrimeTraversals(ctx context.Context, entityType string, id
 	if len(whens) == 0 {
 		return ctx
 	}
-	p := &primedTraversals{owner: s, entityType: entityType, ids: make(map[string]bool, len(ids))}
+	p := &primedTraversals{
+		owner: s, entityType: entityType,
+		ids: make(map[string]bool, len(ids)), progs: make(map[*predicate.Program]bool, len(whens)),
+	}
+	for _, w := range whens {
+		p.progs[w] = true
+	}
 	for _, id := range ids {
 		p.ids[id] = true
 	}
@@ -56,11 +65,19 @@ func (s *Transitions) PrimeTraversals(ctx context.Context, entityType string, id
 }
 
 // primed returns the page-level answer for the row id of entityType, if ctx
-// carries one bound by s that covers it.
-func (s *Transitions) primed(ctx context.Context, entityType, id string) (edgeTraversal, bool) {
+// carries one bound by s that covers the row and every traversing program
+// of whens.
+func (s *Transitions) primed(
+	ctx context.Context, entityType, id string, whens []*predicate.Program,
+) (edgeTraversal, bool) {
 	p, ok := ctx.Value(primedTraversalsKey{}).(*primedTraversals)
 	if !ok || p.owner != s || p.entityType != entityType || !p.ids[id] {
 		return edgeTraversal{}, false
+	}
+	for _, w := range whens {
+		if w != nil && len(w.Traversals()) > 0 && !p.progs[w] {
+			return edgeTraversal{}, false
+		}
 	}
 	if p.err != nil {
 		return edgeTraversal{err: p.err}, true

@@ -6,6 +6,7 @@ import EntityList from './EntityList.vue'
 import { useSchemaStore } from '@/stores/schema'
 import { _setEntityPluralForTest } from '@/api/entities'
 import type { Entity, ListResponse } from '@/types'
+import type { ToggleCell } from '@/types/entity'
 
 // Toggle columns (TKT-FJG779Q): a checkbox whose click writes the value the
 // server put in `_toggles`.
@@ -55,7 +56,7 @@ describe('EntityList toggle column', () => {
     listEntitiesMock.mockResolvedValue(response)
   }
 
-  function row(id: string, status: string | undefined, toggles?: Record<string, string | boolean>): Entity {
+  function row(id: string, status: string | undefined, toggles?: Record<string, ToggleCell>): Entity {
     return {
       id,
       type: 'todo',
@@ -89,49 +90,52 @@ describe('EntityList toggle column', () => {
     document.body.innerHTML = ''
   })
 
-  it('PATCHes the value the server offered', async () => {
-    seed('disabled', [row('T1', 'open', { status: 'completed' }), row('T2', 'completed', { status: 'open' })])
+  it('PATCHes the value the server offered, as the list type, then reloads', async () => {
+    const foreign: Entity = { ...row('T2', 'completed', { status: { checked: true, to: 'open' } }), type: 'other' }
+    seed('disabled', [row('T1', 'open', { status: { checked: false, to: 'completed' } }), foreign])
     const wrapper = await mountList()
     const open = box(wrapper, 'Todo T1')
-    expect(open.exists()).toBe(true)
     expect((open.element as HTMLInputElement).checked).toBe(false)
     expect((box(wrapper, 'Todo T2').element as HTMLInputElement).checked).toBe(true)
+    const reads = listEntitiesMock.mock.calls.length
     await open.trigger('click')
     await flushPromises()
     expect(updateEntityMock).toHaveBeenCalledWith('todo', 'T1', { properties: { status: 'completed' } })
+    expect(listEntitiesMock.mock.calls.length).toBeGreaterThan(reads)
     await box(wrapper, 'Todo T2').trigger('click')
     await flushPromises()
     expect(updateEntityMock).toHaveBeenLastCalledWith('todo', 'T2', { properties: { status: 'open' } })
   })
 
-  it('disables the checkbox without a toggle entry', async () => {
-    seed('disabled', [row('T1', 'open'), row('T2', 'canceled')])
+  it('does not reload after a failed PATCH', async () => {
+    seed('disabled', [row('T1', 'open', { status: { checked: false, to: 'completed' } })])
+    updateEntityMock.mockRejectedValue(new Error('refused'))
     const wrapper = await mountList()
-    expect((box(wrapper, 'Todo T1').element as HTMLInputElement).disabled).toBe(true)
-    const other = box(wrapper, 'Todo T2').element as HTMLInputElement
-    expect(other.disabled).toBe(true)
-    expect(other.checked).toBe(false)
+    const reads = listEntitiesMock.mock.calls.length
+    await box(wrapper, 'Todo T1').trigger('click')
+    await flushPromises()
+    expect(listEntitiesMock.mock.calls.length).toBe(reads)
+  })
+
+  it('takes checked from the server, not from the value', async () => {
+    // An unset machine property reads as its initial value on the server.
+    seed('on', [row('T1', undefined, { status: { checked: true, to: 'open' } })])
+    const wrapper = await mountList()
+    expect((box(wrapper, 'Todo T1').element as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('disables the checkbox when the server offers no write', async () => {
+    seed('disabled', [row('T1', 'open', { status: { checked: false } })])
+    const wrapper = await mountList()
+    const el = box(wrapper, 'Todo T1').element as HTMLInputElement
+    expect(el.disabled).toBe(true)
     await box(wrapper, 'Todo T1').trigger('click')
     expect(updateEntityMock).not.toHaveBeenCalled()
   })
 
-  it('renders no checkbox for another value with other: hidden', async () => {
+  it('renders no checkbox without a toggle entry', async () => {
     seed('hidden', [row('T1', 'canceled')])
     const wrapper = await mountList()
     expect(box(wrapper, 'Todo T1').exists()).toBe(false)
-  })
-
-  it('renders another value checked with other: on', async () => {
-    seed('on', [row('T1', 'canceled', { status: 'open' })])
-    const wrapper = await mountList()
-    const el = box(wrapper, 'Todo T1').element as HTMLInputElement
-    expect(el.checked).toBe(true)
-    expect(el.disabled).toBe(false)
-  })
-
-  it('reads an unset value as off', async () => {
-    seed('disabled', [row('T1', undefined, { status: 'completed' })])
-    const wrapper = await mountList()
-    expect((box(wrapper, 'Todo T1').element as HTMLInputElement).checked).toBe(false)
   })
 })

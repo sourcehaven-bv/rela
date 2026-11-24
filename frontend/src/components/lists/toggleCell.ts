@@ -1,16 +1,17 @@
 /**
  * A list toggle column (TKT-FJG779Q): a checkbox for a boolean or enum
- * property. The server decides what a click writes and whether the reader
- * may write it (`_toggles`); this module only derives what the cell shows.
+ * property. The server decides everything the cell shows (`_toggles`):
+ * whether there is a checkbox, whether it is checked, and what a click
+ * writes. This module only reads that back.
  */
 import type { ListColumn } from '@/types/config'
 import type { Entity } from '@/types'
 
 export interface ToggleCellState {
-  /** No checkbox at all: the value is neither on nor off and `other: hidden`. */
+  /** No checkbox: the row has no `_toggles` entry for the property. */
   hidden: boolean
   checked: boolean
-  /** True when the row carries no write for the property. */
+  /** True when the server offered no write. */
   disabled: boolean
   /** The value a click writes; undefined when disabled. */
   target?: string | boolean
@@ -21,18 +22,9 @@ export function isToggleColumn(column: ListColumn | undefined): boolean {
   return column?.widget === 'toggle' && !!column.property
 }
 
-/** What a toggle cell shows for one row. An unset value reads as off. */
+/** What a toggle cell shows for one row. */
 export function toggleCellState(entity: Entity, column: ListColumn): ToggleCellState {
-  const property = column.property ?? ''
-  const raw = entity.properties?.[property]
-  const value = raw === undefined || raw === null || raw === '' ? column.off : String(raw)
-  const isOn = value === column.on
-  const isOther = !isOn && value !== column.off
-  const target = entity._toggles?.[property]
-  return {
-    hidden: isOther && column.other === 'hidden',
-    checked: isOn || (isOther && column.other === 'on'),
-    disabled: target === undefined,
-    target,
-  }
+  const cell = entity._toggles?.[column.property ?? '']
+  if (!cell) return { hidden: true, checked: false, disabled: true }
+  return { hidden: false, checked: cell.checked, disabled: cell.to === undefined, target: cell.to }
 }

@@ -3,6 +3,8 @@ package transitions
 import (
 	"context"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
 )
 
 // PrimeTraversals binds a page once; Performable on its rows reuses it, and
@@ -35,5 +37,29 @@ func TestPrimeTraversals_OneBindPerPage(t *testing.T) {
 	}
 	if got := set.PrimeTraversals(context.Background(), "person", []string{"P-1"}); got.Value(primedTraversalsKey{}) != nil {
 		t.Fatal("a type without traversing whens must not be primed")
+	}
+}
+
+// A caller whose whens were not part of the prime binds on its own.
+func TestPrimeTraversals_ForeignProgramBindsPerRow(t *testing.T) {
+	b := &stubBinder{answer: map[string]bool{"T-1": true}}
+	set, err := CompileTransitions(relatedMeta(true), WithTransitionTraversals(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := set.PrimeTraversals(context.Background(), "ticket", []string{"T-1"})
+	var primedProg *predicate.Program
+	set.machines[set.propType["ticket"]["status"]].eachBranch(func(_ string, br headlessBranch) {
+		if br.when != nil {
+			primedProg = br.when
+		}
+	})
+	foreign := *primedProg // same traversals, another program
+	open := ent("T-1", "ticket", "open")
+	if tr := set.bindTraversals(ctx, open, []*predicate.Program{primedProg}); tr.fn == nil || b.binds != 1 {
+		t.Fatalf("primed program: binds = %d, want the primed answer", b.binds)
+	}
+	if tr := set.bindTraversals(ctx, open, []*predicate.Program{&foreign}); tr.fn == nil || b.binds != 2 {
+		t.Fatalf("foreign program: binds = %d, want a bind of its own", b.binds)
 	}
 }

@@ -202,19 +202,30 @@ type Activity struct {
 	// status working, which the caller may read. Nil is absent ("not
 	// served"); an empty slice is `[]` ("none busy that you may see").
 	Busy []BusyChannel `json:"_busy,omitzero"`
-	// Toggles maps a toggle column's property (TKT-FJG779Q) to the value a
-	// click on the checkbox writes: a JSON bool for a boolean property, else
-	// the enum value. It is set only on list rows of a read that names the
-	// list (`list_id`), and only for a write the caller may make now. An
-	// absent key means the checkbox is disabled. It grants nothing: the
-	// PATCH checks the write again.
-	Toggles map[string]any `json:"_toggles,omitempty"`
+	// Toggles maps a toggle column's property (TKT-FJG779Q) to the state of
+	// its checkbox. It is set only on list rows of a read that names the list
+	// (`list_id`). A property has no entry when the cell shows no checkbox:
+	// the field is hidden from the caller, or the value is neither on nor off
+	// and the column says `other: hidden`.
+	Toggles map[string]Toggle `json:"_toggles,omitempty"`
 	// Updated is when the row last changed, in RFC 3339, set on the
 	// per-entity responses only. It is absent when any property of the row
 	// is hidden from or inaccessible to the caller, because the time says
 	// when any field changed, a hidden one included; and absent when the
 	// backend keeps no time.
 	Updated string `json:"_updated,omitempty"`
+}
+
+// Toggle is the state of one toggle cell of a list row (TKT-FJG779Q).
+type Toggle struct {
+	// Checked says whether the box shows checked: the value is on, or it
+	// is another value and the column says `other: on`.
+	Checked bool `json:"checked"`
+	// To is the value a click writes: a JSON bool for a boolean property,
+	// else the enum value. Nil: absent when the caller may not make the
+	// write now, so the box is disabled. It grants nothing: the PATCH
+	// checks the write again.
+	To any `json:"to,omitzero"`
 }
 
 // BusyChannel is one busy channel of a list row. Since is when the session

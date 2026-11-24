@@ -37,11 +37,11 @@ export interface Entity {
   // as `[]` when none is busy; absent when the list did not ask or the
   // server could not answer for the type.
   _busy?: BusyChannel[]
-  // Per toggle column property, the value a click on the checkbox writes
-  // (TKT-FJG779Q): a boolean for a boolean property, else the enum value.
-  // Present only on rows of a read that names the list, and only when the
-  // reader may make that write now. Absent means the checkbox is disabled.
-  _toggles?: Record<string, string | boolean>
+  // Per toggle column property, the state of its checkbox (TKT-FJG779Q).
+  // Present only on rows of a read that names the list. No entry means the
+  // cell shows no checkbox; `to` is the value a click writes, absent when
+  // the reader may not make that write now (the box is disabled).
+  _toggles?: Record<string, ToggleCell>
   // Present only on rows of a `/_search` or list read made with a relation
   // context (`relation` + `direction=incoming`): whether the principal may
   // create that relation from this row's face. The server computes it with the gates the
@@ -682,4 +682,10 @@ export interface FieldConflicts {
   properties?: Record<string, FieldConflict>
   content?: FieldConflict
   relations?: FieldConflict
+}
+
+/** The state of one list toggle cell (`_toggles`, TKT-FJG779Q). */
+export interface ToggleCell {
+  checked: boolean
+  to?: string | boolean
 }

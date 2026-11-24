@@ -29,20 +29,41 @@ func validateToggleColumn(
 		if c.Widget != "" {
 			return []string{fmt.Sprintf("%s: unknown widget %q (valid: %s)", prefix, c.Widget, WidgetToggle)}
 		}
-		if c.On != "" || c.Off != "" || c.Other != "" {
-			return []string{prefix + ": on, off and other need widget: toggle"}
+		var errs []string
+		for key, v := range map[string]string{"on": c.On, "off": c.Off, "other": c.Other} {
+			if v != "" {
+				errs = append(errs, fmt.Sprintf("%s: %s needs widget: toggle", prefix, key))
+			}
 		}
-		return nil
+		slices.Sort(errs)
+		return errs
 	}
-	if c.Property == "" || c.Relation != "" || c.Face || c.Busy != "" {
-		return []string{prefix + ": a toggle column needs a property and takes no relation, face or busy"}
+	var shape []string
+	if c.Property == "" {
+		shape = append(shape, prefix+": a toggle column needs a property")
+	}
+	for key, set := range map[string]bool{"relation": c.Relation != "", "face": c.Face, "busy": c.Busy != ""} {
+		if set {
+			shape = append(shape, fmt.Sprintf("%s: a toggle column takes no %s", prefix, key))
+		}
+	}
+	if len(shape) > 0 {
+		slices.Sort(shape)
+		return shape
 	}
 	prop, ok := entDef.Properties[c.Property]
 	if !ok {
 		return nil // the column loop reports the unknown property
 	}
-	if c.On == "" || c.Off == "" {
-		return []string{prefix + ": a toggle column needs both on and off"}
+	var missing []string
+	if c.On == "" {
+		missing = append(missing, prefix+": a toggle column needs on")
+	}
+	if c.Off == "" {
+		missing = append(missing, prefix+": a toggle column needs off")
+	}
+	if len(missing) > 0 {
+		return missing
 	}
 	if c.On == c.Off {
 		return []string{fmt.Sprintf("%s: on and off are both %q", prefix, c.On)}
@@ -59,9 +80,9 @@ func validateToggleColumn(
 
 func checkBoolToggle(prefix string, c ListColumn) []string {
 	var errs []string
-	for _, v := range []string{c.On, c.Off} {
-		if v != "true" && v != "false" {
-			errs = append(errs, fmt.Sprintf("%s: a boolean toggle takes on and off of true or false, not %q", prefix, v))
+	for _, kv := range [][2]string{{"on", c.On}, {"off", c.Off}} {
+		if kv[1] != "true" && kv[1] != "false" {
+			errs = append(errs, fmt.Sprintf("%s: %s of a boolean toggle must be true or false, not %q", prefix, kv[0], kv[1]))
 		}
 	}
 	if c.Other != "" {
@@ -72,9 +93,9 @@ func checkBoolToggle(prefix string, c ListColumn) []string {
 
 func checkEnumToggle(prefix string, c ListColumn, values []string) []string {
 	var errs []string
-	for _, v := range []string{c.On, c.Off} {
-		if !slices.Contains(values, v) {
-			errs = append(errs, fmt.Sprintf("%s: %q is not a value of property %q", prefix, v, c.Property))
+	for _, kv := range [][2]string{{"on", c.On}, {"off", c.Off}} {
+		if !slices.Contains(values, kv[1]) {
+			errs = append(errs, fmt.Sprintf("%s: %s %q is not a value of property %q", prefix, kv[0], kv[1], c.Property))
 		}
 	}
 	switch {

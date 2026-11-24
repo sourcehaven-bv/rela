@@ -155,22 +155,28 @@ reload. See the busy indicator section of the realtime guide.
 ## Toggles on list rows
 
 When `GET /api/v1/{plural}` names a list with `list_id` and that list has toggle columns
-(`widget: toggle`), each row carries `_toggles`. It maps the toggle property to the value a
-click on the checkbox writes: a JSON boolean for a boolean property, else the enum value.
+(`widget: toggle`), each row carries `_toggles`. It maps the toggle property to the state of its
+checkbox:
 
 ```json
 {
   "id": "TD-1",
   "properties": { "status": "open" },
-  "_toggles": { "status": "completed" }
+  "_toggles": { "status": { "checked": false, "to": "completed" } }
 }
 ```
 
-A property has an entry only when the caller may make that write now: the field is visible and
-writable, the target is an allowed option, and for a state-machine property the transition from
-the current value to the target is allowed. A property the caller cannot see never has an entry.
+- `checked` is true when the value is the column's `on`, or another value under `other: on`. An
+  unset state-machine property counts as its initial value, any other unset property as `off`.
+- `to` is the value a click writes: a JSON boolean for a boolean property, else the enum value.
+  It is present only when the caller may make that write now: the field is writable, the target
+  is an allowed option, and for a state-machine property the transition is allowed. Without
+  `to` the checkbox is disabled.
+- A property has no entry when the cell shows no checkbox: the caller cannot see the field, or
+  the value is neither `on` nor `off` under `other: hidden`.
+
 `_toggles` is absent without `list_id`, for a list without toggle columns, and on rows of
-another type than the list's. It grants nothing: the client sends the value with
+another type than the list's. It grants nothing: the client sends `to` with
 `PATCH /api/v1/{plural}/{id}` and `{"properties": {"status": "completed"}}`, which checks the
 write again. The whole page is checked with one set of store reads, whatever the number of rows.
 

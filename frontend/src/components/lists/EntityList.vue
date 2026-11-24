@@ -74,6 +74,7 @@ import RlBusyIndicator, {
 import type { SortClickEvent, TableColumn } from 'rela-components/components/table/types'
 import { leadingImageColumns, listColumnOf, nameColumn, toTableColumns, toTableNameColumn } from './tableColumns'
 import { isToggleColumn, toggleCellState } from './toggleCell'
+import type { ListColumn } from '@/types/config'
 import { updateEntity } from '@/api/entities'
 import { fromPageQuery } from '@/utils/pageContext'
 
@@ -565,24 +566,23 @@ const busyType = computed(() => listConfig.value?.columns?.find((c) => c.busy)?.
 // may move the row out of the list's condition.
 const togglePending = ref(new Set<string>())
 
-async function onToggle(entity: Entity, column: import('@/types/config').ListColumn) {
+async function onToggle(entity: Entity, column: ListColumn) {
   const state = toggleCellState(entity, column)
   const property = column.property
-  if (!property || state.disabled || state.target === undefined) return
+  const listType = listConfig.value?.entity
+  if (!listType || !property || state.disabled || state.target === undefined) return
   const key = `${entity.id}:${property}`
   if (togglePending.value.has(key)) return
   togglePending.value = new Set(togglePending.value).add(key)
   try {
-    await updateEntity(listConfig.value?.entity ?? entity.type, entityRef(entity), {
-      properties: { [property]: state.target },
-    })
+    await updateEntity(listType, entityRef(entity), { properties: { [property]: state.target } })
+    void queryCache.invalidateQueries({ key: entityKeys.list(listType) })
   } catch (err) {
     uiStore.error(getErrorMessage(err))
   } finally {
     const next = new Set(togglePending.value)
     next.delete(key)
     togglePending.value = next
-    void queryCache.invalidateQueries({ key: entityKeys.list(listConfig.value?.entity ?? '') })
   }
 }
 

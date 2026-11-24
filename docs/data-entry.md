@@ -2234,6 +2234,9 @@ columns:
   writable to you, the target value is an option you may pick, and for a state-machine
   property the transition is allowed. Otherwise it is disabled. The write goes through the
   normal update, which checks all of this again.
+- On a type with faces, a row served on a named face cannot answer a transition `when:` that
+  follows a relation (`related(...)`), so its box is always disabled. It still shows checked or
+  unchecked.
 - After the write the list reloads. A row that no longer matches the list's `condition:` or
   `filters:` leaves the list.
 
