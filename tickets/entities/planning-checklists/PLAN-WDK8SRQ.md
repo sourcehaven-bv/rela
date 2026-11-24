@@ -64,7 +64,9 @@ internal/autocascade/{runner,host}.go, docs-project flows guide.
 - [x] Error handling doesn't leak sensitive information
 
 **Input Sources & Validation:** flows.yaml (operator config). Names must be
-declared properties of every `on.entity` type (allowlist).
+declared properties of every `on.entity` type (allowlist). The Configure API
+edits flows.yaml too (allowlist key `set.unset`); its output goes through the
+same load validation.
 
 **Security-Sensitive Operations:** A system write, like `set`. File and
 external-ref properties refused, as for `set`.
