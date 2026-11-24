@@ -124,11 +124,52 @@ export function styleFill(cls: string | undefined): Record<string, string> | und
  * server cannot emit, so the caller keeps its default colour.
  */
 export function styleBarColor(cls: string | undefined): string | undefined {
-  const status = styleSwatch(cls)?.status
+  return dotColorVar(styleSwatch(cls)?.status)
+}
+
+/** The solid CSS colour a status dot of this colour shows. */
+export function dotColorVar(status: DotColor | undefined): string | undefined {
   if (!status) return undefined
   if (status.startsWith('--rl-')) return `var(${status})`
   // The dots paint purple with the accent, as the purple badge does.
   return status === 'purple' ? 'var(--rl-color-accent)' : `var(--rl-color-status-${status})`
+}
+
+/**
+ * The one list of colour names data-entry.yaml accepts, and the dot colour
+ * each paints. A list group, a calendar, gantt or sankey source and a bare
+ * `styles:` colour all take these names. `gray` and `slate` are aliases of
+ * grey, `amber` of orange and `violet` of purple. The server holds the same
+ * names in ColorNames (internal/dataentryconfig/colors.go), and
+ * TestColorNamesMatchSPA pins the two.
+ */
+export const NAMED_COLORS = {
+  grey: 'grey',
+  gray: 'grey',
+  slate: 'grey',
+  red: 'red',
+  orange: 'amber',
+  amber: 'amber',
+  yellow: '--rl-color-status-yellow',
+  green: 'green',
+  teal: '--rl-color-status-teal',
+  blue: 'blue',
+  purple: 'purple',
+  violet: 'purple',
+} as const satisfies Record<string, DotColor>
+
+/** A colour name from NAMED_COLORS. */
+export type ColorName = keyof typeof NAMED_COLORS
+
+/** The dot colour of a colour name; undefined for a name the server does not accept. */
+export function namedColor(name: string | undefined): DotColor | undefined {
+  if (!name || !Object.prototype.hasOwnProperty.call(NAMED_COLORS, name)) return undefined
+  return NAMED_COLORS[name as ColorName]
+}
+
+/** The solid CSS colour of a colour name, for a mark that is not a status dot. */
+export function namedColorVar(name: string | undefined): string | undefined {
+  return dotColorVar(namedColor(name))
 }
 
 export type { DotColor, StatusColor }

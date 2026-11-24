@@ -702,6 +702,11 @@ func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(problem)
+	case errors.Is(err, errBadViewID):
+		slog.Warn("dataentry: rejected request naming two views",
+			"path", r.URL.Path, "method", r.Method)
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_view",
+			"Invalid view parameter", err.Error())
 	case errors.Is(err, errBadQueryScope):
 		// Client-caused, like errBadFilter above: the caller named a scope
 		// that does not resolve, or repeated the parameter. Echo the detail

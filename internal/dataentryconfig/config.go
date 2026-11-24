@@ -775,33 +775,16 @@ func decodeWholeNumber(value *yaml.Node, what string) (int, error) {
 // exactly and the int conversion cannot overflow.
 const maxWholeNumber = 1 << 31
 
-// ValidCalendarColors is the allowlist of palette tokens a calendar source may
-// use to distinguish its events.
-//
-// Named tokens rather than CSS literals, for the same reason ValidIconNames
-// holds names and not glyphs: a hex value written into config is unreadable in
-// whichever theme it was not chosen for, and it pins every deployment's config
-// against any future restyle. A token maps to a CSS custom property, so the
-// theme keeps ownership of what the color actually is.
-//
-// Exported so the check and its frontend-parity test share one source.
-var ValidCalendarColors = map[string]bool{
-	"blue":   true,
-	"green":  true,
-	"amber":  true,
-	"red":    true,
-	"violet": true,
-	"slate":  true,
-}
-
-// validateCalendarColor reports a config error for an unknown color token.
+// validateCalendarColor reports a config error for an unknown color name.
 // An empty value means "use the default" and is always valid.
 func validateCalendarColor(color, context string) []string {
-	if color == "" || ValidCalendarColors[color] {
+	if color == "" {
 		return nil
 	}
-	return []string{fmt.Sprintf("%s: unknown color %q (valid: %s)",
-		context, color, strings.Join(slices.Sorted(maps.Keys(ValidCalendarColors)), ", "))}
+	if _, err := ParseNamedColor(color); err != nil {
+		return []string{fmt.Sprintf("%s: %v", context, err)}
+	}
+	return nil
 }
 
 // NoIcon is the reserved name meaning "render no icon at all".
@@ -1329,15 +1312,10 @@ type Kanban struct {
 	AddColumn      bool            `yaml:"add_column,omitempty" json:"add_column,omitempty"`
 	Filters        []FilterConfig  `yaml:"filters,omitempty" json:"filters,omitempty"`
 	FilterControls []FilterControl `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
-	// Condition mirrors [List.Condition], but is NOT YET SUPPORTED on a
-	// kanban and is refused at config load.
-	//
-	// The field exists so the shape is settled and the compiler already
-	// handles both surfaces; what is missing is the board's server-side read
-	// path (it still filters client-side). Accepting the key meanwhile would
-	// validate an expression and then ignore it — the silent no-op class of
-	// BUG-F1LTV0 and BUG-MYN56J. Drop the guard in validateKanbans when the
-	// board evaluates it.
+	// Condition is [List.Condition] for a board. The SPA names the board
+	// with `kanban_id` on its collection read, and the server applies the
+	// condition on the same path a list's goes through (lowered into the
+	// store query where it can be, else on the redacted rows).
 	Condition string `yaml:"condition,omitempty" json:"condition,omitempty"`
 
 	// QueryScope names a `query_scopes:` entry on this view's entity type,
@@ -1578,7 +1556,7 @@ type CalendarSource struct {
 	// have typed anyway; set it when one type appears as two sources (the
 	// documented way to express OR) and "task" twice would be meaningless.
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
-	// Color is a named palette token (see ValidCalendarColors) distinguishing
+	// Color is a named palette token (see ColorNames) distinguishing
 	// this source's events. It is a TOKEN, never a CSS literal: a hex value
 	// baked into config is unreadable in the dark theme and pins every
 	// deployment against future restyling.
@@ -1710,7 +1688,7 @@ type GanttSource struct {
 	// Label names the property used as the bar label. Defaults to the entity
 	// type's display property.
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
-	// Color is a named palette token (see ValidCalendarColors) distinguishing
+	// Color is a named palette token (see ColorNames) distinguishing
 	// this type's bars. A TOKEN, never a CSS literal, for the same reasons as
 	// [CalendarSource.Color].
 	Color string `yaml:"color,omitempty" json:"color,omitempty"`

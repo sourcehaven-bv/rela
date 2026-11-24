@@ -178,9 +178,12 @@ func resolveListNarrowing(
 	ctx context.Context, a *App, state *Schema, typeName string, query map[string][]string,
 ) (context.Context, listNarrowing, error) {
 	n := listNarrowing{
-		cond:   viewCondition(a.viewConditions, state, viewKindList, queryGet(query, listIDParam)),
 		state:  state,
 		fields: a.fieldResolver,
+	}
+	var err error
+	if n.cond, err = requestViewCondition(a.viewConditions, state, query); err != nil {
+		return ctx, n, err
 	}
 	scopeName, err := queryScopeParam(query)
 	if err != nil {

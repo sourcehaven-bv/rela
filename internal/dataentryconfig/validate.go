@@ -936,6 +936,22 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 	return errs
 }
 
+// deprecatedSelectWidget refuses an explicit `widget: select` or `widget:
+// multi-select` on a form property field. The form derives both from the
+// schema, so the line can only agree with the derived control or contradict
+// it. The message says which line to remove and what the form shows instead.
+// A relation's `widget:` is a real choice and is not checked here.
+func deprecatedSelectWidget(formID, ctx string, i int, f FormField) []string {
+	if f.Widget != WidgetSelect && f.Widget != WidgetMultiSelect {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"form %q: %sfield[%d] property %q: \"widget: %s\" is deprecated; "+
+			"remove the \"widget: %s\" line from this field. Without it the form picks the control "+
+			"from the schema: a select for a property with values, a multi-select for a list property",
+		formID, ctx, i, f.Property, f.Widget, f.Widget)}
+}
+
 // validateFormField checks one form field against the metamodel. ctx is an
 // optional location prefix (e.g. "step[0] ") so wizard and flat forms share
 // the rule set while keeping distinct error messages.
@@ -952,6 +968,7 @@ func validateFormField(
 			"form %q: %sfield[%d] property %q not in metamodel for entity %q",
 			formID, ctx, i, f.Property, entityType))
 	}
+	errs = append(errs, deprecatedSelectWidget(formID, ctx, i, f)...)
 	if len(f.Transitions) > 0 {
 		if propDef, hasProp := entDef.Properties[f.Property]; hasProp {
 			errs = append(errs, validateTransitions(formID, i, f, propDef, meta)...)
@@ -2576,18 +2593,6 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 		errs = append(errs, validateKanbanQuickAdd(kanbanID, kanban, entDef, meta)...)
 		errs = append(errs, validateKanbanAddColumn(kanbanID, kanban, entDef)...)
 
-		// `condition:` is accepted on the struct (shared with lists) but the
-		// board does not evaluate it yet — it still filters client-side. A
-		// key that validates and then does nothing is precisely the silent
-		// no-op BUG-F1LTV0 and BUG-MYN56J are both about, so refuse it here
-		// until the kanban read path lands. Remove this when it does.
-		if kanban.Condition != "" {
-			errs = append(errs, fmt.Sprintf(
-				"kanban %q: condition is not supported on a kanban yet "+
-					"(the board filters client-side); use it on a list, or filters: here",
-				kanbanID))
-		}
-
 		errs = append(errs, rollupMisuse(fmt.Sprintf("kanban %q", kanbanID), entDef,
 			kanban.Filters, kanban.FilterControls)...)
 		for _, kp := range [][2]string{
@@ -2812,29 +2817,58 @@ var actionIDRegex = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 
 // reservedListKeys are single-character keys already used by useListKeyboard.ts.
 // Action key bindings must not conflict with these.
-var reservedListKeys = map[string]bool{
-	"j": true, "k": true, // navigation
-	"o": true, "e": true, "n": true, // open, edit, new
-	"h": true, "l": true, // pagination
+var reservedListKeys = map[string]string{
+	"j": "move down", "k": "move up",
+	"o": "open", "e": "edit", "n": "new",
+	"h": "previous page", "l": "next page",
 }
+
+// reservedListKeyOrder is the reserved keys in the order the docs list them.
+var reservedListKeyOrder = []string{"j", "k", "o", "e", "n", "h", "l"}
 
 // actionKeyRegex allows a single lowercase letter or digit as a shortcut key.
 var actionKeyRegex = regexp.MustCompile(`^[a-z0-9]$`)
 
 // validateActionKey checks an action's optional shortcut key. A key is only
-// required when a list references the action.
-func validateActionKey(id, key string) []string {
+// required when a list references the action. usedBy names the lists and
+// boards that offer the action, for the message.
+func validateActionKey(id, key string, usedBy []string) []string {
 	switch {
 	case key == "":
 		return nil
 	case !actionKeyRegex.MatchString(key):
 		return []string{fmt.Sprintf(
 			"actions: %q key %q must be a single lowercase letter or digit", id, key)}
-	case reservedListKeys[key]:
-		return []string{fmt.Sprintf(
-			"actions: %q key %q conflicts with reserved list shortcut", id, key)}
 	}
-	return nil
+	meaning, reserved := reservedListKeys[key]
+	if !reserved {
+		return nil
+	}
+	where := ""
+	if len(usedBy) > 0 {
+		where = " and offered by " + strings.Join(usedBy, ", ")
+	}
+	return []string{fmt.Sprintf(
+		"actions: %q declares key %q%s, but %q is a reserved list shortcut (%s); "+
+			"pick a key other than %s", id, key, where, key, meaning, strings.Join(reservedListKeyOrder, ", "))}
+}
+
+// actionUsers names the lists and boards whose `actions:` offer an action,
+// sorted, for a message.
+func actionUsers(cfg *Config, actionID string) []string {
+	var out []string
+	for id, l := range cfg.Lists {
+		if slices.Contains(l.Actions, actionID) {
+			out = append(out, fmt.Sprintf("list %q", id))
+		}
+	}
+	for id, k := range cfg.Kanbans {
+		if slices.Contains(k.Actions, actionID) {
+			out = append(out, fmt.Sprintf("kanban %q", id))
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // validateActionStyle refuses a `style:` other than empty or danger.
@@ -2900,7 +2934,7 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 		errs = append(errs, validateActionScope(id, action, hasScript, meta)...)
 		errs = append(errs, validateActionElevation(id, action, hasScript, meta)...)
 
-		errs = append(errs, validateActionKey(id, action.Key)...)
+		errs = append(errs, validateActionKey(id, action.Key, actionUsers(cfg, id))...)
 	}
 
 	// Validate list action references

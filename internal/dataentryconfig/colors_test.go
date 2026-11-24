@@ -26,7 +26,11 @@ func TestParseColor(t *testing.T) {
 		{"purple", "badge-purple"},
 		{"yellow", "badge-yellow"},
 		{"teal", "badge-teal"},
+		{"amber", "badge-orange"},
+		{"violet", "badge-purple"},
+		{"slate", "badge-gray"},
 		{"red/700", "kit-red-700"},
+		{"amber/700", "kit-orange-700"},
 		{"gray/50", "kit-grey-50"},
 		{"teal/900", "kit-teal-900"},
 		{"risico-kritiek", "custom-risico-kritiek"},
@@ -202,6 +206,41 @@ func keys(m map[string]string) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestColorNames_EverySurface pins the one color list: every name a list
+// group or calendar takes is a style color, and the reverse for every bare
+// name, so `amber` in `styles:` is as valid as in `group_by:`.
+func TestColorNames_EverySurface(t *testing.T) {
+	for name, hue := range ColorNames {
+		t.Run(name, func(t *testing.T) {
+			c, err := ParseColor(name, nil)
+			require.NoError(t, err)
+			assert.Equal(t, ColorBare, c.Kind)
+			assert.Equal(t, hue, c.Hue)
+			got, err := ParseNamedColor(name)
+			require.NoError(t, err)
+			assert.Equal(t, hue, got)
+			assert.Empty(t, validateCalendarColor(name, "calendar"))
+		})
+	}
+	_, err := ParseNamedColor("red/700")
+	require.Error(t, err, "a shade is a style color only")
+
+	cfg := `
+version: "1.0"
+styles:
+  status: {open: amber, in-progress: violet, closed: slate}
+lists:
+  tickets:
+    entity_type: ticket
+    columns: [{property: title}]
+    group_by:
+      property: status
+      groups: [{value: open, color: orange}, {value: closed, color: gray}]
+`
+	_, err = loadAndValidate(t, cfg)
+	require.NoError(t, err)
 }
 
 func TestValidateConfig_StyleColors(t *testing.T) {

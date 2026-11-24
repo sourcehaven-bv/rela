@@ -14,6 +14,7 @@
  * distinguish, and a lone legend entry beside its own grid is noise.
  */
 import type { CalendarSourceConfig } from '@/types/config'
+import { namedColorVar } from '@/utils/styleColors'
 
 defineProps<{
   sources: CalendarSourceConfig[]
@@ -36,10 +37,8 @@ function sourceLabel(source: CalendarSourceConfig): string {
       :key="i"
       type="button"
       class="calendar-legend-item"
-      :class="[
-        `calendar-legend-item--${source.color ?? 'blue'}`,
-        { 'calendar-legend-item--off': hidden.includes(i) },
-      ]"
+      :class="{ 'calendar-legend-item--off': hidden.includes(i) }"
+      :style="{ '--legend-swatch': namedColorVar(source.color ?? 'blue') }"
       :aria-pressed="!hidden.includes(i)"
       @click="$emit('toggle', i)"
     >
@@ -91,24 +90,5 @@ function sourceLabel(source: CalendarSourceConfig): string {
   height: 10px;
   border-radius: 2px;
   background: var(--legend-swatch, var(--rl-color-accent));
-}
-
-.calendar-legend-item--blue {
-  --legend-swatch: var(--rl-color-status-blue);
-}
-.calendar-legend-item--green {
-  --legend-swatch: var(--rl-color-status-green);
-}
-.calendar-legend-item--amber {
-  --legend-swatch: var(--rl-color-status-amber);
-}
-.calendar-legend-item--red {
-  --legend-swatch: var(--rl-color-status-red);
-}
-.calendar-legend-item--violet {
-  --legend-swatch: var(--rl-color-accent);
-}
-.calendar-legend-item--slate {
-  --legend-swatch: var(--rl-color-status-grey);
 }
 </style>

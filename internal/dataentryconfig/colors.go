@@ -60,16 +60,41 @@ var kitRamps = map[string][]string{
 	},
 }
 
-// bareHues are the hues valid without a shade. `purple` has no kit ramp, so it
-// is bare only. `gray` is an alias of `grey`, the spelling style colors used
-// before the kit.
-var bareHues = map[string]bool{
-	"grey": true, "red": true, "orange": true, "yellow": true,
-	"green": true, "teal": true, "blue": true, "purple": true,
+// ColorNames is the one list of color names data-entry.yaml accepts, mapped
+// to the hue each paints. Every surface that takes a color reads it: `styles:`
+// and the dashboard matrix through ParseColor, list `group_by` sections,
+// calendar, gantt and sankey sources through ParseNamedColor. A name valid in
+// one place is valid in all of them.
+//
+// `gray`, `slate`, `amber` and `violet` are aliases. `gray` and `slate` paint
+// `grey`, `amber` paints `orange` and `violet` paints `purple`; calendars used
+// the last three before the lists were merged. `purple` has no kit ramp, so it
+// is bare only. frontend/src/utils/styleColors.ts holds the same names in
+// NAMED_COLORS; TestColorNamesMatchSPA pins the two.
+var ColorNames = map[string]string{
+	"grey": "grey", "gray": "grey", "slate": "grey",
+	"red":    "red",
+	"orange": "orange", "amber": "orange",
+	"yellow": "yellow",
+	"green":  "green",
+	"teal":   "teal",
+	"blue":   "blue",
+	"purple": "purple", "violet": "purple",
 }
 
-// hueAliases maps an accepted spelling to its hue.
-var hueAliases = map[string]string{"gray": "grey"}
+// ParseNamedColor returns the hue a color name paints, for the surfaces that
+// take a bare name only: no kit shade and no operator color.
+func ParseNamedColor(name string) (string, error) {
+	if hue, ok := ColorNames[name]; ok {
+		return hue, nil
+	}
+	return "", fmt.Errorf("unknown color %q (valid: %s)", name, colorNameList())
+}
+
+// colorNameList is the sorted, comma-separated ColorNames for a message.
+func colorNameList() string {
+	return strings.Join(slices.Sorted(maps.Keys(ColorNames)), ", ")
+}
 
 // toneHues are the tone names a dashboard matrix accepts besides color names,
 // each with the kit hue it paints. An operator color may not take one of these
@@ -153,9 +178,11 @@ type Color struct {
 // operator may be nil.
 func ParseColor(name string, operator map[string]OperatorColor) (Color, error) {
 	if hue, shade, ok := strings.Cut(name, "/"); ok {
-		hue = canonicalHue(hue)
+		if c, ok := ColorNames[hue]; ok {
+			hue = c
+		}
 		if _, ok := kitRamps[hue]; !ok {
-			if bareHues[hue] {
+			if _, bare := ColorNames[hue]; bare {
 				return Color{}, fmt.Errorf("unknown color %q: %q has no shades (%s)", name, hue, colorForms())
 			}
 			return Color{}, fmt.Errorf("unknown color %q: %q is not a hue (%s)", name, hue, colorForms())
@@ -166,7 +193,7 @@ func ParseColor(name string, operator map[string]OperatorColor) (Color, error) {
 		}
 		return Color{Kind: ColorShade, Hue: hue, Shade: shade}, nil
 	}
-	if hue := canonicalHue(name); bareHues[hue] {
+	if hue, ok := ColorNames[name]; ok {
 		return Color{Kind: ColorBare, Hue: hue}, nil
 	}
 	if _, ok := operator[name]; ok {
@@ -175,17 +202,10 @@ func ParseColor(name string, operator map[string]OperatorColor) (Color, error) {
 	return Color{}, fmt.Errorf("unknown color %q (%s)", name, colorForms())
 }
 
-func canonicalHue(h string) string {
-	if c, ok := hueAliases[h]; ok {
-		return c
-	}
-	return h
-}
-
 // colorForms describes the valid color names for an error message.
 func colorForms() string {
-	return "valid: grey, red, orange, yellow, green, teal, blue, purple; " +
-		"a shade such as red/700 (50-900, not purple); or a name under palette.colors"
+	return "valid: " + colorNameList() +
+		"; a shade such as red/700 (50-900, not purple); or a name under palette.colors"
 }
 
 // StyleClass is the class the SPA receives in the styles map for this color:
@@ -220,7 +240,7 @@ func validateOperatorColors(colors map[string]OperatorColor) error {
 		if !operatorColorNameRe.MatchString(name) {
 			return fmt.Errorf("colors: name %q must be lower-case letters, digits and hyphens, starting with a letter", name)
 		}
-		if bareHues[canonicalHue(name)] || SemanticTones[name] {
+		if _, hue := ColorNames[name]; hue || SemanticTones[name] {
 			return fmt.Errorf("colors: name %q is reserved for a kit color or tone", name)
 		}
 		// Each name also claims the token `<name>-fg` for its text color.
