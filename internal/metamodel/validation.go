@@ -120,6 +120,11 @@ const (
 	// entitymanager write path, not by [Validator.ValidateEntity]. Property
 	// is empty, because a rule is about the entity, not one property.
 	ValidationErrorRule ValidationErrorType = "rule"
+	// ValidationErrorScope reports an edge of a relation declared `within:`
+	// whose target is not owned by the source's scope (TKT-5GK80Q9). It is
+	// HARD and raised by the entitymanager write path. Property names the
+	// scoped relation, so a form can show the failure at that field.
+	ValidationErrorScope ValidationErrorType = "scope"
 )
 
 // ValidationError represents a structured validation error with field information.

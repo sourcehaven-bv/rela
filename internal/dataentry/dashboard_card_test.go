@@ -538,7 +538,7 @@ func TestQueryBudget_DashboardCardsAreSizeIndependent(t *testing.T) {
 			})
 			// TODO(TKT-D3RAB0E): calls only. A card aggregates in Go over a
 			// full header scan of the type (navStatusRows, nav_status.go,
-			// through scopedHeaders' type scan in scopedread.go), so its rows grow
+			// through listPipeline.scanType in list_pipeline.go), so its rows grow
 			// with the store. Assert rows once the count is pushed down.
 			assertCallBudget(t, "dashboard "+card.Title, b, dashboardCardBudgets[card.Title], detail)
 		})

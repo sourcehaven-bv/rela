@@ -320,10 +320,16 @@ func (q *queryService) firstNByTypes(
 		}
 		offset, window := 0, n-len(results)
 		for reads := 1; ; reads++ {
+			var rows []*entity.Entity
 			if reads > maxQueryWindows {
-				window = 0 // the rest of the type
+				// The rest of the type in one read, through the whole-type
+				// scan and its allowlist entry. window 0 marks the type as
+				// exhausted after this read.
+				window = 0
+				rows, err = visibleEntitiesOfType(ctx, svc, typ, ts, pushed, offset)
+			} else {
+				rows, err = visibleEntitiesOfTypeWindow(ctx, svc, typ, ts, pushed, window, offset)
 			}
-			rows, err := visibleEntitiesOfTypeWindow(ctx, svc, typ, ts, pushed, window, offset)
 			if err != nil {
 				return nil, false, err
 			}

@@ -50,12 +50,12 @@ type ganttHandler struct {
 	// Going through it (not the raw store) is what makes step 1 structural.
 	scoped func(ctx context.Context, typeName string, query map[string][]string) ([]*entity.Entity, error)
 
-	// scopedHeaders is the body-free read the AllowAll path uses: the gantt
-	// never reads markdown, and profiling showed body decode dominated the
-	// request. Injected rather than called directly so the handler keeps its
-	// narrow collaborator set.
-	scopedHeaders func(ctx context.Context, typeName string) ([]store.EntityHeader, bool, error)
-	// scopedHeadersByIDs is scopedHeaders narrowed to the named ids, so a
+	// scanTypeHeaders is the body-free read of every readable row of a type the
+	// AllowAll path uses: the gantt never reads markdown, and profiling
+	// showed body decode dominated the request. Injected rather than called
+	// directly so the handler keeps its narrow collaborator set.
+	scanTypeHeaders func(ctx context.Context, typeName string) ([]store.EntityHeader, error)
+	// scopedHeadersByIDs is scanTypeHeaders narrowed to the named ids, so a
 	// caller that already knows its candidates (sankey pips) pays for those
 	// and not for the whole type. Every verdict still applies to each id.
 	scopedHeadersByIDs func(ctx context.Context, typeName string, ids []string) ([]store.EntityHeader, bool, error)
@@ -381,9 +381,17 @@ func newGanttHandler(app *App, st store.Store) *ganttHandler {
 		schema: app.State,
 		store:  st,
 		scoped: app.lists.scopedSortedEntities,
-		scopedHeaders: func(ctx context.Context, typeName string) ([]store.EntityHeader, bool, error) {
+		// Every readable row of the source type: the chart, its where:
+		// filters and the roll-ups past the node cap need the whole set.
+		// TKT-DIDCQS6 bounds it.
+		scanTypeHeaders: func(ctx context.Context, typeName string) ([]store.EntityHeader, error) {
 			rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
-			return scopedHeaders(ctx, app.Services(), rqr, scopeRequest{Type: typeName, Faces: rqr.Faces})
+			req := scopeRequest{Type: typeName, Faces: rqr.Faces}
+			q, errClass, withheld, err := scopedQuery(ctx, rqr, req)
+			if withheld || err != nil {
+				return nil, err
+			}
+			return scanHeaders(ctx, app.Services(), q, errClass, req)
 		},
 		scopedHeadersByIDs: func(
 			ctx context.Context, typeName string, ids []string,
@@ -442,7 +450,7 @@ func (h *ganttHandler) loadGanttType(
 		// reaches this path too; redaction stays HERE because the funnel is
 		// deliberately ACL-narrowing only and must never return
 		// already-redacted rows (visibility.Redact is non-composable).
-		hdrs, _, err := h.scopedHeaders(ctx, typeName)
+		hdrs, err := h.scanTypeHeaders(ctx, typeName)
 		if err != nil {
 			slog.Error("gantt: header list failed", "type", typeName, "error", err)
 			return nil, &ganttError{http.StatusInternalServerError, "internal", "Failed to list entities", ""}
@@ -738,7 +746,7 @@ func (h *ganttHandler) collectGanttRound(
 				Depth:          ganttClosureRoundDepth,
 			}}},
 		}
-		// The same world and face ceiling the full build's scopedHeaders
+		// The same world and face ceiling the full build's scanHeaders
 		// read applies, so both paths pick the same row per id.
 		rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 		q = stampScope(ctx, q, scopeRequest{Type: typeName, Faces: rqr.Faces})
@@ -877,7 +885,7 @@ func ganttDescendants(rootID string, children map[string][]string) map[string]bo
 
 // addOutsideParents reads the given ids through the read gate, redacts each
 // once, and adds the ones the where: filter keeps to nodes. The read mirrors
-// the AllowAll branch of scopedHeaders narrowed to ids; the fast path only
+// an AllowAll read through scopedQuery, narrowed to ids; the fast path only
 // runs when every source type is AllowAll or DenyAll, and a denied type is
 // never queried.
 func (h *ganttHandler) addOutsideParents(

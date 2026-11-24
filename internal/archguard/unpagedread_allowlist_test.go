@@ -6,9 +6,7 @@ package archguard
 //
 // Each entry has a category (see readCategory) and a reason that says what
 // the read is for. requestPath entries are debt. Each names the open ticket
-// that removes it: TKT-C5H506O (scopedHeaders, which also serves the
-// structured search shapes TKT-PSBGQLY lowers) and TKT-1X1X24O
-// (desktopnotify).
+// that removes it in its reason.
 var unpagedReadAllowlist = map[string]unpagedRead{
 	// aclmap: the who-can report.
 	"internal/aclmap/enumerate.go#Engine.enumeratePrincipals": {2, batchJob,
@@ -90,18 +88,32 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/dataentry/gantt_handler.go#ganttHandler.collectGanttRound": {1, bounded,
 		"gantt closure round: a GraphQuery for the descendants of the frontier, so it reads the subtree " +
 			"the chart shows, not the type"},
+	// The whole-type scans behind scanHeaders (scopedread.go): each caller
+	// carries its own entry (TKT-C5H506O). scopedHeaders itself only reads
+	// by ids or one window.
+	"internal/dataentry/actions_llm.go#actionOps.collectCandidates": {1, requestPath,
+		"llm action candidates for a candidates: condition that does not lower: every readable header of the " +
+			"target type, judged in Go page by page; TKT-08JN7C3 lowers ordered comparisons"},
+	"internal/dataentry/commands.go#commandHandler.visibleListRows": {1, requestPath,
+		"list-context command payload: every readable row of the list type, then the list filters in Go; " +
+			"TKT-F69VAYJ bounds it"},
+	"internal/dataentry/feed_handler.go#feedEntitySource.listType": {1, requestPath,
+		"calendar feed, CalDAV static collections and the CalDAV driver list: every readable row of the " +
+			"source type, then where: in Go; TKT-SMUO8CS pushes where: into the store"},
+	"internal/dataentry/gantt_handler.go#newGanttHandler": {1, requestPath,
+		"gantt and sankey AllowAll arm: every readable row of a source type, for where: and the roll-ups " +
+			"past the node cap; TKT-DIDCQS6 bounds it"},
+	"internal/dataentry/helpers.go#visibleEntitiesOfType": {1, requestPath,
+		"structured search Go path (executeQuery: /_search, dashboard, next action) for the shapes " +
+			"planSearch declines, read once per page served, and the tail of firstNByTypes; " +
+			"TKT-PSBGQLY pushes those shapes into the store"},
+	"internal/dataentry/list_pipeline.go#listPipeline.scanType": {1, requestPath,
+		"list Go path for requests planListPushdown declines and that name no ids, shared by _position, " +
+			"export, nav status, next action and the gantt scoped arm; TKT-5SXPBL1 pushes those shapes " +
+			"into the store"},
 	"internal/dataentry/listpushdown.go#listPlan.run": {1, bounded,
 		"list pushdown page: the plan's GraphQuery carries Limit = perPage and Offset (planListPushdown); " +
 			"the matcher cannot see a field set in another function"},
-	"internal/dataentry/scopedread.go#scopedHeaders": {2, requestPath,
-		"the scoped collection read behind the list Go path, executeQuery (search, dashboard, nav status, " +
-			"next action), kanban, export, feed, gantt and the command picker: every header " +
-			"of the type in the world, directly or as the ACL-scoped GraphQuery (built by scopedQuery) with " +
-			"no Limit through collectHeaders. A page scope or ?q= reads by ids instead (headersByIDs). The " +
-			"rest needs the whole filtered set in Go; TKT-C5H506O moves the whole-set callers to their own read " +
-			"and pages the rest. A /_search shape the plan declines reads it once per page served " +
-			"(TKT-T0DK37); TKT-PSBGQLY lowers those shapes"},
-
 	// datamigration: migrations rewrite whole types.
 	"internal/datamigration/adoptface.go#faceAdoption.plan": {1, batchJob, "face adoption: scans a type for zero-face rows to move"},
 	"internal/datamigration/gc.go#scanEntities":             {1, batchJob, "migration gc: scans every entity for stale shape keys"},

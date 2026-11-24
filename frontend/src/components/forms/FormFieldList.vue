@@ -20,8 +20,9 @@ import RelationCards from './RelationCards.vue'
 import RelationPicker from './RelationPicker.vue'
 import type { RelationCardState } from './RelationCards.vue'
 import type { RelationPickerIncomingState } from './RelationPicker.vue'
+import { useSchemaStore } from '@/stores'
 
-defineProps<{
+const props = defineProps<{
   fields: FormFieldOrRelation[]
   entityType: string
   entityId?: string
@@ -41,6 +42,15 @@ defineProps<{
   // non-machine field. Present → FieldRenderer renders the StatusControl.
   transitionsFor: (field: FormFieldOrRelation) => TransitionOption[] | undefined
 }>()
+
+const schemaStore = useSchemaStore()
+
+// The current value of a scoped relation's `within` relation, which narrows
+// what its picker offers (TKT-5GK80Q9). Undefined for any other relation.
+function scopeValueFor(relation: string): string[] | undefined {
+  const within = schemaStore.getRelationType(relation)?.within
+  return within ? props.relations[within] || [] : undefined
+}
 
 const emit = defineEmits<{
   (e: 'update-field', property: string, value: unknown): void
@@ -96,6 +106,8 @@ const emit = defineEmits<{
       :entity-id="entityId"
       :value="relations[field.relation] || []"
       :verdict="relationAffordances[field.relation!]"
+      :scope-value="scopeValueFor(field.relation!)"
+      :error="errors[field.relation!]"
       @update="emit('update-relation', field.relation!, $event)"
       @update:types="(types) => emit('update-relation-types', field.relation!, types)"
       @incoming-changed="(state) => emit('incoming-changed', field.relation!, state)"

@@ -98,6 +98,9 @@ func openConcFSStore(t *testing.T) store.Store {
 		// an undeclared one.
 		Schemas: map[string]store.EntityTypeSchema{
 			"checklist": {Plural: "checklists"},
+			"heading":   {Plural: "headings"},
+			"project":   {Plural: "projects"},
+			"todo":      {Plural: "todos"},
 			"control":   {Plural: "controls"},
 			"note":      {Plural: "notes"},
 			"person":    {Plural: "persons"},

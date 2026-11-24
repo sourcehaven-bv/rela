@@ -7,6 +7,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -58,7 +59,7 @@ func CascadeHostCreate(
 func WriteAutomationProperties(
 	ctx context.Context, m *Manager, created *entity.Entity, set map[string]string,
 ) (*entity.Entity, error) {
-	return writeAutomationProperties(ctx, m.deps, created, set, nil)
+	return writeAutomationProperties(ctx, m.deps, created, triggers.PropertyWrites{Set: set}, nil)
 }
 
 // BindAs runs the request edge for ctx against m's ACL: it resolves the

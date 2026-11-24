@@ -169,6 +169,11 @@ export function renameTriggerReferences(
     for (const output of mapItems(get(rule, 'outputs'))) {
       const props = getIn(output, ['set', 'properties'])
       if (isMap(props) && has(props, from)) renameKey(props, from, to)
+      const setOut = get(output, 'set')
+      const unset = get(setOut, 'unset')
+      if (isMap(setOut) && Array.isArray(unset) && unset.includes(from)) {
+        set(setOut, 'unset', unset.map((name) => (name === from ? to : name)))
+      }
       const notifyTo = getIn(output, ['notify', 'to'])
       if (isMap(notifyTo)) renameIn(notifyTo, 'property', from, to)
       renameTexts(output, from, to)
