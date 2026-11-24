@@ -162,6 +162,11 @@ export interface AppConfig {
    * tag, or absent to follow the browser. A user's own choice wins over it.
    */
   language?: string
+  /**
+   * The interface languages a user may pick (`app.languages`), base
+   * languages such as `en`. Absent means every language the app has.
+   */
+  languages?: string[]
   // The world a request lands in when the URL names none. '' / absent means
   // the raw default faces. Presentation only — the read grant is re-checked
   // per request, so this changes which face a bare URL resolves to, not who

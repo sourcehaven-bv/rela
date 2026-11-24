@@ -190,6 +190,7 @@ var editable = map[File][]string{
 		"app.name",
 		"app.description",
 		"app.language",
+		"app.languages.[]",
 		"app.world_switcher",
 
 		"styles.*.*",

@@ -122,6 +122,13 @@ const sections = computed(() => {
       </div>
     </template>
 
+    <p
+      v-else-if="group.items.length === 0 && group.emptyLabel"
+      class="rl-sidebar-group__empty"
+    >
+      {{ group.emptyLabel }}
+    </p>
+
     <RlSidebarNavItem
       v-for="item in group.items"
       v-else
@@ -154,6 +161,13 @@ const sections = computed(() => {
   background: var(--rl-color-sidebar-bg);
   box-shadow: 0 0 0 var(--rl-space-3) var(--rl-color-sidebar-bg);
   clip-path: inset(calc(-1 * var(--rl-space-3)) calc(-1 * var(--rl-space-3)) 0);
+}
+
+.rl-sidebar-group__empty {
+  margin: 0;
+  padding: var(--rl-space-1) var(--rl-space-2);
+  font-size: var(--rl-font-size-sm);
+  color: var(--rl-color-text-subtle);
 }
 
 .rl-sidebar-group__section + .rl-sidebar-group__section {

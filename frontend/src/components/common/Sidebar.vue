@@ -127,7 +127,7 @@ const navEntities = useNavEntities(sidebarGroups)
  * The router would redirect an unprefixed path anyway, but a real prefixed
  * href keeps a modified click and the active-row match in the space.
  */
-function inSpace(groups: SidebarGroup[]): SidebarGroup[] {
+function inSpace<T extends SidebarGroup>(groups: T[]): T[] {
   if (!spaceStore.enabled) return groups
   return groups.map((group) => ({
     ...group,

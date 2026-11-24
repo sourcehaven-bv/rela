@@ -57,6 +57,46 @@ func TestValidateApp_Language(t *testing.T) {
 	}
 }
 
+func TestValidateAppLanguages(t *testing.T) {
+	tests := []struct {
+		name    string
+		langs   []string
+		def     string
+		wantErr []string
+	}{
+		{name: "empty allows all"},
+		{name: "one", langs: []string{"en"}},
+		{name: "both", langs: []string{"nl", "en"}, def: "nl-BE"},
+		{name: "unsupported", langs: []string{"de"}, wantErr: []string{"app.languages: \"de\" is not a supported"}},
+		{name: "region", langs: []string{"nl-BE"}, wantErr: []string{"app.languages: \"nl-BE\" is not a supported"}},
+		{name: "upper case", langs: []string{"EN"}, wantErr: []string{"app.languages: \"EN\" is not a supported"}},
+		{name: "twice", langs: []string{"en", "en"}, wantErr: []string{"app.languages: \"en\" is listed twice"}},
+		{name: "default outside", langs: []string{"en"}, def: "nl", wantErr: []string{"app.language: \"nl\" is not one of app.languages"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := validateAppLanguages(tc.langs, tc.def)
+			if len(errs) != len(tc.wantErr) {
+				t.Fatalf("validateAppLanguages(%v, %q) = %v, want %d errors", tc.langs, tc.def, errs, len(tc.wantErr))
+			}
+			for i, want := range tc.wantErr {
+				if !strings.HasPrefix(errs[i], want) {
+					t.Errorf("error %d = %q, want prefix %q", i, errs[i], want)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateApp_Languages checks that validateApp reports app.languages.
+func TestValidateApp_Languages(t *testing.T) {
+	cfg := &Config{App: AppConfig{Languages: []string{"de"}}}
+	errs := validateApp(cfg, nil)
+	if len(errs) != 1 || !strings.HasPrefix(errs[0], "app.languages: ") {
+		t.Fatalf("validateApp(languages=[de]) = %v, want one app.languages error", errs)
+	}
+}
+
 // TestSupportedUILanguagesMatchLocaleFiles pins SupportedUILanguages to the
 // SPA's message files on disk. A language added on one side only would either
 // pass validation and render English, or never be selectable from config.

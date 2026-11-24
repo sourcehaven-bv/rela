@@ -43,7 +43,7 @@ export class SettingsPage extends BasePage {
     const card = (title: string) =>
       this.page.locator('.settings-card').filter({ has: this.page.getByRole('heading', { name: title, exact: true }) });
     await expect(card('Display timezone')).toBeVisible();
-    await expect(this.appInfoCard).toBeVisible();
+    await expect(this.appInfoCard).toHaveCount(count);
     for (const title of ['Property Defaults', 'Relation Defaults', 'Overrides', 'Appearance', 'Logo', 'Theme package']) {
       await expect(card(title)).toHaveCount(count);
     }

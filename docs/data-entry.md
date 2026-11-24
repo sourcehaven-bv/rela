@@ -440,6 +440,7 @@ app:
 | Field      | Description                                                                  |
 | ---------- | ---------------------------------------------------------------------------- |
 | `language` | A BCP 47 language tag such as `nl` or `nl-BE`. Supported languages: `en`, `nl`. |
+| `languages` | The languages users may pick, such as `[en]`. Base languages only, from the supported ones. Empty means all. |
 
 The app picks the language in this order:
 
@@ -447,6 +448,17 @@ The app picks the language in this order:
 2. `app.language`;
 3. the browser's preferred languages, first supported one wins;
 4. English.
+
+With `languages`, only those languages count at each step, and the first one
+replaces English as the last step. `app.language` must be one of them. With a
+single language the Settings page shows no language choice:
+
+```yaml
+app:
+  name: "Support Tickets"
+  language: en
+  languages: [en]
+```
 
 The language also decides how dates and numbers are written. A region in the
 tag (`nl-BE`) is used for that formatting. A tag that is not valid BCP 47, or
