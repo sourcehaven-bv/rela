@@ -56,8 +56,8 @@ func PatchWithRelations(
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := rp.scope.prepass(ctx, m, rp.createKeys(), rp.removes); err != nil {
-		return nil, nil, &JoinedRelationError{Err: err}
+	if scopeErr := rp.scope.prepass(ctx, m, rp.createKeys(), rp.removes); scopeErr != nil {
+		return nil, nil, &JoinedRelationError{Err: scopeErr}
 	}
 	j := &joinedReplace{rp: rp, id: g.ref.ID}
 	res, err := patchEntity(context.WithValue(ctx, joinedReplaceKey{}, j), m, id, p,

@@ -213,7 +213,9 @@ func checkCascadeScope(ctx context.Context, x *scopeIndex, view store.Store, key
 // checkScopesNoClear is [checkScopes] for a writer that does not clear: an
 // automation, or an entity copy. A write that would leave a stored edge out
 // of scope is refused, whatever `on_change:` says.
-func checkScopesNoClear(ctx context.Context, x *scopeIndex, view store.Store, adds, removes []entity.RelationKey) error {
+func checkScopesNoClear(
+	ctx context.Context, x *scopeIndex, view store.Store, adds, removes []entity.RelationKey,
+) error {
 	clears, err := checkScopes(ctx, x, view, adds, removes)
 	if err != nil {
 		return err
@@ -367,7 +369,7 @@ func (c *scopeClears) prepass(ctx context.Context, m *Manager, adds, removes []e
 	// Inside a transaction the caller joined, the outer store is that
 	// transaction's view: the file and memory stores would deadlock on the
 	// outer handle.
-	var st store.Store = m.deps.Store
+	st := m.deps.Store
 	if v := store.TxView(ctx); v != nil {
 		st = v
 	}

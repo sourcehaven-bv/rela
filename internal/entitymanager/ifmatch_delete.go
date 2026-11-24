@@ -99,8 +99,8 @@ func deleteRelationIfVersion(
 	}
 	removes := []entity.RelationKey{key}
 	var clears scopeClears
-	if err := clears.prepass(ctx, m, nil, removes); err != nil {
-		return err
+	if scopeErr := clears.prepass(ctx, m, nil, removes); scopeErr != nil {
+		return scopeErr
 	}
 	var rel *entity.Relation
 	err = auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {

@@ -105,10 +105,10 @@ func withinCycle(m *Metamodel, name string) []string {
 	chain := []string{name}
 	for cur := name; ; {
 		next := m.Relations[cur].Within
-		switch {
-		case next == "":
+		switch next {
+		case "":
 			return nil
-		case next == name:
+		case name:
 			return chain
 		}
 		if _, ok := m.Relations[next]; !ok || slices.Contains(chain, next) {

@@ -71,26 +71,26 @@ func newScopedFixture(t *testing.T, b concBackend, a acl.ACL) *scopedFixture {
 	return &scopedFixture{mgr: mgr, st: st, log: log}
 }
 
-func (f *scopedFixture) mk(t *testing.T, typ string) string {
+func (f *scopedFixture) mk(ctx context.Context, t *testing.T, typ string) string {
 	t.Helper()
 	e := entity.New("", typ)
 	e.SetString("title", typ)
-	res, err := f.mgr.CreateEntity(context.Background(), e, entity.CreateOptions{})
+	res, err := f.mgr.CreateEntity(ctx, e, entity.CreateOptions{})
 	require.NoError(t, err)
 	return res.Entity.ID
 }
 
-func (f *scopedFixture) link(from, relType, to string) error {
-	_, err := f.mgr.CreateRelation(context.Background(),
+func (f *scopedFixture) link(ctx context.Context, from, relType, to string) error {
+	_, err := f.mgr.CreateRelation(ctx,
 		entity.RelationKey{From: from, Type: relType, To: to}, entity.RelationOptions{})
 	return err
 }
 
-func (f *scopedFixture) targets(t *testing.T, from, relType string) []string {
+func (f *scopedFixture) targets(ctx context.Context, t *testing.T, from, relType string) []string {
 	t.Helper()
 	var out []string
 	q := store.RelationQuery{From: from, Type: relType, Direction: store.DirectionOutgoing}
-	for r, err := range f.st.ListRelations(context.Background(), q) {
+	for r, err := range f.st.ListRelations(ctx, q) {
 		require.NoError(t, err)
 		out = append(out, r.To)
 	}
@@ -101,15 +101,15 @@ func (f *scopedFixture) targets(t *testing.T, from, relType string) []string {
 // world is two projects with a heading each, and a todo in the first.
 type scopedWorld struct{ todo, p1, p2, h1, h2 string }
 
-func (f *scopedFixture) world(t *testing.T) scopedWorld {
+func (f *scopedFixture) world(ctx context.Context, t *testing.T) scopedWorld {
 	t.Helper()
 	w := scopedWorld{
-		todo: f.mk(t, "todo"), p1: f.mk(t, "project"), p2: f.mk(t, "project"),
-		h1: f.mk(t, "heading"), h2: f.mk(t, "heading"),
+		todo: f.mk(ctx, t, "todo"), p1: f.mk(ctx, t, "project"), p2: f.mk(ctx, t, "project"),
+		h1: f.mk(ctx, t, "heading"), h2: f.mk(ctx, t, "heading"),
 	}
-	require.NoError(t, f.link(w.p1, "has_heading", w.h1))
-	require.NoError(t, f.link(w.p2, "has_heading", w.h2))
-	require.NoError(t, f.link(w.todo, "in_project", w.p1))
+	require.NoError(t, f.link(ctx, w.p1, "has_heading", w.h1))
+	require.NoError(t, f.link(ctx, w.p2, "has_heading", w.h2))
+	require.NoError(t, f.link(ctx, w.todo, "in_project", w.p1))
 	return w
 }
 
@@ -134,92 +134,93 @@ func requireScopeRefusal(t *testing.T, err error, rel string) {
 }
 
 func TestScoped_CreateRelation(t *testing.T) {
+	ctx := t.Context()
 	for _, b := range concBackends {
 		t.Run(b.name, func(t *testing.T) {
 			f := newScopedFixture(t, b, acl.NopACL{})
-			w := f.world(t)
-			require.NoError(t, f.link(w.todo, "under_heading", w.h1))
+			w := f.world(ctx, t)
+			require.NoError(t, f.link(ctx, w.todo, "under_heading", w.h1))
 			// A target owned by another project is refused, whatever on_change says.
-			requireScopeRefusal(t, f.link(w.todo, "under_section", w.h2), "under_section")
+			requireScopeRefusal(t, f.link(ctx, w.todo, "under_section", w.h2), "under_section")
 			// An empty scope admits nothing.
-			loose := f.mk(t, "todo")
-			requireScopeRefusal(t, f.link(loose, "under_heading", w.h1), "under_heading")
+			loose := f.mk(ctx, t, "todo")
+			requireScopeRefusal(t, f.link(ctx, loose, "under_heading", w.h1), "under_heading")
 			// A target with no owner admits nothing.
-			orphan := f.mk(t, "heading")
-			requireScopeRefusal(t, f.link(w.todo, "under_section", orphan), "under_section")
-			require.Equal(t, []string{w.h1}, f.targets(t, w.todo, "under_heading"))
-			require.Empty(t, f.targets(t, w.todo, "under_section"))
+			orphan := f.mk(ctx, t, "heading")
+			requireScopeRefusal(t, f.link(ctx, w.todo, "under_section", orphan), "under_section")
+			require.Equal(t, []string{w.h1}, f.targets(ctx, t, w.todo, "under_heading"))
+			require.Empty(t, f.targets(ctx, t, w.todo, "under_section"))
 		})
 	}
 }
 
 func TestScoped_ScopeChange(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	for _, b := range concBackends {
 		t.Run(b.name, func(t *testing.T) {
 			t.Run("replace clears", func(t *testing.T) {
 				f := newScopedFixture(t, b, acl.NopACL{})
-				w := f.world(t)
-				require.NoError(t, f.link(w.todo, "under_heading", w.h1))
+				w := f.world(ctx, t)
+				require.NoError(t, f.link(ctx, w.todo, "under_heading", w.h1))
 				_, err := f.mgr.ReplaceRelations(ctx,
 					[]entitymanager.RelationCreate{{Key: skey(w.todo, "in_project", w.p2)}},
 					[]entity.RelationKey{skey(w.todo, "in_project", w.p1)})
 				require.NoError(t, err)
-				require.Equal(t, []string{w.p2}, f.targets(t, w.todo, "in_project"))
-				require.Empty(t, f.targets(t, w.todo, "under_heading"))
+				require.Equal(t, []string{w.p2}, f.targets(ctx, t, w.todo, "in_project"))
+				require.Empty(t, f.targets(ctx, t, w.todo, "under_heading"))
 				requireClearAudited(t, f.log, w.todo, w.h1)
 			})
 			t.Run("replace with new target in new scope", func(t *testing.T) {
 				f := newScopedFixture(t, b, acl.NopACL{})
-				w := f.world(t)
-				require.NoError(t, f.link(w.todo, "under_section", w.h1))
+				w := f.world(ctx, t)
+				require.NoError(t, f.link(ctx, w.todo, "under_section", w.h1))
 				_, err := f.mgr.ReplaceRelations(ctx,
 					[]entitymanager.RelationCreate{
 						{Key: skey(w.todo, "in_project", w.p2)}, {Key: skey(w.todo, "under_section", w.h2)},
 					},
 					[]entity.RelationKey{skey(w.todo, "in_project", w.p1), skey(w.todo, "under_section", w.h1)})
 				require.NoError(t, err)
-				require.Equal(t, []string{w.h2}, f.targets(t, w.todo, "under_section"))
+				require.Equal(t, []string{w.h2}, f.targets(ctx, t, w.todo, "under_section"))
 			})
 			t.Run("replace rejects", func(t *testing.T) {
 				f := newScopedFixture(t, b, acl.NopACL{})
-				w := f.world(t)
-				require.NoError(t, f.link(w.todo, "under_section", w.h1))
+				w := f.world(ctx, t)
+				require.NoError(t, f.link(ctx, w.todo, "under_section", w.h1))
 				_, err := f.mgr.ReplaceRelations(ctx,
 					[]entitymanager.RelationCreate{{Key: skey(w.todo, "in_project", w.p2)}},
 					[]entity.RelationKey{skey(w.todo, "in_project", w.p1)})
 				requireScopeRefusal(t, err, "under_section")
-				require.Equal(t, []string{w.p1}, f.targets(t, w.todo, "in_project"))
-				require.Equal(t, []string{w.h1}, f.targets(t, w.todo, "under_section"))
+				require.Equal(t, []string{w.p1}, f.targets(ctx, t, w.todo, "in_project"))
+				require.Equal(t, []string{w.h1}, f.targets(ctx, t, w.todo, "under_section"))
 			})
 			t.Run("delete scope clears", func(t *testing.T) {
 				f := newScopedFixture(t, b, acl.NopACL{})
-				w := f.world(t)
-				require.NoError(t, f.link(w.todo, "under_heading", w.h1))
+				w := f.world(ctx, t)
+				require.NoError(t, f.link(ctx, w.todo, "under_heading", w.h1))
 				require.NoError(t, f.mgr.DeleteRelation(ctx, skey(w.todo, "in_project", w.p1)))
-				require.Empty(t, f.targets(t, w.todo, "under_heading"))
+				require.Empty(t, f.targets(ctx, t, w.todo, "under_heading"))
 				requireClearAudited(t, f.log, w.todo, w.h1)
 			})
 			t.Run("delete scope rejects", func(t *testing.T) {
 				f := newScopedFixture(t, b, acl.NopACL{})
-				w := f.world(t)
-				require.NoError(t, f.link(w.todo, "under_section", w.h1))
+				w := f.world(ctx, t)
+				require.NoError(t, f.link(ctx, w.todo, "under_section", w.h1))
 				requireScopeRefusal(t, f.mgr.DeleteRelation(ctx, skey(w.todo, "in_project", w.p1)), "under_section")
-				require.Equal(t, []string{w.p1}, f.targets(t, w.todo, "in_project"))
+				require.Equal(t, []string{w.p1}, f.targets(ctx, t, w.todo, "in_project"))
 			})
 			t.Run("unrelated delete leaves scoped edges", func(t *testing.T) {
 				f := newScopedFixture(t, b, acl.NopACL{})
-				w := f.world(t)
-				require.NoError(t, f.link(w.todo, "under_heading", w.h1))
+				w := f.world(ctx, t)
+				require.NoError(t, f.link(ctx, w.todo, "under_heading", w.h1))
 				require.NoError(t, f.mgr.DeleteRelation(ctx, skey(w.todo, "under_heading", w.h1)))
-				require.Equal(t, []string{w.p1}, f.targets(t, w.todo, "in_project"))
+				require.Equal(t, []string{w.p1}, f.targets(ctx, t, w.todo, "in_project"))
 			})
 		})
 	}
 }
 
 func TestScoped_Reparent(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	for _, b := range concBackends {
 		t.Run(b.name, func(t *testing.T) {
 			for _, tc := range []struct {
@@ -228,21 +229,21 @@ func TestScoped_Reparent(t *testing.T) {
 			}{{"under_heading", true}, {"under_section", false}} {
 				t.Run(tc.rel, func(t *testing.T) {
 					f := newScopedFixture(t, b, acl.NopACL{})
-					w := f.world(t)
-					require.NoError(t, f.link(w.todo, tc.rel, w.h1))
+					w := f.world(ctx, t)
+					require.NoError(t, f.link(ctx, w.todo, tc.rel, w.h1))
 					// Move heading h1 from project p1 to project p2.
 					_, err := f.mgr.ReplaceRelations(ctx,
 						[]entitymanager.RelationCreate{{Key: skey(w.p2, "has_heading", w.h1)}},
 						[]entity.RelationKey{skey(w.p1, "has_heading", w.h1)})
 					if !tc.cleared {
 						requireScopeRefusal(t, err, tc.rel)
-						require.Equal(t, []string{w.h1}, f.targets(t, w.todo, tc.rel))
-						require.Equal(t, []string{w.h1}, f.targets(t, w.p1, "has_heading"))
+						require.Equal(t, []string{w.h1}, f.targets(ctx, t, w.todo, tc.rel))
+						require.Equal(t, []string{w.h1}, f.targets(ctx, t, w.p1, "has_heading"))
 						return
 					}
 					require.NoError(t, err)
-					require.Empty(t, f.targets(t, w.todo, tc.rel))
-					require.Equal(t, []string{w.h1, w.h2}, f.targets(t, w.p2, "has_heading"))
+					require.Empty(t, f.targets(ctx, t, w.todo, tc.rel))
+					require.Equal(t, []string{w.h1, w.h2}, f.targets(ctx, t, w.p2, "has_heading"))
 				})
 			}
 		})
@@ -253,16 +254,17 @@ func TestScoped_Reparent(t *testing.T) {
 // must be allowed: a caller who may not delete under_heading edges cannot
 // change the scope of a todo that has one.
 func TestScoped_ClearNeedsDeleteGrant(t *testing.T) {
+	ctx := t.Context()
 	f := newScopedFixture(t, concBackends[0], noScopedDeleteACL{})
-	w := f.world(t)
-	require.NoError(t, f.link(w.todo, "under_heading", w.h1))
-	_, err := f.mgr.ReplaceRelations(context.Background(),
+	w := f.world(ctx, t)
+	require.NoError(t, f.link(ctx, w.todo, "under_heading", w.h1))
+	_, err := f.mgr.ReplaceRelations(ctx,
 		[]entitymanager.RelationCreate{{Key: skey(w.todo, "in_project", w.p2)}},
 		[]entity.RelationKey{skey(w.todo, "in_project", w.p1)})
 	var forbidden *acl.ForbiddenError
 	require.ErrorAs(t, err, &forbidden)
-	require.Equal(t, []string{w.p1}, f.targets(t, w.todo, "in_project"))
-	require.Equal(t, []string{w.h1}, f.targets(t, w.todo, "under_heading"))
+	require.Equal(t, []string{w.p1}, f.targets(ctx, t, w.todo, "in_project"))
+	require.Equal(t, []string{w.h1}, f.targets(ctx, t, w.todo, "under_heading"))
 }
 
 // noScopedDeleteACL allows every write except deleting an under_heading edge.
@@ -279,37 +281,39 @@ func (noScopedDeleteACL) AuthorizeWrite(_ context.Context, req acl.WriteRequest)
 // of a source the caller cannot read: the write is refused with the scope
 // refusal, not a 403, and the hidden edge stays.
 func TestScoped_ReparentHiddenSource(t *testing.T) {
+	ctx := t.Context()
 	gate := &scopedGateACL{}
 	f := newScopedFixture(t, concBackends[0], gate)
-	w := f.world(t)
-	require.NoError(t, f.link(w.todo, "under_heading", w.h1))
+	w := f.world(ctx, t)
+	require.NoError(t, f.link(ctx, w.todo, "under_heading", w.h1))
 	gate.hidden = w.todo
-	_, err := f.mgr.ReplaceRelations(context.Background(),
+	_, err := f.mgr.ReplaceRelations(ctx,
 		[]entitymanager.RelationCreate{{Key: skey(w.p2, "has_heading", w.h1)}},
 		[]entity.RelationKey{skey(w.p1, "has_heading", w.h1)})
 	requireScopeRefusal(t, err, "under_heading")
-	require.Equal(t, []string{w.h1}, f.targets(t, w.todo, "under_heading"))
+	require.Equal(t, []string{w.h1}, f.targets(ctx, t, w.todo, "under_heading"))
 }
 
 // TestScoped_ClearAuthorizedPerSource pins that each cleared edge is
 // authorized on its own source: an allow for one todo does not carry over to
 // another todo whose edge the same re-parent clears.
 func TestScoped_ClearAuthorizedPerSource(t *testing.T) {
+	ctx := t.Context()
 	gate := &scopedGateACL{}
 	f := newScopedFixture(t, concBackends[0], gate)
-	w := f.world(t)
-	other := f.mk(t, "todo")
-	require.NoError(t, f.link(other, "in_project", w.p1))
-	require.NoError(t, f.link(w.todo, "under_heading", w.h1))
-	require.NoError(t, f.link(other, "under_heading", w.h1))
+	w := f.world(ctx, t)
+	other := f.mk(ctx, t, "todo")
+	require.NoError(t, f.link(ctx, other, "in_project", w.p1))
+	require.NoError(t, f.link(ctx, w.todo, "under_heading", w.h1))
+	require.NoError(t, f.link(ctx, other, "under_heading", w.h1))
 	gate.noDelete = other
-	_, err := f.mgr.ReplaceRelations(context.Background(),
+	_, err := f.mgr.ReplaceRelations(ctx,
 		[]entitymanager.RelationCreate{{Key: skey(w.p2, "has_heading", w.h1)}},
 		[]entity.RelationKey{skey(w.p1, "has_heading", w.h1)})
 	var forbidden *acl.ForbiddenError
 	require.ErrorAs(t, err, &forbidden)
-	require.Equal(t, []string{w.h1}, f.targets(t, w.todo, "under_heading"))
-	require.Equal(t, []string{w.h1}, f.targets(t, other, "under_heading"))
+	require.Equal(t, []string{w.h1}, f.targets(ctx, t, w.todo, "under_heading"))
+	require.Equal(t, []string{w.h1}, f.targets(ctx, t, other, "under_heading"))
 }
 
 // scopedGateACL hides one entity from reads and refuses deleting the edges of
@@ -333,27 +337,27 @@ func (g *scopedGateACL) AuthorizeWrite(_ context.Context, req acl.WriteRequest) 
 // TestScoped_CreateLinked covers a create of the scope target from the form
 // of a todo: the new project owns no heading, so the todo's heading clears.
 func TestScoped_CreateLinked(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	for _, b := range concBackends {
 		t.Run(b.name, func(t *testing.T) {
 			f := newScopedFixture(t, b, acl.NopACL{})
-			loose := f.mk(t, "todo")
-			p := f.mk(t, "project")
-			h := f.mk(t, "heading")
-			require.NoError(t, f.link(p, "has_heading", h))
-			require.NoError(t, f.link(loose, "in_project", p))
-			require.NoError(t, f.link(loose, "under_heading", h))
+			loose := f.mk(ctx, t, "todo")
+			p := f.mk(ctx, t, "project")
+			h := f.mk(ctx, t, "heading")
+			require.NoError(t, f.link(ctx, p, "has_heading", h))
+			require.NoError(t, f.link(ctx, loose, "in_project", p))
+			require.NoError(t, f.link(ctx, loose, "under_heading", h))
 			require.NoError(t, f.mgr.DeleteRelation(ctx, skey(loose, "under_heading", h)))
-			require.NoError(t, f.link(loose, "under_heading", h))
+			require.NoError(t, f.link(ctx, loose, "under_heading", h))
 
 			// Re-point the todo to a new project: in_project is single-valued,
 			// so the old edge goes first.
 			_, err := f.mgr.ReplaceRelations(ctx, nil, []entity.RelationKey{skey(loose, "in_project", p)})
 			require.NoError(t, err)
-			require.Empty(t, f.targets(t, loose, "under_heading"))
+			require.Empty(t, f.targets(ctx, t, loose, "under_heading"))
 
-			require.NoError(t, f.link(loose, "in_project", p))
-			require.NoError(t, f.link(loose, "under_heading", h))
+			require.NoError(t, f.link(ctx, loose, "in_project", p))
+			require.NoError(t, f.link(ctx, loose, "under_heading", h))
 			require.NoError(t, f.mgr.DeleteRelation(ctx, skey(loose, "in_project", p)))
 			e := entity.New("", "project")
 			e.SetString("title", "new")
@@ -361,8 +365,8 @@ func TestScoped_CreateLinked(t *testing.T) {
 				Entity: e, RelateType: "in_project", RelateFrom: loose,
 			})
 			require.NoError(t, err)
-			require.Len(t, f.targets(t, loose, "in_project"), 1)
-			require.Empty(t, f.targets(t, loose, "under_heading"))
+			require.Len(t, f.targets(ctx, t, loose, "in_project"), 1)
+			require.Empty(t, f.targets(ctx, t, loose, "under_heading"))
 
 			// A new heading has no owner, so it cannot be linked as a target.
 			hd := entity.New("", "heading")
@@ -387,9 +391,9 @@ func TestScoped_CreateLinked(t *testing.T) {
 // in which entities own themselves or each other, which the write path never
 // produces, is judged without looping.
 func TestScoped_CyclicOwnershipData(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newScopedFixture(t, concBackends[0], acl.NopACL{})
-	w := f.world(t)
+	w := f.world(ctx, t)
 	for _, k := range []entity.RelationKey{
 		skey(w.h1, "has_heading", w.h1), skey(w.p1, "has_heading", w.p1),
 		skey(w.h2, "has_heading", w.p2),
@@ -397,22 +401,22 @@ func TestScoped_CyclicOwnershipData(t *testing.T) {
 		_, err := f.st.CreateRelation(ctx, k, &store.RelationData{})
 		require.NoError(t, err)
 	}
-	require.NoError(t, f.link(w.todo, "under_heading", w.h1))
-	requireScopeRefusal(t, f.link(w.todo, "under_section", w.h2), "under_section")
+	require.NoError(t, f.link(ctx, w.todo, "under_heading", w.h1))
+	requireScopeRefusal(t, f.link(ctx, w.todo, "under_section", w.h2), "under_section")
 	_, err := f.mgr.ReplaceRelations(ctx,
 		[]entitymanager.RelationCreate{{Key: skey(w.todo, "in_project", w.p2)}},
 		[]entity.RelationKey{skey(w.todo, "in_project", w.p1)})
 	require.NoError(t, err)
-	require.Empty(t, f.targets(t, w.todo, "under_heading"))
+	require.Empty(t, f.targets(ctx, t, w.todo, "under_heading"))
 }
 
 // TestScoped_PatchWithRelations covers the form's joined write: a property
 // change with a scope change clears in the same transaction.
 func TestScoped_PatchWithRelations(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newScopedFixture(t, concBackends[0], acl.NopACL{})
-	w := f.world(t)
-	require.NoError(t, f.link(w.todo, "under_heading", w.h1))
+	w := f.world(ctx, t)
+	require.NoError(t, f.link(ctx, w.todo, "under_heading", w.h1))
 	row, err := f.st.GetEntity(ctx, entity.Ref{ID: w.todo, Face: entity.ImplicitFace})
 	require.NoError(t, err)
 	g, err := f.mgr.AuthorizeUpdate(ctx, row)
@@ -422,7 +426,7 @@ func TestScoped_PatchWithRelations(t *testing.T) {
 		[]entitymanager.RelationCreate{{Key: skey(w.todo, "in_project", w.p2)}},
 		[]entity.RelationKey{skey(w.todo, "in_project", w.p1)})
 	require.NoError(t, err)
-	require.Empty(t, f.targets(t, w.todo, "under_heading"))
+	require.Empty(t, f.targets(ctx, t, w.todo, "under_heading"))
 	requireClearAudited(t, f.log, w.todo, w.h1)
 }
 
@@ -430,10 +434,10 @@ func TestScoped_PatchWithRelations(t *testing.T) {
 // trigger of its own and does not re-enter the scope check: the manager
 // runs no automation on relation writes, and a clear is a relation write.
 func TestScoped_ClearRunsNoAutomation(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newScopedFixture(t, concBackends[0], acl.NopACL{})
-	w := f.world(t)
-	require.NoError(t, f.link(w.todo, "under_heading", w.h1))
+	w := f.world(ctx, t)
+	require.NoError(t, f.link(ctx, w.todo, "under_heading", w.h1))
 	before := len(f.log.Records())
 	_, err := f.mgr.ReplaceRelations(ctx,
 		[]entitymanager.RelationCreate{{Key: skey(w.todo, "in_project", w.p2)}},
@@ -451,6 +455,7 @@ func requireClearAudited(t *testing.T, log *audit.Memory, from, to string) {
 	for _, r := range log.Records() {
 		if r.Op == audit.OpDeleteRelation && r.Subject != nil && r.Subject.FromID == from &&
 			r.Subject.ToID == to && strings.HasPrefix(r.Summary, "cleared: out of scope of in_project") {
+
 			n++
 		}
 	}

@@ -140,11 +140,15 @@ func applyCopyEdges(ctx context.Context, meta *metamodel.Metamodel, view store.S
 func checkCopyScopes(ctx context.Context, scopes *scopeIndex, view store.Store, plan *copyPlan) error {
 	adds := make([]entity.RelationKey, 0, len(plan.edges))
 	for _, e := range plan.edges {
-		adds = append(adds, entity.RelationKey{From: plan.targetID, FromFace: plan.targetTail, Type: e.relType, To: e.to})
+		adds = append(adds, entity.RelationKey{
+			From: plan.targetID, FromFace: plan.targetTail, Type: e.relType, To: e.to,
+		})
 	}
 	removes := make([]entity.RelationKey, 0, len(plan.removable))
 	for k := range plan.removable {
-		removes = append(removes, entity.RelationKey{From: plan.targetID, FromFace: plan.targetTail, Type: k.relType, To: k.to})
+		removes = append(removes, entity.RelationKey{
+			From: plan.targetID, FromFace: plan.targetTail, Type: k.relType, To: k.to,
+		})
 	}
 	return checkScopesNoClear(ctx, scopes, view, adds, removes)
 }

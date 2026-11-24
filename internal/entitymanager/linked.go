@@ -190,8 +190,8 @@ func prepareLinkedCreate(ctx context.Context, m *Manager, lc LinkedCreate) (*lin
 		if t.key, t.rel, err = prepareLinkedRelation(ctx, m, lc); err != nil {
 			return nil, err
 		}
-		if err = t.scope.prepass(ctx, m, []entity.RelationKey{t.key}, nil); err != nil {
-			return nil, err
+		if scopeErr := t.scope.prepass(ctx, m, []entity.RelationKey{t.key}, nil); scopeErr != nil {
+			return nil, scopeErr
 		}
 	}
 	return t, nil

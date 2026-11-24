@@ -25,3 +25,5 @@ heading owned by the project that the todo's `in_project` points to.
 - Data-entry form: picker filtered by the unsaved scope value; dependent field
 cleared or flagged on change; disabled while scope is empty.
 - Docs in docs-project.
+
+CI lint and allowlist fixes follow the security review.

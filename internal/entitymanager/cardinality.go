@@ -210,8 +210,8 @@ func (m *Manager) ReplaceRelations(
 	if err != nil {
 		return nil, err
 	}
-	if err := rp.scope.prepass(ctx, m, rp.createKeys(), rp.removes); err != nil {
-		return nil, err
+	if scopeErr := rp.scope.prepass(ctx, m, rp.createKeys(), rp.removes); scopeErr != nil {
+		return nil, scopeErr
 	}
 	var deleted []*entity.Relation
 	err = auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
@@ -234,15 +234,6 @@ func (m *Manager) ReplaceRelations(
 	return rp.rels, nil
 }
 
-// createKeys returns the keys of the edges rp creates.
-func (rp *relationReplace) createKeys() []entity.RelationKey {
-	keys := make([]entity.RelationKey, len(rp.creates))
-	for i, c := range rp.creates {
-		keys[i] = c.Key
-	}
-	return keys
-}
-
 // relationReplace is one ReplaceRelations call: its creates, its removes
 // without repeats, and the relations prepare built for the creates.
 type relationReplace struct {
@@ -253,6 +244,15 @@ type relationReplace struct {
 	rels    []*entity.Relation          // one per create, set by prepare
 	// scope is the out-of-scope edges the replace clears (TKT-5GK80Q9).
 	scope scopeClears
+}
+
+// createKeys returns the keys of the edges rp creates.
+func (rp *relationReplace) createKeys() []entity.RelationKey {
+	keys := make([]entity.RelationKey, len(rp.creates))
+	for i, c := range rp.creates {
+		keys[i] = c.Key
+	}
+	return keys
 }
 
 // audit writes the records of the replace on view: deleted, the edges it
