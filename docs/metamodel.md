@@ -1089,6 +1089,7 @@ entities:
 | `min`/`max` | The lowest or highest value of an `integer` or `date` property; same type. Not yet `decimal`  |
 | `sum`       | The exact total of an `integer` or `decimal` property; the roll-up has the same type          |
 | `latest_by` | With `pick`: the `pick` value of the entity with the latest `date` here                       |
+| `body_tasks` | `done`, `open` or `total`: the task lines in the entity's own body (see below). No other key |
 
 Declare exactly one function. `pick` must have the roll-up's declared type.
 A roll-up cannot read another roll-up. It cannot be
@@ -1116,6 +1117,37 @@ saldo:
 The rows are as visible as their owner, so a hidden owner's rows never reach
 a value. A page of entities costs one record read per roll-up, whatever its
 size. An entity without rows has no value.
+
+**Over the body's tasks.** A roll-up can count the task lines in the entity's
+own markdown body. `body_tasks` names the count: `done`, `open` or `total`.
+The property must be `integer`, and `body_tasks` cannot be combined with any
+other key. A task line is a list item (`-`, `*`, `+`, `1.` or `1)`) whose text
+starts with `[ ]` (open) or `[x]` or `[X]` (done), at any indentation, so
+nested tasks count. Lines inside a fenced code block (` ``` ` or `~~~`) do
+not count. A code block indented by four spaces is not recognized, because
+under a list item the same indentation is a nested task.
+
+```yaml
+entities:
+  todo:
+    properties:
+      title: { type: string }
+      tasks_done:
+        type: integer
+        rollup: { body_tasks: done }
+      tasks_total:
+        type: integer
+        rollup: { body_tasks: total }
+```
+
+The count follows the body: it has a value only where the reader may read the
+body. A reader who cannot read the entity gets no value, an entity whose body
+is encrypted and unreadable has none, and a `visible:` grant on the roll-up
+property hides it like any other property. A page of entities costs one body
+read per page, whatever its size, and only the page's rows are read. A list
+can show the count as a column (`columns: [title, tasks_done, tasks_total]`),
+but a list cannot filter or sort on it: that would read the body of every
+entity of the type, so the request is refused with `400`.
 
 **Paths.** `via` can name a list of relations. The roll-up then follows each
 relation in turn and summarizes the entities at the far end. A requirement
