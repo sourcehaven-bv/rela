@@ -75,7 +75,7 @@ func postAssign(ctx context.Context, t *testing.T, app *App, body string) (int, 
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, assignPath, bytes.NewBufferString(body)).WithContext(ctx)
 	rec := httptest.NewRecorder()
-	app.handleV1Assign(rec, req)
+	handleV1Assign(app, rec, req)
 	var resp assignResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	return rec.Code, resp

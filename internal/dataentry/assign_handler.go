@@ -77,7 +77,7 @@ type assignResponse struct {
 // the uniform 404 of a missing entity.
 var errAssignTargetNotFound = errors.New("assign target not found")
 
-func (a *App) handleV1Assign(w http.ResponseWriter, r *http.Request) {
+func handleV1Assign(a *App, w http.ResponseWriter, r *http.Request) {
 	var req assignRequest
 	switch r.Method {
 	case http.MethodGet:
@@ -118,13 +118,13 @@ func (a *App) handleV1Assign(w http.ResponseWriter, r *http.Request) {
 		writeV1JSON(w, http.StatusOK, vals)
 		return
 	}
-	results, err := a.applyAssign(r, s, vals, req.Entities)
+	results, err := applyAssign(a, r, s, vals, req.Entities)
 	if err != nil {
 		writeInternalError(w, r, "assign_failed", "Assign failed", err)
 		return
 	}
 	if req.List != "" {
-		if err := a.markAssignMatches(r.Context(), s, req.List, results); err != nil {
+		if err := markAssignMatches(r.Context(), a, s, req.List, results); err != nil {
 			writeListPipelineError(w, r, err)
 			return
 		}
@@ -148,11 +148,10 @@ func assignInternal(code string, err error) *assignFailure {
 // resolveAssign finds the block the request names and evaluates it.
 func resolveAssign(
 	ctx context.Context, a *App, s *Schema, req assignRequest, now time.Time,
-) (assignValues, int, string, error) {
+) (vals assignValues, status int, code string, err error) {
 	block, itemType, targetType, fail := assignBlock(s, req)
 	if fail == nil {
-		var vals assignValues
-		vals, fail = a.assignValuesOf(ctx, s, block, itemType, targetType, req.Target, now)
+		vals, fail = assignValuesOf(ctx, a, s, block, itemType, targetType, req.Target, now)
 		if fail == nil {
 			return vals, 0, "", nil
 		}
@@ -165,7 +164,7 @@ func resolveAssign(
 
 // assignBlock finds the block. A missing list or page is a 404 naming the
 // config key: config is not secret.
-func assignBlock(s *Schema, req assignRequest) (*dataentryconfig.Assign, string, string, *assignFailure) {
+func assignBlock(s *Schema, req assignRequest) (block *dataentryconfig.Assign, itemType, targetType string, fail *assignFailure) {
 	switch {
 	case req.List != "" && req.Page == "":
 		l, ok := s.Cfg.Lists[req.List]
@@ -187,13 +186,12 @@ func assignBlock(s *Schema, req assignRequest) (*dataentryconfig.Assign, string,
 	}
 }
 
-func (a *App) assignValuesOf(
-	ctx context.Context, s *Schema, block *dataentryconfig.Assign, itemType, targetType, target string, now time.Time,
+func assignValuesOf(ctx context.Context, a *App, s *Schema, block *dataentryconfig.Assign, itemType, targetType, target string, now time.Time,
 ) (assignValues, *assignFailure) {
 	vals := assignValues{EntityType: itemType, Properties: map[string]any{}}
 	entDef, _ := s.Meta.GetEntityDef(itemType)
 	for name, v := range block.Properties {
-		got, err := a.assignProperty(ctx, s, entDef.Properties[name], v, now)
+		got, err := assignProperty(ctx, a, s, entDef.Properties[name], v, now)
 		if err != nil {
 			return assignValues{}, assignInternal("assign_failed", err)
 		}
@@ -203,7 +201,7 @@ func (a *App) assignValuesOf(
 		vals.Relations = map[string]assignRelationOps{}
 	}
 	for rel, val := range block.Relations {
-		peer, fail := a.assignPeerOf(ctx, val, targetType, target)
+		peer, fail := assignPeerOf(ctx, a, val, targetType, target)
 		if fail != nil {
 			return assignValues{}, fail
 		}
@@ -217,8 +215,7 @@ func (a *App) assignValuesOf(
 	return vals, nil
 }
 
-func (a *App) assignProperty(
-	ctx context.Context, s *Schema, def metamodel.PropertyDef, v dataentryconfig.AssignValue, now time.Time,
+func assignProperty(ctx context.Context, a *App, s *Schema, def metamodel.PropertyDef, v dataentryconfig.AssignValue, now time.Time,
 ) (any, error) {
 	if v.Expr == "" {
 		return dataentryconfig.TypedLiteral(&def, v.Literal)
@@ -231,7 +228,7 @@ func (a *App) assignProperty(
 
 // assignPeerOf resolves a relation value: the request's target, or a
 // configured entity id. Either one the caller cannot read is the uniform 404.
-func (a *App) assignPeerOf(ctx context.Context, val, targetType, target string) (assignPeer, *assignFailure) {
+func assignPeerOf(ctx context.Context, a *App, val, targetType, target string) (assignPeer, *assignFailure) {
 	notFound := &assignFailure{status: http.StatusNotFound, code: "not_found", err: errAssignTargetNotFound}
 	if val != dataentryconfig.AssignTarget {
 		typ, err := a.visibleReader.readableType(ctx, val)
@@ -278,7 +275,7 @@ func SetAssignExprs(a *App, fn AssignExprFunc) error {
 // applyAssign writes vals to each address through the entity PATCH handler,
 // so an assign is authorized, validated and audited exactly as a PATCH from
 // the SPA is. Each row is its own write: a refusal leaves the others written.
-func (a *App) applyAssign(r *http.Request, s *Schema, vals assignValues, addrs []string) ([]assignResult, error) {
+func applyAssign(a *App, r *http.Request, s *Schema, vals assignValues, addrs []string) ([]assignResult, error) {
 	plural := pluralOf(s.Meta)(vals.EntityType)
 	patch := map[string]any{}
 	var unset []string
@@ -338,7 +335,7 @@ func (a *App) applyAssign(r *http.Request, s *Schema, vals assignValues, addrs [
 // markAssignMatches sets Matches on every written row: whether the list holds
 // it now. One list read narrowed to the written ids, through the same pipeline
 // as the list itself, so the answer covers only rows the caller can read.
-func (a *App) markAssignMatches(ctx context.Context, s *Schema, listID string, results []assignResult) error {
+func markAssignMatches(ctx context.Context, a *App, s *Schema, listID string, results []assignResult) error {
 	reach := map[string]bool{}
 	for _, r := range results {
 		if r.OK {

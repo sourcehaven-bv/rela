@@ -434,6 +434,8 @@ var locked = map[File][]string{
 		"dashboard.entity_type", "dashboards.*.entity_type",
 		"dashboard.cards.[].scope.*", "dashboards.*.cards.[].scope.*",
 		"lists.*.actions.**", "lists.*.toolbar_actions.**", "lists.*.export_render",
+		// Not in the Configure space yet: list assign defaults (TKT-FGE5G3I).
+		"lists.*.assign.**",
 		// A board's header actions (TKT-I2SRNWR), like a list's.
 		"kanbans.*.actions.**",
 		// The pile menu's actions and export transforms, like a list's.
