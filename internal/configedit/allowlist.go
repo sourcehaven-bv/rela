@@ -159,6 +159,7 @@ var editable = map[File][]string{
 		"triggers.*.on.when",
 		"triggers.*.on.where.[]",
 		"triggers.*.outputs.[].set.properties.*",
+		"triggers.*.outputs.[].set.unset.[]",
 		"triggers.*.outputs.[].create.properties.*",
 		"triggers.*.outputs.[].create.relate.from",
 		"triggers.*.outputs.[].create.relate.type",
@@ -383,7 +384,7 @@ var locked = map[File][]string{
 		"copies.**", "conversions.**", "task_item_conversions.**", "default_world", "worlds.**", "entities.*.faces.**",
 		"entities.*.properties.*.computed", "relations.*.properties.*.computed",
 		"entities.*.properties.*.rollup.**", "relations.*.properties.*.rollup.**",
-		"relations.*.scope", "relations.*.owning",
+		"relations.*.scope", "relations.*.owning", "relations.*.within", "relations.*.on_change",
 		"validations.[].faces.**",
 	},
 	FlowsFile: {
@@ -435,6 +436,8 @@ var locked = map[File][]string{
 		"dashboard.entity_type", "dashboards.*.entity_type",
 		"dashboard.cards.[].scope.*", "dashboards.*.cards.[].scope.*",
 		"lists.*.actions.**", "lists.*.toolbar_actions.**", "lists.*.export_render",
+		// Not in the Configure space yet: list assign defaults (TKT-FGE5G3I).
+		"lists.*.assign.**",
 		// A board's header actions (TKT-I2SRNWR), like a list's.
 		"kanbans.*.actions.**",
 		// The pile menu's actions and export transforms, like a list's.

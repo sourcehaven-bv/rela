@@ -787,6 +787,9 @@
       "readOnly": "read-only",
       "searchPlaceholder": "Search {types}...",
       "noMatches": "No matching entities found",
+      "scopeEmpty": "Choose {scope} first",
+      "scopeLoadFailed": "Could not load the choices for {scope}",
+      "scopeStale": "This no longer belongs to {scope}. Change it or keep the old {scope}.",
       "more": "+{n} more...",
       "newButton": "+ New {type}",
       "loadFailed": "Failed to load relations",
@@ -1725,5 +1728,11 @@
     "title": "Page not found",
     "description": "There is no page at this address. It may have moved, or the link may be wrong.",
     "home": "Go to the home page"
+  },
+  "assign": {
+    "done": "Moved {count} item | Moved {count} items",
+    "refused": "{count} item could not be moved | {count} items could not be moved",
+    "notInList": "Moved, but {count} item does not match the list's condition | Moved, but {count} items do not match the list's condition",
+    "wrongType": "This entry does not accept that kind of item"
   }
 }

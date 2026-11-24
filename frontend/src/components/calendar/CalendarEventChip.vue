@@ -14,6 +14,7 @@ import { useI18n } from 'vue-i18n'
 import type { CalendarEvent } from '@/composables/useCalendarEvents'
 import CardFieldList from '@/components/common/CardFieldList.vue'
 import { compareDays, sameDay, type CalendarDay } from '@/utils/calendarGrid'
+import { namedColorVar } from '@/utils/styleColors'
 
 const props = defineProps<{
   event: CalendarEvent
@@ -86,10 +87,8 @@ defineEmits<{
   <button
     type="button"
     class="calendar-chip"
-    :class="[
-      `calendar-chip--${event.color}`,
-      { 'calendar-chip--timed': event.timed, 'calendar-chip--dragging': dragging },
-    ]"
+    :class="{ 'calendar-chip--timed': event.timed, 'calendar-chip--dragging': dragging }"
+    :style="{ '--calendar-chip-accent': namedColorVar(event.color) }"
     :draggable="draggable ? 'true' : 'false'"
     :title="event.summary"
     @click="$emit('open', event)"
@@ -186,26 +185,7 @@ defineEmits<{
   line-height: 1;
 }
 
-/* Source colours map onto the EXISTING badge palette rather than a private set
-   of hex values: those tokens are already themed for light and dark, so a
-   calendar restyles with the rest of the app instead of pinning colours the
-   theme cannot reach. */
-.calendar-chip--blue {
-  --calendar-chip-accent: var(--rl-color-status-blue);
-}
-.calendar-chip--green {
-  --calendar-chip-accent: var(--rl-color-status-green);
-}
-.calendar-chip--amber {
-  --calendar-chip-accent: var(--rl-color-status-amber);
-}
-.calendar-chip--red {
-  --calendar-chip-accent: var(--rl-color-status-red);
-}
-.calendar-chip--violet {
-  --calendar-chip-accent: var(--rl-color-accent);
-}
-.calendar-chip--slate {
-  --calendar-chip-accent: var(--rl-color-status-grey);
-}
+/* The source colour arrives inline as --calendar-chip-accent, from the one
+   colour list (NAMED_COLORS in utils/styleColors.ts). Those are theme tokens,
+   so a calendar restyles with the rest of the app. */
 </style>

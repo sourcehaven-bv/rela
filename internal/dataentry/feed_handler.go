@@ -148,20 +148,45 @@ type feedEntitySource struct {
 
 // listType lists all entities of a type the principal may read.
 //
-// Routes through scopedHeaders (scopedread.go), which owns the verdict switch
-// and every narrowing — this used to restate the switch by hand, which is how
-// a world or face narrowing could reach the list endpoint and not the feed.
-// Fail-closed: an unresolvable verdict withholds.
+// Reads through scopedQuery and scanHeaders (scopedread.go), which own the
+// verdict switch and every narrowing. This used to restate the switch by
+// hand, which is how a world or face narrowing could reach the list endpoint
+// and not the feed. Fail-closed: an unresolvable verdict withholds. The scan
+// grows with the type; TKT-SMUO8CS pushes the feed's `where:` into the store.
 func (s feedEntitySource) listType(ctx context.Context, entityType string) ([]*entitypkg.Entity, error) {
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, entityType)
-	entities, _, err := scopedEntities(ctx, s.app.Services(), rqr, scopeRequest{
-		Type:  entityType,
-		Faces: rqr.Faces,
+	req := scopeRequest{Type: entityType, Faces: rqr.Faces}
+	q, errClass, withheld, err := scopedQuery(ctx, rqr, req)
+	if withheld || err != nil {
+		return nil, wrapFeedList(entityType, err)
+	}
+	headers, err := scanHeaders(ctx, s.app.Services(), q, errClass, req)
+	if err != nil {
+		return nil, wrapFeedList(entityType, err)
+	}
+	return headerEntities(headers), nil
+}
+
+// listByIDs is listType narrowed to the named ids: the same verdict, world
+// and faces, at a cost that follows len(ids) rather than the type. An id the
+// principal may not read is absent from the result.
+func (s feedEntitySource) listByIDs(ctx context.Context, entityType string, ids []string) ([]*entitypkg.Entity, error) {
+	rqr := readGateFromContext(ctx).ReadQuery(ctx, entityType)
+	entities, err := scopedEntities(ctx, s.app.Services(), rqr, scopeRequest{
+		Type: entityType, Faces: rqr.Faces, ByIDs: true, IDs: ids,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("feed: list %q: %w", entityType, err)
+		return nil, wrapFeedList(entityType, err)
 	}
 	return entities, nil
+}
+
+// wrapFeedList names the feed source type in a read error; nil stays nil.
+func wrapFeedList(entityType string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("feed: list %q: %w", entityType, err)
 }
 
 // getEntity fetches one entity if the principal may read it (per-entity gate).

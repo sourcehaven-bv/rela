@@ -36,6 +36,10 @@ type Page struct {
 	// overriding next_action_surfaces. Nil: accepted, means inherit. See
 	// [Config.NextActionsEnabled].
 	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
+	// Assign is what an item gets when it is dropped on a sidebar entry that
+	// links to this page's entity (`items_from`, `entities:`). Only an entity
+	// page takes it. See [Assign].
+	Assign *Assign `yaml:"assign,omitempty" json:"assign,omitempty"`
 }
 
 // PageMode says how a [Page] shows its tabs.

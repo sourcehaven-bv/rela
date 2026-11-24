@@ -53,5 +53,8 @@ paths:
   `ListEntities`/`ListRelations`/`ListEntityHeaders` call, or a
   `GraphQuery`/`*Page` call without `Limit`, that is not bounded by ids fails
   `TestNoNewUnpagedReads`; the list may only shrink. Its `request-path`
-  entries are debt, and the allowlist names the follow-up ticket for each
-  area.
+  entries are debt, and each names the ticket that removes it. In data-entry,
+  `scopedHeaders` serves bounded reads only (ids, or one window with
+  `Limit`); a caller that needs every row calls `scopedQuery` and then
+  `scanHeaders` itself, so the scan is charged to that caller's own entry
+  (TKT-C5H506O).

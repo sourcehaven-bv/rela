@@ -849,7 +849,13 @@ type RelationType struct {
 	Symmetric   bool        `json:"symmetric,omitempty"`
 	// Owning marks a relation whose targets are shown as part of their
 	// source (TKT-QO14GB).
-	Owning      bool                   `json:"owning,omitempty"`
+	Owning bool `json:"owning,omitempty"`
+	// Within names the scope relation of a scoped relation; OnChange is
+	// "clear" or "reject". ScopeOwners maps each target type to the owning
+	// relation whose source is its owner (TKT-5GK80Q9).
+	Within      string                 `json:"within,omitempty"`
+	OnChange    string                 `json:"on_change,omitempty"`
+	ScopeOwners map[string]string      `json:"scope_owners,omitempty"`
 	MinOutgoing *int                   `json:"min_outgoing,omitempty"`
 	MaxOutgoing *int                   `json:"max_outgoing,omitempty"`
 	MinIncoming *int                   `json:"min_incoming,omitempty"`
@@ -1338,6 +1344,9 @@ type SidebarGroup struct {
 	ItemsKey  string        `json:"items_key,omitempty"`
 	ItemsPage string        `json:"items_page,omitempty"`
 	ItemsList string        `json:"items_list,omitempty"`
+	// ItemsChildPage names the entity page a child entry opens, empty when
+	// a child opens the entity itself or the group has no children.
+	ItemsChildPage string `json:"items_child_page,omitempty"`
 	// ItemsCreate is the add control on a generated group's heading
 	// (`items_from.create`), present only when this principal may create
 	// the list's type and a form resolves. A UI hint; the create endpoint
@@ -1368,6 +1377,13 @@ type NavItem struct {
 	Type    string `json:"type"`
 	Label   string `json:"label"`
 	Initial string `json:"initial,omitempty"`
+	// Status is the entry's count, absent when it is zero or not configured.
+	Status *NavStatus `json:"status,omitempty"`
+	// Children are the entries one level down, in the child list's order.
+	Children []NavItem `json:"children,omitempty"`
+	// ChildrenTruncated says the entry has more visible children than the
+	// limit.
+	ChildrenTruncated bool `json:"children_truncated,omitempty"`
 }
 
 // DashboardResponse contains the dashboard page config with the cards this

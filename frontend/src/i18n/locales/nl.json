@@ -787,6 +787,9 @@
       "readOnly": "alleen-lezen",
       "searchPlaceholder": "{types} zoeken...",
       "noMatches": "Geen passende items gevonden",
+      "scopeEmpty": "Kies eerst {scope}",
+      "scopeLoadFailed": "De keuzes voor {scope} konden niet worden geladen",
+      "scopeStale": "Dit hoort niet meer bij {scope}. Wijzig het of houd de oude {scope}.",
       "more": "+{n} meer...",
       "newButton": "+ Nieuw: {type}",
       "loadFailed": "Relaties laden mislukt",
@@ -1725,5 +1728,11 @@
     "title": "Pagina niet gevonden",
     "description": "Op dit adres staat geen pagina. Misschien is de pagina verplaatst, of klopt de link niet.",
     "home": "Naar de startpagina"
+  },
+  "assign": {
+    "done": "{count} item verplaatst | {count} items verplaatst",
+    "refused": "{count} item kon niet worden verplaatst | {count} items konden niet worden verplaatst",
+    "notInList": "Verplaatst, maar {count} item past niet bij de voorwaarde van de lijst | Verplaatst, maar {count} items passen niet bij de voorwaarde van de lijst",
+    "wrongType": "Dit menu-item accepteert dat soort item niet"
   }
 }

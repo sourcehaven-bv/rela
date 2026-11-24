@@ -1,4 +1,4 @@
-import type { StatusColor } from 'rela-components/types'
+import type { NavItemStatus } from 'rela-components/types'
 import type {
   ChannelMessageCards,
   ChannelMessageDisplay,
@@ -122,6 +122,8 @@ export interface ActionConfig {
    */
   confirm?: boolean | string
   set?: Record<string, string>
+  /** A list whose `assign:` this action applies to the selected rows. */
+  assign?: string
   script?: string
   description?: string
   params?: Record<string, string>
@@ -386,7 +388,22 @@ export interface FormFieldOrRelation {
   clear_when_hidden?: ClearWhenHidden
 }
 
+/** One assigned value: a literal, or an expression the server evaluates. */
+export type AssignValueConfig = { value: string } | { expr: string }
+
+/**
+ * What an item gets when it enters a list or is dropped on a page's sidebar
+ * entry. The SPA never evaluates it: `/_assign` resolves and writes it.
+ */
+export interface AssignConfig {
+  entity_type?: string
+  properties?: Record<string, AssignValueConfig>
+  relations?: Record<string, string>
+}
+
 export interface ListConfig {
+  /** Set when the list assigns values to items entering it. */
+  assign?: AssignConfig
   entity: string
   title?: string
   /** Markdown rendered above the list. `description` is a fallback alias. */
@@ -493,7 +510,7 @@ export interface ListGroup {
   id?: string
   condition?: string
   label?: string
-  color?: StatusColor
+  color?: ColorName
 }
 
 /**
@@ -624,6 +641,8 @@ export interface ViewSection {
 export interface KanbanConfig {
   entity: string
   title?: string
+  /** A predicate the server applies to the board's cards; see `kanban_id`. */
+  condition?: string
   /**
    * `wall` lays the cards out as a wrapping grid: one grid without columns,
    * or with `columns_from` a pile of loose cards above the groups.
@@ -835,7 +854,26 @@ export type CalendarViewKind = 'month' | 'week'
 export type CalendarWeekStart = 'monday' | 'sunday'
 
 /** A named palette token; the theme owns what the colour actually is. */
-export type CalendarColor = 'blue' | 'green' | 'amber' | 'red' | 'violet' | 'slate'
+/**
+ * A colour name data-entry.yaml accepts: a hue or one of its aliases. The
+ * server's ColorNames (internal/dataentryconfig/colors.go) holds the same
+ * names; NAMED_COLORS in utils/styleColors.ts maps each to its dot colour.
+ */
+export type ColorName =
+  | 'grey'
+  | 'gray'
+  | 'slate'
+  | 'red'
+  | 'orange'
+  | 'amber'
+  | 'yellow'
+  | 'green'
+  | 'teal'
+  | 'blue'
+  | 'purple'
+  | 'violet'
+
+export type CalendarColor = ColorName
 
 /**
  * CalendarSourceConfig projects one entity type onto the grid.
@@ -1376,6 +1414,13 @@ export interface SidebarItem {
    */
   status_key?: string
   /**
+   * Never in `/_sidebar`: filled in the browser from `/_nav_items` for a
+   * generated entry, whose count and children are per principal.
+   */
+  status?: NavItemStatus
+  /** Never in `/_sidebar`; see `status`. */
+  children?: SidebarItem[]
+  /**
    * The letter badge of an entry generated from a list row (`items_from:`).
    * Never on the wire from `/_sidebar`: it comes per principal from
    * `/_nav_items`.
@@ -1407,6 +1452,8 @@ export interface SidebarGroup {
   items_page?: string
   /** The list the generated entries come from, for a link to all of its rows. */
   items_list?: string
+  /** The entity page each child entry opens. Absent: a child opens the entity. */
+  items_child_page?: string
   /**
    * Set when the group offers to create a row of its list (`items_from.create`)
    * and the principal may. The server re-authorizes the create.
@@ -1486,6 +1533,8 @@ export interface SidebarData {
  * The tabs a principal may see come from the sidebar's `pages`.
  */
 export interface PageConfig {
+  /** Set when a row dropped on an entry for this page's entity gets values. */
+  assign?: AssignConfig
   label: string
   icon?: string
   entity_type?: string

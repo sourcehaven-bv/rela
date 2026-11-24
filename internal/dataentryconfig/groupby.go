@@ -61,8 +61,7 @@ type ListGroupBy struct {
 
 // ListGroup restyles the section for one value of an enum group property,
 // or, in a computed grouping, declares one section by ID and Condition.
-// Color is a status color token from the component library (see
-// ValidGroupColors).
+// Color is a color name from [ColorNames].
 type ListGroup struct {
 	Value string `yaml:"value,omitempty" json:"value,omitempty"`
 	// ID names a computed group. It is what the server stamps on each row

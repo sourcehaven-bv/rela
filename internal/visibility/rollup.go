@@ -114,6 +114,9 @@ func (r *Rollups) Values(
 		slog.Warn("visibility: roll-ups left out", "type", entityType, "err", err)
 		return out
 	}
+	// bodies are the served rows' readable bodies, read once for every
+	// body_tasks column of the type.
+	var bodies map[entity.Ref]string
 	for _, col := range cols {
 		if want != nil && !want(col.Property) {
 			continue
@@ -124,9 +127,15 @@ func (r *Rollups) Values(
 			continue
 		}
 		var results map[string]store.RollupResult
-		if col.Records != "" {
+		switch {
+		case col.BodyTasks != "":
+			if bodies == nil {
+				bodies = readBodiesOrNone(ctx, r.st, entityType, rows)
+			}
+			results = bodyColumn(col, rows, bodies)
+		case col.Records != "":
 			results, err = r.recordColumn(ctx, col, ids)
-		} else {
+		default:
 			results, err = r.column(ctx, col, ids, world)
 		}
 		if err != nil {
@@ -296,4 +305,78 @@ func MergeRollups(props map[string]any, names []string, values map[string]any) m
 		}
 	}
 	return props
+}
+
+// readBodies reads the bodies of rows, one store call per distinct face, for
+// the body_tasks roll-ups (TKT-SQ8O0EQ). rows are already row-gated by the
+// caller. A row whose body is inaccessible (git-crypt) is absent, so its
+// roll-ups have no value: a count derived from the body is shown only where
+// the body is. Field redaction does not reach the body today (see the
+// body-redaction TODO on [PolicyReader]); when it does, this read must
+// apply it too.
+func readBodies(ctx context.Context, st store.EntityLister, rows []entity.Ref) (map[entity.Ref]string, error) {
+	byFace := map[entity.Face][]string{}
+	var faces []entity.Face
+	seen := make(map[entity.Ref]struct{}, len(rows))
+	for _, ref := range rows {
+		if _, dup := seen[ref]; dup {
+			continue
+		}
+		seen[ref] = struct{}{}
+		if _, known := byFace[ref.Face]; !known {
+			faces = append(faces, ref.Face)
+		}
+		byFace[ref.Face] = append(byFace[ref.Face], ref.ID)
+	}
+	out := make(map[entity.Ref]string, len(rows))
+	for _, face := range faces {
+		q := store.EntityQuery{IDs: byFace[face], Faces: store.AtFaces(face)}
+		for e, err := range st.ListEntities(ctx, q) {
+			if err != nil {
+				return nil, err
+			}
+			if !bodyInaccessible(e) {
+				out[e.Ref()] = e.Content
+			}
+		}
+	}
+	return out, nil
+}
+
+// readBodiesOrNone is [readBodies], or no bodies when the read fails: the
+// body roll-ups are then absent, never ungated.
+func readBodiesOrNone(
+	ctx context.Context, st store.EntityLister, entityType string, rows []entity.Ref,
+) map[entity.Ref]string {
+	bodies, err := readBodies(ctx, st, rows)
+	if err != nil {
+		slog.Warn("visibility: body roll-ups left out", "type", entityType, "err", err)
+		return map[entity.Ref]string{}
+	}
+	return bodies
+}
+
+// bodyColumn is one body_tasks roll-up over the readable bodies, keyed by
+// id; the first face of an id wins.
+func bodyColumn(col rollup.Column, rows []entity.Ref, bodies map[entity.Ref]string) map[string]store.RollupResult {
+	out := make(map[string]store.RollupResult, len(rows))
+	for _, ref := range rows {
+		if _, done := out[ref.ID]; done {
+			continue
+		}
+		if body, ok := bodies[ref]; ok {
+			out[ref.ID] = store.RollupResult{Value: col.TaskCount(body)}
+		}
+	}
+	return out
+}
+
+// bodyInaccessible reports whether e's body is marked unreadable.
+func bodyInaccessible(e *entity.Entity) bool {
+	for _, f := range e.Inaccessible {
+		if f.Name == entity.InaccessibleFieldContent {
+			return true
+		}
+	}
+	return false
 }

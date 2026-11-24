@@ -27,6 +27,7 @@
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import { useRelationColumns, OTHER_COLUMN } from '@/composables/useRelationColumns'
 import type { DotColor } from 'rela-components/types'
+import { namedColor } from '@/utils/styleColors'
 import { useUIStore } from '@/stores'
 import { formatCellValue } from '@/utils/format'
 import { BUCKET_ORDER, bucketDate, bucketOf, defaultBucketLabel } from '@/utils/dateBuckets'
@@ -141,7 +142,7 @@ export function groupRows(
     byKey.set(value, {
       id: `value:${value}`,
       title: override?.label || def?.labels?.[value] || value,
-      color: override?.color,
+      color: namedColor(override?.color),
       prefill: { [property]: value },
       items: [],
     })
@@ -188,7 +189,7 @@ function computedSections(rows: Entity[], groupBy: ListGroupBy): ListSection[] {
   const byId = new Map<string, ListSection>()
   for (const g of groupBy.groups ?? []) {
     if (!g.id) continue
-    byId.set(g.id, { id: `group:${g.id}`, title: g.label || g.id, color: g.color, items: [] })
+    byId.set(g.id, { id: `group:${g.id}`, title: g.label || g.id, color: namedColor(g.color), items: [] })
   }
   const other: ListSection = { id: OTHER_ID, title: t('list.group.other'), items: [] }
   for (const row of rows) {

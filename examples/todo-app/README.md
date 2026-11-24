@@ -44,12 +44,19 @@ The four orphan findings are the Inbox to-dos, which belong to nothing.
 | -------- | ------------------------------------------------------------------------- |
 | Inbox    | list `inbox`: open, no when, no start date, no project, no area           |
 | Today    | list `today`: scheduled with start date reached, or deadline reached; computed groups Today, This Evening, Deadline reached |
-| Upcoming | list `upcoming` grouped by start date, and calendar `upcoming_calendar`   |
+| Upcoming | page `upcoming`: list `upcoming` grouped by start date, and calendar `upcoming_calendar` as tabs |
 | Anytime  | list `anytime`, grouped by project                                        |
 | Someday  | list `someday`                                                            |
 | Logbook  | list `logbook`, newest first                                              |
 | Areas    | one sidebar group per area with its active projects; area and project pages |
 
 List shortcuts: select rows, then `c` complete, `x` cancel, `t` Today,
-`v` This Evening, `a` Anytime, `s` Someday. Today and This Evening run
+`v` This Evening, `a` Anytime, `s` Someday. This Evening runs
 `actions/schedule.lua`, which schedules the to-do for today's date in UTC.
+
+Moving rows: Today, Anytime and Someday each declare an `assign:`, the values
+a to-do gets when it enters the list. Today's assign schedules it with
+`start_date: today()`. Adding a row there, dragging rows onto the list's
+sidebar entry, and the `t`/`a`/`s` keys all apply it. Dragging a to-do onto a
+project or area entry in the sidebar puts it in that project or area (the
+`assign:` on the `project` and `area` pages).

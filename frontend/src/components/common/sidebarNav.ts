@@ -75,7 +75,8 @@ export function toNavGroups(
   groups: ShownGroup[],
   routerLink: Component,
   onFlyoutClick?: FlyoutClickHandler,
-  statusFor?: NavStatusLookup
+  statusFor?: NavStatusLookup,
+  dropAttrs?: NavDropAttrs
 ): NavGroup[] {
   const seen = new Set<string>()
 
@@ -92,7 +93,7 @@ export function toNavGroups(
     // looks like a link and goes nowhere is worse than an absent one.
     items: group.items
       .filter(isNavigable)
-      .map((item) => toNavItem(item, routerLink, seen, onFlyoutClick, statusFor)),
+      .map((item) => toNavItem(item, routerLink, seen, onFlyoutClick, statusFor, dropAttrs)),
   }))
 }
 
@@ -106,12 +107,19 @@ export type FlyoutClickHandler = (item: SidebarItem, id: string, event: MouseEve
 /** Resolves an entry's `status_key` to its current marker, if it has one. */
 export type NavStatusLookup = (key: string | undefined) => NavItemStatus | undefined
 
+/**
+ * Drag-and-drop handlers for a link entry, by its href: the entries whose list
+ * or page has an `assign:` accept dropped rows (TKT-FGE5G3I).
+ */
+export type NavDropAttrs = (href: string) => Record<string, unknown> | undefined
+
 function toNavItem(
   item: SidebarItem,
   routerLink: Component,
   seen: Set<string>,
   onFlyoutClick?: FlyoutClickHandler,
-  statusFor?: NavStatusLookup
+  statusFor?: NavStatusLookup,
+  dropAttrs?: NavDropAttrs
 ): NavItem {
   let id = navId(item)
   // Malformed config can repeat the placeholder, and an operator can point two
@@ -123,7 +131,11 @@ function toNavItem(
     id = `${id}:${n}`
   }
   seen.add(id)
-  const status = statusFor?.(item.status_key)
+  const status = item.status ?? statusFor?.(item.status_key)
+  const drop = !item.action && !item.pile && item.href ? dropAttrs?.(item.href) : undefined
+  const children = item.children
+    ?.filter(isNavigable)
+    .map((child) => toNavItem(child, routerLink, seen, onFlyoutClick, statusFor, dropAttrs))
 
   return {
     id,
@@ -134,7 +146,7 @@ function toNavItem(
     icon: item.icon,
     ...(item.action || item.pile
       ? { as: 'button' as const }
-      : { as: routerLink, attrs: { to: item.href } }),
+      : { as: routerLink, attrs: { to: item.href, ...drop } }),
     ...(item.pile ? { opensFlyout: true } : {}),
     // Still a link to the list's page, so a modified click opens it in a new
     // tab; only the plain click is taken over.
@@ -143,12 +155,14 @@ function toNavItem(
           opensFlyout: true,
           attrs: {
             to: item.href,
+            ...drop,
             onClickCapture: (event: MouseEvent) => onFlyoutClick(item, id, event),
           },
         }
       : {}),
     ...(status ? { status } : {}),
     ...(item.initial ? { initial: item.initial } : {}),
+    ...(children?.length ? { children } : {}),
   }
 }
 
@@ -174,6 +188,12 @@ export function generatedItemHref(group: SidebarGroup, entry: NavItemEntry): str
   return entityDetailHref(entry)
 }
 
+/** Where a child entry goes: the group's child page, or else the entity itself. */
+export function generatedChildHref(group: SidebarGroup, entry: NavItemEntry): string {
+  if (group.items_child_page) return `/p/${group.items_child_page}/${encodeURIComponent(entry.id)}`
+  return entityDetailHref(entry)
+}
+
 /**
  * Fills each generated group (`items_key`) with its entries, so the rest of
  * the mapping treats them as ordinary items.
@@ -191,7 +211,8 @@ export function generatedItemHref(group: SidebarGroup, entry: NavItemEntry): str
 export function expandGeneratedItems(
   groups: SidebarGroup[],
   lookup: NavItemsLookup,
-  hrefFor: GeneratedItemHref = generatedItemHref
+  hrefFor: GeneratedItemHref = generatedItemHref,
+  childHrefFor: GeneratedItemHref = generatedChildHref
 ): ShownGroup[] {
   const out: ShownGroup[] = []
   for (const group of groups) {
@@ -213,6 +234,10 @@ export function expandGeneratedItems(
       // No glyph: the library renders the badge only where there is no icon,
       // and an entry without one keeps its label aligned with its siblings.
       ...(entry.initial ? { initial: entry.initial } : {}),
+      ...(entry.status ? { status: entry.status } : {}),
+      ...(entry.children?.length
+        ? { children: generatedChildren(group, entry, childHrefFor) }
+        : {}),
     }))
     if (list.truncated && group.items_list) {
       items.push({ label: t('nav.showAll'), href: `/list/${group.items_list}`, icon: 'list' })
@@ -220,6 +245,26 @@ export function expandGeneratedItems(
     out.push({ ...group, items })
   }
   return out
+}
+
+/**
+ * The child rows of a generated entry. When the entry has more children than
+ * it shows, a last row links to the entry itself, where they all are.
+ */
+function generatedChildren(
+  group: SidebarGroup,
+  entry: NavItemEntry,
+  hrefFor: GeneratedItemHref
+): SidebarItem[] {
+  const items: SidebarItem[] = (entry.children ?? []).map((child) => ({
+    label: child.label,
+    href: hrefFor(group, child),
+    ...(child.status ? { status: child.status } : {}),
+  }))
+  if (entry.children_truncated) {
+    items.push({ label: t('nav.showAll'), href: generatedItemHref(group, entry), icon: 'list' })
+  }
+  return items
 }
 
 /**
@@ -268,13 +313,14 @@ export function expandEntityEntries(
 export function activeNavId(groups: NavGroup[], path: string): string | undefined {
   let best: { id: string; length: number } | undefined
 
-  for (const group of groups) {
-    for (const item of group.items) {
-      const to = item.attrs?.to
-      if (typeof to !== 'string') continue
-      if (path !== to && (stripSpace(to) === '/' || !path.startsWith(`${to}/`))) continue
-      if (!best || to.length > best.length) best = { id: item.id, length: to.length }
-    }
+  // A child row (a generated entry's children) is matched like any other.
+  const flat = (items: NavItem[]): NavItem[] =>
+    items.flatMap((item) => [item, ...flat(item.children ?? [])])
+  for (const item of groups.flatMap((group) => flat(group.items))) {
+    const to = item.attrs?.to
+    if (typeof to !== 'string') continue
+    if (path !== to && (stripSpace(to) === '/' || !path.startsWith(`${to}/`))) continue
+    if (!best || to.length > best.length) best = { id: item.id, length: to.length }
   }
 
   return best?.id

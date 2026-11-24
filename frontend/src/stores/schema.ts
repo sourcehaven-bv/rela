@@ -14,6 +14,7 @@ import type {
   FormConfig,
   ChannelPresentation,
   ListConfig,
+  PageConfig,
   ViewConfig,
   EntityViewConfig,
   CalendarConfig,
@@ -71,6 +72,8 @@ export const useSchemaStore = defineStore('schema', () => {
   /** data-entry.yaml `channels:`, keyed by channel type (TKT-91BK6F). */
   const channelPresentations = ref<Map<string, ChannelPresentation>>(new Map())
   const lists = ref<Map<string, ListConfig>>(new Map())
+  /** `pages:` from `/_config`, for what a drop on a page's entry assigns. */
+  const pageConfigs = ref<Map<string, PageConfig>>(new Map())
   const views = ref<Map<string, ViewConfig>>(new Map())
   // Keyed by entity TYPE, unlike `views` which is keyed by view id.
   const entityViews = ref<Map<string, EntityViewConfig>>(new Map())
@@ -258,6 +261,7 @@ export const useSchemaStore = defineStore('schema', () => {
   )
   const getForm = computed(() => (id: string) => forms.value.get(id))
   const getList = computed(() => (id: string) => lists.value.get(id))
+  const getPageConfig = computed(() => (id: string) => pageConfigs.value.get(id))
   // Find the first list ID that shows entities of the given type.
   // Returns undefined if no list is configured for that type.
   const findListIdForEntityType = computed(() => (entityType: string) => {
@@ -523,6 +527,7 @@ export const useSchemaStore = defineStore('schema', () => {
       forms.value = new Map(Object.entries(configData.forms || {}))
       channelPresentations.value = new Map(Object.entries(configData.channels || {}))
       lists.value = new Map(Object.entries(configData.lists || {}))
+      pageConfigs.value = new Map(Object.entries(configData.pages || {}))
       views.value = new Map(Object.entries(configData.views || {}))
       entityViews.value = new Map(Object.entries(configData.entity_views || {}))
       kanbans.value = new Map(Object.entries(configData.kanbans || {}))
@@ -685,6 +690,7 @@ export const useSchemaStore = defineStore('schema', () => {
     getInverseName,
     getForm,
     getList,
+    getPageConfig,
     findListIdForEntityType,
     getView,
     getKanban,

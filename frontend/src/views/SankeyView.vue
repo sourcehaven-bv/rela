@@ -19,6 +19,7 @@ import { fromPageQuery } from '@/utils/pageContext'
 import { renderMarkdown } from '@/utils/markdown'
 import { layoutSankey } from '@/utils/sankeyLayout'
 import type { CalendarColor } from '@/types/config'
+import { namedColorVar } from '@/utils/styleColors'
 
 const props = defineProps<{ id: string }>()
 
@@ -164,14 +165,6 @@ function pipX(n: Placed, i: number): number {
 
 /* Colours are palette tokens mapped onto the theme's own variables, so the
    diagram follows light and dark mode like the rest of the app. */
-const TOKEN_VAR: Record<CalendarColor, string> = {
-  blue: 'var(--rl-color-status-blue)',
-  green: 'var(--rl-color-status-green)',
-  amber: 'var(--rl-color-status-amber)',
-  red: 'var(--rl-color-status-red)',
-  violet: 'var(--rl-color-accent)',
-  slate: 'var(--rl-color-status-grey)',
-}
 const CYCLE: CalendarColor[] = ['blue', 'green', 'amber', 'red', 'violet', 'slate']
 
 const typeColor = computed(() => {
@@ -179,7 +172,7 @@ const typeColor = computed(() => {
   const cfg = config.value
   if (!cfg) return out
   cfg.columns.flat().forEach((type, i) => {
-    out.set(type, TOKEN_VAR[cfg.types?.[type]?.color ?? CYCLE[(i + 4) % CYCLE.length]])
+    out.set(type, namedColorVar(cfg.types?.[type]?.color ?? CYCLE[(i + 4) % CYCLE.length]) ?? '')
   })
   return out
 })
@@ -188,12 +181,14 @@ const toneColor = computed(() => {
   const tones = [
     ...new Set((data.value?.nodes ?? []).map((n) => n.tone).filter((v): v is string => !!v)),
   ].sort()
-  return new Map(tones.map((v, i) => [v, TOKEN_VAR[CYCLE[i % CYCLE.length]]]))
+  return new Map(tones.map((v, i) => [v, namedColorVar(CYCLE[i % CYCLE.length]) ?? '']))
 })
 /** Pip tones are dealt colours like node tones, in a set of their own. */
 const pipToneColor = computed(() => {
   const tones = [...pipInfo.value.values()].map((p) => p.tone).filter((v): v is string => !!v)
-  return new Map([...new Set(tones)].sort().map((v, i) => [v, TOKEN_VAR[CYCLE[i % CYCLE.length]]]))
+  return new Map(
+    [...new Set(tones)].sort().map((v, i) => [v, namedColorVar(CYCLE[i % CYCLE.length]) ?? ''])
+  )
 })
 function pipFill(p: SankeyPip): string {
   return (p.tone && pipToneColor.value.get(p.tone)) || 'var(--rl-color-status-grey)'

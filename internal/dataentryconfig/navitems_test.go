@@ -42,6 +42,39 @@ func TestValidateNavItemsFrom(t *testing.T) {
 		}), nil, ""},
 		{"property initial", group(func(f *NavItemsFrom) { f.Initial = &NavItemsInitial{Property: "name"} }), nil, ""},
 		{"inferred direction", group(func(f *NavItemsFrom) { f.Initial.Direction = "" }), nil, ""},
+		{"children and status", group(func(f *NavItemsFrom) {
+			f.Status = &NavItemsStatus{List: "tickets", Via: "belongs-to", Tone: "info", Label: "{count}"}
+			f.Children = &NavItemsChildren{List: "tickets", Via: "belongs-to", Limit: 5,
+				Status: &NavItemsStatus{List: "tickets", Via: "blocks", Direction: DirectionOutgoing,
+					Tone: "info", Label: "{count}"}}
+		}), nil, ""},
+		{"children unknown list", group(func(f *NavItemsFrom) {
+			f.Children = &NavItemsChildren{List: "nope", Via: "belongs-to"}
+		}), nil, `items_from.children: references unknown list "nope"`},
+		{"children no via", group(func(f *NavItemsFrom) {
+			f.Children = &NavItemsChildren{List: "tickets"}
+		}), nil, "items_from.children.via is required"},
+		{"children via does not join", group(func(f *NavItemsFrom) {
+			f.Children = &NavItemsChildren{List: "cats", Via: "belongs-to", Direction: DirectionOutgoing}
+		}), nil, `items_from.children: relation "belongs-to" does not connect "category"`},
+		{"children limit", group(func(f *NavItemsFrom) {
+			f.Children = &NavItemsChildren{List: "tickets", Via: "belongs-to", Limit: 51}
+		}), nil, "items_from.children.limit must be between 1 and 50"},
+		{"children page for another type", group(func(f *NavItemsFrom) {
+			f.Children = &NavItemsChildren{List: "tickets", Via: "belongs-to", Page: "cat"}
+		}), nil, `page "cat" shows "category" but the list shows "ticket"`},
+		{"status unknown tone", group(func(f *NavItemsFrom) {
+			f.Status = &NavItemsStatus{List: "tickets", Via: "belongs-to", Tone: "loud", Label: "x"}
+		}), nil, `items_from.status: unknown tone "loud"`},
+		{"status no label", group(func(f *NavItemsFrom) {
+			f.Status = &NavItemsStatus{List: "tickets", Via: "belongs-to", Tone: "info"}
+		}), nil, "items_from.status: label is required"},
+		{"status no list", group(func(f *NavItemsFrom) {
+			f.Status = &NavItemsStatus{Via: "belongs-to", Tone: "info", Label: "x"}
+		}), nil, "items_from.status.list is required"},
+		{"status unknown relation", group(func(f *NavItemsFrom) {
+			f.Status = &NavItemsStatus{List: "tickets", Via: "nope", Tone: "info", Label: "x"}
+		}), nil, `items_from.status: relation "nope" not in metamodel`},
 		{"on an item", []NavigationEntry{{Label: "Cats", List: "cats", ItemsFrom: &NavItemsFrom{List: "cats"}}}, nil,
 			`navigation "Cats": items_from is only supported on a group`},
 		{"on an item inside a group", []NavigationEntry{{Group: "G", Items: []NavigationEntry{

@@ -264,6 +264,10 @@ type Action struct {
 	Key         string            `yaml:"key,omitempty" json:"key,omitempty"`
 	Confirm     ActionConfirm     `yaml:"confirm,omitempty" json:"confirm,omitzero"`
 	Set         map[string]string `yaml:"set,omitempty" json:"set,omitempty"`
+	// Assign names a list whose `assign:` the action applies to the selected
+	// rows, as a drop on that list's sidebar entry does. A third mode beside
+	// Set and Script, exclusive with both.
+	Assign string `yaml:"assign,omitempty" json:"assign,omitempty"`
 
 	// LLM makes this a declarative LLM action (TKT-4USH1HO), the third mode
 	// next to Set and Script. It requires AvailableOn with one entity type
@@ -782,33 +786,16 @@ func decodeWholeNumber(value *yaml.Node, what string) (int, error) {
 // exactly and the int conversion cannot overflow.
 const maxWholeNumber = 1 << 31
 
-// ValidCalendarColors is the allowlist of palette tokens a calendar source may
-// use to distinguish its events.
-//
-// Named tokens rather than CSS literals, for the same reason ValidIconNames
-// holds names and not glyphs: a hex value written into config is unreadable in
-// whichever theme it was not chosen for, and it pins every deployment's config
-// against any future restyle. A token maps to a CSS custom property, so the
-// theme keeps ownership of what the color actually is.
-//
-// Exported so the check and its frontend-parity test share one source.
-var ValidCalendarColors = map[string]bool{
-	"blue":   true,
-	"green":  true,
-	"amber":  true,
-	"red":    true,
-	"violet": true,
-	"slate":  true,
-}
-
-// validateCalendarColor reports a config error for an unknown color token.
+// validateCalendarColor reports a config error for an unknown color name.
 // An empty value means "use the default" and is always valid.
 func validateCalendarColor(color, context string) []string {
-	if color == "" || ValidCalendarColors[color] {
+	if color == "" {
 		return nil
 	}
-	return []string{fmt.Sprintf("%s: unknown color %q (valid: %s)",
-		context, color, strings.Join(slices.Sorted(maps.Keys(ValidCalendarColors)), ", "))}
+	if _, err := ParseNamedColor(color); err != nil {
+		return []string{fmt.Sprintf("%s: %v", context, err)}
+	}
+	return nil
 }
 
 // NoIcon is the reserved name meaning "render no icon at all".
@@ -985,7 +972,7 @@ type RelationProperty struct {
 // The plimsoll directive is the format-mirror exception documented on
 // [Config]: each exported field is one key of a list in data-entry.yaml.
 //
-//plimsoll:max-fields=22
+//plimsoll:max-fields=23
 type List struct {
 	EntityType  string `yaml:"entity_type" json:"entity"`
 	Title       string `yaml:"title" json:"title"`
@@ -1091,6 +1078,10 @@ type List struct {
 	// overriding next_action_surfaces. Nil: accepted, means inherit. See
 	// [Config.NextActionsEnabled].
 	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
+	// Assign is what an item gets when it enters this list: the create
+	// form's prefill, a drop on the list's sidebar entry, and an action's
+	// `assign:`. Nil: the list assigns nothing. See [Assign].
+	Assign *Assign `yaml:"assign,omitempty" json:"assign,omitempty"`
 }
 
 // ListColumn defines a column in a list view. A column is one of four
@@ -1336,15 +1327,10 @@ type Kanban struct {
 	AddColumn      bool            `yaml:"add_column,omitempty" json:"add_column,omitempty"`
 	Filters        []FilterConfig  `yaml:"filters,omitempty" json:"filters,omitempty"`
 	FilterControls []FilterControl `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
-	// Condition mirrors [List.Condition], but is NOT YET SUPPORTED on a
-	// kanban and is refused at config load.
-	//
-	// The field exists so the shape is settled and the compiler already
-	// handles both surfaces; what is missing is the board's server-side read
-	// path (it still filters client-side). Accepting the key meanwhile would
-	// validate an expression and then ignore it — the silent no-op class of
-	// BUG-F1LTV0 and BUG-MYN56J. Drop the guard in validateKanbans when the
-	// board evaluates it.
+	// Condition is [List.Condition] for a board. The SPA names the board
+	// with `kanban_id` on its collection read, and the server applies the
+	// condition on the same path a list's goes through (lowered into the
+	// store query where it can be, else on the redacted rows).
 	Condition string `yaml:"condition,omitempty" json:"condition,omitempty"`
 
 	// QueryScope names a `query_scopes:` entry on this view's entity type,
@@ -1585,7 +1571,7 @@ type CalendarSource struct {
 	// have typed anyway; set it when one type appears as two sources (the
 	// documented way to express OR) and "task" twice would be meaningless.
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
-	// Color is a named palette token (see ValidCalendarColors) distinguishing
+	// Color is a named palette token (see ColorNames) distinguishing
 	// this source's events. It is a TOKEN, never a CSS literal: a hex value
 	// baked into config is unreadable in the dark theme and pins every
 	// deployment against future restyling.
@@ -1717,7 +1703,7 @@ type GanttSource struct {
 	// Label names the property used as the bar label. Defaults to the entity
 	// type's display property.
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
-	// Color is a named palette token (see ValidCalendarColors) distinguishing
+	// Color is a named palette token (see ColorNames) distinguishing
 	// this type's bars. A TOKEN, never a CSS literal, for the same reasons as
 	// [CalendarSource.Color].
 	Color string `yaml:"color,omitempty" json:"color,omitempty"`
@@ -1948,6 +1934,58 @@ type NavItemsFrom struct {
 	// create_form, else the type's create form, and is offered only to a
 	// principal who may create the list's type.
 	Create bool `yaml:"create,omitempty" json:"create,omitempty"`
+	// Status puts a count on each entry: the rows of another list related
+	// to the entry. See [NavItemsStatus].
+	//
+	// Nil: accepted, means no count.
+	Status *NavItemsStatus `yaml:"status,omitempty" json:"status,omitempty"`
+	// Children puts one level of entries under each entry: the rows of
+	// another list related to it. See [NavItemsChildren].
+	//
+	// Nil: accepted, means a flat group.
+	Children *NavItemsChildren `yaml:"children,omitempty" json:"children,omitempty"`
+}
+
+// NavItemsChildren is the child level of a generated group: under each
+// entry, the rows of List related to the entry through Via. One level only.
+type NavItemsChildren struct {
+	// List names the list whose rows become child entries, in its order.
+	List string `yaml:"list" json:"list"`
+	// Via is the relation between a child row and its parent row.
+	Via string `yaml:"via" json:"via"`
+	// Direction is from the child row's side, inferred when left out.
+	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"`
+	// Page names an entity page for the child list's type.
+	Page string `yaml:"page,omitempty" json:"page,omitempty"`
+	// Limit caps the children per parent, as [NavItemsFrom.Limit] does.
+	Limit int `yaml:"limit,omitempty" json:"limit,omitempty"`
+	// Status puts a count on each child entry.
+	//
+	// Nil: accepted, means no count.
+	Status *NavItemsStatus `yaml:"status,omitempty" json:"status,omitempty"`
+}
+
+// EffectiveLimit returns Limit, or [NavItemsDefaultLimit] when it is zero.
+func (c NavItemsChildren) EffectiveLimit() int {
+	if c.Limit == 0 {
+		return NavItemsDefaultLimit
+	}
+	return c.Limit
+}
+
+// NavItemsStatus is the count on a generated entry: the number of rows of
+// List (its filters, scope, `condition:` and read gate) related to the entry
+// through Via. A zero count shows nothing. The counted list's own condition
+// decides what counts, so there are no per-rule conditions.
+type NavItemsStatus struct {
+	List string `yaml:"list" json:"list"`
+	Via  string `yaml:"via" json:"via"`
+	// Direction is from the counted row's side, inferred when left out.
+	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"`
+	// Tone is one of the NavStatusTone* values.
+	Tone string `yaml:"tone" json:"tone"`
+	// Label is the marker's text; {count} is the one variable.
+	Label string `yaml:"label" json:"label"`
 }
 
 // NavItemsInitial says where an entry's letter badge comes from: the first

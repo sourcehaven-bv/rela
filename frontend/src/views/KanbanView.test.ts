@@ -242,6 +242,24 @@ describe('KanbanView card property fields', () => {
     wrapper.unmount()
   })
 
+  it('names the board with kanban_id when it has a condition', async () => {
+    const ticket = makeTicket('T-7')
+    const wrapper = await mountBoard(
+      [{ property: 'priority' }],
+      [ticket],
+      {},
+      {
+        condition: "entity.status ~= 'done'",
+      }
+    )
+    expect(listAllEntitiesMock).toHaveBeenCalledWith(
+      ENTITY_TYPE,
+      { kanban_id: KANBAN_ID },
+      expect.any(AbortSignal)
+    )
+    wrapper.unmount()
+  })
+
   it('renders an enum property as a Badge', async () => {
     const ticket = makeTicket('T-6')
     ticket.properties = { title: 'Ticket T-6', status: 'todo' }

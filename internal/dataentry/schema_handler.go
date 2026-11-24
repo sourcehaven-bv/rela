@@ -125,6 +125,16 @@ func (h *schemaHandler) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		if def.Scope.IsContent() {
 			rt.Scope = "content"
 		}
+		if def.Within != "" {
+			rt.Within = def.Within
+			rt.OnChange = string(def.OnChange)
+			rt.ScopeOwners = make(map[string]string, len(def.To))
+			for _, to := range def.To {
+				if owner, ok := metamodel.ScopeOwner(s.Meta, name, to); ok {
+					rt.ScopeOwners[to] = owner
+				}
+			}
+		}
 		if len(def.Properties) > 0 {
 			rt.Properties = make(map[string]v1.PropertyDef, len(def.Properties))
 			for propName, propDef := range def.Properties {

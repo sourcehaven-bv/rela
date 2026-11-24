@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -115,7 +116,7 @@ func (h *cascadeHost) CreateEntity(
 // reason ("the create path must not be the weaker one" — see CreateEntity);
 // without them here, an automation could silently persist a duplicate of a
 // `unique:` natural key, or a value validation would reject.
-func (h *cascadeHost) WriteEntity(ctx context.Context, e *entity.Entity, set map[string]string) error {
+func (h *cascadeHost) WriteEntity(ctx context.Context, e *entity.Entity, set triggers.PropertyWrites) error {
 	if e == nil { // coverage-ignore: defensive: Runner only calls WriteEntity with an entity it created earlier in the
 		// same cascade; never nil
 		return nil
@@ -206,6 +207,9 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 		if err := CheckOwningEdge(ctx, h.deps.Meta, st, r.Identity()); err != nil {
 			return err
 		}
+		if err := checkCascadeScope(ctx, h.deps.scopes, st, r.Identity()); err != nil {
+			return err
+		}
 		if _, err := st.CreateRelation(ctx, r.Identity(), &store.RelationData{
 			Properties: r.Properties,
 			Content:    r.Content,
@@ -214,7 +218,8 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 		}
 		return h.recordCascade(ctx, st, audit.OpCreateRelation, relationSubject(r), "created")
 	}
-	err := auditTx(ctx, h.deps, bounded || metamodel.IsOwning(h.deps.Meta, r.Type), write)
+	inTx := bounded || metamodel.IsOwning(h.deps.Meta, r.Type) || h.deps.scopes.touches(r.Identity())
+	err := auditTx(ctx, h.deps, inTx, write)
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			return nil

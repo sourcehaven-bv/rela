@@ -366,6 +366,8 @@ type App struct {
 	// withhold. It is not safe for the reverse, which is why a condition
 	// that fails to COMPILE is a startup error rather than a silent widening.
 	viewConditions ViewConditionFunc
+	// assignExprs evaluates `assign:` value expressions (TKT-FGE5G3I).
+	assignExprs AssignExprFunc
 
 	// queryScopes compiles `query_scopes:`; see SetQueryScopeResolver.
 	queryScopes QueryScopeResolverFunc
