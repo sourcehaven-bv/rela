@@ -23,4 +23,11 @@ paths:
   cannot break an unrelated PR; run `just comment-body-update` or
   `npm run lint:comments:update` to lock the gain in. Do not raise a count to
   make a build pass.
-- Test files, generated files and `frontend/e2e` are out of scope.
+- CI also runs `go run ./tools/commentbody -against origin/<base>` on PRs. It
+  fails when either baseline gains a file or a higher count than the base.
+- Out of scope: test files, Go generated files, `frontend/e2e`,
+  `frontend/packages`, plain `.js`/`.mjs` files, and TS generated files are not
+  excluded by name. A `why:` comment is one group (adjacent `//` lines); the
+  first line must start with `why:` and give a reason. Per-line
+  `eslint-disable` of this rule does not work, because it is not in the main
+  lint config.

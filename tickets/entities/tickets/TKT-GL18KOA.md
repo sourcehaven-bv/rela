@@ -3,7 +3,8 @@ id: TKT-GL18KOA
 type: ticket
 title: 'Lint: no comments in function bodies (Go and TS)'
 kind: chore
-status: planning
+started: "2026-11-24"
+status: review
 ---
 
 ## Description

@@ -1,6 +1,6 @@
 import { ESLint } from 'eslint'
 import { readFileSync, writeFileSync } from 'node:fs'
-import { relative } from 'node:path'
+import { relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -11,14 +11,18 @@ const eslint = new ESLint({ cwd: root, overrideConfigFile: 'eslint.comments.conf
 const results = await eslint.lintFiles(['.'])
 
 const found = {}
+const problems = []
 for (const result of results) {
+  if (result.fatalErrorCount > 0) {
+    problems.push(`${relative(root, result.filePath)}: could not be parsed`)
+  }
   const messages = result.messages.filter((m) => m.ruleId === 'rela/no-body-comments')
-  if (messages.length > 0) found[relative(root, result.filePath)] = messages
+  if (messages.length > 0) found[relative(root, result.filePath).split(sep).join('/')] = messages
 }
 const counts = Object.fromEntries(
   Object.entries(found)
     .map(([file, messages]) => [file, messages.length])
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
 )
 
 if (update) {
@@ -27,7 +31,6 @@ if (update) {
 }
 
 const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'))
-const problems = []
 for (const [file, count] of Object.entries(counts)) {
   const allowed = baseline[file] ?? 0
   if (count > allowed) {

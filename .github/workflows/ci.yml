@@ -585,6 +585,12 @@ jobs:
       - name: Check comment bodies (gate)
         run: go run ./tools/commentbody
 
+      - name: Check baselines did not grow
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --depth=1 origin "${{ github.base_ref }}"
+          go run ./tools/commentbody -against "origin/${{ github.base_ref }}"
+
       # Advisory: real findings with a backlog being worked down. Visible in
       # the log, never red — see .commentlint.yml for why each rule is here.
       #

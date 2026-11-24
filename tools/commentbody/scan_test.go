@@ -3,6 +3,8 @@ package main
 import (
 	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -30,6 +32,8 @@ func TestFindings(t *testing.T) {
 		{"closure comment", "package p\nvar g = func() {\n\t// explain\n}\n", 1},
 		{"nested closure counted once", "package p\nfunc f() {\n\tg := func() {\n\t\t// explain\n\t}\n\t_ = g\n}\n", 1},
 		{"directive in body", "package p\nfunc f() {\n\t//nolint:gosec\n\t_ = 1\n}\n", 0},
+		{"coverage-ignore", "package p\nfunc f() {\n\t// coverage-ignore: defensive\n\t_ = 1\n}\n", 0},
+		{"bare nolint", "package p\nfunc f() {\n\t// nolint\n\t_ = 1\n}\n", 0},
 		{"why with reason", "package p\nfunc f() {\n\t// why: library bug 42\n\t_ = 1\n}\n", 0},
 		{"why without reason", "package p\nfunc f() {\n\t// why:\n\t_ = 1\n}\n", 1},
 		{"short doc", "package p\n" + okDoc + "func f() {}\n", 0},
@@ -64,6 +68,101 @@ func TestCompare(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := compare(tc.counts, tc.baseline, found); len(got) != tc.wantLen {
 				t.Errorf("problems = %v, want %d", got, tc.wantLen)
+			}
+		})
+	}
+}
+
+func writeTree(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for name, content := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+const commentedFunc = "package p\nfunc f() {\n\t// explain\n}\n"
+
+func TestScanTreeSkipsTestsAndVendoredDirs(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"a.go":               commentedFunc,
+		"a_test.go":          commentedFunc,
+		"frontend/b.go":      commentedFunc,
+		"testdata/c.go":      commentedFunc,
+		"internal/sub/d.go":  commentedFunc,
+		"internal/sub/e.txt": "not go",
+	})
+	got, err := scanTree(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || len(got["a.go"]) != 1 || len(got["internal/sub/d.go"]) != 1 {
+		t.Errorf("scanTree = %v, want only a.go and internal/sub/d.go", got)
+	}
+}
+
+func TestScanTreeReportsParseError(t *testing.T) {
+	root := writeTree(t, map[string]string{"bad.go": "package p\nfunc {"})
+	if _, err := scanTree(root); err == nil {
+		t.Error("want a parse error")
+	}
+}
+
+func TestRunAgainstBaseline(t *testing.T) {
+	root := writeTree(t, map[string]string{"a.go": commentedFunc, baselinePath: "{}"})
+	if err := run(root, false); err == nil {
+		t.Fatal("new finding above an empty baseline must fail")
+	}
+	if err := run(root, true); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if err := run(root, false); err != nil {
+		t.Fatalf("after update: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(root, false); err != nil {
+		t.Fatalf("an improvement must only note, got: %v", err)
+	}
+}
+
+func TestRunMissingBaseline(t *testing.T) {
+	if err := run(writeTree(t, map[string]string{"a.go": "package p\n"}), false); err == nil {
+		t.Error("missing baseline must fail")
+	}
+}
+
+func TestImprovements(t *testing.T) {
+	got := improvements(map[string]int{"a.go": 1}, map[string]int{"a.go": 2, "b.go": 1})
+	if len(got) != 2 {
+		t.Errorf("notes = %v, want 2", got)
+	}
+}
+
+func TestGrew(t *testing.T) {
+	old := map[string]int{"a.go": 2, "b.go": 1}
+	tests := []struct {
+		name string
+		new  map[string]int
+		want int
+	}{
+		{"same", map[string]int{"a.go": 2, "b.go": 1}, 0},
+		{"lower or removed", map[string]int{"a.go": 1}, 0},
+		{"higher", map[string]int{"a.go": 3, "b.go": 1}, 1},
+		{"new key", map[string]int{"a.go": 2, "b.go": 1, "c.go": 1}, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := grew(old, tc.new); len(got) != tc.want {
+				t.Errorf("grew = %v, want %d", got, tc.want)
 			}
 		})
 	}

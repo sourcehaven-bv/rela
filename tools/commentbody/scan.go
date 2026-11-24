@@ -135,7 +135,16 @@ func inAnyBody(bodies []*ast.BlockStmt, group *ast.CommentGroup) bool {
 }
 
 func hasProse(group *ast.CommentGroup) bool {
-	return strings.TrimSpace(group.Text()) != ""
+	for line := range strings.SplitSeq(group.Text(), "\n") {
+		if text := strings.TrimSpace(line); text != "" && !isToolDirective(text) {
+			return true
+		}
+	}
+	return false
+}
+
+func isToolDirective(text string) bool {
+	return strings.HasPrefix(text, "coverage-ignore:") || strings.HasPrefix(text, "nolint")
 }
 
 func isWhyWithReason(group *ast.CommentGroup) bool {
@@ -145,7 +154,7 @@ func isWhyWithReason(group *ast.CommentGroup) bool {
 
 func proseLines(group *ast.CommentGroup) int {
 	count := 0
-	for _, line := range strings.Split(group.Text(), "\n") {
+	for line := range strings.SplitSeq(group.Text(), "\n") {
 		if strings.TrimSpace(line) != "" {
 			count++
 		}

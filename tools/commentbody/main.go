@@ -5,14 +5,25 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"sort"
 )
 
 const baselinePath = "tools/commentbody/baseline.json"
 
+var baselinePaths = []string{baselinePath, "frontend/comment-body-baseline.json"}
+
 func main() {
 	update := flag.Bool("update", false, "rewrite the baseline to the current counts")
+	against := flag.String("against", "", "git ref: fail if a baseline gained a file or a higher count than at that ref")
 	flag.Parse()
+	if *against != "" {
+		if err := checkAgainst(*against); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(".", *update); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -97,4 +108,43 @@ func writeBaseline(path string, counts map[string]int) error {
 		return err
 	}
 	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+func checkAgainst(ref string) error {
+	var problems []string
+	for _, path := range baselinePaths {
+		out, err := exec.Command("git", "show", ref+":"+path).Output()
+		if err != nil {
+			return fmt.Errorf("git show %s:%s: %w", ref, path, err)
+		}
+		old := map[string]int{}
+		if err := json.Unmarshal(out, &old); err != nil {
+			return err
+		}
+		current, err := readBaseline(path)
+		if err != nil {
+			return err
+		}
+		for _, p := range grew(old, current) {
+			problems = append(problems, path+": "+p)
+		}
+	}
+	for _, p := range problems {
+		fmt.Fprintln(os.Stderr, p)
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("commentbody: baseline grew against %s; remove the comments instead of raising the count", ref)
+	}
+	return nil
+}
+
+func grew(old, current map[string]int) []string {
+	var problems []string
+	for _, file := range sortedKeys(current) {
+		before, known := old[file]
+		if !known || current[file] > before {
+			problems = append(problems, fmt.Sprintf("%s: baseline %d, was %d", file, current[file], before))
+		}
+	}
+	return problems
 }
