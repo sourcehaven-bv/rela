@@ -29,6 +29,8 @@ import { filterStateToApiParams } from '@/utils/filters'
 import { defaultSortParam, groupedSort, listBaseParams, sortParam } from '@/utils/listParams'
 import { editFormRoute, entityDetailHref } from '@/utils/entityRoute'
 import { entityRef } from '@/utils/entityRef'
+import { getAssign, type AssignValues } from '@/api/assign'
+import { writeAssignDrag } from '@/utils/assignDrag'
 import { worldText } from '@/utils/worldText'
 import { safeInternalHref } from '@/utils/openIntent'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
@@ -201,6 +203,34 @@ const createPrefill = ref<{
   properties: Record<string, unknown>
   relations?: Record<string, { id: string; type: string }[]>
 }>()
+// A list `assign:` (TKT-FGE5G3I) is what a new row gets by default; a
+// section's own prefill wins over it.
+const assignDefaults = shallowRef<AssignValues>()
+watch(
+  () => (schemaStore.getList(props.listId)?.assign ? props.listId : undefined),
+  async (list) => {
+    assignDefaults.value = undefined
+    if (!list) return
+    try {
+      assignDefaults.value = await getAssign({ list })
+    } catch {
+      // The create form opens without defaults.
+    }
+  },
+  { immediate: true }
+)
+const effectivePrefill = computed(() => {
+  const a = assignDefaults.value
+  if (!a) return createPrefill.value
+  const relations: Record<string, { id: string; type: string }[]> = {}
+  for (const [rel, ops] of Object.entries(a.relations ?? {})) {
+    relations[rel] = ops.data ?? ops.add ?? []
+  }
+  return {
+    properties: { ...(a.properties ?? {}), ...(createPrefill.value?.properties ?? {}) },
+    relations: { ...relations, ...(createPrefill.value?.relations ?? {}) },
+  }
+})
 function onTableAdd(section: ListSection | { prefill?: undefined; prefillRelations?: undefined }) {
   createPrefill.value =
     section.prefill || section.prefillRelations
@@ -971,8 +1001,24 @@ function onSortClick(column: TableColumn, event: SortClickEvent) {
  * href is not a usable key for it.
  *
  */
+const entityById = computed(() => new Map(entities.value.map((e) => [e.id, e])))
 function rowAttrs(item: { id: string }) {
-  return { 'data-entity-id': item.id }
+  const attrs: Record<string, unknown> = { 'data-entity-id': item.id }
+  // A row the user may update can be dragged onto a sidebar entry that
+  // assigns (TKT-FGE5G3I). Off while reordering, which owns the drag.
+  const row = entityById.value.get(item.id)
+  if (row && canUpdate(row) && !reorder.reorderable.value) {
+    attrs.draggable = 'true'
+    attrs.onDragstart = (e: DragEvent) => {
+      if (!e.dataTransfer) return
+      // Dragging a selected row moves the whole selection.
+      const addresses = selectedIds.value.has(row.id)
+        ? entities.value.filter((x) => selectedIds.value.has(x.id) && canUpdate(x)).map((x) => entityRef(x))
+        : [entityRef(row)]
+      writeAssignDrag(e.dataTransfer, { entityType: row.type, addresses })
+    }
+  }
+  return attrs
 }
 
 /** A table row carries the entity id, so selection maps straight across. */
@@ -1811,7 +1857,7 @@ watch(searchQuery, () => {
       :form-id="listConfig.create_form"
       :entity-type="listConfig.entity"
       :world="createWorld || undefined"
-      :prefill="createPrefill"
+      :prefill="effectivePrefill"
       :add-another="!createPrefill"
       @close="createModal.close"
       @created="createModal.created"

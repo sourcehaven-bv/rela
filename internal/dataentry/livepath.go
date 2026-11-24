@@ -70,7 +70,7 @@ var (
 	liveInboxKeys = keySet("limit", "kinds")
 	liveListKeys  = keySet(
 		"page", "per_page", "cursor", "sort", "fields", "field_verdicts", "include", "comment_counts", "busy",
-		"world", "list_id", "query_scope", "scope_page", "scope_tab", "anchor",
+		"world", "list_id", "kanban_id", "query_scope", "scope_page", "scope_tab", "anchor",
 		"relation", "direction",
 	)
 	// liveFilterKey matches the list filter parameters, filter[prop] and

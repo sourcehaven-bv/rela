@@ -2350,3 +2350,43 @@ where `record` is the stored audit record, unredacted. It needs `audit:read`
 under an ACL policy; otherwise it answers 403 `permission_required`.
 `audit.global` reports whether the caller holds it. Each page served writes
 an `audit-read` audit record.
+
+## Assign: GET/POST /api/v1/_assign
+
+Applies a list or page `assign:` block (TKT-FGE5G3I). See "Moving items into
+a list" in the data-entry guide for the configuration.
+
+`GET ?list=ID` or `GET ?page=ID&target=ID` answers the resolved block. The SPA
+uses it as a create form's prefill:
+
+```json
+{
+  "entity_type": "todo",
+  "properties": { "when": "today", "start_date": "2026-11-24" },
+  "relations": { "in_project": { "data": [{ "type": "project", "id": "PRJ-1" }] } }
+}
+```
+
+A relation that allows one outgoing edge comes as `data` (replace); any other
+as `add`, the same wire shape as a PATCH `relations` field.
+
+`POST {"list": ID, "entities": [ADDR, ...]}`, or with `"page"` and `"target"`
+instead of `"list"`, writes the block to 1 to 100 entities. Each entity is
+written through the entity PATCH handler, so it is authorized, validated and
+audited as a PATCH. The answer is per entity:
+
+```json
+{ "results": [
+  { "id": "TODO-1", "ok": true, "status": 200, "matches": true },
+  { "id": "TODO-2", "ok": false, "status": 403, "code": "forbidden" }
+] }
+```
+
+`matches` is set for a list only: whether the entity is in the list after the
+write. A refused row leaves the others written.
+
+| Status | When |
+|--------|------|
+| 400 | Neither or both of `list` and `page`; no `target` for a `target` relation; an empty or oversized `entities` |
+| 404 `assign_not_found` | The list or page has no `assign:` (config is not secret, so the key is named) |
+| 404 `not_found` | The `target` entity, or an entity id in the block, is not readable |

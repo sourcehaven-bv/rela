@@ -57,7 +57,7 @@ type SankeyType struct {
 	// without the property sorts first; text order puts "1.10" before "1.2".
 	// "id" orders by entity id.
 	Order string `yaml:"order,omitempty" json:"order,omitempty"`
-	// Color is a named palette token (see [ValidCalendarColors]) for the
+	// Color is a named palette token (see [ColorNames]) for the
 	// type's nodes.
 	Color string `yaml:"color,omitempty" json:"color,omitempty"`
 	// ColorBy names a property whose value picks the node's tone. The

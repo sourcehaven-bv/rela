@@ -54,8 +54,7 @@ type ListGroupBy struct {
 }
 
 // ListGroup restyles the section for one value of an enum group property.
-// Color is a status color token from the component library (see
-// ValidGroupColors).
+// Color is a color name from [ColorNames].
 type ListGroup struct {
 	Value string `yaml:"value" json:"value"`
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
