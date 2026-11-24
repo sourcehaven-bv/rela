@@ -246,6 +246,7 @@ func TestQueryBudget_NavItemsTreeIsSizeIndependent(t *testing.T) {
 			got := items["0"].Entries
 			if len(got) == 0 || len(got[0].Children) == 0 || got[0].Status == nil ||
 				!slices.ContainsFunc(got[0].Children, func(c v1.NavItem) bool { return c.Status != nil }) {
+
 				t.Fatalf("no children or count, so this budget proves nothing: %+v", items)
 			}
 		})

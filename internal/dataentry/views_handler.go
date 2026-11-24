@@ -733,6 +733,7 @@ func setNavItemsFrom(
 	}
 	if c := from.Children; c != nil && c.Page != "" &&
 		showsNavEntry(ctx, aclImpl, cfg, dataentryconfig.NavigationEntry{Page: c.Page}) {
+
 		group.ItemsChildPage = c.Page
 	}
 }
