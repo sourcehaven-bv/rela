@@ -51,3 +51,8 @@ a to-do gets when it enters the list. Adding a row there, dragging rows onto
 the list's sidebar entry, and the `t`/`a`/`s` keys all apply it. Dragging a
 to-do onto a project or area entry in the sidebar puts it in that project or
 area (the `assign:` on the `project` and `area` pages).
+
+Typed dates: the `start_date` and `deadline` fields take phrases as well as the
+picker, such as `tomorrow`, `friday`, `next week`, `in 3 days` or `5 march`
+(`morgen`, `vrijdag`, `volgende week`, `over 3 dagen`, `5 maart` in Dutch). The
+field shows the date before it applies; Enter or leaving the box applies it.

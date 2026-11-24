@@ -770,6 +770,12 @@
     },
     "fileCell": {
       "count": "{n} file | {n} files"
+    },
+    "date": {
+      "phraseLabel": "Type a date",
+      "phrasePlaceholder": "e.g. tomorrow, next friday, in 3 days",
+      "resolved": "→ {date}",
+      "unknown": "Not a date this field understands"
     }
   },
   "form": {

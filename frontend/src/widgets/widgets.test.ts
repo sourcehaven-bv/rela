@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import TextWidget from './TextWidget.vue'
 import TextareaWidget from './TextareaWidget.vue'
@@ -248,6 +248,78 @@ describe('DateWidget', () => {
     expect(w.find('span.display-value').exists()).toBe(false)
     await input.setValue('2026-06-01')
     expect(w.emitted('update:modelValue')?.[0]).toEqual(['2026-06-01'])
+  })
+
+  describe('phrase box', () => {
+    const mountEdit = () =>
+      mount(DateWidget, { props: { modelValue: '', mode: 'edit' as const, propertyName: '' } })
+
+    afterEach(() => vi.useRealTimers())
+
+    it('previews the resolved date and applies it only on Enter', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2026, 10, 25))
+      const w = mountEdit()
+      const box = w.get('[data-testid="date-phrase"]')
+      await box.setValue('tomorrow')
+      expect(w.get('[data-testid="date-preview"]').text()).toMatch(/^→ /)
+      expect(w.emitted('update:modelValue')).toBeUndefined()
+      const enter = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })
+      box.element.dispatchEvent(enter)
+      await w.vm.$nextTick()
+      expect(enter.defaultPrevented).toBe(true)
+      expect(w.emitted('update:modelValue')?.[0]).toEqual(['2026-11-26'])
+      expect((box.element as HTMLInputElement).value).toBe('')
+    })
+
+    it('applies on blur', async () => {
+      const w = mountEdit()
+      const box = w.get('[data-testid="date-phrase"]')
+      await box.setValue('2027-01-31')
+      await box.trigger('blur')
+      expect(w.emitted('update:modelValue')?.[0]).toEqual(['2027-01-31'])
+    })
+
+    it('flags an unknown phrase and changes nothing', async () => {
+      const w = mountEdit()
+      const box = w.get('[data-testid="date-phrase"]')
+      await box.setValue('someday maybe')
+      expect(w.get('[data-testid="date-preview"]').text()).not.toBe('')
+      await box.trigger('keydown', { key: 'Enter' })
+      await box.trigger('blur')
+      expect(w.emitted('update:modelValue')).toBeUndefined()
+      expect((box.element as HTMLInputElement).value).toBe('someday maybe')
+      expect(box.attributes('aria-invalid')).toBe('true')
+    })
+
+    it('lets Enter submit when the box does not resolve', async () => {
+      const w = mountEdit()
+      const enter = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })
+      w.get('[data-testid="date-phrase"]').element.dispatchEvent(enter)
+      expect(enter.defaultPrevented).toBe(false)
+    })
+
+    it('consumes Escape only while the box has text', async () => {
+      const w = mountEdit()
+      const box = w.get('[data-testid="date-phrase"]')
+      await box.setValue('tomorrow')
+      const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+      const outer = vi.fn()
+      w.element.addEventListener('keydown', outer)
+      box.element.dispatchEvent(esc)
+      await w.vm.$nextTick()
+      expect((box.element as HTMLInputElement).value).toBe('')
+      expect(outer).not.toHaveBeenCalled()
+      box.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      expect(outer).toHaveBeenCalledOnce()
+    })
+
+    it('links the preview to the box', async () => {
+      const w = mountEdit()
+      const id = w.get('[data-testid="date-phrase"]').attributes('aria-describedby')
+      expect(id).toBeTruthy()
+      expect(w.get('[data-testid="date-preview"]').attributes('id')).toBe(id)
+    })
   })
 
   // The API returns RFC3339 for `date` properties (`2026-09-15T00:00:00Z`),

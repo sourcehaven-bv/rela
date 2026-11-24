@@ -1111,6 +1111,41 @@ schema: a select for a property with values, a multi-select for a list property
 A relation's `widget:` (`select`, `multi-select`, `cards`, `search`) is still a choice and
 is not affected.
 
+### Typing a date
+
+A `date` field has a text box beside its picker. Type a phrase and the field
+shows the date it resolves to; press Enter or leave the box to apply it. Escape
+clears the box. A phrase the field does not understand changes nothing.
+
+The phrases follow the UI language, with English as the fallback:
+
+| Shape                | English                       | Dutch                          |
+| -------------------- | ----------------------------- | ------------------------------ |
+| A day near today     | today, tomorrow, yesterday    | vandaag, morgen, overmorgen    |
+| A weekday            | friday, this friday           | vrijdag, op vrijdag            |
+| The next or last one | next friday, last monday      | volgende vrijdag, vorige maandag |
+| A count of units     | in 3 days, 2 weeks, 1 month ago | over 3 dagen, 2 weken, 1 maand geleden |
+| One unit away        | next week, last month         | volgende week, vorige maand    |
+| A day and month      | 5 march, march 5th, 5 march 2027 | 5 maart, 1e januari, 5 maart 2027 |
+| An ISO date          | 2027-03-05                    | 2027-03-05                     |
+
+A bare weekday or `this` is today or later; `next` is strictly after today and
+`last` strictly before. `next week` is seven days from today. A day and month
+without a year is its next occurrence. Adding a month keeps the day, or takes
+the month's last day when it is shorter. Numeric dates such as `3/4` are not
+accepted, because their order differs between countries.
+
+Each language is one vocabulary file in `frontend/src/utils/naturalDate/locales/`.
+The parser holds no words of its own, so adding a language needs no parser
+change. Add a file there and list it in `locales/index.ts`; the shared tests run
+every listed language. A vocabulary file can express:
+
+- word order: words such as `next` and `ago` may stand before or after what
+  they modify (`vendredi prochain`, `vor 3 Tagen`);
+- words of several words, such as `il y a`;
+- filler words to ignore, such as articles;
+- its own tokenizer, for a language written without spaces.
+
 ### Datetime fields and time zones
 
 A `datetime` property renders as a native date + time picker. Because a

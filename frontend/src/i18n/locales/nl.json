@@ -770,6 +770,12 @@
     },
     "fileCell": {
       "count": "{n} bestand | {n} bestanden"
+    },
+    "date": {
+      "phraseLabel": "Typ een datum",
+      "phrasePlaceholder": "bv. morgen, volgende vrijdag, over 3 dagen",
+      "resolved": "→ {date}",
+      "unknown": "Geen datum die dit veld begrijpt"
     }
   },
   "form": {
