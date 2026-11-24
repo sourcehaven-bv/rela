@@ -103,6 +103,7 @@ lists:
       and not related(entity, 'in_project') and not related(entity, 'in_area')
     columns:
       - { property: title, label: "Title", link: detail }
+      - { property: status, label: "Done", widget: toggle, on: completed, off: open, other: disabled }
       - { property: deadline, label: "Deadline" }
     sort: [{ property: title }]
     create_form: quick_todo
@@ -117,6 +118,7 @@ lists:
       or (entity.deadline ~= nil and entity.deadline <= today()))
     columns:
       - { property: title, label: "Title", link: detail }
+      - { property: status, label: "Done", widget: toggle, on: completed, off: open, other: disabled }
       - { relation: in_project, label: "Project" }
       - { relation: in_area, label: "Area" }
       - { relation: tagged, label: "Tags" }
@@ -161,6 +163,7 @@ lists:
            or related(entity, 'in_project') or related(entity, 'in_area'))
     columns:
       - { property: title, label: "Title", link: detail }
+      - { property: status, label: "Done", widget: toggle, on: completed, off: open, other: disabled }
       - { property: when, label: "When" }
       - { relation: in_area, label: "Area" }
       - { relation: tagged, label: "Tags" }
@@ -196,7 +199,7 @@ lists:
       - { property: status, operator: in, value: "completed,canceled" }
     columns:
       - { property: title, label: "Title", link: detail }
-      - { property: status, label: "Status" }
+      - { property: status, label: "Done", widget: toggle, on: completed, off: open, other: disabled }
       - { relation: in_project, label: "Project" }
       - { property: completed_on, label: "Completed" }
     sort: [{ property: completed_on, direction: desc }, { property: title }]
@@ -208,6 +211,7 @@ lists:
     filters: [{ property: status, operator: "=", value: open }]
     columns:
       - { property: title, label: "Title", link: detail }
+      - { property: status, label: "Done", widget: toggle, on: completed, off: open, other: disabled }
       - { property: when, label: "When" }
       - { property: start_date, label: "Start" }
       - { property: deadline, label: "Deadline" }
@@ -229,6 +233,7 @@ lists:
     filters: [{ property: status, operator: "=", value: open }]
     columns:
       - { property: title, label: "Title", link: detail }
+      - { property: status, label: "Done", widget: toggle, on: completed, off: open, other: disabled }
       - { property: when, label: "When" }
       - { property: start_date, label: "Start" }
       - { property: deadline, label: "Deadline" }

@@ -44,6 +44,12 @@ func serveListRowExtras(
 	if want := listRollups(query); want != nil {
 		serveRowRollups(r.Context(), newRollupSource(a), rows, data, want)
 	}
+	if s := a.State(); s != nil {
+		if listType, cols := listToggleColumns(s, query); cols != nil {
+			src := toggleSources{schema: s, listType: listType, res: a.fieldResolver, svc: a.affordances}
+			serveRowToggles(r.Context(), src, cols, rows, data)
+		}
+	}
 	return true
 }
 

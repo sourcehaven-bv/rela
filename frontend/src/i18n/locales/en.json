@@ -944,6 +944,7 @@
     "noEntities": "No {entity} found.",
     "noItems": "Nothing found.",
     "createOne": "Create one",
+    "toggle": "{label}: {title}",
     "inaccessible": "inaccessible",
     "moveFailed": "Could not move the row",
     "pagination": {

@@ -944,6 +944,7 @@
     "noEntities": "Geen {entity} gevonden.",
     "noItems": "Niets gevonden.",
     "createOne": "Aanmaken",
+    "toggle": "{label}: {title}",
     "inaccessible": "niet toegankelijk",
     "moveFailed": "Kon de rij niet verplaatsen",
     "pagination": {

@@ -1122,7 +1122,37 @@ type ListColumn struct {
 	// other columns go. The title column always stays. Lists only: dashboard
 	// card and view section columns refuse it.
 	Primary *bool `yaml:"primary,omitempty" json:"primary,omitempty"`
+	// Widget set to [WidgetToggle] renders a property column as a checkbox
+	// that writes On or Off (TKT-FJG779Q). Lists only: dashboard card and
+	// view section columns refuse it, as they refuse On, Off and Other.
+	Widget string `yaml:"widget,omitempty" json:"widget,omitempty"`
+	// On is the value a checked toggle stands for. A boolean property
+	// writes it as "true" or "false".
+	On string `yaml:"on,omitempty" json:"on,omitempty"`
+	// Off is the value an unchecked toggle stands for. An unset property
+	// reads as Off, except an unset state-machine property, which reads as
+	// the machine's entry value.
+	Off string `yaml:"off,omitempty" json:"off,omitempty"`
+	// Other says how a toggle shows a value that is neither On nor Off:
+	// [ToggleOtherDisabled], [ToggleOtherHidden] or [ToggleOtherOn]. It is
+	// required when the enum has more than two values, and refused otherwise.
+	Other string `yaml:"other,omitempty" json:"other,omitempty"`
 }
+
+// The toggle column values (TKT-FJG779Q).
+const (
+	// WidgetToggle is the ListColumn.Widget value for a checkbox column.
+	WidgetToggle = "toggle"
+	// ToggleOtherDisabled shows an unchecked, disabled checkbox.
+	ToggleOtherDisabled = "disabled"
+	// ToggleOtherHidden shows no checkbox.
+	ToggleOtherHidden = "hidden"
+	// ToggleOtherOn shows a checked checkbox; a click writes Off.
+	ToggleOtherOn = "on"
+)
+
+// IsToggle reports whether the column is a toggle column.
+func (c ListColumn) IsToggle() bool { return c.Widget == WidgetToggle }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.
 // This is the data-entry-specific alias matching the YAML config format.

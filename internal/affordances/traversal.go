@@ -192,3 +192,21 @@ func refuseIdentityTraversal(prog *predicate.Program) error {
 	}
 	return nil
 }
+
+// PrimeTransitionTraversals binds the `related(...)` of every transition
+// `when:` of entityType for all ids at once (TKT-FJG779Q), so
+// [PolicyResolver.TransitionVerdicts] on a page of rows under the returned
+// ctx costs one bind, not one per row. It is separate from
+// [PolicyResolver.PrimeTraversals] because only a page that asks for
+// transition verdicts needs it. A function rather than a method because
+// PolicyResolver is at its method load line.
+//
+// Nil: r is accepted and returns ctx unchanged.
+func PrimeTransitionTraversals(
+	ctx context.Context, r *PolicyResolver, entityType string, ids []string,
+) context.Context {
+	if r == nil || r.machines == nil {
+		return ctx
+	}
+	return r.machines.PrimeTraversals(ctx, entityType, ids)
+}

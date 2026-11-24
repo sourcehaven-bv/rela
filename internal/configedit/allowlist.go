@@ -235,6 +235,12 @@ var editable = map[File][]string{
 		"lists.*.columns.[].property",
 		"lists.*.columns.[].relation",
 		"lists.*.columns.[].sortable",
+		// A toggle column (TKT-FJG779Q) only places a checkbox; the write
+		// goes through PATCH, which applies the ACL and the transitions.
+		"lists.*.columns.[].widget",
+		"lists.*.columns.[].on",
+		"lists.*.columns.[].off",
+		"lists.*.columns.[].other",
 		// Pile toggles only place a button that adds to the caller's own pile.
 		"piles.toggles.[].**",
 		"lists.*.condition",
@@ -469,6 +475,11 @@ var locked = map[File][]string{
 		// Editable columns are view-table-only (TKT-4Q2EIVZ); the load refuses them here.
 		"lists.*.columns.[].render", "dashboard.cards.[].columns.[].render",
 		"dashboards.*.cards.[].columns.[].render",
+		// Toggle columns are list-only (TKT-FJG779Q); the load refuses them here.
+		"dashboard.cards.[].columns.[].widget", "dashboards.*.cards.[].columns.[].widget",
+		"dashboard.cards.[].columns.[].on", "dashboards.*.cards.[].columns.[].on",
+		"dashboard.cards.[].columns.[].off", "dashboards.*.cards.[].columns.[].off",
+		"dashboard.cards.[].columns.[].other", "dashboards.*.cards.[].columns.[].other",
 	},
 }
 

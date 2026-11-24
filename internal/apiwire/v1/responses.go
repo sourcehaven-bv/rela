@@ -202,6 +202,13 @@ type Activity struct {
 	// status working, which the caller may read. Nil is absent ("not
 	// served"); an empty slice is `[]` ("none busy that you may see").
 	Busy []BusyChannel `json:"_busy,omitzero"`
+	// Toggles maps a toggle column's property (TKT-FJG779Q) to the value a
+	// click on the checkbox writes: a JSON bool for a boolean property, else
+	// the enum value. It is set only on list rows of a read that names the
+	// list (`list_id`), and only for a write the caller may make now. An
+	// absent key means the checkbox is disabled. It grants nothing: the
+	// PATCH checks the write again.
+	Toggles map[string]any `json:"_toggles,omitempty"`
 	// Updated is when the row last changed, in RFC 3339, set on the
 	// per-entity responses only. It is absent when any property of the row
 	// is hidden from or inaccessible to the caller, because the time says

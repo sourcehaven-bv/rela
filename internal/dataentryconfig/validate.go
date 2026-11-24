@@ -1311,6 +1311,7 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 		busyColumns := 0
 		for i, c := range list.Columns {
 			errs = append(errs, refuseColumnRender(fmt.Sprintf("list %q: column[%d]", listID, i), c)...)
+			errs = append(errs, validateToggleColumn(fmt.Sprintf("list %q: column[%d]", listID, i), entDef, c, meta)...)
 			if c.Busy != "" {
 				errs = append(errs, checkListBusyColumn(listID, i, c, busyColumns > 0)...)
 				busyColumns++

@@ -152,6 +152,28 @@ answer for a reason above other than a store error, is not repeated on
 channel changes or by the safety check, only after an entity change or a
 reload. See the busy indicator section of the realtime guide.
 
+## Toggles on list rows
+
+When `GET /api/v1/{plural}` names a list with `list_id` and that list has toggle columns
+(`widget: toggle`), each row carries `_toggles`. It maps the toggle property to the value a
+click on the checkbox writes: a JSON boolean for a boolean property, else the enum value.
+
+```json
+{
+  "id": "TD-1",
+  "properties": { "status": "open" },
+  "_toggles": { "status": "completed" }
+}
+```
+
+A property has an entry only when the caller may make that write now: the field is visible and
+writable, the target is an allowed option, and for a state-machine property the transition from
+the current value to the target is allowed. A property the caller cannot see never has an entry.
+`_toggles` is absent without `list_id`, for a list without toggle columns, and on rows of
+another type than the list's. It grants nothing: the client sends the value with
+`PATCH /api/v1/{plural}/{id}` and `{"properties": {"status": "completed"}}`, which checks the
+write again. The whole page is checked with one set of store reads, whatever the number of rows.
+
 ## Limiting search results
 
 `GET /api/v1/_search` accepts an optional `limit` (an integer from 1 to 100)

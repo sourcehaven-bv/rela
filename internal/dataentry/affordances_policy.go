@@ -29,6 +29,13 @@ func (p *policyResolver) PrimeTraversals(ctx context.Context, rows []*entityPkg.
 	return p.inner.PrimeTraversals(ctx, rows)
 }
 
+// PrimeTransitionTraversals implements [transitionPrimer].
+func (p *policyResolver) PrimeTransitionTraversals(
+	ctx context.Context, entityType string, ids []string,
+) context.Context {
+	return affordances.PrimeTransitionTraversals(ctx, p.inner, entityType, ids)
+}
+
 // PrimeFlowRuns implements [flowRunPrimer].
 func (p *policyResolver) PrimeFlowRuns(ctx context.Context, rows []*entityPkg.Entity) context.Context {
 	return affordances.PrimeFlowRuns(ctx, p.inner, rows)

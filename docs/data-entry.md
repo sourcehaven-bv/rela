@@ -2198,6 +2198,10 @@ the face each row was served in, or a busy indicator. Set exactly one of `proper
 | `label`     | string | Column header (defaults to the schema label, then the property / relation name, `Face` or `Busy`) |
 | `sortable`  | bool   | Column can be sorted by clicking the header                                 |
 | `link`      | string | `detail` links the cell to the entity's detail page; `document/<name>` to a document |
+| `widget`    | string | `toggle` shows a boolean or enum property as a checkbox; lists only; see [Toggle columns](#toggle-columns) |
+| `on`        | string | Toggle columns: the value a checked box stands for (`true` or `false` for a boolean) |
+| `off`       | string | Toggle columns: the value an unchecked box stands for                       |
+| `other`     | string | Toggle columns: how a third value shows: `disabled`, `hidden` or `on`        |
 
 An unset column `label` shows the label the schema gives the property, or the relation's
 label (its inverse label on an incoming column). Forms use the same schema label, so set a
@@ -2207,6 +2211,33 @@ The row's title is the column with `link:`, or the first column when no column
 has one. A click anywhere on the row opens the entity. The title shows in the
 link colour when the row links to an entity, as links do elsewhere in the app,
 also when its column has no `link:`.
+
+#### Toggle columns
+
+A column with `widget: toggle` shows a checkbox. A click writes `on` or `off` to the
+property, so a to-do list can tick an item done in place:
+
+```yaml
+columns:
+  - { property: title, link: detail }
+  - { property: status, label: Done, widget: toggle, on: completed, off: open, other: disabled }
+```
+
+- The property must be a boolean or an enum. A boolean toggle takes `on: "true"` and
+  `off: "false"` (or the reverse). An enum toggle takes two different values of the enum.
+- An unset property reads as `off`. An unset state-machine property reads as its initial value.
+- When the enum has more than two values, `other:` says how a row with a third value shows:
+  `disabled` shows an unchecked box that cannot be clicked, `hidden` shows no box, and `on`
+  shows a checked box whose click writes `off`. An enum with two values, or a boolean, takes no
+  `other:`.
+- The box can only be clicked when you may make the write now: the field is visible and
+  writable to you, the target value is an option you may pick, and for a state-machine
+  property the transition is allowed. Otherwise it is disabled. The write goes through the
+  normal update, which checks all of this again.
+- After the write the list reloads. A row that no longer matches the list's `condition:` or
+  `filters:` leaves the list.
+
+Toggle columns work on lists only. Dashboard card and view section columns refuse the keys.
 
 **Face column example** — on a list of a type with `concept` and `vastgesteld` faces, show
 which one the world serves for each row:

@@ -585,6 +585,15 @@ export interface ListColumn {
    * the face and the busy indicator stay. Lists only.
    */
   primary?: boolean
+  /**
+   * `toggle` renders a property column as a checkbox (TKT-FJG779Q). `on`
+   * and `off` are the values it stands for (`true`/`false` for a boolean);
+   * `other` says how a third value shows. Lists only.
+   */
+  widget?: 'toggle'
+  on?: string
+  off?: string
+  other?: 'disabled' | 'hidden' | 'on'
 }
 
 export interface ListFilter {

@@ -105,6 +105,9 @@ func (s *Transitions) bindTraversals(
 	case e.Face != "":
 		return edgeTraversal{err: fmt.Errorf("%s(...) cannot be answered on face %q", predicate.FuncRelated, e.Face)}
 	}
+	if t, ok := s.primed(ctx, e.Type, e.ID); ok {
+		return t
+	}
 	bound, err := s.traversals.Bind(ctx, e.Type, []string{e.ID}, whens...)
 	if err != nil {
 		return edgeTraversal{err: err}

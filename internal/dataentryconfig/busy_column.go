@@ -33,6 +33,7 @@ func checkListBusyColumn(listID string, i int, c ListColumn, earlierBusy bool) [
 // [refuseKanbanOnlyFields].
 func refuseListOnlyColumn(prefix string, c ListColumn) []string {
 	errs := refuseBusyColumn(prefix, c)
+	errs = append(errs, refuseToggleColumn(prefix, c)...)
 	if c.Primary != nil {
 		errs = append(errs, prefix+": primary is only supported on list columns and view display: table section columns")
 	}
@@ -60,7 +61,7 @@ func refuseSectionBusyColumns(viewID string, i int, s ViewSection) []string {
 	table := s.Display == "table"
 	check := func(at string, c ListColumn, primaryOK bool) []string {
 		if primaryOK {
-			return refuseBusyColumn(at, c)
+			return append(refuseBusyColumn(at, c), refuseToggleColumn(at, c)...)
 		}
 		return refuseListOnlyColumn(at, c)
 	}

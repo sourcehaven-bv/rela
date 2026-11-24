@@ -73,6 +73,8 @@ import RlBusyIndicator, {
 } from 'rela-components/components/feedback/RlBusyIndicator.vue'
 import type { SortClickEvent, TableColumn } from 'rela-components/components/table/types'
 import { leadingImageColumns, listColumnOf, nameColumn, toTableColumns, toTableNameColumn } from './tableColumns'
+import { isToggleColumn, toggleCellState } from './toggleCell'
+import { updateEntity } from '@/api/entities'
 import { fromPageQuery } from '@/utils/pageContext'
 
 const props = defineProps<{
@@ -558,6 +560,32 @@ const entityType = computed(() => {
 // The load check allows at most one busy column per list.
 const busyType = computed(() => listConfig.value?.columns?.find((c) => c.busy)?.busy)
 
+// Toggle columns (TKT-FJG779Q). A click writes the value the server put in
+// `_toggles`, through the ordinary PATCH, then reloads the list: the write
+// may move the row out of the list's condition.
+const togglePending = ref(new Set<string>())
+
+async function onToggle(entity: Entity, column: import('@/types/config').ListColumn) {
+  const state = toggleCellState(entity, column)
+  const property = column.property
+  if (!property || state.disabled || state.target === undefined) return
+  const key = `${entity.id}:${property}`
+  if (togglePending.value.has(key)) return
+  togglePending.value = new Set(togglePending.value).add(key)
+  try {
+    await updateEntity(listConfig.value?.entity ?? entity.type, entityRef(entity), {
+      properties: { [property]: state.target },
+    })
+  } catch (err) {
+    uiStore.error(getErrorMessage(err))
+  } finally {
+    const next = new Set(togglePending.value)
+    next.delete(key)
+    togglePending.value = next
+    void queryCache.invalidateQueries({ key: entityKeys.list(listConfig.value?.entity ?? '') })
+  }
+}
+
 /** The row's busy channels of the busy column's type, for the indicator. */
 function busyEntries(entity: Entity): BusyIndicatorEntry[] {
   return busyType.value ? toBusyEntries(entity._busy, busyType.value) : []
@@ -853,6 +881,7 @@ const tableColumns = computed<TableColumn[]>(() =>
       if (!listColumn) return true
       const entity = item as Entity
       if (listColumn.busy) return busyEntries(entity).length === 0
+      if (isToggleColumn(listColumn)) return toggleCellState(entity, listColumn).hidden
       if (isCellInaccessible(entity, listColumn)) return false
       return getFormattedCellValue(entity, listColumn) === ''
     },
@@ -1732,6 +1761,22 @@ watch(searchQuery, () => {
             v-if="listColumnOf(column!)?.busy"
             :entries="busyEntries(item as Entity)"
           />
+          <template v-else-if="isToggleColumn(listColumnOf(column!))">
+            <input
+              v-if="!toggleCellState(item as Entity, listColumnOf(column!)!).hidden"
+              type="checkbox"
+              class="toggle-cell"
+              data-testid="toggle-cell"
+              :checked="toggleCellState(item as Entity, listColumnOf(column!)!).checked"
+              :disabled="toggleCellState(item as Entity, listColumnOf(column!)!).disabled
+                || togglePending.has(`${(item as Entity).id}:${listColumnOf(column!)!.property}`)"
+              :aria-label="t('list.toggle', {
+                label: listColumnOf(column!)!.label || listColumnOf(column!)!.property,
+                title: entityDisplayTitle(item as Entity),
+              })"
+              @click.stop.prevent="onToggle(item as Entity, listColumnOf(column!)!)"
+            />
+          </template>
           <span
             v-else-if="listColumnOf(column!) && isCellInaccessible(item as Entity, listColumnOf(column!)!)"
             class="inaccessible-cell"
