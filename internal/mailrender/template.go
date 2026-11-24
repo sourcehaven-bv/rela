@@ -32,14 +32,17 @@ var defaultPalette = map[string]string{
 }
 
 // msoOpen/msoClose wrap the card in a fixed-width table for Outlook's Word
-// rendering engine, which ignores max-width. Constants, never caller data.
+// rendering engine, which ignores max-width: there the card fills this 600px
+// table rather than the window. Constants, never caller data.
 const (
 	msoOpen  template.HTML = `<!--[if mso]><table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" width="600"><tr><td><![endif]-->`
 	msoClose template.HTML = `<!--[if mso]></td></tr></table><![endif]-->`
 )
 
-// contentWidth is the fixed body width. 600px is the long-standing safe value:
-// it fits the narrowest common desktop preview pane without horizontal scroll.
+// contentWidth is the widest the card grows. 600px is the long-standing safe
+// value: it fits the narrowest common desktop preview pane without horizontal
+// scroll. Below it the card is as wide as the window, so a phone shows it at
+// full size instead of zooming out (see "The card is fluid" below).
 const contentWidth = "600"
 
 // docTemplate is the TRUSTED shell. Its structure is a hand-port of what MJML
@@ -75,6 +78,18 @@ const contentWidth = "600"
 // cell and cannot be made into one without mangling author markup. Outlook
 // honors margin on a list while dropping padding, so margin is the side of the
 // trade that survives.
+//
+// # The card is fluid
+//
+// The card is width 100% with a max-width, not a fixed 600px with max-width
+// 100%. A fixed table width is a minimum in most clients, so on a phone the
+// page grew to 600px plus the gutter and the client zoomed out or scrolled.
+// Outlook Windows, which ignores max-width, gets its fixed width from the mso
+// wrapper. Below 480px the gutter and the cell padding shrink, through a media
+// query whose rules carry !important to beat the inlined padding. A client
+// that drops the query keeps the wider padding; the card still fits.
+//
+// Long words and URLs wrap (overflow-wrap) so they cannot widen the card.
 //
 // # Dark mode is defensive, and the color-scheme meta tag is deliberately absent
 //
@@ -136,7 +151,7 @@ table { border-collapse:collapse; }
 .wrap { background-color:{{.C.bg}}; width:100%; }
 .card { background-color:{{.C.card}}; border:1px solid {{.C.border}}; border-radius:6px; }
 .bar { background-color:{{.C.accent}}; font-size:0; line-height:0; height:4px; }
-.pad { padding:24px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:15px; line-height:1.5; color:{{.C.text}}; }
+.pad { padding:24px; overflow-wrap:break-word; word-wrap:break-word; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:15px; line-height:1.5; color:{{.C.text}}; }
 .pad h1 { font-size:20px; line-height:1.3; margin:0 0 12px 0; color:{{.C.heading}}; font-weight:600; }
 .pad h2 { font-size:17px; line-height:1.3; margin:20px 0 8px 0; color:{{.C.heading}}; font-weight:600; }
 .pad h3 { font-size:15px; margin:16px 0 6px 0; color:{{.C.heading}}; font-weight:600; }
@@ -173,15 +188,21 @@ body, .wrap { background-color:{{.C.darkBg}} !important; }
 .btn-cell { background-color:{{.C.darkAccent}} !important; }
 .pad a.btn { color:{{.C.darkCard}} !important; }
 }
+@media only screen and (max-width: 480px) {
+.outer { padding:12px 8px !important; }
+.pad { padding:16px !important; }
+.logo-cell { padding:16px 16px 0 16px !important; }
+.foot { padding:12px 16px 16px 16px !important; }
+}
 </style>
 </head>
 <body>
 <table class="wrap" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
 <tr><td class="outer" align="center" style="padding:24px 12px;">
 {{.MSOOpen}}
-<table class="card" role="presentation" cellpadding="0" cellspacing="0" border="0" width="{{.Width}}" style="width:{{.Width}}px; max-width:100%;">
+<table class="card" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%; max-width:{{.Width}}px;">
 <tr><td class="bar" height="4">&nbsp;</td></tr>
-{{if .LogoCID}}<tr><td style="padding:20px 24px 0 24px;"><img class="logo" src="cid:{{.LogoCID}}" alt="{{.LogoAlt}}"{{if .LogoWidth}} width="{{.LogoWidth}}"{{end}}{{if .LogoHeight}} height="{{.LogoHeight}}"{{end}} /></td></tr>{{else if .LogoURL}}<tr><td style="padding:20px 24px 0 24px;"><img class="logo" src="{{.LogoURL}}" alt="{{.LogoAlt}}" /></td></tr>{{end}}
+{{if .LogoCID}}<tr><td class="logo-cell" style="padding:20px 24px 0 24px;"><img class="logo" src="cid:{{.LogoCID}}" alt="{{.LogoAlt}}"{{if .LogoWidth}} width="{{.LogoWidth}}"{{end}}{{if .LogoHeight}} height="{{.LogoHeight}}"{{end}} /></td></tr>{{else if .LogoURL}}<tr><td class="logo-cell" style="padding:20px 24px 0 24px;"><img class="logo" src="{{.LogoURL}}" alt="{{.LogoAlt}}" /></td></tr>{{end}}
 <tr><td class="pad">
 <h1>{{.Subject}}</h1>
 {{if .Intro}}<div class="prose">{{.Intro}}</div>{{end}}

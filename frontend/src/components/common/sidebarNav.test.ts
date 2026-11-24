@@ -382,6 +382,15 @@ describe('expandGeneratedItems', () => {
     expect(groups[0].items).toEqual([])
     const [nav] = toNavGroups(groups, RouterLink)
     expect(nav.addLabel).toBe('New Topic')
+    expect(nav.emptyLabel).toBe('None yet')
+  })
+
+  it('says nothing under an empty group whose entries have not loaded', () => {
+    const offer = { type: 'topic', label: 'Topic', form: 'create_topic' }
+    const groups = expandGeneratedItems([{ ...topics, items_create: offer }], () => undefined)
+    const [nav] = toNavGroups(groups, RouterLink)
+    expect(nav.items).toEqual([])
+    expect(nav).not.toHaveProperty('emptyLabel')
   })
 
   it('gives a group without a create offer no add label', () => {

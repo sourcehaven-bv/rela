@@ -45,6 +45,7 @@ func TestShellBootFrom(t *testing.T) {
 	}{
 		{"both", "app:\n  name: Sourcehaven\n  language: en\n", ShellBoot{AppName: "Sourcehaven", Language: "en"}},
 		{"region", "app:\n  language: nl-BE\n", ShellBoot{Language: "nl-BE"}},
+		{"languages", "app:\n  languages: [en, '\"x', nl]\n", ShellBoot{Languages: "en,nl"}},
 		{"no app block", "lists: {}\n", ShellBoot{}},
 		{"bad language", "app:\n  name: X\n  language: '\"><script>'\n", ShellBoot{AppName: "X"}},
 		{
@@ -98,7 +99,7 @@ const bootTestShell = `<!DOCTYPE html>
 // is escaped.
 func TestBootShell(t *testing.T) {
 	got := string(bootShell([]byte(bootTestShell), ShellBoot{
-		AppName: `A & <b>"B"</b>`, Language: "nl", Logo: "/logo.svg?a=1&b=2", SignOut: "/auth/logout",
+		AppName: `A & <b>"B"</b>`, Language: "nl", Languages: "en,nl", Logo: "/logo.svg?a=1&b=2", SignOut: "/auth/logout",
 		Account: "https://account.example.com/", Contact: "Email <support@example.com>",
 		ContactEmail: "support@sourcehaven.test", SuspendedText: "Paused <now>.", ArchivedText: "Closed.",
 		ReadOnlyText: "Look, don't touch.",
@@ -108,6 +109,7 @@ func TestBootShell(t *testing.T) {
 		`<title>A &amp; &lt;b&gt;&#34;B&#34;&lt;/b&gt;</title>`,
 		`<meta name="rela-app-name" content="A &amp; &lt;b&gt;&#34;B&#34;&lt;/b&gt;" />`,
 		`<meta name="rela-language" content="nl" />`,
+		`<meta name="rela-languages" content="en,nl" />`,
 		`<meta name="rela-app-logo" content="/logo.svg?a=1&amp;b=2" />`,
 		`<meta name="rela-sign-out" content="/auth/logout" />`,
 		`<meta name="rela-account-url" content="https://account.example.com/" />`,

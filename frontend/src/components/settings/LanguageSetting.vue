@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import RlSelect from 'rela-components/components/form/RlSelect.vue'
 import type { SelectOption } from 'rela-components/components/form/types'
 import { setUserLanguage } from '@/i18n'
-import { automaticLanguage, chosenLanguage } from '@/i18n/locale'
+import { automaticLanguage, chosenLanguage, offeredLanguages } from '@/i18n/locale'
 import { isUiLanguage, type UiLanguage } from '@/i18n/language'
 
 /**
@@ -13,6 +13,9 @@ import { isUiLanguage, type UiLanguage } from '@/i18n/language'
  * Its own component so the Settings page carries one line for it. The card
  * markup repeats the page's `settings-card` shape because scoped styles do not
  * reach into a child component.
+ *
+ * It lists only the languages the app offers (`app.languages`), and shows
+ * nothing when that is a single one.
  *
  * Language names are endonyms ("Nederlands" in every language), so a user who
  * landed in a language they cannot read can still find their own.
@@ -32,20 +35,25 @@ const options = computed<SelectOption[]>(() => [
       language: t(LANGUAGE_NAMES[automaticLanguage.value.language]),
     }),
   },
-  ...(Object.keys(LANGUAGE_NAMES) as UiLanguage[]).map((lang) => ({
+  ...offeredLanguages.value.map((lang) => ({
     value: lang,
     label: t(LANGUAGE_NAMES[lang]),
   })),
 ])
 
 const choice = computed<string>({
-  get: () => chosenLanguage.value ?? '',
+  // A stored choice the app no longer offers reads as automatic, which is
+  // what the resolution does with it.
+  get: () =>
+    chosenLanguage.value && offeredLanguages.value.includes(chosenLanguage.value)
+      ? chosenLanguage.value
+      : '',
   set: (value: string) => setUserLanguage(isUiLanguage(value) ? value : null),
 })
 </script>
 
 <template>
-  <div class="language-card" data-testid="language-setting">
+  <div v-if="offeredLanguages.length > 1" class="language-card" data-testid="language-setting">
     <h3>{{ t('settings.language.title') }}</h3>
     <p class="language-description">{{ t('settings.language.description') }}</p>
     <div class="language-row">
