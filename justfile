@@ -562,6 +562,17 @@ comment-lint:
     @echo "==> commentlint (gate)"
     go run github.com/sourcehaven-bv/commentlint@{{commentlint_version}} -rules commented-code,doclink ./internal ./cmd
 
+# No comments inside function bodies and a cap on function doc length
+# (TKT-GL18KOA). Findings are held in tools/commentbody/baseline.json, which
+# may only shrink; see tools/commentbody/doc.go.
+comment-body:
+    @echo "==> commentbody (gate)"
+    go run ./tools/commentbody
+
+# Lock in a lower baseline after removing comments.
+comment-body-update:
+    go run ./tools/commentbody -update
+
 # One invocation per rule, because the cross-comment rules replace the
 # per-comment output rather than adding to it — a single run would silently
 # report only one of them.
@@ -582,7 +593,7 @@ comment-report rule="":
     done
 
 # Run all checks (lint + arch-lint + lint-md + test)
-check: lint arch-lint plimsoll comment-lint lint-md test
+check: lint arch-lint plimsoll comment-lint comment-body lint-md test
 
 # Regenerate everything derived from the canonical icon table
 # (internal/dataentryconfig/icondefs): the Go allowlist, the SPA registry, and
@@ -838,4 +849,4 @@ typecheck-frontend:
 
 # Lint Vue frontend
 lint-frontend:
-    cd frontend && npm run lint
+    cd frontend && npm run lint && npm run lint:comments

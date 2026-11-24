@@ -580,6 +580,11 @@ jobs:
       - name: Check comments (gate)
         run: commentlint -rules commented-code,doclink ./internal ./cmd
 
+      # Gate: no comments in function bodies, capped function docs, against a
+      # baseline that may only shrink (tools/commentbody, TKT-GL18KOA).
+      - name: Check comment bodies (gate)
+        run: go run ./tools/commentbody
+
       # Advisory: real findings with a backlog being worked down. Visible in
       # the log, never red — see .commentlint.yml for why each rule is here.
       #
@@ -675,6 +680,9 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      - name: Lint comment bodies
+        run: npm run lint:comments
 
       - name: Test
         # RELA_FULL_CORPUS sweeps every entity body through the markdown
