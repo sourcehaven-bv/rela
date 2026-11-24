@@ -44,8 +44,8 @@ incoming scoped edges.
 6. Refusal messages name the relation and its `within`, never an entity id or
 title.
 7. Cyclic ownership data (an entity owning itself) does not loop.
-8. A flows.yaml relation trigger fires once per cleared edge, and a clear does
-not re-enter the scope check.
+8. Triggers fire at most once per cleared edge: a clear runs no automation (manager
+relation writes fire no relation trigger) and does not re-enter the scope check.
 9. Form: the picker offers only targets owned by the selected scope value, is
 disabled while it is empty, and a scope change clears the dependent field
 (clear) or flags it (reject).
@@ -170,7 +170,7 @@ every principal.
 name. Mitigation: the cleared edge's source is the same entity whose scope edge
 the caller is authorized to write, or (re-parenting) the edge became invalid by
 an owning change the caller is authorized to make. The clear is recorded in the
-audit log under the caller's principal with reason "cleared out of scope", and
+audit log under the caller's principal with summary "cleared: out of scope of <within relation>", and
 versioned, so it is visible and reversible. An operator who does not want a
 write to have this effect declares `reject`.
 3. Unbounded work (DoS). Mitigation: one hop, one level, one pass. Per write:
@@ -209,7 +209,7 @@ replace scope (clear/reject), delete scope (clear/reject), re-parent target
 (clear/reject), PatchWithRelations joined replace, audit records of clears,
 refusal message names no entity.
 2. Seeded cyclic ownership (an entity owning itself, two owning each other).
-3. Trigger on relation delete fires once per cleared edge.
+3. A clear runs no automation (TestScoped_ClearRunsNoAutomation).
 4. Frontend unit tests for the scoped-relation helper and the picker.
 
 **Edge Cases:**
