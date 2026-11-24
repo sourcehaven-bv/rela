@@ -107,7 +107,7 @@ func TestTenantScheduler_WritesOnlyIntoItsTenant(t *testing.T) {
 	go func() { done <- (&SchedulerCmd{}).Run(ctx, svcA, bind) }()
 
 	settled := func() bool {
-		got, loadErr := svcA.SchedulerState().Load(context.Background(), []string{"tick"})
+		got, loadErr := svcA.Scheduler().SchedulerState().Load(context.Background(), []string{"tick"})
 		if loadErr != nil {
 			return false
 		}
@@ -125,7 +125,7 @@ func TestTenantScheduler_WritesOnlyIntoItsTenant(t *testing.T) {
 	assert.Equal(t, []string{"scheduled"}, noteTitles(t, svcA), "the task writes into the tenant it ran for")
 	assert.Empty(t, noteTitles(t, svcB), "the task must not write into another tenant")
 
-	stateB, err := svcB.SchedulerState().Load(context.Background(), []string{"tick"})
+	stateB, err := svcB.Scheduler().SchedulerState().Load(context.Background(), []string{"tick"})
 	require.NoError(t, err)
 	assert.Empty(t, stateB, "run state must stay in the tenant's own schema")
 

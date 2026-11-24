@@ -6,8 +6,9 @@ package archguard
 //
 // Each entry has a category (see readCategory) and a reason that says what
 // the read is for. requestPath entries are debt. Each names the open ticket
-// that removes it: TKT-T0DK37 and TKT-PSBGQLY (structured search),
-// TKT-C5H506O (scopedHeaders) and TKT-1X1X24O (desktopnotify).
+// that removes it: TKT-C5H506O (scopedHeaders, which also serves the
+// structured search shapes TKT-PSBGQLY lowers) and TKT-1X1X24O
+// (desktopnotify).
 var unpagedReadAllowlist = map[string]unpagedRead{
 	// aclmap: the who-can report.
 	"internal/aclmap/enumerate.go#Engine.enumeratePrincipals": {2, batchJob,
@@ -53,9 +54,9 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/appbuild/realtime_triggers.go#entitySource.Scan": {1, batchJob,
 		"realtime trigger engine: one unpaged header scan of a type, handed to the engine in batches of " +
 			"triggerScanPage when it (re)baselines a trigger"},
-	"internal/appbuild/scheduled_mail_validate.go#Services.ValidateScheduledMailRecipients": {1, batchJob,
+	"internal/appbuild/scheduled_mail_validate.go#SchedulerWorkspace.ValidateScheduledMailRecipients": {1, batchJob,
 		"operator validation of scheduled-mail tasks: scans each task's for_each type for invalid addresses"},
-	"internal/appbuild/scheduler_foreach.go#Services.ScheduledForEachEntities": {1, batchJob,
+	"internal/appbuild/scheduler_foreach.go#SchedulerWorkspace.ScheduledForEachEntities": {1, batchJob,
 		"scheduled task for_each: selects the task's subjects from its entity type"},
 
 	// apptest: `rela test`.
@@ -89,10 +90,6 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/dataentry/gantt_handler.go#ganttHandler.collectGanttRound": {1, bounded,
 		"gantt closure round: a GraphQuery for the descendants of the frontier, so it reads the subtree " +
 			"the chart shows, not the type"},
-	"internal/dataentry/searchplan.go#searchPlan.page": {1, requestPath,
-		"structured /_search without a limit returns every match, as visibleListByTypes did before it; " +
-			"the filter and the ACL gate run in the store, and with a limit the GraphQuery carries it. " +
-			"TKT-T0DK37 bounds the unlimited case; TKT-PSBGQLY lowers the shapes the plan still declines"},
 	"internal/dataentry/listpushdown.go#listPlan.run": {1, bounded,
 		"list pushdown page: the plan's GraphQuery carries Limit = perPage and Offset (planListPushdown); " +
 			"the matcher cannot see a field set in another function"},
@@ -102,7 +99,8 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 			"of the type in the world, directly or as the ACL-scoped GraphQuery (built by scopedQuery) with " +
 			"no Limit through collectHeaders. A page scope or ?q= reads by ids instead (headersByIDs). The " +
 			"rest needs the whole filtered set in Go; TKT-C5H506O moves the whole-set callers to their own read " +
-			"and pages the rest"},
+			"and pages the rest. A /_search shape the plan declines reads it once per page served " +
+			"(TKT-T0DK37); TKT-PSBGQLY lowers those shapes"},
 
 	// datamigration: migrations rewrite whole types.
 	"internal/datamigration/adoptface.go#faceAdoption.plan": {1, batchJob, "face adoption: scans a type for zero-face rows to move"},

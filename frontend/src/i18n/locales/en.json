@@ -11,6 +11,7 @@
     "piles": "Piles",
     "newPile": "New pile",
     "newItem": "New {label}",
+    "emptyGroup": "None yet",
     "inbox": "Inbox",
     "inboxWaiting": "{n} waiting | {n} waiting",
     "inboxMentions": "{n} mention | {n} mentions",
@@ -203,14 +204,14 @@
     },
     "notifications": {
       "title": "Browser notifications",
-      "description": "Notify this browser about new inbox entries while rela is in the background. Notifications show who wrote and on which item, never the message itself.",
+      "description": "Notify this browser about new inbox entries while this app is in the background. Notifications show who wrote and on which item, never the message itself.",
       "enable": "Notify me",
       "mentions": "Mentions and replies",
       "waiting": "Sessions waiting on me",
       "unsupported": "This browser cannot show notifications here.",
       "denied": "Notifications are blocked for this site. Allow them in your browser's site settings, then turn this on again.",
       "signedOut": "Sign in to choose notifications.",
-      "noStorage": "This browser does not let rela store data for this site, so it cannot tell new inbox entries from old ones. Allow site data and try again."
+      "noStorage": "This browser does not let this app store data for this site, so it cannot tell new inbox entries from old ones. Allow site data and try again."
     },
     "relationDefault": {
       "none": "None",
@@ -1005,7 +1006,8 @@
       "tomorrow": "Tomorrow",
       "next7Days": "Next 7 days",
       "later": "Later",
-      "noDate": "No date"
+      "noDate": "No date",
+      "weekOf": "Week of {date}"
     },
     "summary": {
       "count": "Count",
@@ -1038,6 +1040,8 @@
     "introTitle": "Search entities",
     "introDescription": "Find entities by title or content, and narrow the results with filters.",
     "resultCount": "{n} result found | {n} results found",
+    "resultCountTruncated": "Showing the first {n} of {total} results. Refine the search to see the rest.",
+    "resultCountCapped": "Showing the {n} best matches; there are more. Refine the search to narrow them down.",
     "addResultsToPile": "Add results to pile",
     "newPileFromResults": "New pile from results…",
     "inOwner": "in {title}",

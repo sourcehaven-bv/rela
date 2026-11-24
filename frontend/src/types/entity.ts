@@ -471,6 +471,12 @@ export interface ListMeta {
   page: number
   per_page: number
   has_more: boolean
+  /**
+   * A free-text `/_search` matched more hits than its relevance cap of
+   * 1000; `total` counts the hits within the cap, and no page reaches the
+   * rest.
+   */
+  capped?: boolean
   next_cursor?: string
   // Set when the rows are in the order of one orderable relation of the
   // tab's anchor; see RelationOrder.

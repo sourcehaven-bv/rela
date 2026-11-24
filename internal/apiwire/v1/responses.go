@@ -485,6 +485,10 @@ type ListMeta struct {
 	Page    int  `json:"page"`
 	PerPage int  `json:"per_page"`
 	HasMore bool `json:"has_more"`
+	// Capped says a free-text /_search matched more hits than its
+	// relevance cap of 1000: Total counts the hits within the cap, and no
+	// page reaches the rest. Only /_search sets it.
+	Capped bool `json:"capped,omitempty"`
 	// RelationOrder is set when the rows are shown in relation order.
 	//
 	// Nil: the rows follow the request's sort, or no sort at all.
@@ -956,6 +960,9 @@ type AppConfig struct {
 	// a BCP 47 tag, or empty to follow the browser. The SPA uses it when
 	// the user has chosen no language of their own.
 	Language string `json:"language,omitempty"`
+	// Languages are the interface languages a user may pick (app.languages),
+	// base languages such as "en". Empty means every language the SPA has.
+	Languages []string `json:"languages,omitempty"`
 	// PlantUMLServerURL is the configured PlantUML server base URL, or empty
 	// when PlantUML rendering is disabled. The SPA treats a non-empty value as
 	// the on switch for ```plantuml diagram rendering.

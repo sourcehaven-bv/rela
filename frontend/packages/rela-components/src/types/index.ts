@@ -212,6 +212,11 @@ export interface NavGroup {
    */
   addLabel?: string
   /**
+   * Shown under the heading while the group has no items, so a heading kept
+   * for its add control does not stand over nothing ("None yet").
+   */
+  emptyLabel?: string
+  /**
    * Subheadings for this group's items, in the order they should appear.
    *
    * Applied only past `RlSidebarGroup`'s threshold, so the same data reads as

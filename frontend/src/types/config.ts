@@ -160,6 +160,11 @@ export interface AppConfig {
    * tag, or absent to follow the browser. A user's own choice wins over it.
    */
   language?: string
+  /**
+   * The interface languages a user may pick (`app.languages`), base
+   * languages such as `en`. Absent means every language the app has.
+   */
+  languages?: string[]
   // The world a request lands in when the URL names none. '' / absent means
   // the raw default faces. Presentation only — the read grant is re-checked
   // per request, so this changes which face a bare URL resolves to, not who
@@ -431,6 +436,24 @@ export interface ListConfig {
 /** The relative date buckets, in the order their sections appear. */
 export type DateBucket = 'overdue' | 'today' | 'tomorrow' | 'next_7_days' | 'later' | 'no_date'
 
+/** A calendar bucket unit, finest first. */
+export type CalendarUnit = 'day' | 'week' | 'month' | 'year'
+
+/**
+ * `buckets:` in its mapping form: one section per calendar unit. `for`
+ * (`<n>d`, with `by: day`) gives the next n days one by one, then `then`
+ * sections, or one "later" section.
+ */
+export interface CalendarBuckets {
+  by: CalendarUnit
+  for?: string
+  then?: Exclude<CalendarUnit, 'day'>
+  order?: 'asc' | 'desc'
+}
+
+/** The fixed calendar sections `labels:` may rename. */
+export type CalendarFixedBucket = 'overdue' | 'today' | 'tomorrow' | 'later' | 'no_date'
+
 /**
  * A list's `group_by:`. The server always sends the mapping form, with
  * `max_rows` already defaulted, so the SPA holds no copy of the default.
@@ -448,10 +471,13 @@ export interface ListGroupBy {
   style_from?: string
   /** Restyles enum values. Every declared value still gets a section. */
   groups?: ListGroup[]
-  /** Sorts a date property into relative sections. Exclusive with `groups`. */
-  buckets?: 'relative'
+  /**
+   * Sorts a date property into date sections. Exclusive with `groups`. The
+   * string is the relative scheme; the mapping is calendar sections.
+   */
+  buckets?: 'relative' | CalendarBuckets
   /** Bucket titles by bucket key; a key left out keeps the English default. */
-  labels?: Partial<Record<DateBucket, string>>
+  labels?: Partial<Record<DateBucket | CalendarFixedBucket, string>>
   /** How many rows a grouped list loads. A grouped list is not paged. */
   max_rows: number
 }

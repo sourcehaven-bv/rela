@@ -239,24 +239,25 @@ func (f fileKeyLocker) Acquire(ctx context.Context, key string) (func(), error) 
 // webhook named one subject, and an ambiguous value cannot say which entity
 // that was. Faces that disagree on the value grant nothing either.
 func storedAssertedRoles(
-	ctx context.Context, s *Services, entityID string, headers []store.EntityHeader,
+	ctx context.Context, roles *idproles.Store, policy *acl.Policy, st store.Store,
+	entityID string, headers []store.EntityHeader,
 ) ([]string, error) {
-	if s.idpRoles == nil || s.aclPolicy == nil || len(s.aclPolicy.AssertedRoles) == 0 {
+	if roles == nil || policy == nil || len(policy.AssertedRoles) == 0 {
 		return nil, nil
 	}
-	subject, err := principalSubject(ctx, s, entityID, headers)
+	subject, err := principalSubject(ctx, policy, st, entityID, headers)
 	if err != nil || subject == "" {
 		return nil, err
 	}
-	return s.idpRoles.RolesFor(ctx, subject, entityID)
+	return roles.RolesFor(ctx, subject, entityID)
 }
 
 // principalSubject returns the IdP subject of a user entity, or "" when it
 // has none or the value is ambiguous.
 func principalSubject(
-	ctx context.Context, s *Services, entityID string, headers []store.EntityHeader,
+	ctx context.Context, policy *acl.Policy, st store.Store, entityID string, headers []store.EntityHeader,
 ) (string, error) {
-	prop := strings.TrimSpace(s.aclPolicy.PrincipalProperty)
+	prop := strings.TrimSpace(policy.PrincipalProperty)
 	if prop == "" {
 		return entityID, nil
 	}
@@ -271,11 +272,11 @@ func principalSubject(
 	if subject == "" {
 		return "", nil
 	}
-	lookup, err := aclstore.NewPrincipalLookup(s.store)
+	lookup, err := aclstore.NewPrincipalLookup(st)
 	if err != nil {
 		return "", err
 	}
-	ids, err := lookup.LookupEntityByProperty(ctx, s.aclPolicy.UserEntityType, prop, subject)
+	ids, err := lookup.LookupEntityByProperty(ctx, policy.UserEntityType, prop, subject)
 	if err != nil {
 		return "", err
 	}

@@ -762,6 +762,16 @@ func (h *entityReadHandler) handleV1Search(w http.ResponseWriter, r *http.Reques
 			fmt.Sprintf("limit must be an integer between 1 and %d", maxSearchLimit), "")
 		return
 	}
+	page, ok := parseSearchPage(r.URL.Query().Get("page"))
+	if !ok {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_page",
+			fmt.Sprintf("page must be an integer between 1 and %d", maxSearchPage), "")
+		return
+	}
+	perPage := limit
+	if perPage == 0 {
+		perPage = maxSearchResults
+	}
 	meta := h.schema().Meta
 	relCtx, werr := parseSearchRelation(meta, r.URL.Query())
 	if werr != nil {
@@ -789,10 +799,12 @@ func (h *entityReadHandler) handleV1Search(w http.ResponseWriter, r *http.Reques
 	// silently truncating. The limit lowers the relevance cap where that
 	// cannot change which rows survive the filters (TKT-T2I7P2, see
 	// freeTextLimit), and a structured query reads only the rows it serves
-	// (TKT-D3RAB0E, see searchPage). total counts the matches before the
-	// cut.
-	entities, total, err := h.queries().searchPage(r.Context(), query,
-		queryOptions{limit: limit, exactType: typeFilter})
+	// (TKT-D3RAB0E, see searchPage). Every page is bounded, a page without
+	// a limit at maxSearchResults (TKT-T0DK37). total counts the matches
+	// before the cut.
+	offset := (page - 1) * perPage
+	entities, total, capped, err := h.queries().searchPage(r.Context(), query,
+		queryOptions{limit: perPage, exactType: typeFilter, offset: offset})
 	if err != nil {
 		writeListPipelineError(w, r, err)
 		return
@@ -838,8 +850,10 @@ func (h *entityReadHandler) handleV1Search(w http.ResponseWriter, r *http.Reques
 		Data: linkRows(data, entities, linkable),
 		Meta: v1.ListMeta{
 			Total:   total,
-			Page:    1,
-			PerPage: len(data),
+			Page:    page,
+			PerPage: perPage,
+			HasMore: offset+len(data) < total,
+			Capped:  capped,
 		},
 	}
 

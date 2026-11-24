@@ -5,7 +5,9 @@ title: Per-type records:read and records:append permissions
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-23"
+completed: "2026-11-23"
+status: done
 ---
 
 ## Description

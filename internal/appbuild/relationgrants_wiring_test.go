@@ -100,7 +100,7 @@ func newSpawntHarness(t *testing.T, policyBody string) spawntHarness {
 			t.Fatalf("IdentityBinder: %v", bindErr)
 		}
 		var out strings.Builder
-		rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out,
+		rt := lua.NewWriter(svc.Scheduler().ScheduledLuaWriteDeps(), &out,
 			lua.WithContext(taskCtx), lua.WithPrincipal(principal.From(taskCtx)))
 		defer rt.Close()
 		//nolint:contextcheck // the ctx is supplied via lua.WithContext above;

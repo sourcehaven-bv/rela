@@ -489,7 +489,7 @@ func newBCWorld(t *testing.T) *bcWorld {
 func (w *bcWorld) run(e *entity.Entity) error {
 	w.t.Helper()
 	ctx := boundAs(w.t, w.svc, connector)
-	deps := w.svc.ScheduledLuaWriteDeps()
+	deps := w.svc.Scheduler().ScheduledLuaWriteDeps()
 	deps.Capabilities = w.caps
 	return w.svc.ScriptEngine().ExecuteFile(ctx, "basecamp.lua", deps, e, nil)
 }

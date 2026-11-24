@@ -44,6 +44,11 @@ const filterMenuRef = ref<InstanceType<typeof AdHocFilterMenu> | null>(null)
 
 const query = ref('')
 const results = ref<Entity[]>([])
+// The total when the result is cut to its first page; undefined when the
+// rows shown are the whole result.
+const truncatedTotal = ref<number | undefined>(undefined)
+// Free text matched more hits than the server ranks (meta.capped).
+const capped = ref(false)
 
 // "Add results to pile" adds every result on screen, each by its ADDRESS so
 // the pile holds the face the search served (TKT-K3RJLH).
@@ -142,6 +147,8 @@ async function search() {
   const searchQuery = fullSearchQuery.value
   if (!searchQuery) {
     results.value = []
+    truncatedTotal.value = undefined
+    capped.value = false
     searched.value = false
     return
   }
@@ -153,9 +160,15 @@ async function search() {
   try {
     const response = await searchEntities(searchQuery, { world: worldParam.value })
     results.value = response.data
+    // One page holds at most 1000 rows (TKT-T0DK37); say so rather than
+    // present the first page as the whole result.
+    truncatedTotal.value = response.meta.has_more ? response.meta.total : undefined
+    capped.value = response.meta.capped === true
   } catch (err) {
     console.error('Search error:', err)
     results.value = []
+    truncatedTotal.value = undefined
+    capped.value = false
     loadError.value = true
   } finally {
     loading.value = false
@@ -559,7 +572,15 @@ watch(
 
     <section v-else-if="results.length > 0" class="search-results" aria-labelledby="search-results-heading">
       <div class="results-head">
-        <p id="search-results-heading" class="results-count">{{ t('search.resultCount', { n: results.length }, results.length) }}</p>
+        <p id="search-results-heading" class="results-count">
+          {{
+            capped
+              ? t('search.resultCountCapped', { n: results.length })
+              : truncatedTotal === undefined
+                ? t('search.resultCount', { n: results.length }, results.length)
+                : t('search.resultCountTruncated', { n: results.length, total: truncatedTotal })
+          }}
+        </p>
         <AddToPileMenu
           v-if="schemaStore.listButtons.add_to_pile"
           :addresses="resultAddresses"

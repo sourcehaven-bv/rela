@@ -1,4 +1,9 @@
-import { resolveLanguage, type LanguageInputs, type ResolvedLanguage } from './language'
+import {
+  offeredLanguages,
+  resolveLanguage,
+  type LanguageInputs,
+  type ResolvedLanguage,
+} from './language'
 
 describe('resolveLanguage', () => {
   const cases: { name: string; inputs: LanguageInputs; want: ResolvedLanguage }[] = [
@@ -67,9 +72,44 @@ describe('resolveLanguage', () => {
       inputs: { browser: ['', 'x_y', 'nl'] },
       want: { language: 'nl', locale: 'nl', source: 'browser' },
     },
+    {
+      name: 'a browser language the app does not offer is skipped',
+      inputs: { browser: ['nl-NL', 'en-GB'], offered: ['en'] },
+      want: { language: 'en', locale: 'en-GB', source: 'browser' },
+    },
+    {
+      name: 'a user choice the app does not offer is ignored',
+      inputs: { user: 'nl', browser: [], offered: ['en'] },
+      want: { language: 'en', locale: 'en', source: 'fallback' },
+    },
+    {
+      name: 'the first offered language is the fallback',
+      inputs: { browser: ['de-DE'], offered: ['nl'] },
+      want: { language: 'nl', locale: 'de-DE', source: 'fallback' },
+    },
+    {
+      name: 'the first offered language is the fallback even when English is offered',
+      inputs: { browser: ['de-DE'], offered: ['nl', 'en'] },
+      want: { language: 'nl', locale: 'de-DE', source: 'fallback' },
+    },
+    {
+      name: 'an offer naming no known language offers all',
+      inputs: { browser: ['nl'], offered: ['xx'] },
+      want: { language: 'nl', locale: 'nl', source: 'browser' },
+    },
   ]
 
   it.each(cases)('$name', ({ inputs, want }) => {
     expect(resolveLanguage(inputs)).toEqual(want)
+  })
+})
+
+describe('offeredLanguages', () => {
+  it('keeps known languages in order, once', () => {
+    expect(offeredLanguages(['nl', 'xx', 'en', 'nl'])).toEqual(['nl', 'en'])
+  })
+  it('offers every language when none is named', () => {
+    expect(offeredLanguages(undefined)).toEqual(['en', 'nl'])
+    expect(offeredLanguages([])).toEqual(['en', 'nl'])
   })
 })

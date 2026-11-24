@@ -302,7 +302,48 @@ export async function searchEntities(
   if (opts.limit) {
     params.limit = String(opts.limit)
   }
+  if (opts.page && opts.page > 1) {
+    params.page = String(opts.page)
+  }
   return api.get<ListResponse<Entity>>('/_search', params, opts.signal)
+}
+
+// searchAllEntities pages: a runaway guard, as MAX_LIST_ALL_PAGES is. At
+// the server's 1000-row page without a limit that is 50,000 rows.
+const MAX_SEARCH_ALL_PAGES = 50
+
+/**
+ * Reads EVERY page of a search and merges them into one ListResponse. One
+ * `/_search` read returns at most one page (1000 rows without a `limit`);
+ * a caller that computes over the whole result, such as a dashboard
+ * breakdown, follows `meta.has_more` through this helper instead of
+ * treating the first page as the set.
+ *
+ * The contract is listAllEntities': response-driven paging, rows deduped
+ * by id, a page cap after which the merged meta keeps has_more true, and
+ * the signal aborts between pages. Pages are offsets into a live result: a
+ * row created between pages can repeat (the dedupe drops it), and a row
+ * deleted between pages can make one later row skip a page and be missed.
+ * Free text pages only within its 1000 best hits.
+ */
+export async function searchAllEntities(
+  query: string,
+  opts: Omit<SearchOptions, 'page'> = {}
+): Promise<ListResponse<Entity>> {
+  const byId = new Map<string, Entity>()
+  let res: ListResponse<Entity>
+  let page = 1
+  for (let fetched = 1; ; fetched++) {
+    res = await searchEntities(query, { ...opts, page })
+    for (const e of res.data) byId.set(e.id, e)
+    if (!res.meta.has_more || fetched >= MAX_SEARCH_ALL_PAGES || res.data.length === 0) break
+    page = res.meta.page + 1
+  }
+  const data = [...byId.values()]
+  return {
+    data,
+    meta: { total: res.meta.total, page: 1, per_page: data.length, has_more: res.meta.has_more },
+  }
 }
 
 /** Optional inputs of {@link searchEntities}. */
@@ -319,6 +360,12 @@ export interface SearchOptions {
    * up to 1000 rows, which costs more database time and a larger response.
    */
   limit?: number
+  /**
+   * Which page of `limit` rows (1000 without a limit) to read; 1 when
+   * omitted. `meta.has_more` says whether a later page holds rows; a caller
+   * that needs every row uses searchAllEntities.
+   */
+  page?: number
 }
 
 /**

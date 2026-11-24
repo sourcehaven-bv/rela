@@ -834,7 +834,9 @@ func hasBackgroundActions(rules []triggers.Rule) bool {
 // keeping the two methods off Services, which is at its plimsoll cap.
 type servicesJobRunner struct{ s *Services }
 
-func (r servicesJobRunner) ScheduledLuaWriteDeps() lua.WriteDeps { return r.s.ScheduledLuaWriteDeps() }
+func (r servicesJobRunner) ScheduledLuaWriteDeps() lua.WriteDeps {
+	return r.s.Scheduler().ScheduledLuaWriteDeps()
+}
 
 func (r servicesJobRunner) BindIdentity(ctx context.Context) (context.Context, error) {
 	return identityBinderFor(r.s.aclDeclarative, servicesClock(r.s))(ctx)

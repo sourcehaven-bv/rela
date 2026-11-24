@@ -146,7 +146,7 @@ func outputLines(got string) []string {
 func runLua(ctx context.Context, t *testing.T, svc *appbuild.Services, src string) (string, error) {
 	t.Helper()
 	var out strings.Builder
-	rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out, lua.WithContext(ctx), lua.WithPrincipal(principal.From(ctx)))
+	rt := lua.NewWriter(svc.Scheduler().ScheduledLuaWriteDeps(), &out, lua.WithContext(ctx), lua.WithPrincipal(principal.From(ctx)))
 	defer rt.Close()
 	err := rt.RunString(src) //nolint:contextcheck // the runtime carries ctx via lua.WithContext
 	return out.String(), err

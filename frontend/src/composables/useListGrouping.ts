@@ -30,8 +30,24 @@ import type { DotColor } from 'rela-components/types'
 import { useUIStore } from '@/stores'
 import { formatCellValue } from '@/utils/format'
 import { BUCKET_ORDER, bucketDate, bucketOf, defaultBucketLabel } from '@/utils/dateBuckets'
+import {
+  calendarBucketDate,
+  calendarBucketOf,
+  calendarBucketColor,
+  calendarBucketTitle,
+  compareCalendarBuckets,
+  type CalendarBucket,
+} from '@/utils/calendarBuckets'
 import { t } from '@/i18n'
-import type { DateBucket, Entity, EntityType, ListGroupBy, ListResponse, PageScope } from '@/types'
+import type {
+  CalendarBuckets,
+  DateBucket,
+  Entity,
+  EntityType,
+  ListGroupBy,
+  ListResponse,
+  PageScope,
+} from '@/types'
 
 export interface ListSection {
   id: string
@@ -111,6 +127,9 @@ export function groupRows(
   if (!groupBy.property && !groupBy.relation) return computedSections(rows, groupBy)
   const property = groupBy.property ?? ''
   const def = entityType?.properties[property]
+  if (groupBy.buckets && typeof groupBy.buckets === 'object') {
+    return calendarSections(rows, groupBy, groupBy.buckets, options, def?.type === 'date')
+  }
   if (groupBy.buckets) return bucketSections(rows, groupBy, options, def?.type === 'date')
 
   const declared = def?.values ?? []
@@ -218,6 +237,50 @@ function bucketSections(
   })
 }
 
+/**
+ * Calendar sections (utils/calendarBuckets), empty ones left out, ordered by
+ * their start day rather than by row arrival: the server orders by instant,
+ * and a naive datetime is read as wall-clock time, so arrival order could
+ * split a day.
+ */
+function calendarSections(
+  rows: Entity[],
+  groupBy: ListGroupBy,
+  buckets: CalendarBuckets,
+  options: GroupOptions,
+  isDate: boolean
+): ListSection[] {
+  const { now, tz } = options
+  const byId = new Map<string, { bucket: CalendarBucket; items: Entity[] }>()
+  for (const row of rows) {
+    const bucket = calendarBucketOf(
+      row.properties[groupBy.property ?? ''],
+      buckets,
+      now,
+      tz,
+      isDate
+    )
+    const entry = byId.get(bucket.id) ?? { bucket, items: [] }
+    entry.items.push(row)
+    byId.set(bucket.id, entry)
+  }
+  const desc = buckets.order === 'desc'
+  return [...byId.values()]
+    .sort((a, b) => compareCalendarBuckets(a.bucket, b.bucket, desc))
+    .map(({ bucket, items }) => {
+      const date = isDate ? calendarBucketDate(bucket) : undefined
+      return {
+        id: bucket.id,
+        title:
+          (bucket.fixed && groupBy.labels?.[bucket.fixed]) || calendarBucketTitle(bucket, now, tz),
+        color: calendarBucketColor(bucket),
+        prefill: date && groupBy.property ? { [groupBy.property]: date } : undefined,
+        bucket: bucket.meta,
+        items,
+      }
+    })
+}
+
 /** Where a list's closed sections are remembered, per browser. */
 export function collapsedStorageKey(listId: string): string {
   return `rela:list-groups:${listId}`
@@ -295,7 +358,11 @@ export function useListGrouping(options: {
         },
       ])
     )
-    const other: ListSection = { id: `rel:${OTHER_COLUMN}`, title: t('list.group.other'), items: [] }
+    const other: ListSection = {
+      id: `rel:${OTHER_COLUMN}`,
+      title: t('list.group.other'),
+      items: [],
+    }
     for (const row of rows) {
       const column = relationColumns.columnOf(row)
       ;(byId.get(column) ?? other).items.push(row)

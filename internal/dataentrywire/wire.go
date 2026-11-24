@@ -41,7 +41,7 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 
 	// The remote routes list every remote in remotes.yaml; a project
 	// without one lists none.
-	rs, rsErr := newRemotes(svc, slog.Default())
+	rs, rsErr := newRemotes(svc.Scheduler(), slog.Default())
 	if rsErr != nil {
 		return fmt.Errorf("wire remotes: %w", rsErr)
 	}

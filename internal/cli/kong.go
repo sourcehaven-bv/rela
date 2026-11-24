@@ -33,9 +33,9 @@ import (
 // Version is set at build time.
 var Version = "dev"
 
-// The scheduler command's workspace is bound at the wiring site below;
-// kong.BindTo only verifies assignability at runtime, so pin it here.
-var _ scheduler.WorkspaceProvider = (*appbuild.Services)(nil)
+// The commands' workspace is bound at the wiring site below; kong.BindTo only
+// verifies assignability at runtime, so pin it here.
+var _ scheduler.WorkspaceProvider = (*appbuild.SchedulerWorkspace)(nil)
 
 // Invocation-scoped globals populated by [runKong] before any Run
 // method executes. Subcommands read them for behavior driven by the
@@ -316,10 +316,11 @@ func runKong() int {
 	if bundles != nil {
 		ktx.Bind(bundles.read, bundles.write, bundles.attachment, bundles.renametype, bundles.analysis, bundles.leases,
 			bundles.records, bundles.channels, bundles.flows, bundles.reconcile)
-		// The scheduler command's workspace and request-edge step are
-		// supplied here at the wiring site (consumer-side interface):
-		// appbuild.Services satisfies scheduler.WorkspaceProvider directly.
-		ktx.BindTo(svc, (*scheduler.WorkspaceProvider)(nil))
+		// The scheduler and remote commands' workspace and request-edge step
+		// are supplied here at the wiring site (consumer-side interface).
+		// `rela scheduler` also takes svc itself, for the sync-backend check.
+		ktx.BindTo(svc.Scheduler(), (*scheduler.WorkspaceProvider)(nil))
+		ktx.Bind(svc)
 		ktx.BindTo(bind, (*scheduler.IdentityBinder)(nil))
 	}
 

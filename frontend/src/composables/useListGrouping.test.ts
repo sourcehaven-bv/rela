@@ -309,3 +309,48 @@ describe('groupRows by condition', () => {
     expect(ids(groupRows(rows, groupBy, taskType, { now, tz }))).toEqual([['other', ['b']]])
   })
 })
+
+describe('groupRows with calendar buckets', () => {
+  const rows = [
+    task('old', { due: '2026-06-01' }),
+    task('today', { due: '2026-06-10' }),
+    task('soon', { due: '2026-06-12' }),
+    task('july', { due: '2026-07-20' }),
+    task('none', {}),
+  ]
+
+  it('gives the near window by day, then months, and labels fixed sections', () => {
+    const groupBy: ListGroupBy = {
+      property: 'due',
+      buckets: { by: 'day', for: '7d', then: 'month' },
+      labels: { today: 'Vandaag' },
+      max_rows: 500,
+    }
+    const sections = groupRows(rows, groupBy, taskType, { now, tz })
+    expect(sections.map((s) => s.items.map((e) => e.id))).toEqual([
+      ['old'],
+      ['today'],
+      ['soon'],
+      ['july'],
+      ['none'],
+    ])
+    expect(sections[0].color).toBe('red')
+    expect(sections[1].title).toBe('Vandaag')
+    expect(sections[2].prefill).toEqual({ due: '2026-06-12' })
+    expect(sections[3].prefill).toBeUndefined()
+  })
+
+  it('orders months newest first with no date last', () => {
+    const groupBy: ListGroupBy = {
+      property: 'due',
+      buckets: { by: 'month', order: 'desc' },
+      max_rows: 500,
+    }
+    const sections = groupRows(rows, groupBy, taskType, { now, tz })
+    expect(sections.map((s) => s.items.map((e) => e.id))).toEqual([
+      ['july'],
+      ['old', 'today', 'soon'],
+      ['none'],
+    ])
+  })
+})

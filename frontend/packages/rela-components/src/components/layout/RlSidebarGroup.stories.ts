@@ -50,3 +50,19 @@ export const LongWithoutSubgroups: Story = {
 export const ThresholdRaised: Story = {
   args: { group: long, activeId: 'seat-count', groupThreshold: Infinity },
 }
+
+/**
+ * No items yet, kept for its add control. The empty label says so, so the
+ * heading does not stand over nothing.
+ */
+export const Empty: Story = {
+  args: {
+    group: {
+      id: 'notes',
+      label: 'Recent notes',
+      items: [],
+      addLabel: 'New note',
+      emptyLabel: 'None yet',
+    },
+  },
+}

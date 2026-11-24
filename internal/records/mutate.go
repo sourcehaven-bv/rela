@@ -133,6 +133,12 @@ func (s *Service) changeable(
 	if id == "" {
 		return nil, Record{}, fmt.Errorf("%w: record id is required", ErrInvalid)
 	}
+	if err := s.canAppend(ctx, typ); err != nil {
+		return nil, Record{}, err
+	}
+	if err := s.canRead(ctx, typ); err != nil {
+		return nil, Record{}, err
+	}
 	cur, err := m.Get(ctx, typ, id)
 	if err != nil {
 		return nil, Record{}, err

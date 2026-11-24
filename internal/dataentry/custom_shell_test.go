@@ -58,7 +58,7 @@ func embeddedSPAShell() ([]byte, error) {
 }
 
 // TestSPAShellInjection exercises the real router: a stock deployment's shell
-// must be byte-identical to the embedded one, and an injected shell must carry
+// must be byte-identical to the embedded one after the boot rewrite, and an injected shell must carry
 // a correct Content-Length (http.FileServer's headers describe the ORIGINAL
 // bytes, which we no longer serve).
 func TestSPAShellInjection(t *testing.T) {
@@ -110,8 +110,11 @@ func TestSPAShellInjection(t *testing.T) {
 				t.Errorf("js tag present = %v, want %v", gotJS, tt.wantJS)
 			}
 
-			// The strongest form of "no injection".
-			if !tt.wantCSS && !tt.wantJS && body != string(embedded) {
+			// The strongest form of "no injection". The router still applies
+			// the boot rewrite (title, lang, metas), so compare against that.
+			cfg := app.State().Cfg
+			stock := bootShell(embedded, shellBootOf(cfg.App, cfg.Account))
+			if !tt.wantCSS && !tt.wantJS && body != string(stock) {
 				t.Errorf("shell differs from the embedded original with no injection expected")
 			}
 

@@ -180,7 +180,8 @@ func validateMailRecipients(ctx context.Context, root string) (failed bool, err 
 	if err != nil {
 		return false, err
 	}
-	if validateErr := mailSvc.ValidateScheduledMailRecipients(appbuild.BindOrWarn(ctx, bind)); validateErr != nil {
+	validateErr := mailSvc.Scheduler().ValidateScheduledMailRecipients(appbuild.BindOrWarn(ctx, bind))
+	if validateErr != nil {
 		fmt.Printf("  ✗ scheduled mail recipients: %v\n", validateErr)
 		return true, nil
 	}

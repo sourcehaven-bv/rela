@@ -446,6 +446,7 @@ app:
 | Field      | Description                                                                  |
 | ---------- | ---------------------------------------------------------------------------- |
 | `language` | A BCP 47 language tag such as `nl` or `nl-BE`. Supported languages: `en`, `nl`. |
+| `languages` | The languages users may pick, such as `[en]`. Base languages only, from the supported ones. Empty means all. |
 
 The app picks the language in this order:
 
@@ -453,6 +454,17 @@ The app picks the language in this order:
 2. `app.language`;
 3. the browser's preferred languages, first supported one wins;
 4. English.
+
+With `languages`, only those languages count at each step, and the first one
+replaces English as the last step. `app.language` must be one of them. With a
+single language the Settings page shows no language choice:
+
+```yaml
+app:
+  name: "Support Tickets"
+  language: en
+  languages: [en]
+```
 
 The language also decides how dates and numbers are written. A region in the
 tag (`nl-BE`) is used for that formatting. A tag that is not valid BCP 47, or
@@ -996,9 +1008,12 @@ lists:
       - property: logo
 ```
 
-The first column is the row title and link, so it cannot be an image. When
-a later column sets `link`, that column is the title and a first column such
-as `logo` shows as an ordinary column after it.
+An image column is as wide as its thumbnail, not as a text column. List the
+image column **before** the title column to show it as a leading avatar, left
+of the title; it is then part of the title cell and is not repeated as a
+column. The title column is the one with `link`, else the first column. With
+no `link` set, a first column that is an image is itself the title. An image
+column after the title is an ordinary narrow column.
 
 Attachments inherit the owning entity's permissions: if you may not update the
 entity, you may not attach to it. A `fields:` rule that makes the file field
@@ -2784,7 +2799,7 @@ lists:
 |------------|--------|-------------|
 | `property` | string | The property to group by. Required. It must be a single value, not a `list: true` property. |
 | `groups`   | list   | Optional. Per value: `value` (required, must be one of the enum's values), `label`, and `color` (`green`, `amber`, `red`, `grey`, `blue` or `purple`). Needs an enum property. |
-| `buckets`  | string | `relative` groups a date by how far away it is. See [Date buckets](#date-buckets). |
+| `buckets`  | string or map | `relative` groups a date by how far away it is; a map such as `{ by: month }` groups it by calendar unit. See [Date buckets](#date-buckets). |
 | `labels`   | map    | Section titles for the date buckets. Only with `buckets`. |
 | `max_rows` | int    | How many rows the list loads, from 1 to 2000. Default 500. |
 
@@ -2894,6 +2909,59 @@ buckets move on at midnight without a reload.
 The **Add** button of **Today** and **Tomorrow** fills in that date on a `date`
 property. The other buckets span more than one day, and a `datetime` needs a
 time as well, so they fill in nothing.
+
+### Calendar buckets
+
+A mapping under `buckets:` gives one section per calendar day, week, month or
+year:
+
+```yaml
+lists:
+  upcoming:
+    entity: todo
+    group_by:
+      property: start
+      buckets: { by: day, for: 7d, then: month }
+  logbook:
+    entity: todo
+    filters:
+      - { property: completed, operator: "!=", value: "" }
+    group_by:
+      property: completed
+      buckets: { by: month, order: desc }
+```
+
+| Key     | Description |
+|---------|-------------|
+| `by`    | `day`, `week`, `month` or `year`. Required. |
+| `for`   | A number of days, such as `7d`, from 1 to 366. Only with `by: day`. Each day from today to the last day of the window gets a section. An earlier date goes in **Overdue**. A later date goes in the `then` sections, or in one **Later** section. |
+| `then`  | `week`, `month` or `year`: the sections after the `for` window. Needs `for`. |
+| `order` | `asc` (the default) or `desc`, for newest first. `desc` cannot take `for`. |
+
+Without `for`, every date gets a section of its unit, past dates included.
+
+- A week starts on Monday. Its section is titled with its Monday, such as
+  "Week of 23 Nov".
+- A day section is titled **Today**, **Tomorrow**, or with the date, such as
+  "Thu 26 Nov". A month is titled "November 2026", a year "2026". A date in
+  another year shows its year.
+- The first `then` section can be partial: after a 7-day window it holds only
+  the rest of its month.
+- `labels:` can rename only the fixed sections: `no_date`, `today` and
+  `tomorrow` with `by: day` (no `tomorrow` with `for: 1d`), `overdue` with
+  `for`, and `later` with `for` and no `then`. Another key is a config error.
+- `{ by: day }` without `for` still names today's and tomorrow's sections
+  **Today** and **Tomorrow**, also with `order: desc`.
+- **Add** in a day section fills in that date on a `date` property.
+- Sections follow the same time zone rule as relative buckets.
+
+The list loads at most `max_rows` rows, in the order of the sections. Two
+cases can fill that with rows you did not want:
+
+- With `order: desc`, rows without a date are loaded first. Filter them out,
+  as the logbook above does, when the list is long.
+- With `for`, all overdue rows are loaded before today's. Filter old dates out
+  with a `condition:` when there can be many.
 
 > **Note**: The buckets are worked out in the browser, in the reader's time
 > zone. A `condition:` that uses `days_between(entity.due, today())` is worked
@@ -10773,7 +10841,7 @@ promise-based, closed set of methods that forward to the REST API over the
 | `rela.schema()` / `rela.config()` | metamodel + data-entry config |
 | `rela.list({type, params})` | list entities of a type |
 | `rela.get({type, id, params})` | fetch one entity |
-| `rela.search({query, type})` | full-text search |
+| `rela.search({query, type, page?})` | search; one page of at most 1000 rows, `meta.has_more` says a later `page` holds more |
 | `rela.analyze()` | run the analysis checks |
 | `rela.templates({type})` | entity templates |
 | `rela.position({id, scope})` | prev/next within an ordered set |
