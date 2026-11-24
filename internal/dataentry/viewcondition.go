@@ -85,7 +85,31 @@ const (
 	// serving, so the server can apply that list's condition. Absent means
 	// "no view named" — see [viewConditionFor].
 	listIDParam = "list_id"
+	// kanbanIDParam is listIDParam for a board: it names the kanban whose
+	// condition the read applies. A request names at most one of the two.
+	kanbanIDParam = "kanban_id"
 )
+
+// errBadViewID reports a request that names both a list and a kanban. The
+// two would each pick a condition, and taking either one silently would show
+// the caller a view it did not ask for.
+var errBadViewID = errors.New("invalid view parameter: give list_id or kanban_id, not both")
+
+// requestViewCondition resolves the condition of the list or kanban a
+// collection read names, or nil when it names neither.
+func requestViewCondition(
+	fn ViewConditionFunc, s *Schema, query map[string][]string,
+) (ViewConditionMatcher, error) {
+	listID, kanbanID := queryGet(query, listIDParam), queryGet(query, kanbanIDParam)
+	switch {
+	case listID != "" && kanbanID != "":
+		return nil, errBadViewID
+	case kanbanID != "":
+		return viewCondition(fn, s, viewKindKanban, kanbanID), nil
+	default:
+		return viewCondition(fn, s, viewKindList, listID), nil
+	}
+}
 
 // viewConditionFor resolves the matcher for a list, or nil when there is none:
 // no id supplied, no lookup wired, or the view declares no condition.

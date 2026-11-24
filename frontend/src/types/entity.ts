@@ -564,6 +564,11 @@ export interface ListQueryScope {
 }
 
 export interface ListParams extends ListQueryScope {
+  /**
+   * kanban_id is list_id for a board. A read names at most one of the two.
+   * Not on ListQueryScope: a position scope carries list_id only.
+   */
+  kanban_id?: string
   page?: number
   per_page?: number
   cursor?: string

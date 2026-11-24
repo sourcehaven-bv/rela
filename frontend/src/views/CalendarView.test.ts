@@ -550,8 +550,11 @@ describe('CalendarView same-type sources', () => {
     })
     await flushPromises()
 
-    expect(wrapper.find('.calendar-chip--blue').exists()).toBe(true)
-    expect(wrapper.find('.calendar-chip--red').exists()).toBe(true)
+    const accents = wrapper
+      .findAll('.calendar-chip')
+      .map((c) => (c.element as HTMLElement).style.getPropertyValue('--calendar-chip-accent'))
+    expect(accents).toContain('var(--rl-color-status-blue)')
+    expect(accents).toContain('var(--rl-color-status-red)')
 
     wrapper.unmount()
   })

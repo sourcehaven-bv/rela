@@ -118,8 +118,8 @@ func TestValidateListGroupBy(t *testing.T) {
 		},
 		{
 			name:    "unknown color",
-			groupBy: &ListGroupBy{Property: "status", Groups: []ListGroup{{Value: "todo", Color: "violet"}}},
-			wantErr: `unknown color "violet"`,
+			groupBy: &ListGroupBy{Property: "status", Groups: []ListGroup{{Value: "todo", Color: "pink"}}},
+			wantErr: `unknown color "pink"`,
 		},
 		{
 			name:    "groups on a non-enum property",
@@ -221,21 +221,20 @@ func TestNormalizeListGroupBy(t *testing.T) {
 	assert.Equal(t, 40, cfg.Lists["set"].GroupBy.MaxRows)
 }
 
-// TestGroupColorsMatchLibrary pins ValidGroupColors to the component
-// library's StatusColor type. The SPA passes the configured color straight to
-// the section heading, so a token the library does not know renders as no
-// color at all, silently.
-func TestGroupColorsMatchLibrary(t *testing.T) {
-	src, err := os.ReadFile("../../frontend/packages/rela-components/src/types/index.ts")
+// TestColorNamesMatchSPA pins ColorNames to the SPA's NAMED_COLORS, which
+// paints every surface that takes a bare color name. A name only one side
+// knows either validates and renders as no color, or is never accepted.
+func TestColorNamesMatchSPA(t *testing.T) {
+	src, err := os.ReadFile("../../frontend/src/utils/styleColors.ts")
 	require.NoError(t, err)
-	line := regexp.MustCompile(`export type StatusColor = ([^\n]+)`).FindSubmatch(src)
-	require.NotNil(t, line, "StatusColor type not found")
-	var library []string
-	for _, m := range regexp.MustCompile(`'([a-z]+)'`).FindAllSubmatch(line[1], -1) {
-		library = append(library, string(m[1]))
+	block := regexp.MustCompile(`(?s)export const NAMED_COLORS[^=]*= \{(.*?)\n\}`).FindSubmatch(src)
+	require.NotNil(t, block, "NAMED_COLORS not found")
+	var spa []string
+	for _, m := range regexp.MustCompile(`(?m)^\s*([a-z]+):`).FindAllSubmatch(block[1], -1) {
+		spa = append(spa, string(m[1]))
 	}
-	sort.Strings(library)
-	assert.Equal(t, slices.Sorted(maps.Keys(ValidGroupColors)), library)
+	sort.Strings(spa)
+	assert.Equal(t, slices.Sorted(maps.Keys(ColorNames)), spa)
 }
 
 // TestDateBucketKeysMatchSPA pins DateBucketKeys to the SPA's bucket order,

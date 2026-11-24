@@ -9,20 +9,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
-// ValidGroupColors is the allowlist of section colors a list group may use.
-// It mirrors the component library's StatusColor type
-// (frontend/packages/rela-components/src/types/index.ts), which is what the
-// SPA hands the section heading. A token rather than a CSS value, for the
-// reason ValidCalendarColors gives.
-var ValidGroupColors = map[string]bool{
-	"green":  true,
-	"amber":  true,
-	"red":    true,
-	"grey":   true,
-	"blue":   true,
-	"purple": true,
-}
-
 // DateBucketKeys are the bucket keys `labels:` may override, in the order the
 // sections appear. The SPA's utils/dateBuckets.ts holds the same set.
 var DateBucketKeys = []string{"overdue", "today", "tomorrow", "next_7_days", "later", "no_date"}
@@ -226,9 +212,10 @@ func validateListGroups(
 		} else {
 			seen[grp.Value] = i
 		}
-		if grp.Color != "" && !ValidGroupColors[grp.Color] {
-			errs = append(errs, fmt.Sprintf("%s: groups[%d] has unknown color %q (valid: %s)",
-				prefix, i, grp.Color, strings.Join(slices.Sorted(maps.Keys(ValidGroupColors)), ", ")))
+		if grp.Color != "" {
+			if _, err := ParseNamedColor(grp.Color); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: groups[%d]: %v", prefix, i, err))
+			}
 		}
 	}
 	return errs

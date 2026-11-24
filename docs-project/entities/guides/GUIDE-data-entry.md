@@ -626,8 +626,15 @@ A color name takes one of three forms:
 | Hue and shade | `red/700` | One exact shade from the Atlas UI kit. |
 | Your own name | `risk-critical` | A color you define under `palette.colors`. |
 
-The hues are `grey` (also written `gray`), `red`, `orange`, `yellow`, `green`,
-`teal`, `blue` and `purple`. `orange` and `yellow` are two different colors.
+The hues are `grey`, `red`, `orange`, `yellow`, `green`, `teal`, `blue` and
+`purple`. `orange` and `yellow` are two different colors. Four aliases are
+accepted too: `gray` and `slate` are `grey`, `amber` is `orange`, and `violet`
+is `purple`.
+
+This is the one list of color names. Every key that takes a color accepts
+every hue and alias: `styles:`, a list group's `color`, and the `color` of a
+calendar, gantt or sankey source. Only `styles:` and the dashboard matrix also
+take a shade or your own name.
 
 Every hue except `purple` has the shades `50`, `100`, `200`, `300`, `400`,
 `500`, `600`, `700`, `800` and `900`. `50` is the lightest and `900` the
@@ -1089,6 +1096,20 @@ searchable pickers) always take the full row, so a narrow one would break them.
 When no widget is specified, the system auto-detects from the property's type in the metamodel:
 enum types render as a `<select>`, booleans as checkboxes, dates as date pickers, `datetime`
 properties as date+time pickers, and everything else as text inputs.
+
+`widget: select` and `widget: multi-select` are deprecated on a form property field and fail
+at startup. Remove the `widget:` line from the field. The form then shows a select for a
+property with values and a multi-select for a list property. The message names the form and
+the field:
+
+```text
+form "new_task": field[1] property "status": "widget: select" is deprecated; remove the
+"widget: select" line from this field. Without it the form picks the control from the
+schema: a select for a property with values, a multi-select for a list property
+```
+
+A relation's `widget:` (`select`, `multi-select`, `cards`, `search`) is still a choice and
+is not affected.
 
 ### Datetime fields and time zones
 
@@ -2415,10 +2436,20 @@ A condition may use `related(...)` to filter on related entities, for example
 traversal once per page, and only entities the reader may see count. See
 [Where `related(...)` works](metamodel.md#where-related-works).
 
-> **Lists only, for now.** A `condition:` on a `kanbans:` entry is **rejected
-> at startup** — the board still filters client-side, and a key that validated
-> and then did nothing would be exactly the silent no-op this feature exists to
-> remove. Use `filters:` on a board until this note goes away.
+A board takes `condition:` the same way. The board names itself with
+`?kanban_id=<id>` on its read, and the server applies the condition as it does
+for a list. A read may name a list or a board, not both. For example, a board
+of the tasks due today or earlier that are not done:
+
+```yaml
+kanbans:
+  today:
+    entity_type: task
+    column_property: status
+    condition: "entity.due ~= nil and days_between(today(), entity.due) >= 0 and entity.status ~= 'done'"
+    card:
+      title: title
+```
 
 **A condition that does not compile is a startup error**, naming the view and
 the offending attribute:
@@ -2799,7 +2830,7 @@ lists:
 | Key        | Type   | Description |
 |------------|--------|-------------|
 | `property` | string | The property to group by. Required. It must be a single value, not a `list: true` property. |
-| `groups`   | list   | Optional. Per value: `value` (required, must be one of the enum's values), `label`, and `color` (`green`, `amber`, `red`, `grey`, `blue` or `purple`). Needs an enum property. |
+| `groups`   | list   | Optional. Per value: `value` (required, must be one of the enum's values), `label`, and `color` (a hue or alias from [Color names](#color-names)). Needs an enum property. |
 | `buckets`  | string or map | `relative` groups a date by how far away it is; a map such as `{ by: month }` groups it by calendar unit. See [Date buckets](#date-buckets). |
 | `labels`   | map    | Section titles for the date buckets. Only with `buckets`. |
 | `max_rows` | int    | How many rows the list loads, from 1 to 2000. Default 500. |
@@ -8555,7 +8586,14 @@ any `llm:` action does. Over the API, send `{"entity_ids": [...]}` to
 
 ### Reserved Keyboard Shortcuts
 
-The following keys are reserved for built-in list navigation and cannot be used as action keys:
+The following keys are reserved for built-in list navigation and cannot be used as action keys.
+An action that declares one fails at startup. The message names the key, the action and the
+lists or boards that offer it:
+
+```text
+actions: "archive" declares key "e" and offered by list "inbox", but "e" is a reserved
+list shortcut (edit); pick a key other than j, k, o, e, n, h, l
+```
 
 | Key | Built-in Function |
 | --- | ----------------- |
@@ -8848,7 +8886,7 @@ toolbar either, because a document is one rendered entity and not a list.
 | `end_date` | no | Property ending a multi-day event. Must be the **same kind** as `date` |
 | `summary` | no | Property used as the event title (default: the type's display property) |
 | `description` | no | Property shown in the event detail |
-| `color` | no | Palette token: `blue`, `green`, `amber`, `red`, `violet`, `slate` |
+| `color` | no | A hue or alias from [Color names](#color-names) |
 | `max_span` | no | Days to look back for events starting before the visible period (default 31). Only meaningful with `end_date` |
 
 Several sources merge into one grid, so a calendar can mix `task` and `meeting`
@@ -9375,7 +9413,7 @@ Per-type options:
 | `where` | list | Filter clauses, ANDed, evaluated on the redacted entity |
 | `label` | string | Property used as the node label (default: the display property) |
 | `order` | string | Property that pins the node order, compared as text then by id; `id` orders by id |
-| `color` | string | Palette token: `blue`, `green`, `amber`, `red`, `violet` or `slate` |
+| `color` | string | A hue or alias from [Color names](#color-names) |
 | `color_by` | string | Property whose value picks the tone; equal values share a tone |
 | `pips` | object | Related entities drawn as dots beside each node, see below |
 
