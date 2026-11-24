@@ -4,11 +4,13 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -216,4 +218,37 @@ func TestNavStatus_PrimedCountHonorsLocalRoleVisibility(t *testing.T) {
 	got := navStatusAs(gateCtxFor(ctx, t, d), t, app)
 	require.Equal(t, leadDoneCount(), got["0"].Count, "only EP1's done tickets show their status to P1")
 	require.NotContains(t, counting.String(), "GetRelation", "the count resolved roles per row")
+}
+
+// navItemsTreeFieldPolicyBudget is a generated group of epics with their
+// tickets as children and a count on each level. Measured.
+const navItemsTreeFieldPolicyBudget = 20
+
+// A child level and counts add a fixed number of reads per group, whatever
+// the number of parents and children (TKT-MQSK037).
+func TestQueryBudget_NavItemsTreeIsSizeIndependent(t *testing.T) {
+	st := &dataentryconfig.NavItemsStatus{List: "tickets", Via: "in-epic", Tone: "info", Label: "{count}"}
+	b, detail := fieldPolicyReads(t,
+		func(app *App) {
+			installNavStatusConfig(app,
+				map[string]dataentryconfig.List{
+					"epics":   {EntityType: "epic", Condition: "related(entity, 'in-program')"},
+					"tickets": {EntityType: "ticket"},
+				},
+				[]dataentryconfig.NavigationEntry{{Group: "Epics", ItemsFrom: &dataentryconfig.NavItemsFrom{
+					List: "epics", Limit: 50, Status: st,
+					Children: &dataentryconfig.NavItemsChildren{List: "tickets", Via: "in-epic", Limit: 50,
+						Status: &dataentryconfig.NavItemsStatus{List: "tickets", Via: "blocks", Tone: "info", Label: "{count}"}},
+				}}})
+		},
+		func(app *App, ctx context.Context) {
+			items, _ := navItemsAs(ctx, t, app)
+			got := items["0"].Entries
+			if len(got) == 0 || len(got[0].Children) == 0 || got[0].Status == nil ||
+				!slices.ContainsFunc(got[0].Children, func(c v1.NavItem) bool { return c.Status != nil }) {
+
+				t.Fatalf("no children or count, so this budget proves nothing: %+v", items)
+			}
+		})
+	assertBudget(t, "nav items (tree)", b, navItemsTreeFieldPolicyBudget, detail)
 }

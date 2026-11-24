@@ -113,6 +113,26 @@ func navItemsFor(
 			Initial: initials[e.ID],
 		})
 	}
+	ids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		ids = append(ids, e.ID)
+	}
+	// A count or child level that cannot be read, such as one whose list
+	// filters on a property hidden from this principal, is left out; the
+	// entries themselves stand.
+	statuses, err := navItemStatuses(ctx, a, s, from.Status, ids)
+	if err != nil {
+		slog.Log(ctx, sidebarSkipLevel(err), "nav items: counts skipped", "list", from.List, "error", err)
+	}
+	for i := range entries {
+		entries[i].Status = statuses[entries[i].ID]
+	}
+	if err := navItemChildren(ctx, a, s, from.Children, entries); err != nil {
+		slog.Log(ctx, sidebarSkipLevel(err), "nav items: children skipped", "list", from.List, "error", err)
+		for i := range entries {
+			entries[i].Children, entries[i].ChildrenTruncated = nil, false
+		}
+	}
 	return v1.NavItemList{Entries: entries, Truncated: total > limit}, nil
 }
 

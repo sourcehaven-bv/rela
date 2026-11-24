@@ -1,4 +1,4 @@
-import type { StatusColor } from 'rela-components/types'
+import type { NavItemStatus, StatusColor } from 'rela-components/types'
 import type {
   ChannelMessageCards,
   ChannelMessageDisplay,
@@ -1368,6 +1368,13 @@ export interface SidebarItem {
    */
   status_key?: string
   /**
+   * Never in `/_sidebar`: filled in the browser from `/_nav_items` for a
+   * generated entry, whose count and children are per principal.
+   */
+  status?: NavItemStatus
+  /** Never in `/_sidebar`; see `status`. */
+  children?: SidebarItem[]
+  /**
    * The letter badge of an entry generated from a list row (`items_from:`).
    * Never on the wire from `/_sidebar`: it comes per principal from
    * `/_nav_items`.
@@ -1399,6 +1406,8 @@ export interface SidebarGroup {
   items_page?: string
   /** The list the generated entries come from, for a link to all of its rows. */
   items_list?: string
+  /** The entity page each child entry opens. Absent: a child opens the entity. */
+  items_child_page?: string
   /**
    * Set when the group offers to create a row of its list (`items_from.create`)
    * and the principal may. The server re-authorizes the create.

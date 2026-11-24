@@ -362,6 +362,37 @@ describe('expandGeneratedItems', () => {
     ])
   })
 
+  it('nests children under their entry, with counts on both levels', () => {
+    const status = { tone: 'info' as const, label: '3', count: 3 }
+    const [group] = expandGeneratedItems(
+      [{ ...topics, items_child_page: 'project' }],
+      () => ({
+        entries: [
+          {
+            id: 'TOP-1',
+            type: 'topic',
+            label: 'Website',
+            status,
+            children: [{ id: 'PRJ-1', type: 'project', label: 'Launch', status }],
+            children_truncated: true,
+          },
+        ],
+      })
+    )
+    expect(group.items[0]).toEqual({
+      label: 'Website',
+      href: '/p/topic/TOP-1',
+      status,
+      children: [
+        { label: 'Launch', href: '/p/project/PRJ-1', status },
+        { label: 'Show all', href: '/p/topic/TOP-1', icon: 'list' },
+      ],
+    })
+    const nav = toNavGroups([group], RouterLink)
+    expect(nav[0].items[0].children?.[0].status).toEqual(status)
+    expect(activeNavId(nav, '/p/project/PRJ-1')).toBe(nav[0].items[0].children?.[0].id)
+  })
+
   it('opens the entity itself when the group names no page', () => {
     const [group] = expandGeneratedItems([{ ...topics, items_page: undefined }], lookup)
     expect(group.items[0].href).toBe('/entity/topic/TOP-1')
