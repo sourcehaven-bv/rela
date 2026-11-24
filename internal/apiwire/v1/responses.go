@@ -841,7 +841,13 @@ type RelationType struct {
 	Symmetric   bool        `json:"symmetric,omitempty"`
 	// Owning marks a relation whose targets are shown as part of their
 	// source (TKT-QO14GB).
-	Owning      bool                   `json:"owning,omitempty"`
+	Owning bool `json:"owning,omitempty"`
+	// Within names the scope relation of a scoped relation; OnChange is
+	// "clear" or "reject". ScopeOwners maps each target type to the owning
+	// relation whose source is its owner (TKT-5GK80Q9).
+	Within      string                 `json:"within,omitempty"`
+	OnChange    string                 `json:"on_change,omitempty"`
+	ScopeOwners map[string]string      `json:"scope_owners,omitempty"`
 	MinOutgoing *int                   `json:"min_outgoing,omitempty"`
 	MaxOutgoing *int                   `json:"max_outgoing,omitempty"`
 	MinIncoming *int                   `json:"min_incoming,omitempty"`

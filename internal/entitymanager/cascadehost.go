@@ -206,6 +206,9 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 		if err := CheckOwningEdge(ctx, h.deps.Meta, st, r.Identity()); err != nil {
 			return err
 		}
+		if err := checkCascadeScope(ctx, h.deps.scopes, st, r.Identity()); err != nil {
+			return err
+		}
 		if _, err := st.CreateRelation(ctx, r.Identity(), &store.RelationData{
 			Properties: r.Properties,
 			Content:    r.Content,
@@ -214,7 +217,8 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 		}
 		return h.recordCascade(ctx, st, audit.OpCreateRelation, relationSubject(r), "created")
 	}
-	err := auditTx(ctx, h.deps, bounded || metamodel.IsOwning(h.deps.Meta, r.Type), write)
+	inTx := bounded || metamodel.IsOwning(h.deps.Meta, r.Type) || h.deps.scopes.touches(r.Identity())
+	err := auditTx(ctx, h.deps, inTx, write)
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			return nil

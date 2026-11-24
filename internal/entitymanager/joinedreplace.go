@@ -56,6 +56,9 @@ func PatchWithRelations(
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := rp.scope.prepass(ctx, m, rp.createKeys(), rp.removes); err != nil {
+		return nil, nil, &JoinedRelationError{Err: err}
+	}
 	j := &joinedReplace{rp: rp, id: g.ref.ID}
 	res, err := patchEntity(context.WithValue(ctx, joinedReplaceKey{}, j), m, id, p,
 		patchPre{grant: &g, recheck: true})
@@ -63,6 +66,7 @@ func PatchWithRelations(
 		for _, r := range j.deleted {
 			m.recordRelationVersion(ctx, store.VersionOpDelete, r, ids[r.Identity()], "", "", "")
 		}
+		rp.scope.version(ctx, m)
 	}
 	if err != nil {
 		return nil, nil, err
@@ -99,15 +103,6 @@ func joinedFor(ctx context.Context, id string) *joinedReplace {
 		return nil
 	}
 	return j
-}
-
-// adds returns the keys of the edges the replace creates.
-func (j *joinedReplace) adds() []entity.RelationKey {
-	keys := make([]entity.RelationKey, len(j.rp.creates))
-	for i, c := range j.rp.creates {
-		keys[i] = c.Key
-	}
-	return keys
 }
 
 // check is the replace's part of the update's transaction checks. The rules

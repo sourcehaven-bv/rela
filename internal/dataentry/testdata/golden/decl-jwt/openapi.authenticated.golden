@@ -9142,14 +9142,30 @@ body:
           "min_outgoing": {
             "type": "integer"
           },
+          "on_change": {
+            "type": "string",
+            "enum": [
+              "clear",
+              "reject"
+            ]
+          },
           "owning": {
             "type": "boolean"
+          },
+          "scope_owners": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
           },
           "to": {
             "type": "array",
             "items": {
               "type": "string"
             }
+          },
+          "within": {
+            "type": "string"
           }
         }
       },

@@ -60,10 +60,14 @@ func afterEdges(ctx context.Context, id string, stored *storedEdges) writerule.E
 		return stored
 	}
 	p := &pendingEdges{stored: stored}
+	removes := slices.Clone(j.rp.removes)
+	for _, r := range j.rp.scope.cleared {
+		removes = append(removes, r.Identity())
+	}
 	for _, list := range []struct {
 		keys []entity.RelationKey
 		add  bool
-	}{{j.adds(), true}, {j.rp.removes, false}} {
+	}{{j.rp.createKeys(), true}, {removes, false}} {
 		for _, k := range list.keys {
 			if k.From == id {
 				p.note(writerule.Hop{Relation: k.Type}, k.To, list.add)

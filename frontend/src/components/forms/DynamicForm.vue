@@ -10,6 +10,7 @@ import {
 } from 'vue-router'
 import { I18nT, useI18n } from 'vue-i18n'
 import { planPrefillRouting } from './prefillRouting'
+import { dependentsOf, sameIds } from './scopedRelations'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
@@ -361,6 +362,12 @@ const saveGeneration = ref(0) // Incremented after save to reset RelationCards
 const saving = ref(false)
 const dirty = ref(false)
 const errors = ref<Record<string, string>>({})
+// The relations as last loaded from the server: the baseline a scope change is
+// judged against (TKT-5GK80Q9).
+let savedRelations: Record<string, string[]> = {}
+// Scoped relations this form emptied because their scope changed. Moving the
+// scope back to its saved value restores them, unless the user edited them.
+const scopeCleared = new Set<string>()
 const originalData = ref<string>('')
 // TKT-7YHKD1: polite live region for "Create & add another". Everything else
 // about that action is visual — the form blanks, a toast appears — and the
@@ -689,6 +696,8 @@ async function loadEntity(force = false) {
     recordServerBaseline(entity)
     formData.value = { ...entity.properties, ...keptProps }
     relations.value = entity.relations ? { ...entity.relations } : {}
+    savedRelations = { ...relations.value }
+    scopeCleared.clear()
     resetConfirmedRelations(relations.value)
     content.value = keptContent ?? (entity.content || '')
     // TKT-G7N5: per-entity affordances from the server. The wire keys
@@ -2353,8 +2362,44 @@ function updateField(property: string, value: unknown) {
   }
 }
 
+// applyScopeChange reacts to a change of a scope relation: a dependent
+// relation with `on_change: clear` is emptied (and restored if the scope goes
+// back), one with `on_change: reject` is
+// flagged until the scope is back at its saved value or the dependent changes.
+// The server enforces the same rule on save; this shows it before.
+function applyScopeChange(scope: string, value: string[]) {
+  const changed = !sameIds(savedRelations[scope] ?? [], value)
+  for (const dep of dependentsOf(scope, Object.fromEntries(schemaStore.relationTypes))) {
+    const current = relations.value[dep.relation] ?? []
+    if (dep.onChange === 'clear') {
+      if (changed && current.length > 0) {
+        relations.value[dep.relation] = []
+        scopeCleared.add(dep.relation)
+      } else if (!changed && current.length === 0 && scopeCleared.has(dep.relation)) {
+        relations.value[dep.relation] = [...(savedRelations[dep.relation] ?? [])]
+        scopeCleared.delete(dep.relation)
+      }
+      continue
+    }
+    const stale =
+      changed && current.length > 0 && sameIds(current, savedRelations[dep.relation] ?? [])
+    if (stale) {
+      errors.value[dep.relation] = t('form.relation.scopeStale', {
+        scope: schemaStore.getRelationType(scope)?.label || scope,
+      })
+    } else if (errors.value[dep.relation]) {
+      delete errors.value[dep.relation]
+    }
+  }
+}
+
 function updateRelation(relation: string, value: string[]) {
   relations.value[relation] = value
+  if (schemaStore.getRelationType(relation)?.within) {
+    delete errors.value[relation]
+    scopeCleared.delete(relation)
+  }
+  applyScopeChange(relation, value)
   checkDirty()
   // Legacy IDs-only relation widget. Autosave routes this through the
   // pendingCardChanges map: any change triggers a relations PATCH.

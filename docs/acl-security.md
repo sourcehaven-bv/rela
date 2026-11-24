@@ -2608,6 +2608,13 @@ the key; this section covers what it means for `acl.yaml`.
 
 ## What still leaks (deferred)
 
+- **A scoped relation shows whether a target is in scope.** The check of a
+  `within:` relation reads ownership from the stored graph, including owning
+  edges the caller cannot read. Whether a write is accepted or refused with
+  422 therefore tells the caller whether a target is owned by its scope. This
+  is the same one-bit channel as the other write-enforced relation rules. The
+  refusal names the rule, never an entity.
+
 - **A captured figure crosses principals.** A `capture:` task stores a
   figure computed for its `run_as` on an owner whose readers may read fewer
   rows (see "Records"). A count over rows a reader cannot see becomes

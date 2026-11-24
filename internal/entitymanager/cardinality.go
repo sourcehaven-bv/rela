@@ -210,6 +210,9 @@ func (m *Manager) ReplaceRelations(
 	if err != nil {
 		return nil, err
 	}
+	if err := rp.scope.prepass(ctx, m, rp.createKeys(), rp.removes); err != nil {
+		return nil, err
+	}
 	var deleted []*entity.Relation
 	err = auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
 		var txErr error
@@ -227,7 +230,17 @@ func (m *Manager) ReplaceRelations(
 	for _, r := range deleted {
 		m.recordRelationVersion(ctx, store.VersionOpDelete, r, ids[r.Identity()], "", "", "")
 	}
+	rp.scope.version(ctx, m)
 	return rp.rels, nil
+}
+
+// createKeys returns the keys of the edges rp creates.
+func (rp *relationReplace) createKeys() []entity.RelationKey {
+	keys := make([]entity.RelationKey, len(rp.creates))
+	for i, c := range rp.creates {
+		keys[i] = c.Key
+	}
+	return keys
 }
 
 // relationReplace is one ReplaceRelations call: its creates, its removes
@@ -238,6 +251,8 @@ type relationReplace struct {
 	removes []entity.RelationKey
 	leaving map[entity.RelationKey]bool // the set of removes
 	rels    []*entity.Relation          // one per create, set by prepare
+	// scope is the out-of-scope edges the replace clears (TKT-5GK80Q9).
+	scope scopeClears
 }
 
 // audit writes the records of the replace on view: deleted, the edges it
@@ -404,6 +419,18 @@ func (rp *relationReplace) write(ctx context.Context, view store.Store) ([]*enti
 // rules of the entity skip names are not judged; an update joined to this
 // replace judges them on the entity's new state (see [PatchWithRelations]).
 func (rp *relationReplace) check(ctx context.Context, view store.Store, skip string) error {
+	// The scope check comes first: the edges it clears leave with the
+	// replace's removes, so they do not count against a bound below.
+	for _, r := range rp.scope.cleared {
+		delete(rp.leaving, r.Identity())
+	}
+	cleared, err := rp.scope.decide(ctx, rp.m, view, rp.createKeys(), rp.removes)
+	if err != nil {
+		return err
+	}
+	for _, k := range cleared {
+		rp.leaving[k] = true
+	}
 	pending := make([]entity.RelationKey, 0, len(rp.creates))
 	for _, c := range rp.creates {
 		if _, gErr := view.GetRelation(ctx, c.Key); gErr == nil {
@@ -417,8 +444,9 @@ func (rp *relationReplace) check(ctx context.Context, view store.Store, skip str
 		}
 		pending = append(pending, c.Key)
 	}
-	if relationWritesChecked(rp.m.deps, slices.Concat(pending, rp.removes)...) {
-		return checkRelationRulesExcept(ctx, rp.m.deps, view, pending, rp.removes, skip)
+	removes := slices.Concat(rp.removes, cleared)
+	if relationWritesChecked(rp.m.deps, slices.Concat(pending, removes)...) {
+		return checkRelationRulesExcept(ctx, rp.m.deps, view, pending, removes, skip)
 	}
 	return nil
 }
@@ -444,6 +472,9 @@ func (rp *relationReplace) apply(ctx context.Context, view store.Store) ([]*enti
 			return nil, fmt.Errorf("delete relation: %w", err)
 		}
 		deleted = append(deleted, r)
+	}
+	if err := rp.scope.apply(ctx, rp.m, view); err != nil {
+		return nil, err
 	}
 	return deleted, nil
 }

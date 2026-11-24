@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -96,6 +97,11 @@ func deleteRelationIfVersion(
 	if err != nil {
 		return err
 	}
+	removes := []entity.RelationKey{key}
+	var clears scopeClears
+	if err := clears.prepass(ctx, m, nil, removes); err != nil {
+		return err
+	}
 	var rel *entity.Relation
 	err = auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
 		got, gErr := view.GetRelation(txCtx, key)
@@ -105,8 +111,13 @@ func deleteRelationIfVersion(
 		if v := store.RelationVersionOf(got); expect != "" && v != expect {
 			return &store.VersionConflictError{ID: key.String(), Expected: expect, Actual: v}
 		}
-		if relationWritesChecked(m.deps, key) {
-			if cErr := checkRelationRules(txCtx, m.deps, view, nil, []entity.RelationKey{key}); cErr != nil {
+		cleared, sErr := clears.decide(txCtx, m, view, nil, removes)
+		if sErr != nil {
+			return sErr
+		}
+		all := slices.Concat(removes, cleared)
+		if relationWritesChecked(m.deps, all...) {
+			if cErr := checkRelationRules(txCtx, m.deps, view, nil, all); cErr != nil {
 				return cErr
 			}
 		}
@@ -114,11 +125,15 @@ func deleteRelationIfVersion(
 			return fmt.Errorf("delete relation: %w", dErr)
 		}
 		rel = got
-		return m.recordRelationAudit(txCtx, view, audit.OpDeleteRelation, rel, "deleted")
+		if aErr := m.recordRelationAudit(txCtx, view, audit.OpDeleteRelation, rel, "deleted"); aErr != nil {
+			return aErr
+		}
+		return clears.apply(txCtx, m, view)
 	})
 	if err != nil {
 		return err
 	}
 	m.recordRelationVersion(ctx, store.VersionOpDelete, rel, ids[rel.Identity()], "", "", "")
+	clears.version(ctx, m)
 	return nil
 }
