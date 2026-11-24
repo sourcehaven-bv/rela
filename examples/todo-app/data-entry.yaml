@@ -105,6 +105,8 @@ lists:
       - { property: title, label: "Title", link: detail }
       - { property: deadline, label: "Deadline" }
     sort: [{ property: title }]
+    # Each user drags rows into their own order; new rows follow the sort.
+    order: manual
     create_form: quick_todo
     edit_form: todo
     actions: [complete, cancel, move-today, move-evening, move-anytime, move-someday]
@@ -128,6 +130,7 @@ lists:
         - { value: evening, label: "This Evening", color: purple }
         - { value: anytime, label: "Deadline today", color: red }
     sort: [{ property: deadline }, { property: title }]
+    order: manual
     # What a row gets when it is added here, dropped on the Today entry or
     # moved here with the "t" key.
     assign:
@@ -186,6 +189,7 @@ lists:
       - { relation: in_project, label: "Project" }
       - { relation: in_area, label: "Area" }
     sort: [{ property: title }]
+    order: manual
     create_form: quick_todo
     edit_form: todo
     actions: [complete, cancel, move-today, move-anytime]
