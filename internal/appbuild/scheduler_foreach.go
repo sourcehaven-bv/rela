@@ -13,13 +13,13 @@ import (
 
 // ScheduledForEachEntities resolves the bounded recipient/subject selection
 // through the scheduler identity's existing visible reader.
-func (s *Services) ScheduledForEachEntities(
+func (w *SchedulerWorkspace) ScheduledForEachEntities(
 	ctx context.Context, entityType string, where []string, limit int,
 ) (ids []string, dropped int, err error) {
-	if s == nil || s.meta == nil {
+	if w == nil || w.meta == nil {
 		return nil, 0, errors.New("appbuild: scheduled for_each has no metamodel")
 	}
-	def, ok := s.meta.GetEntityDef(entityType)
+	def, ok := w.meta.GetEntityDef(entityType)
 	if !ok {
 		return nil, 0, fmt.Errorf("unknown entity type %q", entityType)
 	}
@@ -27,20 +27,20 @@ func (s *Services) ScheduledForEachEntities(
 	if err != nil {
 		return nil, 0, fmt.Errorf("parse filters: %w", err)
 	}
-	filters = filter.BindDateVariables(filters, readtime.Or(ctx, servicesClock(s)))
-	deps := s.ScheduledLuaWriteDeps()
+	filters = filter.BindDateVariables(filters, readtime.Or(ctx, w.clock))
+	deps := w.ScheduledLuaWriteDeps()
 	if deps.VisibleReader == nil {
 		return nil, 0, errors.New("appbuild: scheduled for_each has no visible reader")
 	}
 	ids = make([]string, 0, limit)
-	q := store.EntityQuery{Type: entityType, Faces: store.InWorld(s.worlds.DefaultWorld())}
+	q := store.EntityQuery{Type: entityType, Faces: store.InWorld(w.worlds.DefaultWorld())}
 	for e, listErr := range deps.VisibleReader.ListEntities(ctx, q) {
 		if listErr != nil {
 			return nil, 0, listErr
 		}
 		matched, matchErr := filter.MatchAll(filter.Record{
 			ID: e.ID, Type: e.Type, Properties: e.Properties, ModifiedAt: e.UpdatedAt,
-		}, filters, def, s.meta)
+		}, filters, def, w.meta)
 		if matchErr != nil {
 			return nil, 0, matchErr
 		}
@@ -62,14 +62,16 @@ func (s *Services) ScheduledForEachEntities(
 // durable payload. The roles the IdP webhook stored for the user ride on the
 // principal as asserted roles (TKT-IZL6NX8), read now rather than when the
 // run was queued, so a revocation applies to the next child.
-func (s *Services) ScheduledForEachPrincipal(ctx context.Context, entityID string) (principal.Principal, error) {
-	if s == nil || s.store == nil {
+func (w *SchedulerWorkspace) ScheduledForEachPrincipal(
+	ctx context.Context, entityID string,
+) (principal.Principal, error) {
+	if w == nil || w.store == nil {
 		return principal.Principal{}, errors.New("appbuild: scheduled for_each has no store")
 	}
 	// A principal is an entity, not one of its faces, so the type check
 	// reads the family's headers: a faced user type has no zero-face row
 	// (DEC-NPZICR).
-	headers, err := store.FamilyHeaders(ctx, s.store, entityID)
+	headers, err := store.FamilyHeaders(ctx, w.store, entityID)
 	if err != nil {
 		return principal.Principal{}, err
 	}
@@ -77,10 +79,10 @@ func (s *Services) ScheduledForEachPrincipal(ctx context.Context, entityID strin
 	if len(headers) > 0 {
 		typ = headers[0].Type
 	}
-	if typ == "" || s.aclPolicy == nil || s.aclPolicy.UserEntityType == "" || typ != s.aclPolicy.UserEntityType {
+	if typ == "" || w.aclPolicy == nil || w.aclPolicy.UserEntityType == "" || typ != w.aclPolicy.UserEntityType {
 		return principal.Principal{}, nil
 	}
-	roles, err := storedAssertedRoles(ctx, s, entityID, headers)
+	roles, err := storedAssertedRoles(ctx, w.idpRoles, w.aclPolicy, w.store, entityID, headers)
 	if err != nil {
 		return principal.Principal{}, fmt.Errorf("stored asserted roles: %w", err)
 	}

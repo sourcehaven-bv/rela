@@ -12,6 +12,7 @@
 export type BootMetaName =
   | 'rela-app-name'
   | 'rela-language'
+  | 'rela-languages'
   | 'rela-app-logo'
   | 'rela-sign-out'
   | 'rela-account-url'

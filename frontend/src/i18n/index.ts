@@ -62,4 +62,10 @@ watch(
   { immediate: true, flush: 'sync' }
 )
 
-export { intlLocale, setProjectLanguage, setUserLanguage, resolvedLanguage } from './locale'
+export {
+  intlLocale,
+  setProjectLanguage,
+  setProjectLanguages,
+  setUserLanguage,
+  resolvedLanguage,
+} from './locale'

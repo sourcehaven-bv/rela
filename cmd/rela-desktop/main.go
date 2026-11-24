@@ -1427,7 +1427,7 @@ func startBackground(
 	ctx context.Context, svc *appbuild.Services, bind func(context.Context) (context.Context, error),
 	cards scheduler.CardEvaluator,
 ) <-chan struct{} {
-	sched := scheduler.StartBackground(ctx, svc, bind, slog.Default(), scheduler.WithCards(cards))
+	sched := scheduler.StartBackground(ctx, svc.Scheduler(), bind, slog.Default(), scheduler.WithCards(cards))
 	leases := appbuild.WatchLeases(ctx, svc)
 	worker := appbuild.RunRealtimeWorker(ctx, svc)
 	flows := appbuild.RunFlowWorker(ctx, svc)

@@ -70,7 +70,7 @@ import RlBusyIndicator, {
   type BusyIndicatorEntry,
 } from 'rela-components/components/feedback/RlBusyIndicator.vue'
 import type { SortClickEvent, TableColumn } from 'rela-components/components/table/types'
-import { listColumnOf, nameColumn, toTableColumns, toTableNameColumn } from './tableColumns'
+import { leadingImageColumns, listColumnOf, nameColumn, toTableColumns, toTableNameColumn } from './tableColumns'
 import { fromPageQuery } from '@/utils/pageContext'
 
 const props = defineProps<{
@@ -881,6 +881,15 @@ const titleColumn = computed(
 const tableNameColumn = computed(() => toTableNameColumn(titleColumn.value))
 
 /**
+ * Image columns listed before the name, shown in the name cell left of the
+ * title. Taken from the same list `tableColumns` uses, so the table and the
+ * name cell agree on which columns moved.
+ */
+const leadingColumns = computed(() =>
+  leadingImageColumns(visibleListColumns.value, titleColumn.value, entityType.value?.properties)
+)
+
+/**
  * The rows, as the sections the library's table wants.
  *
  * A flat list is one section whose title is never shown. A grouped list has
@@ -1610,6 +1619,29 @@ watch(searchQuery, () => {
           Two stretched overlays would fight, which is why this slot exists.
         -->
         <template #name="{ item }">
+          <!--
+            A fixed 32px slot per leading column, whether or not the row has an
+            image, so titles line up. Decorative (the title names the row), so
+            hidden from assistive technology.
+          -->
+          <span
+            v-for="(lead, i) in leadingColumns"
+            :key="i"
+            class="entity-list__lead"
+            :class="{ 'entity-list__lead--locked': isCellInaccessible(item as Entity, lead) }"
+            :title="isCellInaccessible(item as Entity, lead) ? t('list.inaccessible') : undefined"
+            aria-hidden="true"
+          >
+            <component
+              :is="resolveCell(item as Entity, lead)!.component"
+              v-if="!isCellInaccessible(item as Entity, lead) && resolveCell(item as Entity, lead)"
+              :model-value="resolveCell(item as Entity, lead)!.modelValue"
+              :mode="'display'"
+              :property-name="resolveCell(item as Entity, lead)!.propertyName"
+              :entity-type="listConfig.entity"
+              :entity-id="entityRef(item as Entity)"
+            />
+          </span>
           <span v-if="titleColumn && isCellInaccessible(item as Entity, titleColumn)" class="inaccessible-cell" :title="t('list.inaccessible')">🔒</span>
           <RouterLink
             v-else-if="rowTargets.get(item.id)"
@@ -1908,6 +1940,26 @@ watch(searchQuery, () => {
  */
 .rl-table-row .entity-list__title-link {
   color: var(--rl-color-accent);
+}
+
+/* A leading image's fixed slot. Not shrinkable, and no row-wide overlay: only
+   the title link opens the row. */
+.rl-table-row .entity-list__lead {
+  flex: none;
+  display: block;
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  cursor: inherit;
+}
+
+.rl-table-row .entity-list__lead::after {
+  display: none;
+}
+
+/* The lock, as generated content so the string is not hard-coded text. */
+.rl-table-row .entity-list__lead--locked::before {
+  content: '\1F512';
 }
 
 .empty-state {

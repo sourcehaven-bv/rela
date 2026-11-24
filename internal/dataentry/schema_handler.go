@@ -440,6 +440,7 @@ func (h *schemaHandler) handleV1Config(w http.ResponseWriter, r *http.Request) {
 			Name:              s.Cfg.App.Name,
 			Description:       s.Cfg.App.Description,
 			Language:          s.Cfg.App.Language,
+			Languages:         s.Cfg.App.Languages,
 			PlantUMLServerURL: s.Cfg.App.PlantUMLServerURL,
 			DefaultWorld:      declaredDefaultWorld(s.Meta),
 			WorldSwitcher:     worldSwitcherWire(s.Cfg.App.WorldSwitcher),

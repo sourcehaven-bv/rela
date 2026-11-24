@@ -446,6 +446,7 @@ app:
 | Field      | Description                                                                  |
 | ---------- | ---------------------------------------------------------------------------- |
 | `language` | A BCP 47 language tag such as `nl` or `nl-BE`. Supported languages: `en`, `nl`. |
+| `languages` | The languages users may pick, such as `[en]`. Base languages only, from the supported ones. Empty means all. |
 
 The app picks the language in this order:
 
@@ -453,6 +454,17 @@ The app picks the language in this order:
 2. `app.language`;
 3. the browser's preferred languages, first supported one wins;
 4. English.
+
+With `languages`, only those languages count at each step, and the first one
+replaces English as the last step. `app.language` must be one of them. With a
+single language the Settings page shows no language choice:
+
+```yaml
+app:
+  name: "Support Tickets"
+  language: en
+  languages: [en]
+```
 
 The language also decides how dates and numbers are written. A region in the
 tag (`nl-BE`) is used for that formatting. A tag that is not valid BCP 47, or
@@ -996,9 +1008,12 @@ lists:
       - property: logo
 ```
 
-The first column is the row title and link, so it cannot be an image. When
-a later column sets `link`, that column is the title and a first column such
-as `logo` shows as an ordinary column after it.
+An image column is as wide as its thumbnail, not as a text column. List the
+image column **before** the title column to show it as a leading avatar, left
+of the title; it is then part of the title cell and is not repeated as a
+column. The title column is the one with `link`, else the first column. With
+no `link` set, a first column that is an image is itself the title. An image
+column after the title is an ordinary narrow column.
 
 Attachments inherit the owning entity's permissions: if you may not update the
 entity, you may not attach to it. A `fields:` rule that makes the file field

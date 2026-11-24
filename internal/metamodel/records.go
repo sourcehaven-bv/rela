@@ -32,6 +32,33 @@ type RecordTypeDef struct {
 	// Mutable lets a row be updated or deleted one at a time (TKT-ERO2X5G).
 	// A ledger cannot be mutable: it is corrected by reversal.
 	Mutable bool `yaml:"mutable,omitempty"`
+	// Permissions optionally name acl.yaml permissions the caller must hold
+	// on top of the owner rules (TKT-XUYQAWC).
+	Permissions RecordPermissions `yaml:"permissions,omitempty"`
+}
+
+// RecordPermissions are the optional permissions of a record type. Each is a
+// named permission a role grants in acl.yaml, held globally. It narrows the
+// owner rule and never replaces it: a caller needs the permission and the
+// owner access. Empty means the owner rule alone decides.
+type RecordPermissions struct {
+	// Read is needed to list, fold and roll up rows of the type, and to read
+	// a ledger transaction.
+	Read string `yaml:"read,omitempty"`
+	// Append is needed to append rows, to reverse a ledger transaction, and
+	// to change or delete a row of a mutable type.
+	Append string `yaml:"append,omitempty"`
+}
+
+// Names returns the declared permission names.
+func (p RecordPermissions) Names() []string {
+	var out []string
+	for _, n := range []string{p.Read, p.Append} {
+		if n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // LedgerDef is the `ledger:` block of a record type.
@@ -141,6 +168,11 @@ func validateRecords(m *Metamodel) []string {
 		}
 		for _, name := range d.FieldNames() {
 			errs = append(errs, validateRecordField(m, at+".fields."+name, name, d.Fields[name])...)
+		}
+		for key, perm := range map[string]string{"read": d.Permissions.Read, "append": d.Permissions.Append} {
+			if strings.ContainsAny(perm, " \t\n") {
+				errs = append(errs, fmt.Sprintf("%s.permissions.%s: %q is not a permission name", at, key, perm))
+			}
 		}
 		if _, err := ParseRetention(d.Retention); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: retention: %v", at, err))

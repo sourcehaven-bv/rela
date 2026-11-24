@@ -13,7 +13,11 @@ import type { IconName } from '../common/icons'
 
 withDefaults(
   defineProps<{
-    title: string
+    /**
+     * The heading. Leave it out when the page heading already says the same,
+     * so the reader does not see it twice.
+     */
+    title?: string
     description?: string
     icon?: IconName
     size?: 'sm' | 'md'
@@ -25,7 +29,7 @@ withDefaults(
 <template>
   <div class="rl-empty-state" :class="`rl-empty-state--${size}`">
     <RlIcon :name="icon" :size="size === 'sm' ? 24 : 32" class="rl-empty-state__icon" aria-hidden="true" />
-    <RlHeading :level="3" :size="size === 'sm' ? 'sm' : 'md'">{{ title }}</RlHeading>
+    <RlHeading v-if="title" :level="3" :size="size === 'sm' ? 'sm' : 'md'">{{ title }}</RlHeading>
     <RlText v-if="description" as="p" size="sm" tone="muted" class="rl-empty-state__description">
       {{ description }}
     </RlText>

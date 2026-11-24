@@ -134,7 +134,7 @@ func TestScheduledLuaWriteDeps_RedactsHiddenField(t *testing.T) {
 	}
 	defer svc.Close()
 
-	deps := svc.ScheduledLuaWriteDeps()
+	deps := svc.Scheduler().ScheduledLuaWriteDeps()
 	if deps.VisibleReader == nil {
 		t.Fatal("ScheduledLuaWriteDeps has no VisibleReader")
 	}
@@ -539,7 +539,7 @@ func TestScheduledLuaWriteDeps_CarriesAttachFile(t *testing.T) {
 	}
 	defer svc.Close()
 
-	deps := svc.ScheduledLuaWriteDeps()
+	deps := svc.Scheduler().ScheduledLuaWriteDeps()
 	if deps.AttachFile == nil {
 		t.Fatal("ScheduledLuaWriteDeps has no AttachFile")
 	}

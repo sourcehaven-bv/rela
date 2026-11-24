@@ -1,16 +1,16 @@
 import { ref, watch } from 'vue'
-import { setProjectLanguage } from '@/i18n'
+import { setProjectLanguage, setProjectLanguages } from '@/i18n'
 import { bootMeta } from '@/i18n/bootMeta'
 
 /** The part of the schema store the app shell reads its identity from. */
 export interface ShellAppSource {
   /** Whether `/_config` has loaded; until then `app` is a placeholder. */
   loaded: boolean
-  app?: { name?: string; language?: string }
+  app?: { name?: string; language?: string; languages?: string[] }
 }
 
 /**
- * Feeds the language resolution `app.language`, and returns the app name for
+ * Feeds the language resolution `app.language` and `app.languages`, and returns the app name for
  * the tab title.
  *
  * Until the config first loads, the store's `app` is the placeholder
@@ -30,9 +30,15 @@ export function useShellAppConfig(store: ShellAppSource): { appName: () => strin
     }
   )
   watch(
-    () => ({ seen: configSeen.value, language: store.app?.language }),
-    ({ seen, language }) => {
-      if (seen) setProjectLanguage(language)
+    () => ({
+      seen: configSeen.value,
+      language: store.app?.language,
+      languages: store.app?.languages,
+    }),
+    ({ seen, language, languages }) => {
+      if (!seen) return
+      setProjectLanguages(languages)
+      setProjectLanguage(language)
     },
     { immediate: true }
   )

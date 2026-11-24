@@ -956,6 +956,9 @@ type AppConfig struct {
 	// a BCP 47 tag, or empty to follow the browser. The SPA uses it when
 	// the user has chosen no language of their own.
 	Language string `json:"language,omitempty"`
+	// Languages are the interface languages a user may pick (app.languages),
+	// base languages such as "en". Empty means every language the SPA has.
+	Languages []string `json:"languages,omitempty"`
 	// PlantUMLServerURL is the configured PlantUML server base URL, or empty
 	// when PlantUML rendering is disabled. The SPA treats a non-empty value as
 	// the on switch for ```plantuml diagram rendering.

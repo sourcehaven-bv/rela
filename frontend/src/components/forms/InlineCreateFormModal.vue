@@ -188,8 +188,9 @@ function handleKeydown(e: KeyboardEvent) {
   :global(.rl-modal.inline-create-panel) {
     /* A create form is a working surface, not a short confirmation. Use the
        available phone height instead of leaving the modal centered with a
-       large unused strip above it. */
-    width: 100vw;
+       large unused strip above it. 100%, not 100vw: the scrim has no padding
+       here, and 100vw counts a desktop scrollbar the scrim does not cover. */
+    width: 100%;
     height: 100dvh;
     max-height: 100dvh;
     border-radius: 0;
@@ -201,6 +202,17 @@ function handleKeydown(e: KeyboardEvent) {
        lets the first scrolled editor line peek above the sticky toolbar. */
     margin-top: 0;
     padding-top: 0;
+    /* The sheet scrolls up and down only. An editor that bled past the
+       body's edges once made it scroll sideways, so a swipe or the caret
+       moved the form left and cut off its left edge. */
+    overflow-x: hidden;
+  }
+
+  :global(.inline-create-panel .mobile-actionbar) {
+    /* The action bar pulls out under a page's padding. The sheet's body has
+       no such padding, so the pull made the body wider than the sheet. */
+    margin-left: 0;
+    margin-right: 0;
   }
 
   :global(.inline-create-panel .form-actions > .rl-button:first-child) {
@@ -215,17 +227,6 @@ function handleKeydown(e: KeyboardEvent) {
        over preceding form content and leave a clipped line above the buttons. */
     position: relative;
     top: auto;
-  }
-
-  :global(.inline-create-panel .milkdown-editor-shell) {
-    /* The editor is the main writing surface in this form. Let it use the
-       sheet's full inner width while leaving the controls' text gutters
-       intact. */
-    width: calc(100% + var(--space-lg) + var(--space-lg));
-    margin-left: calc(0px - var(--space-lg));
-    border-left: 0;
-    border-right: 0;
-    border-radius: 0;
   }
 }
 
