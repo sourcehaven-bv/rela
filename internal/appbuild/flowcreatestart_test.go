@@ -105,7 +105,7 @@ func TestFlowCreateStart_Lua(t *testing.T) {
 	svc := createStartServices(t)
 	ctx := flowUser(t, svc, "clerk")
 	var out strings.Builder
-	rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out, lua.WithContext(ctx),
+	rt := lua.NewWriter(svc.Scheduler().ScheduledLuaWriteDeps(), &out, lua.WithContext(ctx),
 		lua.WithPrincipal(principal.From(ctx)))
 	defer rt.Close()
 	require.NoError(t, rt.RunString(

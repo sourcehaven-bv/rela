@@ -41,7 +41,7 @@ func TestSQLiteLuaReadsHistory(t *testing.T) {
 	waitForVersions(t, svc.Versions().ListVersions, id, 2)
 
 	var out strings.Builder
-	rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out, lua.WithContext(ctx), lua.WithPrincipal(principal.From(ctx)))
+	rt := lua.NewWriter(svc.Scheduler().ScheduledLuaWriteDeps(), &out, lua.WithContext(ctx), lua.WithPrincipal(principal.From(ctx)))
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
 local h = rela.history("`+id+`")
@@ -123,7 +123,7 @@ func TestSQLiteLuaHistoryRedactsUnderPolicy(t *testing.T) {
 
 	bob := boundAs(t, svc, principal.Principal{User: "bob", Tool: principal.ToolScheduler})
 	var out strings.Builder
-	rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out, lua.WithContext(bob), lua.WithPrincipal(principal.From(bob)))
+	rt := lua.NewWriter(svc.Scheduler().ScheduledLuaWriteDeps(), &out, lua.WithContext(bob), lua.WithPrincipal(principal.From(bob)))
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
 rela.output("live=" .. tostring(rela.get_entity("`+ids[0]+`").properties.secret))

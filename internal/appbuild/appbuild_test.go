@@ -92,7 +92,7 @@ func TestDiscover_BuildsAllServices(t *testing.T) {
 	if svc.Paths() == nil {
 		t.Error("Paths is nil")
 	}
-	if svc.SchedulerState() == nil {
+	if svc.Scheduler().SchedulerState() == nil {
 		t.Error("SchedulerState is nil")
 	}
 	if svc.Meta() == nil {

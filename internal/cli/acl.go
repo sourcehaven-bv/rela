@@ -386,6 +386,7 @@ func (d *dataEntryPermissions) UsedPermissions() []string {
 		}
 	}
 	perms = append(perms, copyGuardPermissions(d.meta)...)
+	perms = append(perms, recordPermissions(d.meta)...)
 	return perms
 }
 
@@ -403,6 +404,19 @@ func copyGuardPermissions(m *metamodel.Metamodel) []string {
 		if def.Guard.Permission != "" {
 			perms = append(perms, def.Guard.Permission)
 		}
+	}
+	return perms
+}
+
+// recordPermissions returns the permissions the record types of m declare.
+// The record service consumes them, so a role granting one is not dead config.
+func recordPermissions(m *metamodel.Metamodel) []string {
+	if m == nil {
+		return nil
+	}
+	var perms []string
+	for _, key := range m.RecordKeys() {
+		perms = append(perms, m.Records[key].Permissions.Names()...)
 	}
 	return perms
 }

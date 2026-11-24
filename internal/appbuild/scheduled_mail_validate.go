@@ -17,16 +17,16 @@ import (
 // ValidateScheduledMailRecipients checks current graph addresses selected by
 // template tasks. Validation is operator-scoped and therefore scans the raw
 // store; rendering remains recipient ACL-scoped at execution.
-func (s *Services) ValidateScheduledMailRecipients(ctx context.Context) error {
-	templateData, err := s.cfgLoader.Load(ctx, mailtemplate.ConfigFile)
+func (w *SchedulerWorkspace) ValidateScheduledMailRecipients(ctx context.Context) error {
+	templateData, err := w.cfgLoader.Load(ctx, mailtemplate.ConfigFile)
 	if err != nil {
 		return err
 	}
-	templates, err := mailtemplate.Parse(templateData, s.meta)
+	templates, err := mailtemplate.Parse(templateData, w.meta)
 	if err != nil {
 		return err
 	}
-	scheduleData, err := s.cfgLoader.Load(ctx, scheduler.ConfigFile)
+	scheduleData, err := w.cfgLoader.Load(ctx, scheduler.ConfigFile)
 	if err != nil {
 		return err
 	}
@@ -44,19 +44,19 @@ func (s *Services) ValidateScheduledMailRecipients(ctx context.Context) error {
 		if !ok {
 			continue
 		} // Named by structural validation before this pass.
-		def, _ := s.meta.GetEntityDef(task.ForEach.EntityType)
+		def, _ := w.meta.GetEntityDef(task.ForEach.EntityType)
 		filters, _ := filter.ParseAll(task.ForEach.Where)
-		filters = filter.BindDateVariables(filters, readtime.Or(ctx, servicesClock(s)))
+		filters = filter.BindDateVariables(filters, readtime.Or(ctx, w.clock))
 		var invalid []string
-		for ent, listErr := range s.store.ListEntities(ctx, store.EntityQuery{
-			Type: task.ForEach.EntityType, Faces: store.InWorld(s.worlds.DefaultWorld()),
+		for ent, listErr := range w.store.ListEntities(ctx, store.EntityQuery{
+			Type: task.ForEach.EntityType, Faces: store.InWorld(w.worlds.DefaultWorld()),
 		}) {
 			if listErr != nil {
 				return listErr
 			}
 			matched, matchErr := filter.MatchAll(filter.Record{
 				ID: ent.ID, Type: ent.Type, Properties: ent.Properties, ModifiedAt: ent.UpdatedAt,
-			}, filters, def, s.meta)
+			}, filters, def, w.meta)
 			if matchErr != nil {
 				return matchErr
 			}

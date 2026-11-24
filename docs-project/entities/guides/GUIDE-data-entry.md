@@ -996,9 +996,12 @@ lists:
       - property: logo
 ```
 
-The first column is the row title and link, so it cannot be an image. When
-a later column sets `link`, that column is the title and a first column such
-as `logo` shows as an ordinary column after it.
+An image column is as wide as its thumbnail, not as a text column. List the
+image column **before** the title column to show it as a leading avatar, left
+of the title; it is then part of the title cell and is not repeated as a
+column. The title column is the one with `link`, else the first column. With
+no `link` set, a first column that is an image is itself the title. An image
+column after the title is an ordinary narrow column.
 
 Attachments inherit the owning entity's permissions: if you may not update the
 entity, you may not attach to it. A `fields:` rule that makes the file field

@@ -92,9 +92,9 @@ import (
 //
 // Method form (not exported fields) is the established pattern in
 // this codebase: it lets *Services satisfy consumer-side service
-// interfaces — `scheduler.WorkspaceProvider`, the data-entry app's
-// constructor inputs — through structural typing, without adapters
-// at the wiring site.
+// interfaces, such as the data-entry app's constructor inputs, through
+// structural typing, without adapters at the wiring site. The scheduler
+// takes the narrower [SchedulerWorkspace] instead.
 //
 // Every exported method is a one-line accessor for a collaborator this facade
 // constructs; the count tracks the number of wired services, not an accreting
@@ -142,7 +142,7 @@ import (
 // build the `rela migrate` commands, and this bundle is the only boundary it
 // can cross. Still a ratchet target under TKT-N0IKN9.
 //
-// 34 → 35 (BUG-TKL08E): [Services.SchedulerState], a scheduler.WorkspaceProvider
+// 34 → 35 (BUG-TKL08E): Services.SchedulerState, a scheduler.WorkspaceProvider
 // method. The run-state backend is chosen here to match the job queue's reach,
 // the same per-recipe choice as [Services.MigState].
 //
@@ -156,8 +156,12 @@ import (
 // `rela audit`. It is typed so the CLI does not reach it through a type
 // assertion on Config.Audit. Total 41 → 42. Still a ratchet target.
 //
-//plimsoll:max-exported-methods=38
-//plimsoll:max-methods=42
+// 38 → 32, total 42 → 35 (TKT-N0IKN9 slice S1): the scheduler methods (Jobs,
+// SchedulerState, ScheduledLuaWriteDeps, the for_each and mail-template
+// methods) moved onto [SchedulerWorkspace], built by [Services.Scheduler].
+//
+//plimsoll:max-exported-methods=32
+//plimsoll:max-methods=35
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -539,27 +543,6 @@ func (s *Services) State() state.KV { return s.stateKV }
 // sqlite.
 func (s *Services) MigState() datamigration.StateStore { return s.migState }
 
-// Jobs returns the background-job queue, already started.
-//
-// The return type deliberately omits [jobs.Lifecycle]: starting and stopping
-// the queue is the composition root's concern, and a consumer that could Close
-// it would be shutting background work down for every other subsystem. Services
-// keeps the lifecycle handle privately and tears it down in Close.
-//
-// Register handlers at wiring time; the dispatcher resolves a handler per job,
-// so registration after start is fine. Durability depends on the build —
-// ephemeral on fs/desktop, durable on postgres.
-//
-// Nil: never — assemble fails rather than returning a Services with no
-// queue, since a nil queue would turn every Enqueue into a panic at the
-// call site rather than a wiring error here.
-func (s *Services) Jobs() jobs.Client { return s.jobQueue }
-
-// SchedulerState returns the scheduler's task and run records. It satisfies
-// scheduler.WorkspaceProvider. The backend matches the job queue's reach:
-// postgres when the queue is durable, kvstate over [Services.State] otherwise.
-func (s *Services) SchedulerState() schedulerstate.Store { return s.schedulerState }
-
 // CalDAVAliases is the CalDAV<->rela resource alias service. Never nil: the
 // service is always constructed (an empty table is the normal first-run state),
 // so consumers need no nil check.
@@ -820,24 +803,6 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 		AttachFile:    s.attachFile,
 		Records:       luaRecords(s.records),
 	}
-}
-
-// ScheduledLuaWriteDeps satisfies scheduler.WorkspaceProvider. Reads are
-// ACL-bound to the task's principal (stamped on the per-task ctx), with
-// privileges coming from acl.yaml — a job sees what its identity may see,
-// nothing more (DEC-O59WM4).
-//
-// Field-level `visible:` redaction APPLIES here (TKT-0XL8MF): a job whose
-// identity may read `person` receives that entity with the same properties
-// redacted as a human with the same role sees in the UI. This closed
-// RR-7408F5, which documented the earlier row-gating-only behavior.
-//
-// Field write grants apply too: writes go through the [entitymanager.FieldGated]
-// handle, so a job cannot set a property its identity may not.
-func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
-	deps := s.luaWriteDepsFor(s.fieldReads)
-	deps.EntityManager = FieldGatedEntityManager(s)
-	return deps
 }
 
 // GatedReads returns the read handles bound to whatever principal is on the
@@ -3640,9 +3605,9 @@ const jobQueueShutdownTimeout = 5 * time.Second
 // runs the teardown exactly once. Calling Close after CloseAssembly still
 // closes the store and search backend.
 //
-// It is NOT safe against a concurrent [Services.Jobs] — the teardown clears
-// the queue handle, and that field carries no lock. Retire an assembly only
-// once nothing is reaching for its background services.
+// It is NOT safe against a concurrent [Services.Scheduler] — the teardown
+// clears the queue handle, and that field carries no lock. Retire an assembly
+// only once nothing is reaching for its background services.
 func (s *Services) CloseAssembly() {
 	s.assemblyCloseOnce.Do(s.stopBackgroundServices)
 }
@@ -3801,7 +3766,7 @@ func (s *Services) Close() error {
 // process-scoped resource — not something to build per request.
 //
 // KNOWN COST: this is EAGER, and the scheduler is currently the only consumer
-// of Services.Jobs. So every short-lived CLI command (show, list, trace, …)
+// of SchedulerWorkspace.Jobs. So every short-lived CLI command (show, list, trace, …)
 // builds and starts a queue it never enqueues to. On the default build that is
 // cheap (~14µs and a few goroutines); on the postgres build it is not — the durable
 // job queue runs a schema-migration check and opens a SECOND connection pool before
@@ -3819,7 +3784,7 @@ func buildJobQueue(base *SharedBase) (jobs.Queue, error) {
 	}
 	// Started here rather than left to the first producer. An unstarted queue
 	// rejects every Enqueue with jobs.ErrNotStarted, so handing one out from
-	// Services.Jobs would be a trap: the accessor would look wired while
+	// SchedulerWorkspace.Jobs would be a trap: the accessor would look wired while
 	// every call through it failed.
 	//
 	// Handlers registered after Start still work — the dispatcher resolves
