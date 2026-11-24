@@ -2876,6 +2876,12 @@
       "reason": "Detector gap: the refusal is tested in internal/dataentry/sse_acl_test.go. Id changed when TKT-3KUIROC moved the handler to a new receiver.",
       "at": "2026-11-21T16:00:00Z",
       "title": "No test shows handleSSE refusing a caller."
+    },
+    "concepts.data_clump-86e9f1288f25": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose. The id moved when TKT-FGE5G3I added assign to ListConfig; the shared fields are unchanged.",
+      "at": "2026-11-24T12:00:00Z",
+      "title": "The fields create_form, edit_form, filter_controls, footer, header and title appear together in 5 types across 3 components."
     }
   },
   "labels": {},
