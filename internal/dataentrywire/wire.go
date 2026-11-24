@@ -114,6 +114,9 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 	if err := app.SetViewConditions(dataentry.AdaptViewConditions(appbuild.ViewConditions)); err != nil {
 		return fmt.Errorf("wire view conditions: %w", err)
 	}
+	if err := dataentry.SetAssignExprs(app, appbuild.AssignExpr); err != nil {
+		return fmt.Errorf("wire assign expressions: %w", err)
+	}
 	if err := app.SetQueryScopeResolver(dataentry.AdaptQueryScopes(appbuild.QueryScopes)); err != nil {
 		return fmt.Errorf("wire query scopes: %w", err)
 	}

@@ -225,7 +225,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/v1/_task_item_conversions/", a.taskItems.handleV1TaskItemConversions)
 	}
 	registerDiagramRoutes(mux, a)
-	mux.HandleFunc("/api/v1/_action/", a.write.handleV1Action)
+	registerWriteActionRoutes(mux, a)
 	mux.HandleFunc("/api/v1/_apps/", a.handleV1App)
 
 	// Dynamic entity routes are handled by a catch-all
@@ -236,6 +236,13 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 func registerDiagramRoutes(mux *http.ServeMux, a *App) {
 	mux.HandleFunc("/api/v1/_gantts/", a.gantt.handleV1Gantt)
 	mux.HandleFunc("/api/v1/_sankeys/", a.sankey.handleV1Sankey)
+}
+
+// registerWriteActionRoutes registers the routes that run a configured write
+// over rows: actions and list or page assigns.
+func registerWriteActionRoutes(mux *http.ServeMux, a *App) {
+	mux.HandleFunc("/api/v1/_action/", a.write.handleV1Action)
+	mux.HandleFunc(assignPath, func(w http.ResponseWriter, r *http.Request) { handleV1Assign(a, w, r) })
 }
 
 // registerAppearanceRoutes registers the settings, palette and theme routes.

@@ -1,0 +1,11 @@
+triggers:
+  stamp-todo-completed:
+    description: Record the logbook date when a to-do is completed.
+    on: { entity: [todo, project], property: status, becomes: completed }
+    outputs:
+      - set: { properties: { completed_on: "{{today}}" } }
+  stamp-todo-canceled:
+    description: Record the logbook date when a to-do is canceled.
+    on: { entity: [todo, project], property: status, becomes: canceled }
+    outputs:
+      - set: { properties: { completed_on: "{{today}}" } }

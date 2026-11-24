@@ -122,6 +122,8 @@ export interface ActionConfig {
    */
   confirm?: boolean | string
   set?: Record<string, string>
+  /** A list whose `assign:` this action applies to the selected rows. */
+  assign?: string
   script?: string
   description?: string
   params?: Record<string, string>
@@ -386,7 +388,22 @@ export interface FormFieldOrRelation {
   clear_when_hidden?: ClearWhenHidden
 }
 
+/** One assigned value: a literal, or an expression the server evaluates. */
+export type AssignValueConfig = { value: string } | { expr: string }
+
+/**
+ * What an item gets when it enters a list or is dropped on a page's sidebar
+ * entry. The SPA never evaluates it: `/_assign` resolves and writes it.
+ */
+export interface AssignConfig {
+  entity_type?: string
+  properties?: Record<string, AssignValueConfig>
+  relations?: Record<string, string>
+}
+
 export interface ListConfig {
+  /** Set when the list assigns values to items entering it. */
+  assign?: AssignConfig
   entity: string
   title?: string
   /** Markdown rendered above the list. `description` is a fallback alias. */
@@ -1487,6 +1504,8 @@ export interface SidebarData {
  * The tabs a principal may see come from the sidebar's `pages`.
  */
 export interface PageConfig {
+  /** Set when a row dropped on an entry for this page's entity gets values. */
+  assign?: AssignConfig
   label: string
   icon?: string
   entity_type?: string

@@ -2124,6 +2124,7 @@ lists:
 | `page_size`       | int    | Rows per page (default: 25)                                 |
 | `actions`         | list   | Action IDs available as keyboard shortcuts on selected rows |
 | `toolbar_actions` | list   | Action IDs shown as buttons next to "New"; they run without a selected row (see [Buttons on a list](#buttons-on-a-list-toolbar_actions)) |
+| `assign`          | object | Values and relations an item gets when it enters the list (see [Moving items into a list](#moving-items-into-a-list-assign)) |
 | `export_render`   | string | Lua script under `scripts/` that renders this list for export instead of the built-in column table (see View Export & Transforms) |
 
 #### Header and footer info regions
@@ -7728,6 +7729,67 @@ navigation:
 
 When clicked, the action executes. If the action script returns a `redirect`, the UI navigates
 to that path. If it returns a `message`, a toast notification is shown.
+
+### Moving items into a list (`assign`)
+
+`assign` names what an item gets when it enters a list: property values and
+relations. Three things apply it:
+
+- the list's "New" and Add buttons, which open the create form with the values
+  filled in;
+- dragging rows onto the list's sidebar entry;
+- an action with `assign: <list>`, for example on a keyboard key.
+
+```yaml
+actions:
+  move-today:
+    label: "Today"
+    key: "t"
+    assign: today          # apply the assign of list `today`
+
+lists:
+  today:
+    entity_type: todo
+    condition: "entity.status == 'open' and entity.when == 'today'"
+    assign:
+      properties:
+        when: today              # a literal
+        start_date: { expr: "today()" }   # a value expression
+      relations:
+        in_area: AREA-home       # an entity id
+```
+
+A value is a literal, or `{expr: ...}` with a predicate value expression.
+A literal is checked against the property's type at load: an integer, a
+boolean, a decimal or a date in the property's format. `{expr: "nil"}` unsets
+the property. The
+expression has no entity, so `entity` and `related(...)` are not available;
+`today()` and `now()` use the same clock as the list's condition. A relation
+that allows one outgoing edge is replaced; any other relation gets the edge
+added, so an assign never removes edges.
+
+An entity page can also take an `assign`. A row dropped on a sidebar entry
+generated from that page (`items_from: { page: ... }` or `entities:`) gets it,
+and the relation value `target` names the entry's own entity:
+
+```yaml
+pages:
+  project:
+    entity_type: project
+    assign:
+      entity_type: todo          # the type of the items dropped here
+      relations: { in_project: target }
+```
+
+An action with `assign:` is a key for the list's assign, so it takes no
+`permission:`, `available_on` or `when`: the write is gated by the rows'
+update permission, the same as a drop. Each item is written with the user's
+own permissions, like an edit. A row the
+user cannot update cannot be dragged, and a refused row is reported without
+undoing the others. When an item still does not match the list's condition
+after the write, a notice says so. Loading fails when an assign names an
+unknown property or relation, a computed property, an enum value that does not
+exist, or a relation that does not start at the item type.
 
 ### Buttons on a list (`toolbar_actions`)
 
