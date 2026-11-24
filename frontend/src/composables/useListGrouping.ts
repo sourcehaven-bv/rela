@@ -28,6 +28,7 @@ import { BUCKET_ORDER, bucketDate, bucketOf, defaultBucketLabel } from '@/utils/
 import {
   calendarBucketDate,
   calendarBucketOf,
+  calendarBucketColor,
   calendarBucketTitle,
   compareCalendarBuckets,
   type CalendarBucket,
@@ -247,7 +248,7 @@ function calendarSections(
         id: bucket.id,
         title:
           (bucket.fixed && groupBy.labels?.[bucket.fixed]) || calendarBucketTitle(bucket, now, tz),
-        color: bucket.fixed === 'overdue' ? ('red' as const) : undefined,
+        color: calendarBucketColor(bucket),
         prefill: date && groupBy.property ? { [groupBy.property]: date } : undefined,
         bucket: bucket.meta,
         items,

@@ -117,6 +117,11 @@ export function compareCalendarBuckets(
   return desc ? b.start - a.start : a.start - b.start
 }
 
+/** The heading colour of a section: red for overdue rows. */
+export function calendarBucketColor(bucket: CalendarBucket): 'red' | undefined {
+  return bucket.fixed === 'overdue' ? 'red' : undefined
+}
+
 /** A section's title, unless `labels:` names its fixed key. */
 export function calendarBucketTitle(
   bucket: CalendarBucket,
