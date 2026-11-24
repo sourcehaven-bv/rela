@@ -24,8 +24,6 @@ export interface Config {
   about_description?: string
   styles?: Record<string, Record<string, string>>
   palette?: ResolvedPalette
-  /** The data-entry.yaml `quick_entry:` block (TKT-24L1H36). */
-  quick_entry?: QuickEntryConfig
   forms: Record<string, FormConfig>
   /**
    * How the channel composer and messages present the message types of
@@ -155,6 +153,8 @@ export interface ActionConfig {
 }
 
 export interface AppConfig {
+  /** The data-entry.yaml `quick_entry:` block (TKT-24L1H36), served under `app`. */
+  quick_entry?: QuickEntryConfig
   name: string
   description?: string
   /**

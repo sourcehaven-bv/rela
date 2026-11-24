@@ -892,7 +892,7 @@ type CustomType struct {
 // It mirrors the top-level keys of data-entry.yaml, so a new key raises the
 // pin by one; `sankeys` and `builtins` (TKT-JEAR2UA) are the most recent.
 //
-//plimsoll:max-fields=25
+//plimsoll:max-fields=24
 type Config struct {
 	App AppConfig `json:"app"`
 	// AboutDescription is the deployment description shown by the SPA's global
@@ -925,8 +925,6 @@ type Config struct {
 	Documents   map[string]dataentryconfig.DocumentConfig      `json:"documents,omitempty"`
 	Apps        map[string]App                                 `json:"apps,omitempty"`
 	Palette     *dataentryconfig.ResolvedPalette               `json:"palette,omitempty"`
-	// QuickEntry is the data-entry.yaml `quick_entry:` block (TKT-24L1H36).
-	QuickEntry *dataentryconfig.QuickEntry `json:"quick_entry,omitempty"`
 
 	// NextActionBands is the operator's ordered priority vocabulary, so the
 	// SPA can label a suggestion's band ("Someone is waiting") rather than
@@ -1011,6 +1009,10 @@ type AppConfig struct {
 	// below the description. Absent when neither is configured. A link the
 	// server cannot serve safely is left out.
 	About *AppAbout `json:"about,omitempty"`
+	// QuickEntry is the top-level data-entry.yaml `quick_entry:` block
+	// (TKT-24L1H36). It rides in `app` because it configures the whole app,
+	// not one view, and it keeps Config at its field pin.
+	QuickEntry *dataentryconfig.QuickEntry `json:"quick_entry,omitempty"`
 }
 
 // AppAbout is [AppConfig.About].
