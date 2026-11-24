@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -199,4 +200,73 @@ func TestCalDAV_PutToReadableEntityStillSucceeds(t *testing.T) {
 		t.Fatalf("PUT on a readable task = %d, want success\n%s", rec.Code, rec.Body.String())
 	}
 	requireTaskState(t, app, readableTaskID, "Mine edited", "todo")
+}
+
+// TestDynamicCollections_HiddenMemberIsAbsent pins that a dynamic collection,
+// which reads its driver's members by id, still applies the row gate: a member
+// linked to the driver that alice cannot read is absent from the listing.
+func TestDynamicCollections_HiddenMemberIsAbsent(t *testing.T) {
+	app := caldavDynamicAppWith(t,
+		[]*entity.Entity{mkProject("PRJ-1", "Alpha"), mkTaskIn(readableTaskID, "Mine"), mkTaskIn(hiddenTaskID, "Secret")},
+		[]*entity.Relation{
+			entity.NewRelation(readableTaskID, "belongs-to", "PRJ-1"),
+			entity.NewRelation(hiddenTaskID, "belongs-to", "PRJ-1"),
+		})
+	meta := app.State().Meta
+	meta.Entities["person"] = metamodel.EntityDef{
+		Label: "Person", IDPrefix: "P-", DisplayProperty: "title",
+		Properties:    map[string]metamodel.PropertyDef{"title": {Type: metamodel.PropertyTypeString}},
+		PropertyOrder: []string{"title"},
+	}
+	meta.Relations["owns"] = metamodel.RelationDef{Label: "owns", From: []string{"person"}, To: []string{"task"}}
+	seedEntity(app, &entity.Entity{ID: hiddenCalDAVUser, Type: "person", Properties: map[string]any{"title": "Alice"}})
+	seedRelation(app, entity.NewRelation(hiddenCalDAVUser, "owns", readableTaskID))
+
+	tasks := []string{"task"}
+	d := mustNewACL(t, &acl.Policy{
+		Roles: map[string]acl.RoleDef{
+			"owner":  {Read: tasks, Create: tasks, Update: tasks, Delete: tasks},
+			"viewer": {Read: []string{"project"}},
+		},
+		Assignments:   map[string]string{hiddenCalDAVUser: "viewer"},
+		RoleRelations: map[string]acl.RoleRelationDef{"owns": {Confers: "owner"}},
+	}, app.store)
+	svc := appbuildtest.New(meta, appbuildtest.WithStore(app.store),
+		appbuildtest.WithFS(app.fs, app.paths), appbuildtest.WithDeclarative(d))
+	rebindApp(app, app.fs, app.paths, svc)
+	setTestACL(t, app, d)
+	app.SetPrincipalResolver(func(*http.Request) principal.Principal {
+		return principal.Principal{User: hiddenCalDAVUser, Tool: principal.ToolDataEntry}
+	})
+
+	rec := doCalDAV(t, app, "PROPFIND", "/api/v1/_caldav/principal/calendars/project_tasks--PRJ-1/", "")
+	if rec.Code != http.StatusMultiStatus {
+		t.Fatalf("PROPFIND = %d, want 207\n%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, readableTaskID) {
+		t.Errorf("readable member %s missing from the collection:\n%s", readableTaskID, body)
+	}
+	if strings.Contains(body, hiddenTaskID) {
+		t.Errorf("hidden member %s listed in the collection:\n%s", hiddenTaskID, body)
+	}
+}
+
+// TestDynamicCollections_GoneDriverIsNotFound pins that a dynamic name whose
+// driver cannot be resolved yields not-found from dynamicMembers, never an
+// unscoped read of the whole member type.
+func TestDynamicCollections_GoneDriverIsNotFound(t *testing.T) {
+	app := caldavDynamicAppWith(t,
+		[]*entity.Entity{mkProject("PRJ-1", "Alpha"), mkTaskIn("TSK-A", "a")}, nil)
+	b := &caldavBackend{app: app, baseURL: "https://example.test"}
+
+	members, scoped, err := b.dynamicMembers(t.Context(), "project_tasks--PRJ-NOPE")
+	if err == nil || scoped || members != nil {
+		t.Errorf("gone driver: members=%v scoped=%v err=%v, want not-found", members, scoped, err)
+	}
+	// A static name stays unscoped without error, so the refusal above is
+	// specific to the dynamic case.
+	if _, scoped, err := b.dynamicMembers(t.Context(), "tasks"); err != nil || scoped {
+		t.Errorf("static collection: scoped=%v err=%v, want unscoped and no error", scoped, err)
+	}
 }

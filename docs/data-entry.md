@@ -2794,7 +2794,7 @@ lists:
 |------------|--------|-------------|
 | `property` | string | The property to group by. Required. It must be a single value, not a `list: true` property. |
 | `groups`   | list   | Optional. Per value: `value` (required, must be one of the enum's values), `label`, and `color` (`green`, `amber`, `red`, `grey`, `blue` or `purple`). Needs an enum property. |
-| `buckets`  | string | `relative` groups a date by how far away it is. See [Date buckets](#date-buckets). |
+| `buckets`  | string or map | `relative` groups a date by how far away it is; a map such as `{ by: month }` groups it by calendar unit. See [Date buckets](#date-buckets). |
 | `labels`   | map    | Section titles for the date buckets. Only with `buckets`. |
 | `max_rows` | int    | How many rows the list loads, from 1 to 2000. Default 500. |
 
@@ -2870,6 +2870,59 @@ buckets move on at midnight without a reload.
 The **Add** button of **Today** and **Tomorrow** fills in that date on a `date`
 property. The other buckets span more than one day, and a `datetime` needs a
 time as well, so they fill in nothing.
+
+### Calendar buckets
+
+A mapping under `buckets:` gives one section per calendar day, week, month or
+year:
+
+```yaml
+lists:
+  upcoming:
+    entity: todo
+    group_by:
+      property: start
+      buckets: { by: day, for: 7d, then: month }
+  logbook:
+    entity: todo
+    filters:
+      - { property: completed, operator: "!=", value: "" }
+    group_by:
+      property: completed
+      buckets: { by: month, order: desc }
+```
+
+| Key     | Description |
+|---------|-------------|
+| `by`    | `day`, `week`, `month` or `year`. Required. |
+| `for`   | A number of days, such as `7d`, from 1 to 366. Only with `by: day`. Each day from today to the last day of the window gets a section. An earlier date goes in **Overdue**. A later date goes in the `then` sections, or in one **Later** section. |
+| `then`  | `week`, `month` or `year`: the sections after the `for` window. Needs `for`. |
+| `order` | `asc` (the default) or `desc`, for newest first. `desc` cannot take `for`. |
+
+Without `for`, every date gets a section of its unit, past dates included.
+
+- A week starts on Monday. Its section is titled with its Monday, such as
+  "Week of 23 Nov".
+- A day section is titled **Today**, **Tomorrow**, or with the date, such as
+  "Thu 26 Nov". A month is titled "November 2026", a year "2026". A date in
+  another year shows its year.
+- The first `then` section can be partial: after a 7-day window it holds only
+  the rest of its month.
+- `labels:` can rename only the fixed sections: `no_date`, `today` and
+  `tomorrow` with `by: day` (no `tomorrow` with `for: 1d`), `overdue` with
+  `for`, and `later` with `for` and no `then`. Another key is a config error.
+- `{ by: day }` without `for` still names today's and tomorrow's sections
+  **Today** and **Tomorrow**, also with `order: desc`.
+- **Add** in a day section fills in that date on a `date` property.
+- Sections follow the same time zone rule as relative buckets.
+
+The list loads at most `max_rows` rows, in the order of the sections. Two
+cases can fill that with rows you did not want:
+
+- With `order: desc`, rows without a date are loaded first. Filter them out,
+  as the logbook above does, when the list is long.
+- With `for`, all overdue rows are loaded before today's. Filter old dates out
+  with a `condition:` when there can be many.
 
 > **Note**: The buckets are worked out in the browser, in the reader's time
 > zone. A `condition:` that uses `days_between(entity.due, today())` is worked
@@ -6564,8 +6617,62 @@ navigation:
 | `initial`   | A letter badge in front of each entry. Set `property` for the first letter of one of the row's properties, or `relation` for the first letter of a related entity's title, such as the owner. `direction` picks the side of the relation, and is needed only when the relation connects the type to itself. |
 | `create`    | Show a "+" on the group heading that creates a row of the list. It opens the list's `create_form:`, or else the type's create form, and then the new entity's page. It is shown only to a user who may create the type. A group that offers it stays in the sidebar when it has no entries, so the first one can be made. In a read-only workspace there is no "+", so an empty group is left out. |
 
+| `status`    | A count of related rows on each entry. See [Counts and children](#counts-and-children). |
+| `children`  | Related rows one level under each entry. See [Counts and children](#counts-and-children). |
+
 A group with `items_from` cannot also have `items`, and cannot have `status:`.
 `items_from` is only allowed on a group.
+
+#### Counts and children
+
+An entry can show a count, and can have entries of its own one level down:
+
+```yaml
+navigation:
+  - group: Areas
+    items_from:
+      list: areas
+      page: area
+      status: { list: open_todos, via: in_area, tone: info, label: "{count}" }
+      children:
+        list: active_projects
+        via: in_area
+        page: project
+        limit: 10
+        status: { list: open_todos, via: in_project, tone: info, label: "{count}" }
+```
+
+`children` has these fields:
+
+| Field       | Description |
+| ----------- | ----------- |
+| `list`      | The list whose rows become child entries, in the list's order. Required. |
+| `via`       | The relation between a child row and its parent row. Required. |
+| `direction` | The side of `via`, seen from the child row. Needed only when the relation connects a type to itself. |
+| `page`      | An entity page for the child list's type. Without it, a child opens the entity's detail view. |
+| `limit`     | The most children per entry, from 1 to 50. The default is 20. An entry with more ends with a **Show all** child that opens the entry. |
+| `status`    | A count on each child entry. |
+
+There is one child level: `children` has no `children`, `initial` or
+`create`.
+
+`status` has these fields:
+
+| Field       | Description |
+| ----------- | ----------- |
+| `list`      | The list whose rows are counted. Required. Its filters, `condition:` and scope decide which rows count. |
+| `via`       | The relation between a counted row and the entry. Required. |
+| `direction` | The side of `via`, seen from the counted row, as for `children`. |
+| `tone`      | `new`, `info`, `warning`, `error` or `success`, as for [status indicators](#status-indicators). |
+| `label`     | The marker's text. `{count}` is the only variable. |
+
+A count of zero shows nothing. Children and counts follow the same access
+rules as the entries: only rows the user may read are shown or counted. A
+child's count covers only the children the entry shows.
+
+The server reads the children and counts in a fixed number of queries per
+group, whatever the number of entries. The rows it reads grow with the number
+of related rows.
 
 The entries follow the same access rules as the list. A user sees only the rows
 the list shows them, and a title they may not read shows as the entity id. An
@@ -6585,7 +6692,10 @@ The entries are not in the sidebar response. The SPA fetches them from
   "items": {
     "1": {
       "entries": [
-        { "id": "TOPIC-1", "type": "topic", "label": "Gezondheid", "initial": "J" }
+        { "id": "TOPIC-1", "type": "topic", "label": "Gezondheid", "initial": "J",
+          "status": { "tone": "info", "label": "3", "count": 3 },
+          "children": [{ "id": "PRJ-1", "type": "project", "label": "Launch" }],
+          "children_truncated": false }
       ],
       "truncated": true
     }
@@ -7371,7 +7481,8 @@ item, and to choose which types it offers once the page's entity has loaded:
 A group with [`items_from`](#generated-items-items_from) has three more fields
 and no `items`: `items_key` names its entries in `/api/v1/_nav_items`,
 `items_list` is the list behind it, and `items_page` is the page an entry
-opens. `items_page` is left out when the user can see no tab of that page; the
+opens. `items_child_page` is the page a child entry opens, under the same rule
+as `items_page`. `items_page` is left out when the user can see no tab of that page; the
 entries then open the entity's detail view. A group with `create: true` has
 `items_create` (`type`, `label`, `form`) when the user may create the type and a
 form resolves for it. The create endpoint checks access again.
@@ -10810,7 +10921,7 @@ promise-based, closed set of methods that forward to the REST API over the
 | `rela.schema()` / `rela.config()` | metamodel + data-entry config |
 | `rela.list({type, params})` | list entities of a type |
 | `rela.get({type, id, params})` | fetch one entity |
-| `rela.search({query, type})` | full-text search |
+| `rela.search({query, type, page?})` | search; one page of at most 1000 rows, `meta.has_more` says a later `page` holds more |
 | `rela.analyze()` | run the analysis checks |
 | `rela.templates({type})` | entity templates |
 | `rela.position({id, scope})` | prev/next within an ordered set |

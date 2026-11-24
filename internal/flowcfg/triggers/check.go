@@ -29,6 +29,7 @@ func Check(meta *metamodel.Metamodel, rules []Rule) []string {
 		errs = append(errs, backgroundErrors(r)...)
 		errs = append(errs, pileErrors(meta, r)...)
 		errs = append(errs, externalRefErrors(meta, r)...)
+		errs = append(errs, unsetSchemaErrors(meta, r)...)
 	}
 	return errs
 }

@@ -1,9 +1,9 @@
 request: GET /api/v1/_gantts/plan
 identity: signed assertion for stranger@example.test
 status: 200
-reads: GetRelation=6 GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=2
-breadth: ListEntityHeaders=0/1 ListRelations=6/2
-bodies: GraphQuery=0/1 ListEntityHeaders=0/1
+reads: GetRelation=6 GraphQueryHeaders=2 ListRelations=2
+breadth: ListRelations=6/2
+bodies: GraphQuery=4/2
 versions: 
 body:
 {

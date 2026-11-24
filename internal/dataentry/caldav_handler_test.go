@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
 // caldavTestApp builds an App with one VTODO collection over `task`, wired with
@@ -1889,4 +1891,31 @@ func TestDynamicCollections_LastMembershipFollowsCardinality(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDynamicCollections_ReadIsScaleFree pins that a dynamic collection reads
+// its driver's members by id: padding the member type with rows linked to no
+// driver changes neither the calls nor the rows read (TKT-C5H506O).
+func TestDynamicCollections_ReadIsScaleFree(t *testing.T) {
+	storetest.AssertScaleFree(t, func(n int) (storetest.Cost, string) {
+		ents := []*entity.Entity{mkProject("PRJ-1", "Alpha"), mkTaskIn("TSK-A", "a"), mkTaskIn("TSK-B", "b")}
+		for i := range n {
+			ents = append(ents, mkTaskIn(fmt.Sprintf("TSK-P%04d", i), "pad"))
+		}
+		app := caldavDynamicAppWith(t, ents, []*entity.Relation{
+			entity.NewRelation("TSK-A", "belongs-to", "PRJ-1"),
+			entity.NewRelation("TSK-B", "belongs-to", "PRJ-1"),
+		})
+		counting := storetest.NewCounting(app.store)
+		app.store = counting
+		b := &caldavBackend{app: app, baseURL: "https://example.test"}
+		objs, err := b.listTodos(t.Context(), "project_tasks--PRJ-1")
+		if err != nil {
+			t.Fatalf("listTodos: %v", err)
+		}
+		if len(objs) != 2 {
+			t.Fatalf("want the 2 members, got %d", len(objs))
+		}
+		return counting.Cost(), counting.String()
+	})
 }

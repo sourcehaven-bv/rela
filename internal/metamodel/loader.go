@@ -322,6 +322,7 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateRelationOrderable(m)...)
 	validationErrors = append(validationErrors, validateRelationScope(m)...)
 	validationErrors = append(validationErrors, validateRelationOwning(m)...)
+	validationErrors = append(validationErrors, validateRelationWithin(m)...)
 	validationErrors = append(validationErrors, validateTransforms(m)...)
 	validationErrors = append(validationErrors, validateCheckers(m)...)
 	validationErrors = append(validationErrors, validateAttachments(m)...)

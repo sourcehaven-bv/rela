@@ -113,6 +113,26 @@ func navItemsFor(
 			Initial: initials[e.ID],
 		})
 	}
+	ids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		ids = append(ids, e.ID)
+	}
+	// A count or child level that cannot be read, such as one whose list
+	// filters on a property hidden from this principal, is left out; the
+	// entries themselves stand.
+	statuses, err := navItemStatuses(ctx, a, s, from.Status, ids)
+	if err != nil {
+		slog.Log(ctx, sidebarSkipLevel(err), "nav items: counts skipped", "list", from.List, "error", err)
+	}
+	for i := range entries {
+		entries[i].Status = statuses[entries[i].ID]
+	}
+	if err := navItemChildren(ctx, a, s, from.Children, entries); err != nil {
+		slog.Log(ctx, sidebarSkipLevel(err), "nav items: children skipped", "list", from.List, "error", err)
+		for i := range entries {
+			entries[i].Children, entries[i].ChildrenTruncated = nil, false
+		}
+	}
 	return v1.NavItemList{Entries: entries, Truncated: total > limit}, nil
 }
 
@@ -124,8 +144,14 @@ func navItemsListQuery(listID string, listCfg dataentryconfig.List) map[string][
 	query := navStatusListQuery(listCfg)
 	query[listIDParam] = []string{listID}
 	var sort []string
-	if listCfg.GroupBy != nil && listCfg.GroupBy.Property != "" {
-		sort = append(sort, listCfg.GroupBy.Property)
+	if g := listCfg.GroupBy; g != nil && g.Property != "" {
+		// Newest-first date sections read the group property descending, as
+		// groupedSort in listParams.ts does.
+		if g.Buckets.Descending() {
+			sort = append(sort, "-"+g.Property)
+		} else {
+			sort = append(sort, g.Property)
+		}
 	}
 	for _, spec := range listCfg.Sort {
 		if listCfg.GroupBy != nil && spec.Property == listCfg.GroupBy.Property {

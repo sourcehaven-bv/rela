@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"maps"
 	"slices"
@@ -205,7 +206,19 @@ func withQueriedRollups(
 		return narrow(entities)
 	}
 	want := queriedRollups(s.schema().Meta, typeName, query)
-	if want == nil || len(entities) == 0 {
+	if want == nil {
+		return narrow(entities)
+	}
+	// A body_tasks roll-up is counted from each row's body, so filtering or
+	// sorting on it would read every body of the type before paging
+	// (TKT-SQ8O0EQ). It is refused rather than served at that cost.
+	for _, col := range s.schema().rollups.For(typeName) {
+		if col.BodyTasks != "" && want[col.Property] {
+			return nil, fmt.Errorf("%w: %q counts body tasks and cannot be filtered or sorted on",
+				errBadFilter, col.Property)
+		}
+	}
+	if len(entities) == 0 {
 		return narrow(entities)
 	}
 	copies := make([]*entityPkg.Entity, len(entities))

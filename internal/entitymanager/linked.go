@@ -120,6 +120,12 @@ func CreateLinked(ctx context.Context, m *Manager, lc LinkedCreate) (*LinkedResu
 		return nil, err
 	}
 	out := t.out
+	// The delete versions of cleared edges go through the outer store, so
+	// inside a joined transaction they wait for its commit.
+	after := afterCommitCtx(ctx)
+	if !nested || !onCommit(ctx, func(context.Context) { t.scope.version(after, m) }) {
+		t.scope.version(ctx, m)
+	}
 	if nested && deferFinishCreate(ctx, m, t, opts.SkipAutomation) {
 		out.Create = &entity.CreateResult{Entity: t.created, Warnings: t.warnings}
 		out.Relation = t.written
@@ -160,6 +166,8 @@ type linkedCreate struct {
 	created  *entity.Entity
 	warnings []entity.Warning
 	written  *entity.Relation
+	// scope is the out-of-scope edges the edge's write clears.
+	scope scopeClears
 }
 
 // prepareLinkedCreate runs the checks that need no transaction: the
@@ -181,6 +189,9 @@ func prepareLinkedCreate(ctx context.Context, m *Manager, lc LinkedCreate) (*lin
 		var err error
 		if t.key, t.rel, err = prepareLinkedRelation(ctx, m, lc); err != nil {
 			return nil, err
+		}
+		if scopeErr := t.scope.prepass(ctx, m, []entity.RelationKey{t.key}, nil); scopeErr != nil {
+			return nil, scopeErr
 		}
 	}
 	return t, nil
@@ -234,6 +245,9 @@ func (t *linkedCreate) checkRelation(ctx context.Context, view store.Store) (boo
 		return false, nil
 	}
 	err := checkLinkedRelation(ctx, view, t.m, t.key)
+	if err == nil {
+		err = t.checkScope(ctx, view)
+	}
 	switch {
 	case err == nil:
 		return true, nil
@@ -243,6 +257,22 @@ func (t *linkedCreate) checkRelation(ctx context.Context, view store.Store) (boo
 	default:
 		return false, beforeWriteError{err}
 	}
+}
+
+// checkScope runs the scope check of the edge before the entity write, with
+// the new end blank: the new entity has no edges, so only the existing end's
+// scoped edges can be affected (TKT-5GK80Q9). The edges it clears go
+// through the relation rules like any removed edge.
+func (t *linkedCreate) checkScope(ctx context.Context, view store.Store) error {
+	adds := []entity.RelationKey{t.key}
+	cleared, err := t.scope.decide(ctx, t.m, view, adds, nil)
+	if err != nil || len(cleared) == 0 {
+		return err
+	}
+	if relationWritesChecked(t.m.deps, cleared...) {
+		return checkRelationRules(ctx, t.m.deps, view, nil, cleared)
+	}
+	return nil
 }
 
 // writeRelation fills in the new entity's end of the edge and writes it.
@@ -262,7 +292,10 @@ func (t *linkedCreate) writeRelation(ctx context.Context, view store.Store, id s
 	t.written = t.rel
 	// A failed record fails the create even when the edge is best effort:
 	// the edge is written, and must not stay without its record.
-	return t.m.recordRelationAudit(ctx, view, audit.OpCreateRelation, t.rel, "created")
+	if err := t.m.recordRelationAudit(ctx, view, audit.OpCreateRelation, t.rel, "created"); err != nil {
+		return err
+	}
+	return t.scope.apply(ctx, t.m, view)
 }
 
 // finishKept runs the post-commit steps of [CreateLinked] for an entity

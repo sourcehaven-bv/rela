@@ -91,7 +91,7 @@ func newQueryService(app *App) *queryService {
 // loaded; the type-listing branch resolves the per-type verdict
 // against the store directly.
 //
-// The maxFreeTextSearchResults bound counts entities that survived
+// The maxSearchResults bound counts entities that survived
 // BOTH visibility and property filters (post-visibility truncation —
 // a pre-visibility cap starves restricted principals; a pre-filter
 // cap would starve filtered queries the same way).
@@ -125,10 +125,13 @@ type queryOptions struct {
 	// reads the store in windows until it has firstN results (see
 	// firstNByTypes). Results past firstN may or may not be returned.
 	firstN int
+	// offset is how many leading results searchPage skips: the rows of the
+	// pages before the one /_search serves. Only searchPage reads it.
+	offset int
 }
 
 // freeTextLimit is the relevance cap for a free-text search. It is
-// maxFreeTextSearchResults unless the caller keeps only opts.limit rows AND
+// maxSearchResults unless the caller keeps only opts.limit rows AND
 // every row the search returns is one the caller keeps, in the order it
 // keeps them:
 //
@@ -140,23 +143,31 @@ type queryOptions struct {
 //     spliced one, so its hits would take slots the exact filter then
 //     empties.
 //
+// A caller that keeps more than maxSearchResults rows (searchPage, for a
+// page that ends past the cap) gets one hit more than the cap, so it can
+// tell a result cut at the cap from one that ends there. It serves no row
+// past the cap.
+//
 // Two drops remain after the search and are accepted: a hit deleted
 // between the search and the header read, and a face the row gate refuses
 // (visibility.SearchScoped). Both are rare; they can return fewer than
 // limit rows where the 1000 cap would have filled them.
 func freeTextLimit(sq *searchparser.SearchQuery, opts queryOptions) int {
-	if opts.limit <= 0 || opts.limit >= maxFreeTextSearchResults ||
+	if opts.limit > maxSearchResults {
+		return maxSearchResults + 1
+	}
+	if opts.limit <= 0 || opts.limit == maxSearchResults ||
 		len(sq.PropertyFilters) > 0 || sq.HasSort() {
 
-		return maxFreeTextSearchResults
+		return maxSearchResults
 	}
 	if opts.exactType != "" {
 		if len(sq.EntityTypes) == 0 {
-			return maxFreeTextSearchResults
+			return maxSearchResults
 		}
 		for _, t := range sq.EntityTypes {
 			if t != opts.exactType {
-				return maxFreeTextSearchResults
+				return maxSearchResults
 			}
 		}
 	}
@@ -177,7 +188,7 @@ func freeTextLimit(sq *searchparser.SearchQuery, opts queryOptions) int {
 //
 // They are ignored on the free-text branch, which runs through the search
 // index rather than a type-scoped store list. That branch is also
-// relevance-CAPPED (maxFreeTextSearchResults) before any caller's pass runs,
+// relevance-CAPPED (maxSearchResults) before any caller's pass runs,
 // so a selection predicate over it would be lossy; the only caller with a
 // condition — the next-action engine — is refused a free-text query at load
 // (conditionlint) for exactly that reason, and this comment is the reminder
@@ -189,8 +200,11 @@ func (q *queryService) executeQueryWith(
 	return results, err
 }
 
-// executeQueryCut is executeQueryWith that also reports whether opts.firstN
-// cut the read short, so rows past the results were not read.
+// executeQueryCut is executeQueryWith that also reports whether the read was
+// cut short, so rows past the results were not read: by opts.firstN, or,
+// for free text, by the relevance cap (the search returned more than
+// maxSearchResults hits, which freeTextLimit allows only for a caller that
+// asks past the cap).
 func (q *queryService) executeQueryCut(
 	ctx context.Context, query string, opts queryOptions,
 ) (results []*entity.Entity, cut bool, err error) {
@@ -219,8 +233,13 @@ func (q *queryService) executeQueryCut(
 	var candidates []*entity.Entity
 	if sq.HasFreeText() {
 		// Hits arrive in relevance order. Scores are dropped because
-		// executeQuery never sorted by them.
+		// executeQuery never sorted by them. A hit past the cap only says
+		// the cap cut the result; it is dropped before any later pass, so
+		// the rows are the top maxSearchResults whatever the caller asked.
 		candidates, err = q.runVisibleFreeTextSearch(ctx, svc, sq, scope, freeTextLimit(sq, opts))
+		if cut = len(candidates) > maxSearchResults; cut {
+			candidates = candidates[:maxSearchResults]
+		}
 	} else {
 		// Push the equality filters into the store as a PRE-FILTER, cutting
 		// the rows loaded. The Go pass below still evaluates every filter,
@@ -256,7 +275,7 @@ func (q *queryService) executeQueryCut(
 			continue
 		}
 		results = append(results, e)
-		if sq.HasFreeText() && len(results) >= maxFreeTextSearchResults {
+		if sq.HasFreeText() && len(results) >= maxSearchResults {
 			break
 		}
 	}
@@ -266,7 +285,7 @@ func (q *queryService) executeQueryCut(
 		q.sortEntitiesMulti(results, sq.SortClauses)
 	}
 
-	return results, false, nil
+	return results, cut, nil
 }
 
 // firstNByTypes is the branch of executeQueryWith without free text for a
@@ -301,10 +320,16 @@ func (q *queryService) firstNByTypes(
 		}
 		offset, window := 0, n-len(results)
 		for reads := 1; ; reads++ {
+			var rows []*entity.Entity
 			if reads > maxQueryWindows {
-				window = 0 // the rest of the type
+				// The rest of the type in one read, through the whole-type
+				// scan and its allowlist entry. window 0 marks the type as
+				// exhausted after this read.
+				window = 0
+				rows, err = visibleEntitiesOfType(ctx, svc, typ, ts, pushed, offset)
+			} else {
+				rows, err = visibleEntitiesOfTypeWindow(ctx, svc, typ, ts, pushed, window, offset)
 			}
-			rows, err := visibleEntitiesOfTypeWindow(ctx, svc, typ, ts, pushed, window, offset)
 			if err != nil {
 				return nil, false, err
 			}
@@ -448,7 +473,7 @@ func (q *queryService) freeTextIDsForType(
 		return freeTextIDsForTypeResult{IDs: map[string]struct{}{}, HasFilter: true}, nil
 	}
 	ids, err := freeTextIDs(ctx, q.visibleSearcher(), q.fields(), sq, scope,
-		worldScopeFrom(ctx), maxFreeTextSearchResults)
+		worldScopeFrom(ctx), maxSearchResults)
 	if err != nil {
 		return freeTextIDsForTypeResult{}, err
 	}
@@ -522,30 +547,46 @@ func loadHitHeaders(ctx context.Context, st store.Store, hits []search.Hit) (map
 	return out, nil
 }
 
-// searchPage is the read behind /_search: the query's result, of
-// opts.exactType only when it is set, cut to opts.limit when it is set, and
-// the number of rows the query matched before the cut.
+// searchPage is the read behind /_search: one page of the query's result,
+// of opts.exactType only when it is set, and the number of rows the query
+// matched in all.
+//
+// The page holds at most opts.limit rows, or maxSearchResults when no limit
+// is set, so no branch returns an unbounded slice (TKT-T0DK37). It starts
+// opts.offset rows into the result; the rows before it are ones the
+// principal may read, so a hidden row neither takes a slot nor shifts a page.
 //
 // A structured query the store can answer ([planSearch]) reads only the
 // rows it returns and counts the rest in the store (TKT-D3RAB0E), so its
 // total is every match. Every other query takes executeQueryWith and is cut
-// here. Its total is the length before the cut, and for free text that
-// length is already bounded by the relevance cap (freeTextLimit), so there
-// it is a lower bound.
+// here; its total is the length before the cut. For free text that length
+// is bounded by the relevance cap (freeTextLimit), so there it is a lower
+// bound. The read asks for one row past the page, so a total above
+// offset+size still says that more rows follow. capped reports that free
+// text matched more than maxSearchResults hits, the rows past which no
+// page reaches.
 func (q *queryService) searchPage(
 	ctx context.Context, query string, opts queryOptions,
-) (rows []*entity.Entity, total int, err error) {
+) (rows []*entity.Entity, total int, capped bool, err error) {
+	size := opts.limit
+	if size <= 0 || size > maxSearchResults {
+		size = maxSearchResults
+	}
+	offset := max(opts.offset, 0)
 	svc := q.services()
 	if plan, scope, ok := structuredPlan(ctx, svc, query, opts.exactType); ok {
 		if len(scope) == 0 {
-			return []*entity.Entity{}, 0, nil
+			return []*entity.Entity{}, 0, false, nil
 		}
-		return plan.page(ctx, svc, scope, opts.limit)
+		rows, total, err = plan.page(ctx, svc, scope, size, offset)
+		return rows, total, false, err
 	}
 
-	rows, err = q.executeQueryWith(ctx, query, opts)
+	read := opts
+	read.limit = offset + size + 1
+	rows, capped, err = q.executeQueryCut(ctx, query, read)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	// The exact filter stays: a `type:` clause already in the query unions
 	// with the caller's type.
@@ -555,10 +596,8 @@ func (q *queryService) searchPage(
 	// Cut after the read gate and the type filter, so the cap counts only
 	// rows this principal may see and a hidden row cannot take a slot.
 	total = len(rows)
-	if opts.limit > 0 && len(rows) > opts.limit {
-		rows = rows[:opts.limit]
-	}
-	return rows, total, nil
+	rows = rows[min(offset, len(rows)):min(offset+size, len(rows))]
+	return rows, total, capped, nil
 }
 
 // searchPosition answers where id sits in a search scope's result (the

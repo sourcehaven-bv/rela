@@ -39,10 +39,10 @@ func (ce *copyEngine) applyCopyAutomations(ctx context.Context, plan *copyPlan) 
 		ev.Type, ev.OldEntity = triggers.EventEntityUpdated, plan.existing
 	}
 	res := m.deps.Automations.Process(ctx, ev)
-	if len(res.PropertiesSet) == 0 {
+	if !res.HasWrites() {
 		return res, nil
 	}
-	set := stringMapAny(res.PropertiesSet)
+	set := writeNames(res.Writes())
 	if err := rejectComputedPresent(m.deps, plan.entity.Type, set); err != nil {
 		return nil, err
 	}
@@ -50,9 +50,7 @@ func (ce *copyEngine) applyCopyAutomations(ctx context.Context, plan *copyPlan) 
 		return nil, err
 	}
 	copied := plan.entity.Clone()
-	for prop, val := range res.PropertiesSet {
-		plan.entity.SetString(prop, val)
-	}
+	res.Writes().Apply(plan.entity)
 	if err := m.deps.Computed.Evaluate(ctx, plan.entity); err != nil {
 		return nil, err
 	}

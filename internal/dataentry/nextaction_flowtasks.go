@@ -168,7 +168,7 @@ func (f flowTaskSource) subjects(
 	rows := map[string][]*entityPkg.Entity{}
 	for typ, ids := range byType {
 		rqr := readGateFromContext(ctx).ReadQuery(ctx, typ)
-		got, _, err := scopedEntities(ctx, a.Services(), rqr, scopeRequest{
+		got, err := scopedEntities(ctx, a.Services(), rqr, scopeRequest{
 			Type: typ, Faces: rqr.Faces, ByIDs: true, IDs: ids,
 		})
 		if err != nil {

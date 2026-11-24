@@ -3,7 +3,14 @@ import { useI18n } from 'vue-i18n'
 import { ref, computed, onMounted, watch } from 'vue'
 import { usePageTitle } from '@/composables/useDocumentTitle'
 import { useSchemaStore, useUIStore } from '@/stores'
-import { searchEntities, analyze, getDashboard, getDashboardCard, ApiError } from '@/api'
+import {
+  searchEntities,
+  searchAllEntities,
+  analyze,
+  getDashboard,
+  getDashboardCard,
+  ApiError,
+} from '@/api'
 import { useWorld } from '@/composables/useWorld'
 import type { RouteLocationRaw } from 'vue-router'
 import DashboardMatrix from '@/components/dashboard/DashboardMatrix.vue'
@@ -184,8 +191,14 @@ async function loadData() {
       }
       // Query cards count in the default world. Counting one in another
       // world is a separate decision, like next-action's per-source
-      // `source_world:`.
-      const response = await searchEntities(card.query ?? '')
+      // `source_world:`. A breakdown or a table is computed over every
+      // row, so it reads every page; a count needs only meta.total, which
+      // the first page carries (TKT-T0DK37).
+      const query = card.query ?? ''
+      const response =
+        card.display === 'breakdown' || card.display === 'table'
+          ? await searchAllEntities(query)
+          : await searchEntities(query)
       if (stale()) return
       cardData.value.set(cardKey(card), {
         entities: response.data,

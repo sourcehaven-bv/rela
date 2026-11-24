@@ -450,20 +450,27 @@ func (h *commandHandler) buildListInput(listID string, entities []*entity.Entity
 // typeName the principal may read, with its body, redacted.
 //
 // The payload leaves the process, so it gets the treatment every other read
-// path gives its output: the gated header read (scopedHeaders) over the
+// path gives its output: the gated header scan (scanHeaders) over the
 // whole type, the bodies of the admitted rows only, then field redaction
 // primed for the whole set. It does not apply the list's query scope or
 // page scope; the payload never did, and the ACL gate is what keeps it
 // safe. The list's own `filters:` run on the
 // redacted rows afterwards, so a filter on a hidden property cannot keep a
-// row because of the value the principal may not see.
+// row because of the value the principal may not see. The scan grows with
+// the type; TKT-F69VAYJ bounds it.
 func (h *commandHandler) visibleListRows(ctx context.Context, typeName string) ([]*entity.Entity, error) {
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 	svc := h.services()
-	rows, _, err := scopedEntities(ctx, svc, rqr, scopeRequest{Type: typeName, Faces: rqr.Faces})
+	req := scopeRequest{Type: typeName, Faces: rqr.Faces}
+	q, errClass, withheld, err := scopedQuery(ctx, rqr, req)
+	if withheld || err != nil {
+		return nil, err
+	}
+	headers, err := scanHeaders(ctx, svc, q, errClass, req)
 	if err != nil {
 		return nil, err
 	}
+	rows := headerEntities(headers)
 	if err := loadRowContent(ctx, svc.Store, rows); err != nil {
 		return nil, fmt.Errorf("%w: %w", errListLoad, err)
 	}

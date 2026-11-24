@@ -787,6 +787,9 @@
       "readOnly": "read-only",
       "searchPlaceholder": "Search {types}...",
       "noMatches": "No matching entities found",
+      "scopeEmpty": "Choose {scope} first",
+      "scopeLoadFailed": "Could not load the choices for {scope}",
+      "scopeStale": "This no longer belongs to {scope}. Change it or keep the old {scope}.",
       "more": "+{n} more...",
       "newButton": "+ New {type}",
       "loadFailed": "Failed to load relations",
@@ -1006,7 +1009,8 @@
       "tomorrow": "Tomorrow",
       "next7Days": "Next 7 days",
       "later": "Later",
-      "noDate": "No date"
+      "noDate": "No date",
+      "weekOf": "Week of {date}"
     },
     "summary": {
       "count": "Count",
@@ -1039,6 +1043,8 @@
     "introTitle": "Search entities",
     "introDescription": "Find entities by title or content, and narrow the results with filters.",
     "resultCount": "{n} result found | {n} results found",
+    "resultCountTruncated": "Showing the first {n} of {total} results. Refine the search to see the rest.",
+    "resultCountCapped": "Showing the {n} best matches; there are more. Refine the search to narrow them down.",
     "addResultsToPile": "Add results to pile",
     "newPileFromResults": "New pile from results…",
     "inOwner": "in {title}",

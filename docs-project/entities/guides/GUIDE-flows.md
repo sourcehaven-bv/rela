@@ -1228,7 +1228,7 @@ when: "entity.due == nil or days_between(entity.due, today()) <= 7"
 
 | Output | What it does |
 | ------ | ------------ |
-| `set` | Sets properties on the entity that fired the rule. |
+| `set` | Sets or removes properties on the entity that fired the rule. |
 | `relate` | Creates a relation from that entity. |
 | `create` | Creates a new entity, and optionally links it. |
 | `add_to_pile` | Puts the entity on a user's pile. |
@@ -1251,7 +1251,25 @@ outputs:
 
 `set` changes the entity that fired the rule. The values are part of the
 same write, so the save stores them with one audit record. `set` needs
-`properties:`.
+`properties:`, `unset:` or both.
+
+`unset:` lists properties to remove. This rule clears the completion date
+when a to-do is reopened:
+
+```yaml
+triggers:
+  reopen:
+    on: { entity: todo, property: status, becomes: open }
+    outputs:
+      - set:
+          unset: [completed_on]
+```
+
+The removal is part of the same write as the change that fired the rule. It
+runs after the change, so it wins over a value the same save gave the
+property. Removing a property the entity does not have does nothing. When
+several outputs name one property, the output that comes last wins: a later
+`properties:` value replaces an earlier `unset:`, and the reverse.
 
 #### relate
 
@@ -1627,14 +1645,17 @@ refuses:
   that names another `system:` identity; one file run twice in the
   background by one rule;
 - `script` without exactly one of `lua:` and `file:`, `set` without
-  `properties:`, `create` without `type:`, `create.relate.from` other than
+  `properties:` or `unset:`, `create` without `type:`, `create.relate.from` other than
   `subject`, an unknown `if_exists`, and `check` without `message:` or with a
   `severity` other than `warning` or `error`;
 - `add_to_pile` without `pile:`, and a `notify` whose pile is not declared,
   lacks `read_state: true` or does not know the `reason`, or whose path does
   not resolve;
+- an `unset:` name that is empty, listed twice, also under `properties:`, or
+  not a property of every type in `entity:` (of any type, for a rule
+  without `entity:`), and one that is required, computed or a state machine;
 - an unknown placeholder, including one with spaces inside the braces;
-- a `set` or `create` that writes a file property or an external ref, and a
+- a `set` or `create` that writes or removes a file property or an external ref, and a
   `property` key that names an external ref. Only the attachments API changes
   a file, and only a script changes a ref.
 

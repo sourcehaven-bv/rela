@@ -1388,7 +1388,13 @@ Key properties:
   from `schema.yaml` while its files remain) is hidden from
   search rather than leaked.
 - **The result limit applies after visibility.** `/_search` returns
-  up to 1000 results; the bound counts *visible* hits. A
+  at most one page: `limit` rows, or 1000 without a `limit`, for free
+  text and structured queries alike. `page` reads the next page;
+  `meta.total` counts the visible matches and `meta.has_more` says a
+  later page holds rows. Free text ranks only its 1000 best hits, so
+  its `meta.total` is a lower bound; `meta.capped` is set when a page
+  reaches the 1000th hit and more hits matched.
+  The bound counts *visible* hits. A
   pre-visibility cap would starve restricted principals — the top
   candidates may all be hidden while their own matches rank below.
   Both gate placement and limit placement are pinned by conformance
@@ -1580,7 +1586,11 @@ group's `items_key`. The entries are the rows the list shows that principal:
 rows are gated, each row is redacted before its title is taken, and
 `truncated` is computed after that filtering. A letter badge taken from a
 related entity appears only when the principal may read that entity and its
-title. The response is `no-store`.
+title. The response is `no-store`. Child entries and counts
+(`items_from.children`, `items_from.status`) follow the same rule: a relation
+query only narrows the candidates, and the rows themselves pass the child or
+counted list's row gate before they are shown or counted. A hidden row is
+never counted, and a child count covers only the shown children.
 
 **Backlinks are gated per source.** The "Mentioned by" panel and a view's
 `mentioned_by` step list only the sources the principal may read, each at
@@ -2613,6 +2623,13 @@ the key; this section covers what it means for `acl.yaml`.
   user and the session's `triggered_by`.
 
 ## What still leaks (deferred)
+
+- **A scoped relation shows whether a target is in scope.** The check of a
+  `within:` relation reads ownership from the stored graph, including owning
+  edges the caller cannot read. Whether a write is accepted or refused with
+  422 therefore tells the caller whether a target is owned by its scope. This
+  is the same one-bit channel as the other write-enforced relation rules. The
+  refusal names the rule, never an entity.
 
 - **A captured figure crosses principals.** A `capture:` task stores a
   figure computed for its `run_as` on an owner whose readers may read fewer

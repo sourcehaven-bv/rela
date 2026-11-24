@@ -66,7 +66,98 @@ func navItemsFromErrors(nav NavigationEntry, cfg *Config, meta *metamodel.Metamo
 	if from.Initial != nil {
 		errs = append(errs, navItemsInitialErrors(prefix+".initial", *from.Initial, list.EntityType, meta)...)
 	}
+	if from.Status != nil {
+		errs = append(errs, navItemsStatusErrors(prefix+".status", *from.Status, list.EntityType, cfg, meta)...)
+	}
+	if from.Children != nil {
+		errs = append(errs, navItemsChildrenErrors(prefix+".children", *from.Children, list.EntityType, cfg, meta)...)
+	}
 	return errs
+}
+
+// navItemsChildrenErrors checks `items_from.children`: a known list whose
+// rows relate to the parent rows through `via`, an entity page for its type,
+// a limit in range and an optional status.
+func navItemsChildrenErrors(
+	prefix string, c NavItemsChildren, parentType string, cfg *Config, meta *metamodel.Metamodel,
+) []string {
+	var errs []string
+	if c.Limit < 0 || c.Limit > NavItemsMaxLimit {
+		errs = append(errs, fmt.Sprintf("%s.limit must be between 1 and %d, got %d", prefix, NavItemsMaxLimit, c.Limit))
+	}
+	childType, ok := navItemsRelatedList(prefix, c.List, c.Via, c.Direction, parentType, cfg, meta, &errs)
+	if !ok {
+		return errs
+	}
+	errs = append(errs, navItemsPageErrors(prefix, c.Page, childType, cfg)...)
+	if c.Status != nil {
+		errs = append(errs, navItemsStatusErrors(prefix+".status", *c.Status, childType, cfg, meta)...)
+	}
+	return errs
+}
+
+// navItemsStatusErrors checks a generated entry's `status:`: a known list
+// whose rows relate to the entry through `via`, a known tone and a label.
+func navItemsStatusErrors(
+	prefix string, st NavItemsStatus, entryType string, cfg *Config, meta *metamodel.Metamodel,
+) []string {
+	var errs []string
+	switch st.Tone {
+	case NavStatusToneNew, NavStatusToneInfo, NavStatusToneWarning, NavStatusToneError, NavStatusToneSuccess:
+	default:
+		errs = append(errs, fmt.Sprintf("%s: unknown tone %q (valid: %s, %s, %s, %s, %s)", prefix, st.Tone,
+			NavStatusToneNew, NavStatusToneInfo, NavStatusToneWarning, NavStatusToneError, NavStatusToneSuccess))
+	}
+	if strings.TrimSpace(st.Label) == "" {
+		errs = append(errs, prefix+": label is required")
+	}
+	navItemsRelatedList(prefix, st.List, st.Via, st.Direction, entryType, cfg, meta, &errs)
+	return errs
+}
+
+// navItemsRelatedList checks a list named by children or status, and that
+// `via` connects the list's rows (on their side, in dir) to otherType. It
+// returns the list's entity type, and ok=false when the list is unusable.
+func navItemsRelatedList(
+	prefix, listID, via string, dir Direction, otherType string, cfg *Config, meta *metamodel.Metamodel,
+	errs *[]string,
+) (string, bool) {
+	if listID == "" {
+		*errs = append(*errs, prefix+".list is required")
+		return "", false
+	}
+	list, ok := cfg.Lists[listID]
+	if !ok {
+		*errs = append(*errs, fmt.Sprintf("%s: references unknown list %q", prefix, listID))
+		return "", false
+	}
+	if via == "" {
+		*errs = append(*errs, prefix+".via is required")
+		return list.EntityType, false
+	}
+	if meta == nil {
+		return list.EntityType, true
+	}
+	def, ok := meta.GetRelationDef(via)
+	if !ok {
+		*errs = append(*errs, fmt.Sprintf("%s: relation %q not in metamodel", prefix, via))
+		return list.EntityType, false
+	}
+	if e := CheckAmbiguousDirection(prefix, list.EntityType, via, dir, meta); e != nil {
+		*errs = append(*errs, e...)
+		return list.EntityType, false
+	}
+	resolved := NavItemsInitial{Relation: via, Direction: dir}.ResolvedDirection(list.EntityType, meta)
+	rowSide, otherSide := def.From, def.To
+	if resolved.IsIncoming() {
+		rowSide, otherSide = def.To, def.From
+	}
+	if !slices.Contains(rowSide, list.EntityType) || !slices.Contains(otherSide, otherType) {
+		*errs = append(*errs, fmt.Sprintf("%s: relation %q does not connect %q (list %q) to %q (from: %s; to: %s)",
+			prefix, via, list.EntityType, listID, otherType, strings.Join(def.From, ", "), strings.Join(def.To, ", ")))
+		return list.EntityType, false
+	}
+	return list.EntityType, true
 }
 
 // navItemsPageErrors checks `items_from.page`: an entity page for the list's

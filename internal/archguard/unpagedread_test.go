@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"maps"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -511,17 +512,31 @@ func TestUnpagedReadAllowlist_HasReasons(t *testing.T) {
 	}
 }
 
-// The request-path scan TKT-A6A97WV's budget tests name stays on the list
-// as debt, not relabelled. TKT-C5H506O deletes this test with the scan.
-func TestUnpagedReadAllowlist_ScopedHeadersIsDebt(t *testing.T) {
+// TestUnpagedReadAllowlist_RequestPathNamesItsTicket keeps request-path
+// debt from being relabelled away or losing its follow-up: every
+// request-path entry names the ticket that removes it, and the whole-type
+// scans TKT-C5H506O split out of scopedHeaders stay request-path while they
+// are on the list. Whether they are on it is TestNoNewUnpagedReads' job.
+func TestUnpagedReadAllowlist_RequestPathNamesItsTicket(t *testing.T) {
 	t.Parallel()
-	const key = "internal/dataentry/scopedread.go#scopedHeaders"
-	e, ok := unpagedReadAllowlist[key]
-	if !ok {
-		t.Fatalf("%s: not on the allowlist; if TKT-C5H506O removed the scan, delete this test with it", key)
+	ticket := regexp.MustCompile(`\bTKT-[0-9A-Z]+\b`)
+	for key, e := range unpagedReadAllowlist {
+		if e.category == requestPath && !ticket.MatchString(e.reason) {
+			t.Errorf("%s: a request-path entry must name the ticket that removes it", key)
+		}
 	}
-	if e.category != requestPath {
-		t.Errorf("%s: category %q, want %q", key, e.category, requestPath)
+	for _, key := range []string{
+		"internal/dataentry/actions_llm.go#actionOps.collectCandidates",
+		"internal/dataentry/commands.go#commandHandler.visibleListRows",
+		"internal/dataentry/feed_handler.go#feedEntitySource.listType",
+		"internal/dataentry/gantt_handler.go#newGanttHandler",
+		"internal/dataentry/helpers.go#visibleEntitiesOfType",
+		"internal/dataentry/list_pipeline.go#listPipeline.scanType",
+	} {
+		e, ok := unpagedReadAllowlist[key]
+		if ok && e.category != requestPath {
+			t.Errorf("%s: category %q, want %q until its ticket removes the scan", key, e.category, requestPath)
+		}
 	}
 }
 
