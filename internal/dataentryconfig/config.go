@@ -972,7 +972,7 @@ type RelationProperty struct {
 // The plimsoll directive is the format-mirror exception documented on
 // [Config]: each exported field is one key of a list in data-entry.yaml.
 //
-//plimsoll:max-fields=23
+//plimsoll:max-fields=24
 type List struct {
 	EntityType  string `yaml:"entity_type" json:"entity"`
 	Title       string `yaml:"title" json:"title"`
@@ -1802,7 +1802,7 @@ func (f KanbanCardField) DisplayLabel() string {
 // [Config]: each exported field is one key of a navigation entry in
 // data-entry.yaml, so a new entry kind raises the pin by one.
 //
-//plimsoll:max-fields=24
+//plimsoll:max-fields=23
 type NavigationEntry struct {
 	// Direct item fields
 	Label     string       `yaml:"label,omitempty" json:"label,omitempty"`
@@ -2260,7 +2260,7 @@ type DashboardConfig struct {
 // The plimsoll directive is the format-mirror exception documented on
 // [Config]: each exported field is one key of a card in data-entry.yaml.
 //
-//plimsoll:max-fields=23
+//plimsoll:max-fields=24
 type DashboardCard struct {
 	Title string `yaml:"title" json:"title"`
 	// List names a `lists:` entry. The card shows exactly the rows that list
