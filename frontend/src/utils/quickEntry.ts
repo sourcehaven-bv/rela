@@ -54,3 +54,39 @@ export function fitQuickEntryPopup(el: HTMLElement): () => void {
   fit()
   return () => ro.disconnect()
 }
+
+const FIELD_SELECTOR =
+  'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), [contenteditable="true"]'
+
+/**
+ * Focuses the first form field in el as soon as one renders, and again
+ * whenever the window gains focus with no field focused (the hotkey raising
+ * an open popup). Returns a stop function.
+ */
+export function autofocusQuickEntry(el: HTMLElement): () => void {
+  const focusFirst = (): boolean => {
+    const field = el.querySelector<HTMLElement>(FIELD_SELECTOR)
+    if (!field) return false
+    field.focus()
+    return true
+  }
+  let mo: MutationObserver | null = null
+  if (!focusFirst()) {
+    mo = new MutationObserver(() => {
+      if (focusFirst()) {
+        mo?.disconnect()
+        mo = null
+      }
+    })
+    mo.observe(el, { childList: true, subtree: true })
+  }
+  const onWindowFocus = () => {
+    const active = document.activeElement
+    if (!active || active === document.body) focusFirst()
+  }
+  window.addEventListener('focus', onWindowFocus)
+  return () => {
+    mo?.disconnect()
+    window.removeEventListener('focus', onWindowFocus)
+  }
+}

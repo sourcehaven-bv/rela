@@ -12,7 +12,12 @@ import DynamicForm from '@/components/forms/DynamicForm.vue'
 import { getAssign, type AssignValues } from '@/api/assign'
 import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
-import { closeQuickEntryPopup, fitQuickEntryPopup, leaveQuickEntry } from '@/utils/quickEntry'
+import {
+  autofocusQuickEntry,
+  closeQuickEntryPopup,
+  fitQuickEntryPopup,
+  leaveQuickEntry,
+} from '@/utils/quickEntry'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -20,10 +25,16 @@ const router = useRouter()
 const popup = computed(() => route.query.popup === '1')
 const root = ref<HTMLElement | null>(null)
 let stopFit = () => {}
+let stopFocus = () => {}
 onMounted(() => {
-  if (popup.value && root.value) stopFit = fitQuickEntryPopup(root.value)
+  if (!popup.value || !root.value) return
+  stopFit = fitQuickEntryPopup(root.value)
+  stopFocus = autofocusQuickEntry(root.value)
 })
-onBeforeUnmount(() => stopFit())
+onBeforeUnmount(() => {
+  stopFit()
+  stopFocus()
+})
 const schemaStore = useSchemaStore()
 const ui = useUIStore()
 

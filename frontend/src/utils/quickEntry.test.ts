@@ -61,3 +61,33 @@ describe('fitQuickEntryPopup', () => {
     ])
   })
 })
+
+describe('autofocusQuickEntry', () => {
+  it('focuses the first field once it renders, and again on window focus', async () => {
+    const { autofocusQuickEntry } = await import('./quickEntry')
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const stop = autofocusQuickEntry(root)
+
+    const hidden = document.createElement('input')
+    hidden.type = 'hidden'
+    const title = document.createElement('input')
+    const notes = document.createElement('textarea')
+    root.append(hidden, title, notes)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(document.activeElement).toBe(title)
+
+    // A field the user moved to is kept on window focus.
+    notes.focus()
+    window.dispatchEvent(new Event('focus'))
+    expect(document.activeElement).toBe(notes)
+
+    // With nothing focused, window focus returns to the first field.
+    notes.blur()
+    window.dispatchEvent(new Event('focus'))
+    expect(document.activeElement).toBe(title)
+
+    stop()
+    root.remove()
+  })
+})
