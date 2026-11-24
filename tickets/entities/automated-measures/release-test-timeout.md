@@ -3,7 +3,7 @@ id: release-test-timeout
 type: automated-measure
 title: 'Workflow: release tests run with a 20 minute package timeout'
 description: The Release workflow runs the suite with the same package timeout as CI.
-kind: workflow
+kind: ci
 location: .github/workflows/release.yml
 status: active
 ---
