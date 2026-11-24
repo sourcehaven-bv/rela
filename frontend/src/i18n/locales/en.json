@@ -1006,7 +1006,8 @@
       "tomorrow": "Tomorrow",
       "next7Days": "Next 7 days",
       "later": "Later",
-      "noDate": "No date"
+      "noDate": "No date",
+      "weekOf": "Week of {date}"
     },
     "summary": {
       "count": "Count",

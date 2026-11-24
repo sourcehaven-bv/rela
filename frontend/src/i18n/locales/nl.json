@@ -1006,7 +1006,8 @@
       "tomorrow": "Morgen",
       "next7Days": "Komende 7 dagen",
       "later": "Later",
-      "noDate": "Geen datum"
+      "noDate": "Geen datum",
+      "weekOf": "Week van {date}"
     },
     "summary": {
       "count": "Aantal",
