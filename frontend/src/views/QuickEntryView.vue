@@ -17,6 +17,7 @@ import { closeQuickEntryPopup, leaveQuickEntry } from '@/utils/quickEntry'
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const popup = computed(() => route.query.popup === '1')
 const schemaStore = useSchemaStore()
 const ui = useUIStore()
 
@@ -65,7 +66,7 @@ function onCancelled() {
 </script>
 
 <template>
-  <div class="quick-entry">
+  <div class="quick-entry" :class="{ 'quick-entry--popup': popup }">
     <h1 class="quick-entry-title">{{ t('quickEntry.title') }}</h1>
     <p v-if="!cfg">{{ t('quickEntry.notConfigured') }}</p>
     <DynamicForm
@@ -89,5 +90,28 @@ function onCancelled() {
 .quick-entry-title {
   font-size: var(--font-size-xl);
   margin: 0 0 var(--space-md);
+}
+/* Popup: a native-style dialog. The top padding keeps the title clear of the
+   macOS traffic lights, which sit over a transparent title bar. */
+.quick-entry--popup {
+  max-width: none;
+  margin: 0;
+  padding: calc(28px + var(--space-sm)) var(--space-md) var(--space-md);
+}
+.quick-entry--popup .quick-entry-title {
+  font-size: var(--font-size-lg);
+  --wails-draggable: drag;
+}
+.quick-entry--popup :deep(.form-actions) {
+  position: static;
+  margin: 0;
+  padding: var(--space-md) 0 0;
+  border-top: none;
+  box-shadow: none;
+  justify-content: flex-end;
+}
+.quick-entry--popup :deep(.form-actions .rl-button) {
+  flex: 0 0 auto;
+  min-height: 0;
 }
 </style>

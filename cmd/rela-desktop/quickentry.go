@@ -11,8 +11,8 @@ import (
 
 // Quick entry popup size (TKT-24L1H36): one create form, no sidebar.
 const (
-	quickEntryWidth  = 520
-	quickEntryHeight = 640
+	quickEntryWidth  = 480
+	quickEntryHeight = 420
 	quickEntryRoute  = "/quick?popup=1"
 )
 

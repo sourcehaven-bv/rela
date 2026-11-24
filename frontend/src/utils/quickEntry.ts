@@ -22,3 +22,10 @@ export function leaveQuickEntry(router: Router, route: RouteLocationNormalizedLo
   if (window.history.state?.back) router.back()
   else router.push('/')
 }
+
+/** True on the desktop quick-entry popup, which App.vue renders without the shell. */
+export function isQuickEntryPopup(
+  route: Pick<RouteLocationNormalizedLoaded, 'name' | 'query'>
+): boolean {
+  return route.name === 'quick' && route.query.popup === '1'
+}
