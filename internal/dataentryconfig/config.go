@@ -1802,7 +1802,7 @@ func (f KanbanCardField) DisplayLabel() string {
 // [Config]: each exported field is one key of a navigation entry in
 // data-entry.yaml, so a new entry kind raises the pin by one.
 //
-//plimsoll:max-fields=23
+//plimsoll:max-fields=24
 type NavigationEntry struct {
 	// Direct item fields
 	Label     string       `yaml:"label,omitempty" json:"label,omitempty"`
