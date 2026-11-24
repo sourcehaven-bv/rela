@@ -3,17 +3,18 @@ id: REV-D7HV7V1
 type: review-checklist
 title: 'Review: Lint: no comments in function bodies (Go and TS)'
 started: "2026-11-24"
-status: in-progress
+completed: "2026-11-24"
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test`)
+- [x] Lint clean (`just lint`)
+- [x] Comment lint gate clean (`just comment-lint`)
+- [x] Coverage maintained (`just coverage-check`)
 
 **Comment findings.** `just comment-report` lists the advisory rules
 (duplication, nil-contract, param-contract, restatement). They are not a merge
@@ -39,7 +40,9 @@ unexplained suppression is a finding nobody can re-evaluate later.
 - [x] All significant review-responses addressed
 - [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** RR-0C3Y02W, RR-19RJHJZ, RR-5DBL2FQ, RR-7FSXSFE, RR-A04IZBU, RR-BMTZC3R, RR-EHII2O7, RR-F4UREG8, RR-JLKY6L8, RR-RXY91FT, RR-S1GT3AN
+**Review Responses:** RR-0C3Y02W, RR-19RJHJZ, RR-5DBL2FQ, RR-7FSXSFE,
+RR-A04IZBU, RR-BMTZC3R, RR-EHII2O7, RR-F4UREG8, RR-JLKY6L8, RR-RXY91FT,
+RR-S1GT3AN
 
 ## Acceptance Verification
 
@@ -64,13 +67,13 @@ Skip this section for bugs and internal refactors.
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] ~~Run `/pr` command to create PR and monitor CI~~ (N/A: PR opened directly with gh pr create and watched by Auto-fix)
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.

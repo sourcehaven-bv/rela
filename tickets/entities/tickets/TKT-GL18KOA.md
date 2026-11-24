@@ -4,7 +4,8 @@ type: ticket
 title: 'Lint: no comments in function bodies (Go and TS)'
 kind: chore
 started: "2026-11-24"
-status: review
+completed: "2026-11-24"
+status: done
 ---
 
 ## Description

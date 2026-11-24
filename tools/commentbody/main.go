@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -98,8 +99,12 @@ func readBaseline(path string) (map[string]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	baseline := map[string]int{}
-	return baseline, json.Unmarshal(data, &baseline)
+	return decodeCounts(data)
+}
+
+func decodeCounts(data []byte) (map[string]int, error) {
+	counts := map[string]int{}
+	return counts, json.Unmarshal(data, &counts)
 }
 
 func writeBaseline(path string, counts map[string]int) error {
@@ -116,21 +121,11 @@ func checkAgainst(ref string) error {
 		if introducedBy(ref, path) {
 			continue
 		}
-		out, err := exec.Command("git", "show", ref+":"+path).Output()
-		if err != nil {
-			return fmt.Errorf("git show %s:%s: %w", ref, path, err)
-		}
-		old := map[string]int{}
-		if err := json.Unmarshal(out, &old); err != nil {
-			return err
-		}
-		current, err := readBaseline(path)
+		found, err := growthAgainst(ref, path)
 		if err != nil {
 			return err
 		}
-		for _, p := range grew(old, current) {
-			problems = append(problems, path+": "+p)
-		}
+		problems = append(problems, found...)
 	}
 	for _, p := range problems {
 		fmt.Fprintln(os.Stderr, p)
@@ -141,8 +136,28 @@ func checkAgainst(ref string) error {
 	return nil
 }
 
+func growthAgainst(ref, path string) ([]string, error) {
+	out, err := exec.CommandContext(context.Background(), "git", "show", ref+":"+path).Output()
+	if err != nil {
+		return nil, fmt.Errorf("git show %s:%s: %w", ref, path, err)
+	}
+	old, err := decodeCounts(out)
+	if err != nil {
+		return nil, err
+	}
+	current, err := readBaseline(path)
+	if err != nil {
+		return nil, err
+	}
+	var problems []string
+	for _, p := range grew(old, current) {
+		problems = append(problems, path+": "+p)
+	}
+	return problems, nil
+}
+
 func introducedBy(ref, path string) bool {
-	return exec.Command("git", "cat-file", "-e", ref+":"+path).Run() != nil
+	return exec.CommandContext(context.Background(), "git", "cat-file", "-e", ref+":"+path).Run() != nil
 }
 
 func grew(old, current map[string]int) []string {
