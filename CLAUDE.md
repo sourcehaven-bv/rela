@@ -355,6 +355,7 @@ code outside its globs.
 | `checkers.md`         | Prose findings are advisory: never on the write path; a request names no command                   |
 | `storage.md`          | Runtime state uses `state.KV`, not local files; test postgres dependencies via a schema-pinned DSN |
 | `comments.md`         | Comments stay out of the graph: no entity type, audit, versioning or search                        |
+| `code-comments.md`    | No comments in Go or TS function bodies; function docs capped at 10 lines; baselines only shrink    |
 | `versioning.md`       | History reads are gated like live reads; relation history on both endpoints                        |
 | `datamigration.md`    | Migration steps stay idempotent; files are named by timestamp, never sequence                      |
 | `configedit.md`       | Configure is the only server-side config writer; its allowlist is per key and default-locked       |
