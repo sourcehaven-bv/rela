@@ -493,6 +493,9 @@ type ListMeta struct {
 	//
 	// Nil: the rows follow the request's sort, or no sort at all.
 	RelationOrder *RelationOrder `json:"relation_order,omitempty"`
+	// ManualOrder says the rows are in the caller's own order of a list
+	// with `order: manual` (TKT-AVNEX5T), so the reader may drag them.
+	ManualOrder bool `json:"manual_order,omitempty"`
 }
 
 // RelationOrder says that a collection lists the peers of one anchor's

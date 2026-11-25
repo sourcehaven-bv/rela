@@ -3049,6 +3049,27 @@ cases can fill that with rows you did not want:
 > another time zone can therefore see a row under **Today** that the condition
 > counts as tomorrow, or the other way round.
 
+### Manual order
+
+`order: manual` lets each user drag the rows of a list into their own order.
+
+```yaml
+lists:
+  todo:
+    entity_type: todo
+    title: Today
+    order: manual
+```
+
+The order belongs to the user, not to the entities. It is stored outside the
+graph, so moving a row writes no entity and no audit record. Each user sees
+the rows they placed first, in their order, and the rest in the list sort.
+
+The order applies until the user sorts the list by a column. On a grouped
+list a row moves only within its section. A list grouped by a relation or by
+date buckets cannot use `order: manual`. On an entity page tab whose rows are
+in the order of an orderable relation, the relation order wins.
+
 ## Views
 
 Views define read-only detail pages that traverse the entity graph to display related data,

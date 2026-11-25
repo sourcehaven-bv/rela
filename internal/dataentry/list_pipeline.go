@@ -49,6 +49,8 @@ type listPipeline struct {
 	narrowing func(
 		ctx context.Context, state *Schema, typeName string, query map[string][]string,
 	) (context.Context, listNarrowing, error)
+	// listOrder returns the manual-order store, or nil when not wired.
+	listOrder func() listOrderStore
 	// pageScope is resolvePageScope bound to the app.
 	pageScope func(
 		ctx context.Context, query map[string][]string, typeName string,
@@ -66,6 +68,7 @@ func newListPipeline(app *App) *listPipeline {
 		queries:     func() *queryService { return app.queries },
 		queryScopes: func() QueryScopeResolverFunc { return app.queryScopes },
 		rollups:     func() rollupSource { return newRollupSource(app) },
+		listOrder:   func() listOrderStore { return app.listOrder },
 		gate: func(
 			ctx context.Context, state *Schema, typeName string, query map[string][]string,
 		) (gatedListQuery, error) {
@@ -102,7 +105,12 @@ func (p *listPipeline) listPage(
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	if plan, empty, ok := n.pushdownPlan(ctx, typeName, gated, page, perPage); ok {
+	manualID, manual := manualListFor(state, query)
+	orders := p.listOrder()
+	if orders == nil {
+		manual = nil
+	}
+	if plan, empty, ok := n.pushdownPlan(ctx, typeName, gated, page, perPage); ok && manual == nil {
 		if empty {
 			return nil, 0, nil, nil
 		}
@@ -125,6 +133,9 @@ func (p *listPipeline) listPage(
 	all, err = applyViewCondition(ctx, all, cond, suggestionRedactor(p.affordances()), p.services().Store)
 	if err != nil {
 		return nil, 0, nil, err
+	}
+	if manual != nil && ordering == nil {
+		all = applyManualOrder(ctx, orders, manualID, manual, all)
 	}
 	total = len(all)
 	start := min((page-1)*perPage, total)

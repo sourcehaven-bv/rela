@@ -252,13 +252,10 @@ func (h *entityReadHandler) handleV1ListEntities(w http.ResponseWriter, r *http.
 	resp := v1.ListResponse{
 		Data: data,
 		Meta: v1.ListMeta{
-			Total:   total,
-			Page:    page,
-			PerPage: perPage,
-			HasMore: end < total,
-			// Relation order is shown only when it was applied, so the
-			// client never has to re-derive the condition.
+			Total: total, Page: page, PerPage: perPage, HasMore: end < total,
+			// Relation order is shown only when applied; the client never re-derives it.
 			RelationOrder: ordering.wire(),
+			ManualOrder:   ordering == nil && manualOrderApplies(r.Context(), h.lists(), state, query),
 		},
 		// A list's toolbar buttons ride on the collection map (toolbaractions.go).
 		Actions: addToolbarActions(r.Context(), state.Cfg, typeName,

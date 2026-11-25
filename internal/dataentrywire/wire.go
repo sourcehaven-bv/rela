@@ -19,6 +19,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/listorder"
 )
 
 // Services wires app to the services in svc: CalDAV aliases, comments, piles, leases,
@@ -179,6 +180,15 @@ func wireOptionalStores(app *dataentry.App, svc *appbuild.Services) error {
 	if p := svc.Piles(); p != nil {
 		if err := app.SetPiles(p, appbuild.LuaPiles(svc)); err != nil {
 			return fmt.Errorf("wire piles: %w", err)
+		}
+	}
+	if kv := svc.State(); kv != nil {
+		lo, err := listorder.New(kv)
+		if err != nil {
+			return fmt.Errorf("wire list order: %w", err)
+		}
+		if err := dataentry.SetListOrder(app, lo); err != nil {
+			return fmt.Errorf("wire list order: %w", err)
 		}
 	}
 	// Without a lease service the lease routes 404 and no response carries

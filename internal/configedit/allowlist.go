@@ -258,6 +258,7 @@ var editable = map[File][]string{
 		"lists.*.footer",
 		"lists.*.group_by.**",
 		"lists.*.header",
+		"lists.*.order",
 		"lists.*.page_size",
 		"lists.*.query_scope",
 		"lists.*.sort.[].**",

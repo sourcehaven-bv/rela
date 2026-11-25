@@ -248,6 +248,7 @@ components:
   pgcomments:       { in: internal/comments/pgcomments }
   sqlitecomments:   { in: internal/comments/sqlitecomments }
   piles:            { in: internal/piles }
+  listorder:        { in: internal/listorder }
   kvpiles:          { in: internal/piles/kvpiles }
   pgpiles:          { in: internal/piles/pgpiles }
   filelock:         { in: internal/filelock }
@@ -761,6 +762,8 @@ deps:
       # The piles service (TKT-K3RJLH). Like comments, only the domain
       # package: the backend (kvpiles/pgpiles) is the wiring site's choice.
       - piles
+      # Manual list order (TKT-AVNEX5T).
+      - listorder
       # Leases (TKT-4YPG4Q): the routes speak lease's request, lease and
       # error types. The backend (kvlease/pglease) is the wiring site's choice.
       - lease
@@ -1669,6 +1672,7 @@ deps:
   # place so the server and the desktop cannot drift apart again.
   dataentrywire:
     mayDependOn:
+      - listorder
       - appbuild
       # audit: the remote routes require a workspace with an audit sink, so
       # resolve, dismiss and link are always recorded (TKT-0FMYPEZ).
@@ -2061,6 +2065,11 @@ deps:
   # piles are per-user stacks of entity references (TKT-K3RJLH). Like
   # comments, not graph content: entity for the Ref type, principal for the
   # owner, and deliberately NOT store or entitymanager.
+  # Per-user manual list order (TKT-AVNEX5T), outside the graph like piles.
+  listorder:
+    mayDependOn:
+      - principal
+      - state
   piles:
     mayDependOn:
       - entity

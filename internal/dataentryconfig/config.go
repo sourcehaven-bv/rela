@@ -1001,7 +1001,7 @@ type RelationProperty struct {
 // The plimsoll directive is the format-mirror exception documented on
 // [Config]: each exported field is one key of a list in data-entry.yaml.
 //
-//plimsoll:max-fields=23
+//plimsoll:max-fields=24
 type List struct {
 	EntityType  string `yaml:"entity_type" json:"entity"`
 	Title       string `yaml:"title" json:"title"`
@@ -1103,6 +1103,9 @@ type List struct {
 	// GroupBy splits the list into sections by one property. Nil means the
 	// list is flat and paged. See [ListGroupBy].
 	GroupBy *ListGroupBy `yaml:"group_by,omitempty" json:"group_by,omitempty"`
+	// Order is the list's `order:`. [ListOrderManual] lets each user drag
+	// the rows into their own order (TKT-AVNEX5T). Empty: the list sort.
+	Order string `yaml:"order,omitempty" json:"order,omitempty"`
 	// Suggestions switches next-action suggestions on or off for this view,
 	// overriding next_action_surfaces. Nil: accepted, means inherit. See
 	// [Config.NextActionsEnabled].
@@ -2295,7 +2298,7 @@ type DashboardConfig struct {
 // The plimsoll directive is the format-mirror exception documented on
 // [Config]: each exported field is one key of a card in data-entry.yaml.
 //
-//plimsoll:max-fields=23
+//plimsoll:max-fields=24
 type DashboardCard struct {
 	Title string `yaml:"title" json:"title"`
 	// List names a `lists:` entry. The card shows exactly the rows that list

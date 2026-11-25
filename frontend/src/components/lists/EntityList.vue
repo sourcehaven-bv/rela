@@ -13,6 +13,7 @@ import { useBatchAction, isBatchAction } from '@/composables/useBatchAction'
 import LLMBatchProposalDialog from '@/components/entity/LLMBatchProposalDialog.vue'
 import { useToolbarActions } from '@/composables/useToolbarActions'
 import { useListReorder } from '@/composables/useListReorder'
+import { useManualReorder } from '@/composables/useManualReorder'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { useWorld } from '@/composables/useWorld'
 import { useCreateTarget } from '@/composables/useCreateTarget'
@@ -40,7 +41,7 @@ import { getCellValue, formatCellValue } from '@/utils/format'
 import { isDenseEmpty } from '@/widgets/viewRouting'
 import { denseCell, denseEntry, type DenseCell, type DenseEntry } from '@/utils/denseCell'
 import type { Entity, ListMeta, ListParams, ListResponse, FilterState, PageScope } from '@/types'
-import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
+import { LIST_ORDER_MANUAL, viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
 import SearchBox from './SearchBox.vue'
@@ -73,7 +74,7 @@ import RlTable from 'rela-components/components/table/RlTable.vue'
 import RlBusyIndicator, {
   type BusyIndicatorEntry,
 } from 'rela-components/components/feedback/RlBusyIndicator.vue'
-import type { SortClickEvent, TableColumn } from 'rela-components/components/table/types'
+import type { RowMove, SortClickEvent, TableColumn } from 'rela-components/components/table/types'
 import { leadingImageColumns, listColumnOf, nameColumn, toTableColumns, toTableNameColumn } from './tableColumns'
 import { fromPageQuery } from '@/utils/pageContext'
 
@@ -460,6 +461,11 @@ const tabScope = usePageTabScope(() => props.pageScope)
 const orderWithheld = ref(false)
 watch(() => props.pageScope, () => (orderWithheld.value = false))
 const relationOrdered = computed(() => tabScope.relationOrdered.value && !orderWithheld.value)
+// The reader's manual order applies: the list declares it, no relation order
+// takes precedence, and the reader has not sorted.
+const manualOrdered = computed(
+  () => listConfig.value?.order === LIST_ORDER_MANUAL && !relationOrdered.value && sortSpecs.value.length === 0
+)
 const createModal = useCreateModal(async (entity) => {
   await tabScope.linkCreated(entity)
   refreshAfterCreate()
@@ -716,6 +722,8 @@ const queryParams = computed((): ListParams => {
   if (busyType.value) params.busy = busyType.value
   if (toggleProperties.value) params.field_verdicts = toggleProperties.value
 
+  if (manualOrdered.value) params.manual_order = 1
+
   Object.assign(params, tabScope.params.value)
 
   return params
@@ -958,13 +966,27 @@ const tableSections = computed(() =>
 // Dragging rows on a tab shown in relation order. Only while the reader
 // sees that order: their own sort, or a grouping, puts the rows elsewhere,
 // and a row dropped there would jump back on the next read.
-const reorder = useListReorder({
+const relationReorder = useListReorder({
   order: () => meta.value.relation_order,
   active: () => relationOrdered.value && sortSpecs.value.length === 0 && !grouping.grouped.value,
   rows: () => entities.value,
   key: () => listKey.value,
   type: () => listConfig.value?.entity ?? '',
 })
+// Dragging rows of a list with `order: manual`, inside their section.
+const manualReorder = useManualReorder({
+  active: () => manualOrdered.value && meta.value.manual_order === true,
+  rows: () => entities.value,
+  sections: () => (grouping.grouped.value ? grouping.sections.value : [{ items: entities.value }]),
+  params: () => queryParams.value,
+  key: () => listKey.value,
+  type: () => listConfig.value?.entity ?? '',
+})
+const reorder = {
+  reorderable: computed(() => relationReorder.reorderable.value || manualReorder.reorderable.value),
+  onReorder: (move: RowMove) =>
+    relationReorder.reorderable.value ? relationReorder.onReorder(move) : manualReorder.onReorder(move),
+}
 const reorderableRow = computed(() => (reorder.reorderable.value ? () => true : undefined))
 
 function onSectionCollapse(section: { id: string }, collapsed: boolean) {

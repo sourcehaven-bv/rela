@@ -250,6 +250,7 @@ func registerDiagramRoutes(mux *http.ServeMux, a *App) {
 // over rows: actions and list or page assigns.
 func registerWriteActionRoutes(mux *http.ServeMux, a *App) {
 	mux.HandleFunc("/api/v1/_action/", a.write.handleV1Action)
+	mux.HandleFunc(listOrderPath, func(w http.ResponseWriter, r *http.Request) { handleV1ListOrder(a, w, r) })
 	mux.HandleFunc(assignPath, func(w http.ResponseWriter, r *http.Request) { handleV1Assign(a, w, r) })
 }
 

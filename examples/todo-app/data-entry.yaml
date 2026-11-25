@@ -116,6 +116,8 @@ lists:
       - { property: title, label: "Title", link: detail }
       - { property: deadline, label: "Deadline" }
     sort: [{ property: title }]
+    # Each user drags rows into their own order; new rows follow the sort.
+    order: manual
     create_form: quick_todo
     edit_form: todo
     actions: [complete, cancel, move-today, move-evening, move-anytime, move-someday]
@@ -161,6 +163,7 @@ lists:
           color: red
           condition: "entity.deadline ~= nil and entity.deadline <= today()"
     sort: [{ property: deadline }, { property: title }]
+    order: manual
     create_form: quick_todo
     edit_form: todo
     actions: [complete, cancel, move-evening, move-anytime, move-someday]
@@ -217,6 +220,7 @@ lists:
     assign:
       properties: { when: someday }
     sort: [{ property: title }]
+    order: manual
     create_form: quick_todo
     edit_form: todo
     actions: [complete, cancel, move-today, move-anytime]
