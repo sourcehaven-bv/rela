@@ -41,7 +41,7 @@ export default defineConfig({
         },
       },
     },
-    include: ['src/**/*.{test,spec}.{js,ts,vue}', '*.{test,spec}.ts'],
+    include: ['src/**/*.{test,spec}.{js,ts,vue}', '*.{test,spec}.ts', 'eslint-rules/*.test.ts'],
     // Milkdown's Timer.start() schedules a 3s setTimeout that is never
     // cleared, even after the timer resolves. When a file finishes sooner,
     // happy-dom removes its globals and the orphan timeout then calls the

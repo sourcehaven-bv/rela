@@ -17,3 +17,4 @@ status: done
 
 The Release workflow failed on the Test job with "test timed out after 10m0s".
 Fixed by passing -timeout 20m, as ci.yml does.
+The first PR (#2591) carried only the ticket files; this one carries the workflow change. v26.11.8 failed the same way.
