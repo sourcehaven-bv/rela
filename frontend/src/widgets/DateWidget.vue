@@ -54,7 +54,11 @@ const inputValue = computed(() => {
 
 function onInput(event: Event) {
   emit('update:modelValue', (event.target as HTMLInputElement).value)
-  // A date picked by hand replaces whatever the phrase box said.
+  discardPhrase()
+}
+
+/** A date picked by hand replaces whatever the phrase box said. */
+function discardPhrase() {
   phrase.value = ''
   phraseInvalid.value = false
   shownFromPhrase = false
@@ -103,8 +107,8 @@ function settlePhrase(): boolean {
   return false
 }
 
+/** Enter on a phrase that does not parse keeps an inline edit open, so the message can be read. */
 function onPhraseEnter(event: KeyboardEvent) {
-  // Keep an inline edit open so the message can be read.
   if (!settlePhrase()) event.preventDefault()
 }
 </script>
