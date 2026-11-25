@@ -9,3 +9,27 @@ triggers:
     on: { entity: [todo, project], property: status, becomes: canceled }
     outputs:
       - set: { properties: { completed_on: "{{today}}" } }
+  # Needs the trigger `unset` output (TKT-61Y46A0).
+  clear-completed-on-reopen:
+    description: A reopened to-do or project leaves the logbook.
+    on: { entity: [todo, project], property: status, becomes: open }
+    outputs:
+      - set: { unset: [completed_on] }
+  repeat-todo:
+    description: Completing a repeating to-do schedules the next one.
+    on: { entity: todo, property: status, becomes: completed }
+    outputs:
+      - script:
+          lua: |
+            local p = entity.properties
+            if not p["repeat"] then return end
+            local from = p.start_date
+            if not from or from < "{{today}}" then from = "{{today}}" end
+            rela.create_entity("todo", {
+              title = p.title,
+              status = "open",
+              when = "scheduled",
+              start_date = rela.date_add(from, p["repeat"]),
+              part_of_day = p.part_of_day,
+              ["repeat"] = p["repeat"],
+            }, entity.content)

@@ -8,10 +8,12 @@ styles:
     completed: green
     canceled: gray
   when_list:
-    today: yellow
-    evening: purple
     anytime: blue
     someday: gray
+    scheduled: yellow
+  part_of_day:
+    day: yellow
+    evening: purple
 
 # Press q, or CmdOrCtrl+Shift+Space in the desktop app, to add a to-do for
 # today from anywhere.
@@ -39,8 +41,10 @@ forms:
       - { property: status, label: "Status", span: 4 }
       - { property: when, label: "When", span: 4 }
       - { property: start_date, label: "Start date", span: 4 }
-      - { property: deadline, label: "Deadline", span: 6 }
-      - { property: completed_on, label: "Completed", span: 6 }
+      - { property: part_of_day, label: "Part of day", span: 4 }
+      - { property: deadline, label: "Deadline", span: 4 }
+      - { property: repeat, label: "Repeat", span: 4, placeholder: "1w" }
+      - { property: completed_on, label: "Completed", span: 4 }
     relations:
       - { relation: in_project, label: "Project" }
       - { relation: in_area, label: "Area", target_type: area }
@@ -89,7 +93,8 @@ actions:
   move-evening:
     label: "This Evening"
     key: "v"
-    set: { when: evening }
+    script: schedule.lua
+    params: { part_of_day: evening }
   move-anytime:
     label: "Anytime"
     key: "a"
@@ -117,9 +122,11 @@ lists:
   today:
     entity_type: todo
     title: "Today"
+    # Today is derived on read: a scheduled to-do whose start date has come,
+    # or any to-do whose deadline has.
     condition: >-
-      entity.status == 'open' and (entity.when == 'today' or entity.when == 'evening'
-      or (entity.start_date ~= nil and entity.start_date <= today())
+      entity.status == 'open' and (
+      (entity.when == 'scheduled' and entity.start_date ~= nil and entity.start_date <= today())
       or (entity.deadline ~= nil and entity.deadline <= today()))
     columns:
       - { property: title, label: "Title", link: detail }
@@ -127,17 +134,33 @@ lists:
       - { relation: in_area, label: "Area" }
       - { relation: tagged, label: "Tags" }
       - { property: deadline, label: "Deadline" }
-    group_by:
-      property: when
-      groups:
-        - { value: today, label: "Today", color: amber }
-        - { value: evening, label: "This Evening", color: purple }
-        - { value: anytime, label: "Deadline today", color: red }
-    sort: [{ property: deadline }, { property: title }]
     # What a row gets when it is added here, dropped on the Today entry or
     # moved here with the "t" key.
     assign:
-      properties: { when: today }
+      properties:
+        when: scheduled
+        start_date: { expr: "today()" }
+        part_of_day: day
+    # Computed groups: the first matching condition places the row.
+    group_by:
+      groups:
+        - id: day
+          label: "Today"
+          color: amber
+          condition: >-
+            entity.when == 'scheduled' and entity.start_date ~= nil
+            and entity.start_date <= today() and entity.part_of_day ~= 'evening'
+        - id: evening
+          label: "This Evening"
+          color: purple
+          condition: >-
+            entity.when == 'scheduled' and entity.start_date ~= nil
+            and entity.start_date <= today()
+        - id: deadline
+          label: "Deadline reached"
+          color: red
+          condition: "entity.deadline ~= nil and entity.deadline <= today()"
+    sort: [{ property: deadline }, { property: title }]
     create_form: quick_todo
     edit_form: todo
     actions: [complete, cancel, move-evening, move-anytime, move-someday]
@@ -146,6 +169,7 @@ lists:
     title: "Upcoming"
     filters:
       - { property: status, operator: "=", value: open }
+      - { property: when, operator: "=", value: scheduled }
       - { property: start_date, operator: ">", value: $today }
     columns:
       - { property: title, label: "Title", link: detail }
@@ -162,7 +186,8 @@ lists:
     title: "Anytime"
     condition: >-
       entity.status == 'open' and entity.when ~= 'someday'
-      and (entity.start_date == nil or entity.start_date <= today())
+      and (entity.when ~= 'scheduled'
+           or (entity.start_date ~= nil and entity.start_date <= today()))
       and (entity.when ~= nil or entity.start_date ~= nil
            or related(entity, 'in_project') or related(entity, 'in_area'))
     columns:
@@ -173,9 +198,9 @@ lists:
       - { property: deadline, label: "Deadline" }
     group_by:
       relation: in_project
-    sort: [{ property: title }]
     assign:
       properties: { when: anytime }
+    sort: [{ property: title }]
     create_form: quick_todo
     edit_form: todo
     actions: [complete, cancel, move-today, move-someday]
@@ -185,12 +210,12 @@ lists:
     filters:
       - { property: status, operator: "=", value: open }
       - { property: when, operator: "=", value: someday }
-    assign:
-      properties: { when: someday }
     columns:
       - { property: title, label: "Title", link: detail }
       - { relation: in_project, label: "Project" }
       - { relation: in_area, label: "Area" }
+    assign:
+      properties: { when: someday }
     sort: [{ property: title }]
     create_form: quick_todo
     edit_form: todo

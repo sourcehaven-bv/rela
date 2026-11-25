@@ -26,7 +26,8 @@ func wantCommentCounts(query map[string][]string) bool {
 
 // serveListRowExtras fills the per-page values a list row carries beyond its
 // entity: the owner and the lease always, the comment count and the busy
-// channels on request. It reports false after writing the error response.
+// channels on request, and the computed group when the request names a
+// list. It reports false after writing the error response.
 func serveListRowExtras(
 	w http.ResponseWriter, r *http.Request, a *App, query map[string][]string,
 	rows []*entityPkg.Entity, data []v1.Entity,
@@ -44,7 +45,7 @@ func serveListRowExtras(
 	if want := listRollups(query); want != nil {
 		serveRowRollups(r.Context(), newRollupSource(a), rows, data, want)
 	}
-	return true
+	return serveListGroups(w, r, a, query, rows, data)
 }
 
 // serveCommentCounts sets the comment count on each row in data, which is

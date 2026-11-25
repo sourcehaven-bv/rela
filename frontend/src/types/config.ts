@@ -507,8 +507,16 @@ export interface ListGroupBy {
   max_rows: number
 }
 
+/**
+ * One group of a list's `groups:`. With `property`, `value` names the enum
+ * value it restyles. Without `property` or `relation`, the grouping is
+ * computed: `id` names the section, and the server stamps it on each row as
+ * `_group` from the group's `condition`.
+ */
 export interface ListGroup {
-  value: string
+  value?: string
+  id?: string
+  condition?: string
   label?: string
   color?: ColorName
 }

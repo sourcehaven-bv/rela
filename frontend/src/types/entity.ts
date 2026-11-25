@@ -32,6 +32,8 @@ export interface Entity {
   // with `comment_counts`, and only when the reader holds comment:read across
   // the project (TKT-WA25G2). Absent means not served, never zero.
   _comment_count?: number
+  /** The computed group (list `group_by.groups` with conditions) the row falls in. */
+  _group?: string
   // The busy channels of the type a list asked for with `?busy=<type>`:
   // channels whose session is in a state with status `working`. Present
   // as `[]` when none is busy; absent when the list did not ask or the

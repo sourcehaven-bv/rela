@@ -2915,6 +2915,40 @@ would lose the value.
 You can close a section with its arrow. The browser remembers which sections
 you closed, per list.
 
+### Computed groups
+
+A list can also be grouped by conditions instead of by one value. Leave out
+`property` and `relation`, and give each group an `id` and a `condition:`.
+The condition uses the same language as a list's `condition:`. A row goes in
+the first group whose condition it matches. One group without a condition may
+come last: it takes every row the others did not. Rows that match no group go
+in a trailing **Other** section.
+
+```yaml
+lists:
+  todos:
+    entity: todo
+    group_by:
+      groups:
+        - id: today
+          label: Today
+          condition: "entity.start_date ~= nil and entity.start_date <= today()"
+        - id: evening
+          label: This evening
+          condition: "entity.part_of_day == 'evening'"
+        - id: anytime
+          label: Anytime
+```
+
+The server evaluates the conditions on each served page, after the access
+rules have removed the fields the reader may not see. A condition over a hidden
+field sees no value, so the group a row lands in says nothing about that
+field. `today()` is the date in UTC, as in every other condition.
+
+Each `id` must match `^[a-z0-9_-]+$` and be unique, and a list may have at most
+20 groups. Empty groups are not shown. A computed grouping cannot use `buckets`
+or a group `value`.
+
 ### Date buckets
 
 With `buckets: relative`, a `date` or `datetime` property groups rows by how
