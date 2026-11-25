@@ -153,27 +153,13 @@ func ApplyWithMetamodel(path string, ft FileType, fs storage.FS, meta MetamodelP
 		}
 	}
 
-	// Write the migrated file back
-	var buf bytes.Buffer
-	encoder := yaml.NewEncoder(&buf)
-	encoder.SetIndent(2)
-	if err := encoder.Encode(&doc); err != nil {
-		// coverage-ignore-start: defensive: yaml.Encoder writing to a bytes.Buffer never errors (Buffer.Write always
-		// succeeds) and a valid parsed
-		// *yaml.Node always encodes
-		result.Error = fmt.Errorf("encoding YAML: %w", err)
-		return result, nil
-		// coverage-ignore-end
-	}
-	if err := encoder.Close(); err != nil {
-		// coverage-ignore-start: defensive: Close flushes into a bytes.Buffer which never errors after a successful
-		// Encode
-		result.Error = fmt.Errorf("closing encoder: %w", err)
-		return result, nil
-		// coverage-ignore-end
+	encoded, encodeErr := encodeNode(&doc)
+	if encodeErr != nil { // coverage-ignore: defensive: a parsed *yaml.Node always encodes into a bytes.Buffer
+		result.Error = encodeErr
+		return result, nil //nolint:nilerr // reported on result.Error, like the write failure below
 	}
 
-	if err := fs.WriteFile(path, refoldFolded(buf.Bytes()), 0o644); err != nil {
+	if err := fs.WriteFile(path, encoded, 0o644); err != nil {
 		result.Error = fmt.Errorf("writing file: %w", err)
 		return result, nil
 	}

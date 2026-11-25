@@ -84,7 +84,12 @@ func Load(path string, fs storage.FS) (*Metamodel, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	return loadData(path, data, fs)
+}
 
+// loadData is [Load] for root content already read from path. Includes are
+// still read through fs, relative to path.
+func loadData(path string, data []byte, fs storage.FS) (*Metamodel, []string, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil { // coverage-ignore: defensive: filepath.Abs only fails if os.Getwd fails; not reachable via the
 		// storage.FS abstraction in tests

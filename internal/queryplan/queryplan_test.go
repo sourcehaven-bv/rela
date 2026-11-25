@@ -184,3 +184,22 @@ func TestStaticIndexSpecsDerivesListIndexes(t *testing.T) {
 		t.Fatalf("StaticIndexSpecs() = %#v, want %#v", got, want)
 	}
 }
+
+// A config with deprecated syntax derives the indexes of its migrated form,
+// as the server reads it, instead of failing and skipping reconciliation.
+func TestLoadStaticIndexSpecsMigratesDeprecatedSyntax(t *testing.T) {
+	t.Parallel()
+	current := "lists:\n  open:\n    entity_type: task\n    sort:\n      - property: owner\n"
+	deprecated := current + "    detail_view: task_detail\n"
+	want, err := LoadStaticIndexSpecs([]byte(current), testMeta())
+	if err != nil || len(want) == 0 {
+		t.Fatalf("current config: specs %v, err %v; want a list index", want, err)
+	}
+	got, err := LoadStaticIndexSpecs([]byte(deprecated), testMeta())
+	if err != nil {
+		t.Fatalf("deprecated config refused: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("deprecated specs = %#v, want %#v", got, want)
+	}
+}

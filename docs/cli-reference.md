@@ -1815,7 +1815,28 @@ and `migrate --check` exits non-zero until you do.
 
 **When to use:**
 
-If you see an error like this when running any rela command:
+After an upgrade, rela still loads `schema.yaml` and `data-entry.yaml` that
+use deprecated syntax. It applies the same migrations in memory, leaves the
+files unchanged, and logs a warning on each load:
+
+```text
+WARN config uses deprecated syntax; loaded it with in-memory migrations.
+  Run 'rela migrate' to update the file
+  file=/srv/project/schema.yaml migrations=[short-id-default]
+```
+
+So a new release does not stop a server whose config predates it. Run
+`rela migrate` to update the files and silence the warning.
+
+Some migrations still stop the load:
+
+- moving `automations:` to `flows.yaml`, which changes more than one file;
+- rewriting a boolean `allow_acl_bypass:` to `read+write`, which grants
+  elevated access, so you confirm it by running `rela migrate`;
+- a migration that fails, or that leaves its old syntax in place.
+
+`rela validate` also still fails on deprecated syntax, so CI keeps reporting
+files that need migrating:
 
 ```text
 schema.yaml uses deprecated syntax:
@@ -1823,8 +1844,6 @@ schema.yaml uses deprecated syntax:
 
 Run 'rela migrate' to update your project files.
 ```
-
-Run `rela migrate` to automatically update your files.
 
 **Examples:**
 

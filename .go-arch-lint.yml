@@ -2439,6 +2439,9 @@ deps:
       - dataentryconfig
       - filter
       - metamodel
+      # It reads data-entry.yaml through the same in-memory migration as the
+      # server, so deprecated syntax derives the indexes the server serves.
+      - migration
       - predicate
       - predicatefns
       - searchparser
