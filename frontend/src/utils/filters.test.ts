@@ -175,19 +175,41 @@ describe('filters', () => {
       expect(parseFilterQueryParams(query)).toEqual({ status: { value: 'second' } })
     })
 
-    it('rejects non-identifier property names (prototype pollution guard)', () => {
-      // __proto__, brackets, whitespace, and non-identifier starts are all
-      // dropped rather than being passed through to a plain-object index.
-      const query: LocationQuery = {
-        'filter[__proto__]': 'x',
-        'filter[a b]': 'x',
-        'filter[1abc]': 'x',
-        'filter[a-b]': 'x',
-        'filter[valid_name]': 'keep',
-      }
-      expect(parseFilterQueryParams(query)).toEqual({
-        valid_name: { value: 'keep' },
+    it.each([
+      ['hyphenated relation', 'belongs-to'],
+      ['dotted', 'meta.owner'],
+      ['inner space', 'some property'],
+      ['leading digit', '1abc'],
+      ['non-ASCII', 'categorieën'],
+      ['identifier', 'valid_name'],
+      ['double quote', 'say "hi"'],
+      ['own key named like a prototype member', 'constructor'],
+      ['prototype', 'prototype'],
+    ])('keeps a metamodel-legal name: %s', (_label, name) => {
+      expect(parseFilterQueryParams({ [`filter[${name}]`]: 'x' })).toEqual({
+        [name]: { value: 'x' },
       })
+    })
+
+    it('keeps a hyphenated relation name with an operator', () => {
+      expect(parseFilterQueryParams({ 'filter[belongs-to][in][]': ['a', 'b'] })).toEqual({
+        'belongs-to': { value: 'a,b', op: 'in' },
+      })
+    })
+
+    it.each([
+      ['__proto__'],
+      ["o'brien"],
+      ['back\\slash'],
+      ['new\nline'],
+      ['nul\u0000'],
+      [' leading'],
+      ['trailing '],
+    ])('drops a name the metamodel rejects or that replaces the prototype: %j', (name) => {
+      const state = parseFilterQueryParams({ [`filter[${name}]`]: 'x', 'filter[status]': 'open' })
+      expect(state).toEqual({ status: { value: 'open' } })
+      expect(Object.getPrototypeOf(state)).toBe(Object.prototype)
+      expect(Object.keys(state)).toEqual(['status'])
     })
 
     it('ignores non-filter query params', () => {
