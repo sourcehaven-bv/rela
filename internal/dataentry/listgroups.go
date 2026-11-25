@@ -17,15 +17,8 @@ const viewKindListGroup = "list_groups"
 // computed: the id of the first group whose condition the row matches. data
 // is parallel to rows.
 //
-// It runs on the served page, after the row gate, the list condition and
-// paging, so it adds no read. Each group costs one batched [matchPage] over
-// the page, never a per-row lookup. The conditions judge the redacted rows
-// only, as a list condition does: a hidden field binds Nil, so the group a
-// row lands in carries no bit of its value. The result is per request and is
-// not cached.
-//
-// A failed evaluation fails the list, as a failed list condition does: a
-// list that silently puts every row in the fallback would misreport it.
+// It runs on the served, redacted page: one batched [matchPage] per group,
+// never cached. A failed evaluation fails the list rather than misreport it.
 func serveListGroups(
 	w http.ResponseWriter, r *http.Request, a *App, query map[string][]string,
 	rows []*entityPkg.Entity, data []v1.Entity,
@@ -41,9 +34,8 @@ func serveListGroups(
 	}
 	ctx := r.Context()
 	if a.viewConditions == nil {
-		return true // no compiler wired: leave the rows ungrouped
+		return true
 	}
-	// One compile per request, shared by every group.
 	lookup, problems := a.viewConditions(s.Cfg, s.Meta)
 	if len(problems) > 0 {
 		slog.WarnContext(ctx, "dataentry: list groups not compiled; rows left ungrouped", "list", listID)
@@ -53,12 +45,7 @@ func serveListGroups(
 	placed := make([]bool, len(rows))
 	for _, g := range gb.Groups {
 		if g.Condition == "" {
-			// The fallback takes every row not yet placed.
-			for i := range rows {
-				if !placed[i] {
-					placed[i], data[i].Group = true, g.ID
-				}
-			}
+			placeUnplaced(placed, data, g.ID)
 			break
 		}
 		m := viewConditionFor(lookup, viewKindListGroup, dataentryconfig.ListGroupConditionID(listID, g.ID))
@@ -87,5 +74,14 @@ func serveListGroups(
 func clearGroups(data []v1.Entity) {
 	for i := range data {
 		data[i].Group = ""
+	}
+}
+
+// placeUnplaced assigns groupID to every row not yet placed.
+func placeUnplaced(placed []bool, data []v1.Entity, groupID string) {
+	for i := range data {
+		if !placed[i] {
+			placed[i], data[i].Group = true, groupID
+		}
 	}
 }

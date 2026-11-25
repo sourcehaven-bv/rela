@@ -117,6 +117,11 @@ function isEmptyValue(value: unknown): boolean {
   return value === undefined || value === null || value === ''
 }
 
+/** Mirrors ListGroupBy.Computed on the server. */
+function isComputedGroupBy(groupBy: ListGroupBy): boolean {
+  return !groupBy.property && !groupBy.relation
+}
+
 /** Splits rows into sections. See the file comment for the rules. */
 export function groupRows(
   rows: Entity[],
@@ -124,8 +129,7 @@ export function groupRows(
   entityType: EntityType | undefined,
   options: GroupOptions
 ): ListSection[] {
-  // Mirrors ListGroupBy.Computed on the server.
-  if (!groupBy.property && !groupBy.relation) return computedSections(rows, groupBy)
+  if (isComputedGroupBy(groupBy)) return computedSections(rows, groupBy)
   const property = groupBy.property ?? ''
   const def = entityType?.properties[property]
   if (groupBy.buckets && typeof groupBy.buckets === 'object') {
@@ -158,9 +162,6 @@ export function groupRows(
     const key = String(value)
     let section = byKey.get(key)
     if (!section) {
-      // A value the enum does not declare (hand-edited data), or any value
-      // of a non-enum property. It gets a section of its own after the
-      // declared ones rather than disappearing.
       section = {
         id: `value:${key}`,
         title: formatCellValue(value, property, entityType, options.tz) || key,
@@ -189,7 +190,12 @@ function computedSections(rows: Entity[], groupBy: ListGroupBy): ListSection[] {
   const byId = new Map<string, ListSection>()
   for (const g of groupBy.groups ?? []) {
     if (!g.id) continue
-    byId.set(g.id, { id: `group:${g.id}`, title: g.label || g.id, color: namedColor(g.color), items: [] })
+    byId.set(g.id, {
+      id: `group:${g.id}`,
+      title: g.label || g.id,
+      color: namedColor(g.color),
+      items: [],
+    })
   }
   const other: ListSection = { id: OTHER_ID, title: t('list.group.other'), items: [] }
   for (const row of rows) {
@@ -227,8 +233,6 @@ function bucketSections(
       {
         id: `bucket:${bucket}`,
         title: groupBy.labels?.[bucket] || defaultBucketLabel(bucket),
-        // Overdue is the one bucket that asks for action; the rest are only
-        // a when.
         color: bucket === 'overdue' ? 'red' : undefined,
         prefill: date && groupBy.property ? { [groupBy.property]: date } : undefined,
         bucket,
@@ -294,7 +298,7 @@ function readCollapsed(listId: string): Set<string> {
       Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []
     )
   } catch {
-    // A corrupt entry costs the reader their closed sections, not the list.
+    // why: a corrupt entry costs the reader their closed sections, not the list.
     return new Set()
   }
 }
@@ -336,8 +340,6 @@ export function useListGrouping(options: {
 
   const grouped = computed(() => options.groupBy() !== undefined)
 
-  // Grouping on a relation: the sections are the relation's targets, the
-  // same ones a relation-backed board shows as columns.
   const relationColumns = useRelationColumns(
     computed(() => (options.groupBy()?.relation ? options.groupBy() : undefined)),
     computed(() => options.pageScope?.()),
@@ -404,7 +406,7 @@ export function useListGrouping(options: {
     try {
       localStorage.setItem(collapsedStorageKey(options.listId()), JSON.stringify([...next]))
     } catch {
-      // Storage full or disabled: the choice holds for this visit only.
+      // why: storage full or disabled: the choice holds for this visit only.
     }
   }
 
