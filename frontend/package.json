@@ -15,6 +15,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "lint:comments": "node scripts/comment-body.mjs",
+    "lint:comments:update": "node scripts/comment-body.mjs --update",
     "format": "prettier --write \"src/**/*.{ts,vue,css}\"",
     "format:check": "prettier --check \"src/**/*.{ts,vue,css}\"",
     "typecheck": "vue-tsc --noEmit",
