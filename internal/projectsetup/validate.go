@@ -82,9 +82,9 @@ func ValidateWithFS(ctx context.Context, startDir string, fs storage.FS) (*Valid
 	result := &ValidateResult{}
 	result.ProjectRoot = proj.Root
 
-	// Validate metamodel. FSLoader runs the migration check the server boot
-	// runs, so a schema the server would refuse (for example one that still
-	// declares `automations:`, TKT-GWOBH2U) is not reported valid.
+	// Validate metamodel. The strict loader refuses deprecated syntax the server
+	// would migrate in memory, so CI keeps flagging files that need
+	// `rela migrate` (TKT-3JF7FSN).
 	mm, _, err := metamodel.NewStrictFSLoader(fs, proj.SchemaPath).Load(ctx)
 	switch {
 	case err != nil:
