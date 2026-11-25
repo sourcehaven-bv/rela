@@ -142,7 +142,7 @@ func (b *eventBroker) broadcastEvent(event sseEvent) {
 	for ch := range b.clients {
 		select {
 		case ch <- event:
-		default: // skip slow clients
+		default:
 		}
 	}
 	b.mu.Unlock()
@@ -168,26 +168,13 @@ func (b *eventBroker) broadcastGitStatus() {
 	b.broadcastEvent(sseEvent{Name: "git:status", Data: "{}"})
 }
 
-// StartWatching begins file watching for live-reload. It does two
-// independent things:
+// StartWatching subscribes to `data-entry.yaml` (and `realtime.yaml` when
+// [SetRealtime] wired a holder) and asks the store to watch its own files when
+// it implements [storeWatcher]. The store's observers handle reindexing.
 //
-//  1. Subscribes to `data-entry.yaml` via the config loader so SPA
-//     reloads pick up dashboard / palette / form config changes, and to
-//     `realtime.yaml` when [SetRealtime] wired a holder.
-//  2. Asks the store to start watching its own entity/relation files
-//     (feature-detected via [storeWatcher] — fsstore implements it;
-//     in-memory backends don't). The store's observer chain handles
-//     reindex automatically; no callback wiring is needed at this
-//     layer.
-//
-// The returned error covers only the config-subscriber failure
-// (step 1). Store-watcher errors (step 2) are logged via slog.Warn
-// because store watching is a live-reload nice-to-have, not a
-// startup requirement.
-//
-// Stop via [App.StopWatching]. Note: that only releases the config
-// subscription — the store-watcher lifecycle is owned by the store
-// (closed when the store is closed).
+// Only the config-subscriber failure is returned; a store-watcher failure is
+// logged, because live reload is not a startup requirement. [App.StopWatching]
+// releases the config subscription; the store owns its watcher.
 //
 // coverage-ignore-func: requires real filesystem events via the file watcher
 func (a *App) StartWatching() error {
@@ -199,7 +186,6 @@ func (a *App) StartWatching() error {
 			if a.reloadPaused.Load() > 0 {
 				return
 			}
-			// A rejection is already logged and broadcast; nothing more to do.
 			_ = a.reloadConfig()
 		})
 		if err != nil {
@@ -211,11 +197,6 @@ func (a *App) StartWatching() error {
 		}
 	}
 
-	// (2) Store-level watcher (fsstore). Errors are logged, not
-	// returned — store watching is a live-reload nice-to-have, not a
-	// startup requirement. Stores that don't implement [storeWatcher]
-	// (memstore, etc.) get a debug log instead of silence so
-	// "why isn't live-reload working" doesn't require a goose chase.
 	if sw, ok := a.store.(storeWatcher); ok {
 		if err := sw.StartWatching(); err != nil {
 			slog.Warn("store watcher not started", "error", err)
@@ -225,11 +206,6 @@ func (a *App) StartWatching() error {
 			"store", fmt.Sprintf("%T", a.store))
 	}
 
-	// (3) Store-event -> change feed. Feeds the store's change watcher into
-	// the bus every SSE connection reads. This is the path that makes a
-	// write by ANOTHER process visible live (the pgstore cross-process feed,
-	// TKT-WZYWM9) and surfaces fsstore's external-file-edit events. Local API
-	// writes flow through here too, so the write handlers do not broadcast.
 	a.sse.startStoreEventBridge()
 
 	return nil
@@ -237,21 +213,13 @@ func (a *App) StartWatching() error {
 }
 
 // startStoreEventBridge starts the change feed on the store's change watcher.
-// A feed that does not start (it was already started or closed) leaves SSE
-// connections working without entity changes, so the failure is logged
-// rather than returned.
+// A feed that does not start is logged, and SSE keeps working without entity
+// changes.
 //
-// # Audit-isolation invariant
-//
-// The change feed NEVER carries audit records. It holds entity types only,
-// and the wire carries `{type}`. Subject.ID / Subject.FromID from
-// `denied-write` audit rows must NOT be forwarded to SSE: the audit log is the
-// only intended audience for principal-attribution detail, and broadcasting it
-// would leak the principal-to-entity topology to every subscriber.
-//
-// If a future feature needs an audit-aware SSE channel, it must expose a
-// SEPARATE feed, gated by per-subscriber ACL, with its own redaction policy.
-// The regression test `TestSSE_DoesNotFlowAuditEvents` pins this invariant.
+// The feed NEVER carries audit records: it holds entity types only. Forwarding
+// `denied-write` subjects would leak principal-to-entity topology to every
+// subscriber. An audit-aware channel needs a separate, ACL-gated feed.
+// TestSSE_DoesNotFlowAuditEvents pins this.
 func (h *sseHandler) startStoreEventBridge() {
 	feed := h.feed()
 	if err := feed.Start(h.source()); err != nil {
@@ -378,46 +346,23 @@ func publishConfig(a *App, cfg *Config) {
 	meta := a.Meta()
 	warnListVisibilityConflicts(cfg, meta, a.acl)
 
-	// The provider recomputes the style map + OpenAPI generator (co-derived
-	// from cfg/meta) and publishes atomically.
 	a.schema.Reload(cfg, meta, true)
 
-	// Re-resolve the palette against the new project palette. The service
-	// keeps the previous user override if the on-disk file is broken —
-	// better to show stale colors than crash or wipe.
 	if err := a.palette.Reresolve(cfg.Palette); err != nil {
 		slog.Warn("watcher: keeping previous user palette",
 			"file", userPaletteFile, "error", err)
 	}
 }
 
-// handleSSE serves Server-Sent Events for live-reload notifications.
-// Connected browsers receive events when project files change or entities
-// are modified. Event types on the wire:
-//   - ready: first frame on a connection. Its id is the resume token for
-//     the position the stream starts at. Data is {}.
-//   - refresh: files changed, reload needed. Also sent as the FIRST frame,
-//     in place of ready, with data {"reason":"resync"} when the presented
-//     resume token is unusable; the client cannot know what it missed and
-//     re-fetches everything.
-//   - config-error: a data-entry.yaml or realtime.yaml reload was rejected;
-//     the previous version of that file keeps serving. Data is
-//     {"file": ..., "error": ..., "applied"?: ...}; applied names a file the
-//     same reload did put in force.
-//   - config-changed: a Configure save replaced the server; the stream ends.
-//   - git / git:status: Git status changed (git:status carries empty JSON)
-//   - entity:changed: Entities of a type changed; data is {"type": "..."}
-//     with NO id. Create/update/delete all collapse to this single
-//     type-scoped staleness signal, ACL-gated per connection — a
-//     connection only receives a type its principal may read (TKT-POT9GQ).
-//   - ping: sent every [ssePingInterval]; data is {}.
+// handleSSE serves Server-Sent Events for live reload. Events: ready (first
+// frame, carries the resume token), refresh (also the first frame with
+// reason "resync" when the resume token is unusable), config-error,
+// config-changed (the stream ends), git / git:status, entity:changed (data
+// {"type"} with no id, sent only for types the principal may read), and ping.
 //
-// ready, refresh-on-resync, the last entity:changed of a flush, and ping
-// carry an `id:` resume token. A client reconnects with it in the
-// Last-Event-ID header or the last_event_id query parameter (the SPA rebuilds
-// its EventSource by hand, so it cannot rely on the browser resending the
-// header) and receives one entity:changed frame per readable type that
-// changed since (TKT-3A1200).
+// ready, resync, the last entity:changed of a flush and ping carry an `id:`
+// token. A client resumes with it in Last-Event-ID or last_event_id and gets
+// one entity:changed per readable type that changed since.
 //
 //archplan:auth=required
 func (h *sseHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
@@ -427,18 +372,11 @@ func (h *sseHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// SSE is reachable only from same-origin or explicitly allow-listed
-	// dev origins (enforced by requireSameOrigin middleware). No CORS
-	// reflection — that previously let any website subscribe to live
-	// project events.
-
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	// A token that expired between verification and this point ends the
-	// stream here, before any subscription or live registration.
 	expiry, hasExpiry := credentialExpiry(r.Context())
 	if hasExpiry && !time.Now().Before(expiry) {
 		return
@@ -448,9 +386,6 @@ func (h *sseHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	ch := broker.subscribe()
 	defer broker.unsubscribe(ch)
 
-	// The token is untrusted input. Subscribe checks its exact length before
-	// decoding, and anything it did not mint is a resync; the value is never
-	// echoed or logged.
 	token := r.Header.Get("Last-Event-ID")
 	if token == "" {
 		token = r.URL.Query().Get("last_event_id")
@@ -461,11 +396,8 @@ func (h *sseHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	rc := http.NewResponseController(w)
 	conn := &sseConn{w: w, flusher: flusher, setDeadline: rc.SetWriteDeadline, timing: h.timing, expiry: expiry}
 	ready := map[string]string{}
-	var live liveFrames // nil: no live views on this stream
+	var live liveFrames
 	if r.URL.Path == "/api/v1/_events" {
-		// Live views are v1 only; the legacy stream has no connection id.
-		// Without the stashed principal a replay would run as the resolved
-		// one, so the stream goes without live views instead.
 		if owner, ok := replayPrincipalFrom(r.Context()); ok {
 			hub := h.live()
 			c := hub.register(owner)
@@ -574,43 +506,16 @@ type changeSource interface {
 	Token(seq uint64) string
 }
 
-// runSSELoop is the per-connection event loop. It is split out from
-// handleSSE so tests can drive it with an in-memory writer. start is the
-// position the subscription began at.
+// runSSELoop is the per-connection event loop; start is the subscription's
+// feed position. Entity changes are gated by the connection's cached
+// per-type read verdicts and flushed on a timer. A relation change re-derives
+// a fresh read gate, coalesced into the flush window, because membership may
+// have changed.
 //
-// Entity changes are gated per-connection: the connection's principal
-// read verdict for each entity type is resolved via the read gate and
-// cached. A pending set of "stale types" is accumulated and flushed on a
-// timer (coalescing bursts, AC5).
-//
-// A relation change can alter the principal's read scope (a member-of
-// edge changes group membership; a role-relation / containment edge
-// changes inheritance). It re-derives a FRESH read gate (a new
-// acl.Request whose member-of closure is walked against the current
-// graph — the connection's original Request memoizes that closure for its
-// lifetime, RR-K2WKEJ) and clears the cached verdicts so the next entity
-// event re-resolves against current membership. The re-derive is coalesced
-// into the same flush window so a burst of relation writes triggers one
-// re-walk, not one per edge.
-//
-// Resume tokens: cursor is the feed position taken so far; flushed is the
-// position whose changes have all been gated and written. The last frame
-// of a flush carries cursor, and a ping carries flushed, so a client that
-// resumes from any token it saw misses no change the feed counted. The
-// feed counts what the store delivered: a store that drops events on a
-// full buffer drops them for resume too. When a batch holds only types the
-// principal cannot read, nothing is written and flushed simply moves on,
-// so a hidden entity write produces no frame and does not move a frame in
-// time. A relation write of any kind starts a flush window to re-derive
-// the gate, so it can make a readable frame arrive up to one window early
-// (docs/acl-security.md).
-//
-// Non-entity events (refresh, git) pass through ungated and immediately.
-// The stream ends on a closed broker channel, the request context, the
-// credential expiry on conn, or right after a config-changed frame, so
-// that frame is the last one written even when a flush or ping is due at
-// the same moment. At expiry no final frame is written: the client
-// reconnects with a fresh assertion, as after a reload.
+// The last frame of a flush carries the cursor and a ping carries the flushed
+// position, so a resuming client misses nothing the feed counted. Other events
+// pass through ungated. The stream ends on a closed broker, the request
+// context, credential expiry or right after a config-changed frame.
 func (h *sseHandler) runSSELoop(
 	conn *sseConn, r *http.Request, ch <-chan sseEvent, feed changeSource, start uint64, live liveFrames,
 ) {
@@ -626,9 +531,6 @@ func (h *sseHandler) runSSELoop(
 		flushed:  start,
 	}
 
-	// One timer for the connection's lifetime, created stopped and reset
-	// to (re)arm the coalescing window. flushArmed tracks whether the
-	// timer is currently running so a burst doesn't keep resetting it.
 	flush := time.NewTimer(conn.timing.flush)
 	if !flush.Stop() {
 		<-flush.C
@@ -637,11 +539,11 @@ func (h *sseHandler) runSSELoop(
 	flushArmed := false
 	ping := time.NewTicker(conn.timing.ping)
 	defer ping.Stop()
-	var liveWake <-chan struct{} // nil: no live views on this stream
+	var liveWake <-chan struct{}
 	if live != nil {
 		liveWake = live.wake()
 	}
-	var expired <-chan time.Time // nil: the credential does not expire
+	var expired <-chan time.Time
 	if !conn.expiry.IsZero() {
 		expire := time.NewTimer(time.Until(conn.expiry))
 		defer expire.Stop()
@@ -709,8 +611,6 @@ type sseStream struct {
 // broker writes a non-entity frame: pre-rendered and ungated.
 func (st *sseStream) broker(event sseEvent) error {
 	if event.Name == "" {
-		// A zero-value frame is a programming error. Drop it rather than
-		// emit a malformed empty frame.
 		slog.Warn("sse: dropping zero-value broker event")
 		return nil
 	}
@@ -727,17 +627,8 @@ func (st *sseStream) broker(event sseEvent) error {
 // flush is needed.
 func (st *sseStream) take(ctx context.Context) bool {
 	batch := st.feed.Take()
-	// Coalesce: re-derive the gate at most once per flush window (a bulk
-	// relation import otherwise walks member-of per edge per connection).
 	st.regate = st.regate || batch.Relation
-	// A conditional grant (role_relations `when:`, TKT-TKSCSBT) is judged
-	// at the gate's read time, by UTC day. On a new day the gate may admit
-	// less, so re-derive it before nudging.
 	st.regate = st.regate || readDay(nowFunc()) != st.gateDay
-	// An edge is also part of how both ends are shown: a board column or
-	// list section taken from a relation, a detail panel's relation fields.
-	// Mark both ends' types stale so those views re-fetch; the read gate
-	// applies to them as to any entity type.
 	types := batch.Types
 	if len(batch.RelationTypes) > 0 {
 		state := st.h.schema()
@@ -747,17 +638,13 @@ func (st *sseStream) take(ctx context.Context) bool {
 		}
 	}
 	for _, typ := range types {
-		// While a re-gate is pending the current gate is known stale, so
-		// defer the visibility decision to the flush (which re-checks every
-		// pending type against the fresh gate). Otherwise filter at entry to
-		// avoid buffering types the principal can't read.
 		if st.regate || st.typeVisible(ctx, typ) {
 			st.pending[typ] = struct{}{}
 		}
 	}
 	st.cursor = batch.Seq
 	if len(st.pending) == 0 && !st.regate {
-		st.flushed = st.cursor // nothing readable to write
+		st.flushed = st.cursor
 		return false
 	}
 	return true
@@ -767,13 +654,9 @@ func (st *sseStream) take(ctx context.Context) bool {
 // last one carrying the resume token for the cursor.
 func (st *sseStream) flush(ctx context.Context) error {
 	if st.regate {
-		// A re-derived gate is a new operation with its own read time.
 		now := nowFunc()
 		gate, ok := st.h.freshReadGate(readtime.With(ctx, now), st.gate)
 		if !ok && readDay(now) != st.gateDay {
-			// The prior gate was judged on an earlier day, so it may still
-			// count an expired grant. Send nothing until a re-derive works;
-			// the client's reconnect re-fetch reconciles.
 			clear(st.pending)
 			st.flushed = st.cursor
 			return nil
@@ -823,10 +706,6 @@ func (h *sseHandler) freshReadGate(ctx context.Context, current readGate) (readG
 	if !ok || d == nil {
 		return current, true
 	}
-	// The ctx principal was already resolved by attachACLRequest (its User is
-	// the entity id when principal_property matched), so this refresh walks
-	// membership without repeating the lookup. It is an explicit edge step
-	// for a long-lived stream, not a lazy evaluation fallback.
 	req, err := acl.OpenRequest(ctx, d, principal.From(ctx))
 	if err != nil {
 		slog.Warn("sse: re-deriving read gate failed", "err", err)
@@ -861,20 +740,11 @@ func (st *sseStream) typeVisible(ctx context.Context, entityType string) bool {
 	return visible
 }
 
-// noCacheMiddleware sets no-cache headers on dynamic responses so that
-// browsers always fetch fresh data after file changes trigger a reload.
-// This replaces the previous reloadLockMiddleware, which also held the
-// now-deleted App.mu read lock — handlers now get coherent reloadable
-// state via a.State() without any lock acquisition.
+// noCacheMiddleware sets no-cache headers on dynamic responses so browsers
+// fetch fresh data after a reload. /static/ bypasses it.
 //
-// Static files (/static/*) are served separately and bypass this
-// middleware, so they retain normal caching behavior.
-//
-// Under ACL, API responses are additionally per-principal: when a
-// principal header is configured (SetPrincipalHeader), `Vary` names it
-// so any cache that ignores the no-store directive still keys on the
-// identity header instead of serving principal A's filtered response
-// to principal B (TKT-VMD8 AC10, RR-VDTW).
+// API responses are per-principal: when a principal header is configured,
+// `Vary` names it so a cache that ignores no-store still keys on identity.
 func (a *App) noCacheMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")

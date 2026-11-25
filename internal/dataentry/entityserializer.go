@@ -22,26 +22,12 @@ type entitySerializer struct {
 	affordances affordanceService
 }
 
-// toV1 builds the base v1.Entity. meta is the request's metamodel snapshot;
-// outgoing is the entity's outgoing relations, already loaded by the caller
-// (nil omits the relations map — the former includeRelations=false shape).
-// incoming is the entity's incoming relations; when non-nil each incoming
-// edge is added to the relations map under its relation's INVERSE key
-// (inverseRelationKey), so an incoming list column has a distinct lookup key
-// that never collides with the same relation used outgoing. The SPA computes
-// the identical key from the column's relation + the metamodel inverse — see
-// MECHANISM.md. Loading incoming edges is the caller's job; this stays a pure
-// transform.
-//
-// visibleNeighbors gates the neighbor IDs written into the relations map
-// (RR-HJV8CP): when non-nil, an outgoing target (edge.To) or incoming source
-// (edge.From) is emitted ONLY if visibleNeighbors[id] is true, so the wire's
-// `relations` map can never carry an ACL-hidden neighbor's raw ID (which would
-// leak past the `included` map that is already visibility-filtered). Passing
-// nil disables the filter — the per-entity / search / include shapes that
-// serialize their own already-gated edges keep byte-identical output. The set
-// is computed once per page by visibleRelationIDs (batched by type); this
-// transform only consults it.
+// toV1 builds the base v1.Entity, a pure transform. outgoing and incoming are
+// relations loaded by the caller (nil omits them). Incoming edges go under
+// the relation's INVERSE key (inverseRelationKey), which the SPA computes the
+// same way. visibleNeighbors, when non-nil, emits a neighbor id only if it is
+// true in the set, so `relations` never carries an ACL-hidden neighbor's id;
+// nil disables the filter.
 func (s entitySerializer) toV1(
 	ctx context.Context, e *entityPkg.Entity, outgoing, incoming []*entityPkg.Relation,
 	visibleNeighbors map[string]bool, meta *metamodel.Metamodel, plural string,
@@ -57,9 +43,6 @@ func (s entitySerializer) toV1(
 	}
 
 	maps.Copy(out.Properties, e.Properties)
-	// A roll-up is computed per reader, never stored: a value stored under
-	// its name (a hand edit, an import) is not served. The live read paths
-	// add the computed value afterwards (addRollups).
 	for _, name := range meta.RollupNames(e.Type) {
 		delete(out.Properties, name)
 	}
@@ -75,9 +58,6 @@ func (s entitySerializer) toV1(
 	}
 
 	if outgoing != nil || incoming != nil {
-		// neighborVisible reports whether an edge endpoint may appear on the
-		// wire. When visibleNeighbors is nil the filter is off (caller passes
-		// already-gated edges); otherwise only IDs in the set survive.
 		neighborVisible := func(id string) bool {
 			return visibleNeighbors == nil || visibleNeighbors[id]
 		}
@@ -88,10 +68,6 @@ func (s entitySerializer) toV1(
 			}
 			out.Relations[edge.Type] = append(out.Relations[edge.Type], edge.To)
 		}
-		// Incoming edges are keyed by the relation's inverse name so an
-		// `direction: incoming` column looks them up without colliding with
-		// outgoing edges of the same relation. edge.From is the source
-		// entity ID (resolved to a title client-side via ?include=*).
 		for _, edge := range incoming {
 			if !neighborVisible(edge.From) {
 				continue
@@ -123,27 +99,14 @@ func (s entitySerializer) forWire(
 	return s.forWireScoped(ctx, e, outgoing, nil, meta, plural)
 }
 
-// forWireScoped is forWire with an explicit neighbor-visibility filter.
-//
-// It exists for the world path (TKT-WRLDAPI item 4), where the edges reaching
-// the serializer were resolved by the world-scoped seam and their heads gated
-// as a batch. Passing that set through means the `relations` map can only
-// name a neighbor that this world resolves AND the principal may read —
-// the same guarantee forWireRelated already gives list rows via
-// visibleNeighbors, which the per-entity path previously had no way to
-// express.
-//
-// visibleNeighbors nil disables the filter, which is what forWire passes: the
-// default-world path's edges come from a reader whose heads the caller has
-// already accounted for, and threading an empty (non-nil) map there would
-// silently blank every relation.
+// forWireScoped is forWire with an explicit neighbor-visibility filter, for
+// the world path, so the `relations` map names only neighbors the world
+// resolves and the principal may read. A nil visibleNeighbors disables the
+// filter; an empty non-nil map blanks every relation.
 func (s entitySerializer) forWireScoped(
 	ctx context.Context, e *entityPkg.Entity, outgoing []*entityPkg.Relation,
 	visibleNeighbors map[string]bool, meta *metamodel.Metamodel, plural string,
 ) v1.Entity {
-	// Per-entity responses carry outgoing edges only; incoming edges reach the
-	// SPA via the dedicated /relations endpoint, not the top-level relations
-	// map. Incoming list columns are served by forWireRelated (list rows).
 	result := s.toV1(ctx, e, outgoing, nil, visibleNeighbors, meta, plural)
 	s.affordances.stripHiddenProperties(ctx, e, &result)
 	s.affordances.attachEntityAffordances(ctx, e, &result)
@@ -151,40 +114,21 @@ func (s entitySerializer) forWireScoped(
 }
 
 // forWireHistoricalReveal renders a historical snapshot for an audit reader
-// holding acl.PermHistoryReadRedacted (TKT-73C6B2): it SKIPS
-// stripHiddenProperties entirely, emitting every frozen field — OVERRIDE
-// semantics, the field-grained sibling of acl.PermHistoryRead's all-or-nothing
-// audit power. This is the ONLY serializer path that intentionally does not
-// strip; every ordinary read path (forWire / forWireRelated) strips. Callers
-// MUST gate this on the permission (the history handler does) — it is not a
-// general-purpose entry point. It omits the `_fields` / `_relations` affordance
-// maps (those ride only on forWire, the per-entity live shape). It does carry
-// the base `_actions` map from toV1 — computed against the LIVE graph, so on a
-// snapshot it is at best advisory and, for a deleted entity, describes write
-// affordances that no longer apply; it is a boolean UI hint, not a data leak,
-// and the server re-authorizes every write regardless. The ordinary
-// (non-reveal) history path shares that same toV1-`_actions` property.
+// holding acl.PermHistoryReadRedacted. It is the ONLY serializer path that
+// does not strip hidden properties. Callers MUST gate it on that permission.
+// It omits the `_fields` / `_relations` maps; its `_actions` map is computed
+// against the live graph and is only an advisory UI hint.
 func (s entitySerializer) forWireHistoricalReveal(
 	ctx context.Context, e *entityPkg.Entity, meta *metamodel.Metamodel, plural string,
 ) v1.Entity {
 	return s.toV1(ctx, e, nil, nil, nil, meta, plural)
 }
 
-// forWireRelated renders an entity that is NOT the per-entity response root —
-// list rows, `?include=*` peers, search-result include map. Strips hidden
-// properties but omits the `_fields` / `_relations` maps (those ride on
-// per-entity responses only). Hidden-field stripping still applies: the wire
-// contract is "hidden values never reach the client, regardless of shape."
-// Pass incoming edges (nil to omit) so `direction: incoming` list columns can
-// resolve their source entities under the relation's inverse key.
-//
-// visibleNeighbors gates the neighbor IDs (both outgoing targets and incoming
-// sources) written into the relations map so a hidden neighbor's ID never
-// leaks onto the wire (RR-HJV8CP). The list handler computes it once per page
-// via visibleRelationIDs (batched by type — no per-id gate calls) and
-// threads it here. Pass nil to disable filtering when the caller already
-// serializes only gated edges (e.g. the search/include shapes pass nil
-// relations anyway).
+// forWireRelated renders an entity that is not the per-entity response root:
+// list rows, `?include=*` peers, search includes. It strips hidden properties
+// and omits the `_fields` / `_relations` maps. Pass incoming edges (nil to
+// omit). visibleNeighbors gates the neighbor ids in the relations map so a
+// hidden neighbor's id never reaches the wire; nil disables the filter.
 func (s entitySerializer) forWireRelated(
 	ctx context.Context, e *entityPkg.Entity, outgoing, incoming []*entityPkg.Relation,
 	visibleNeighbors map[string]bool, meta *metamodel.Metamodel, plural string,
@@ -194,26 +138,10 @@ func (s entitySerializer) forWireRelated(
 	return result
 }
 
-// selfHref addresses the ROW this response describes, face included.
-//
-// `_self` used to be built from e.ID alone, which made it the bare id even
-// when the response was a non-bare face — read `GUIDE-1@nl`, get back a
-// pointer to `GUIDE-1`. A client doing the ordinary GET-`_self` / PATCH-`_self`
-// loop then edited a DIFFERENT content state than the one it was displaying,
-// silently.
-//
-// That is the same wrong-face write the `?world=` write refusal
-// (422 world_read_only) exists to prevent, so handing it back in the response
-// body defeated the guard rather than complementing it.
-//
-// A type declaring faces has NO bare address (BUG-HC6I2T): every face is a
-// named row, so `_self` always carries its coordinate and a write to it always
-// names the face it edits. This used to spell the bare face as the bare id,
-// which was correct while `bare_face` made one face answer to the unsuffixed
-// id; with that gone an unsuffixed id names no row of a faced type.
-//
-// A type with NO faces is unaffected and keeps the bare href: it has exactly
-// one state, stored at the zero coordinate, and no name for it.
+// selfHref addresses the ROW this response describes, face included, so a
+// GET-`_self` / PATCH-`_self` loop edits the face it displayed. A faced type
+// has no bare address and always carries its coordinate. A type with no faces
+// keeps the bare href.
 func selfHref(plural string, e *entityPkg.Entity) string {
 	if e.Face.IsImplicit() {
 		return fmt.Sprintf("/api/v1/%s/%s", plural, e.ID)

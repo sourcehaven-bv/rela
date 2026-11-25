@@ -64,9 +64,6 @@ func (h *liveHub) recordServed(next http.Handler) http.Handler {
 		}
 		sw := &servedWriter{ResponseWriter: w, h: sha256.New()}
 		next.ServeHTTP(sw, r)
-		// A 304 sends no body. The API's ETags derive from the content, so
-		// the client's copy matches the data now and holds nothing a replay
-		// would not. A failed write left the client without this body.
 		if sw.status() == http.StatusNotModified || sw.failed {
 			return
 		}

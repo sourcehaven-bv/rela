@@ -134,8 +134,6 @@ func (h *pilesHandler) actorTitles(ctx context.Context, rows []pileRow) (map[str
 	if len(ids) == 0 {
 		return out, nil
 	}
-	// An actor is a stored person id with no face; the world picks the face
-	// the owner may read, as it does for a bare item.
 	served, err := h.resolver.ResolveIDsErr(ctx, worldFromContext(ctx).visibility(), ids)
 	if err != nil {
 		return nil, err

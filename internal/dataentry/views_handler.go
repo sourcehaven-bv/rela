@@ -121,7 +121,6 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Parse path: /api/v1/_sidepanel/{formId}/{entityId}
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_sidepanel/")
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
@@ -130,7 +129,7 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 	}
 
 	formID := parts[0]
-	entityID := parts[1] // Get form config
+	entityID := parts[1]
 	s := h.schema()
 	form, ok := s.Cfg.Forms[formID]
 	if !ok {
@@ -138,7 +137,6 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Check if form has side panel
 	if form.SidePanel == nil {
 		writeV1JSON(w, http.StatusOK, []v1.SidePanelSection{})
 		return
@@ -149,14 +147,12 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Execute side panel traversal
 	sections := h.executeSidePanel(r.Context(), form.SidePanel, entityID, form.EntityType)
 	if sections == nil {
 		writeV1JSON(w, http.StatusOK, []v1.SidePanelSection{})
 		return
 	}
 
-	// Build a synthetic ViewConfig to resolve add/link buttons
 	viewConfig := ViewConfig{
 		Entry:    ViewEntry{Type: form.EntityType},
 		Traverse: form.SidePanel.Traverse,
@@ -164,7 +160,6 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 	}
 	h.resolveSectionButtonsWithTraverse(r.Context(), viewConfig, sections, entry)
 
-	// Convert to API response format
 	result := make([]v1.SidePanelSection, 0, len(sections))
 	for _, sec := range sections {
 		apiSec := v1.SidePanelSection{
@@ -175,12 +170,10 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 			EmptyMessage: sec.EmptyMessage,
 		}
 
-		// Convert fields
 		for _, f := range sec.Fields {
 			apiSec.Fields = append(apiSec.Fields, v1.SectionField(f))
 		}
 
-		// Convert entities
 		for _, e := range sec.Entities {
 			apiEnt := v1.SidePanelEntity{
 				ID:         e.ID,
@@ -196,7 +189,6 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 			apiSec.Entities = append(apiSec.Entities, apiEnt)
 		}
 
-		// Convert add/link info
 		if sec.AddInfo != nil {
 			apiSec.AddInfo = &v1.ViewAddInfo{
 				Relation: sec.AddInfo.Relation,
@@ -204,9 +196,6 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 				PeerID:   sec.AddInfo.PeerID,
 			}
 			for _, t := range sec.AddInfo.Targets {
-				// Field-by-field, not a struct conversion: the shared
-				// SectionCreateTarget carries a Template the side panel has no
-				// use for, and the wire type deliberately does not gain one.
 				apiSec.AddInfo.Targets = append(apiSec.AddInfo.Targets, v1.ViewAddTarget{
 					EntityType: t.EntityType,
 					FormID:     t.FormID,
@@ -244,8 +233,6 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	s := h.schema()
 	ctx := r.Context()
 
-	// The ACL is resolved ONCE here rather than per entry, matching
-	// resolveCommands.
 	aclImpl := h.currentACL()
 
 	resp := v1.SidebarResponse{
@@ -326,8 +313,6 @@ func sidebarNavigation(
 	entries []dataentryconfig.NavigationEntry, space string,
 ) []v1.SidebarGroup {
 	navigation := make([]v1.SidebarGroup, 0)
-	// Adjacent top-level items share one unlabelled group, so they sit
-	// together like a group's items instead of each taking a group's gap.
 	lastLoose := false
 	for i, entry := range entries {
 		key := dataentryconfig.NavStatusRootKey(space, i)
@@ -346,19 +331,12 @@ func sidebarNavigation(
 				setNavStatusKey(&sidebarItem, item, dataentryconfig.NavStatusKey(key, j))
 				group.Items = append(group.Items, sidebarItem)
 			}
-			// A group whose every item was filtered out is dropped rather than
-			// rendered as a bare heading: an empty labeled group reads as a
-			// rendering bug, and it outlines what the principal cannot reach
-			// without being useful to them.
-			// A generated group has no static items; its entries arrive from
-			// /api/v1/_nav_items, so it stays.
 			if len(group.Items) == 0 && group.ItemsKey == "" {
 				continue
 			}
 			navigation = append(navigation, group)
 			lastLoose = false
 		} else {
-			// Top-level item without group
 			if !showsNavEntry(ctx, aclImpl, cfg, entry) {
 				continue
 			}
@@ -597,7 +575,7 @@ func sidebarPages(
 		}
 		mode := page.Mode
 		if mode == dataentryconfig.PageModeTabs {
-			mode = "" // the default needs no wire value
+			mode = ""
 		}
 		out[id] = v1.SidebarPage{PageHeader: page.PageHeader, Mode: mode, Tabs: tabs}
 	}
@@ -654,24 +632,10 @@ func sidebarItemFor(
 }
 
 // permitsGatedUIElement reports whether a `permission:`-gated UI element should
-// be shown to this principal (TKT-TXDK8U for sidebar nav entries, TKT-53KICM
-// for dashboard cards).
-//
-// This is a UX filter and NOTHING ELSE. It decides what to RENDER, never what
-// to allow. If you want an authorization check, this is the wrong function —
-// build one, and see authorizeCommand for the shape.
-//
-// Hiding an element changes no enforcement: its target is reachable by typing
-// the URL and behaves exactly as it did before — a list still returns its
-// ACL-scoped rows, which for a principal who may read none of them is simply an
-// empty list, and a dashboard card's query still runs through the ACL-scoped
-// search path. Nor does it conceal configuration: `/api/v1/_config` keeps
-// serving the whole navigation tree and `dashboard:` block to every principal,
-// deliberately (root CLAUDE.md, "The configuration is not a secret; the data
-// is"). The goal is only to keep things a user cannot act on out of their way.
-//
-// The decision per ACL mode, including why read-only shows gated elements, is
-// [access.Mode.PermitsGatedUIElement].
+// be shown to this principal. It is a UX filter only: it decides what to render,
+// never what to allow, and conceals no configuration. A hidden element's target
+// stays reachable and stays ACL-scoped. For an authorization check, see
+// authorizeCommand. The per-mode decision is [access.Mode.PermitsGatedUIElement].
 func permitsGatedUIElement(ctx context.Context, aclImpl acl.ACL, permission string) bool {
 	return access.ModeOf(aclImpl).PermitsGatedUIElement(ctx, readGateFromContext(ctx), permission)
 }
@@ -772,11 +736,6 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, meta *metamode
 		Label: entry.Label,
 	}
 
-	// Glyph names come from icondefs.DerivedNames, not string literals. The SPA
-	// resolves whatever this emits through a generated allowlist, so a renamed
-	// table entry paired with a stale literal here would make EVERY entry of
-	// that kind render the fallback glyph — silently, with no build or test
-	// failure. Naming them makes that rename a compile error.
 	derived := dataentryconfig.DerivedIconNames
 	switch {
 	case entry.List != "":
@@ -810,17 +769,11 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, meta *metamode
 		item.Href = "/settings"
 		item.Icon = derived.Settings
 	case entry.Page != "":
-		// The SPA opens the page on the first tab the principal may see.
 		item.Href = "/p/" + entry.Page
 	case entry.Document != "":
-		// Standalone documents only — validateNavEntry rejects an
-		// entity-anchored document here, since this href has no entity id
-		// segment to fill.
 		item.Href = "/document/" + entry.Document
 		item.Icon = derived.Document
 	case entry.Entities != "":
-		// Href stays empty: the SPA expands this into one link per row it
-		// reads from the list endpoint.
 		item.Entities = &v1.SidebarEntities{
 			Type:       entry.Entities,
 			QueryScope: entry.QueryScope,
@@ -828,7 +781,6 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, meta *metamode
 		}
 		item.Icon = derived.Entity
 	case entry.Pile != "":
-		// Href stays empty — the SPA opens the pile in the flyout.
 		item.Pile = entry.Pile
 		item.Icon = derived.Pile
 		if item.Label == "" {
@@ -836,33 +788,10 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, meta *metamode
 		}
 	case entry.Action != "":
 		item.Action = entry.Action
-		// Href stays empty — frontend renders this as a button.
-		//
-		// An action DOES derive a glyph now. It used to derive none, which was
-		// harmless while `icon:` could only override — but `icon: none` needs
-		// something to fall back to when the collapsed sidebar hides labels,
-		// and an empty fallback resolved to the generic document glyph. That
-		// made a button which fires a mutation look like a link to a document,
-		// sitting in a column of real document links.
 		item.Icon = derived.Action
 	}
 
-	// An authored icon wins over the kind-derived default set above. Applied
-	// after the switch so it covers every branch — including `action`, which
-	// derives no icon of its own and would otherwise be the one entry kind
-	// that could never have one.
-	//
-	// dataentryconfig.NoIcon travels to the client AS ITSELF rather than being
-	// flattened to "". The field is `json:"icon,omitempty"`, so an empty string
-	// is dropped from the payload entirely and becomes indistinguishable from
-	// an entry that never had an icon — which is also what an unmatched switch
-	// leaves behind. The client needs to tell "the author asked for no glyph"
-	// apart from "no glyph was ever chosen", because only the first reserves
-	// the icon column.
 	if entry.Icon != "" {
-		// Keep what the kind derived, for the collapsed sidebar to fall back on.
-		// Only when suppressed: otherwise this would duplicate Icon on every
-		// entry in the payload for no reader.
 		if entry.Icon == dataentryconfig.NoIcon {
 			item.DerivedIcon = item.Icon
 		}
@@ -880,6 +809,9 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, meta *metamode
 // metamodel (see buildDefaultViewConfig) and executed through the same
 // pipeline so the response shape is identical.
 //
+// The entry is row-gated before the view runs, so a hidden id is the same
+// 404 as a missing one; the traversal is gated in loadViewEntities.
+//
 //archplan:auth=required
 func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -887,7 +819,6 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse path: /api/v1/_views/{entityType}/{entityId}
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_views/")
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
@@ -903,30 +834,12 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The id segment is an ADDRESS (`ID` or `ID@face`), parsed once here so
-	// the row gate below sees the BARE id (it is face-blind by design and
-	// matches nothing on a suffixed string) and the engine sees the face.
 	ref, refErr := entityPkg.ParseRef(entityID)
 	if refErr != nil {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
 
-	// ACL gate (TKT-BNX2PN): _views is an entity-read chokepoint just like
-	// GET /{plural}/{id} — it serves _title, properties, and content body via
-	// executeView + serializeEntityForWire. Gate BEFORE executeView so a hidden
-	// id is indistinguishable from a missing one (404, no oracle) and the view
-	// pipeline never runs for a denied principal.
-	//
-	// This gates only the ENTRY. The view's TRAVERSAL is separately
-	// source-gated in loadViewEntities (BUG-9Z20WH), so a hidden intermediary
-	// can neither be collected nor serve as a stepping-stone to a descendant
-	// reachable only through it. Together the two gates make _views an
-	// entity-read chokepoint for the entry AND for every entity the traversal
-	// surfaces.
-	//
-	// A miss here, or below, may be an id a rename or conversion retired:
-	// redirectRetired then sends a reader of the successor there.
 	if !gateViewEntry(w, r, h.viewReader, entityType, ref.ID) {
 		return
 	}
@@ -935,17 +848,11 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		viewCfg, ok = buildDefaultViewConfig(s.Meta, entityType)
 		if !ok {
-			// Cannot happen — entity type already validated above —
-			// but handled defensively to keep the contract clear.
 			writeV1Error(w, r, http.StatusNotFound, "entity_type_not_found", "Entity type not found", entityType)
 			return
 		}
 	}
 
-	// Execute view. This is the ONE surface that opts into worlds
-	// (TKT-WRLDAPI item 4b); the other two executeView callers pass
-	// defaultViewWorld() explicitly. See the viewWorld doc for why the world
-	// is a parameter rather than something the engine reads off ctx.
 	result, err := h.executeViewRef(r.Context(), viewCfg, ref,
 		viewWorldFromRequest(r.Context()))
 	if err != nil {
@@ -953,41 +860,17 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build sections
 	sections := h.buildSections(r.Context(), viewCfg.Sections, result)
 
-	// The opt-in create affordance (TKT-R4BMJM). Runs on every section, but
-	// only ever populates one whose config carries an explicit `create:` block,
-	// so a view that did not opt in stays exactly as read-only as TKT-651W made
-	// it. Note this is NOT resolveSectionButtonsWithTraverse, which also builds
-	// an ungated link-existing affordance the view path must not carry.
 	h.resolveSectionCreate(r.Context(), viewCfg, sections, result.Entry)
 
-	// After resolveSectionCreate, which indexes sections in step with the
-	// view config. Before ownerRows and the header create menu, so a hidden
-	// section contributes nothing.
 	sections = omitHiddenSections(sections)
 
-	// Build response
 	entityDef := s.Meta.Entities[result.Entry.Type]
 	plural := entityDef.GetPlural(result.Entry.Type)
 
-	// The entry's relations: the edges OF THE FACE BEING SERVED, via the
-	// shared seam every other surface uses (see [servedFaceEdges]).
-	//
-	// This replaces two behaviors that were both wrong in the same
-	// direction. Under the DEFAULT world it used the bare-id reader, which
-	// returns the UNION of every face's content-scoped edges — so a draft
-	// entry carried the published face's links, duplicated where they
-	// overlapped. Under a world it emitted NOTHING, as a deliberate
-	// placeholder, which showed a resolved entry with no links at all.
-	//
-	// One face-scoped read answers both: the entry knows its own face, so
-	// its edges are well-defined whether or not a world was named.
 	entryRels, werr := h.faceEdges.edges(r.Context(), result.Entry)
 	if werr != nil {
-		// A neighbor-resolution fault is an infrastructure failure, not an
-		// empty link set — the same posture the entity GET takes (RR-4TFZNL).
 		writeGateError(w, r, werr)
 		return
 	}
@@ -1003,20 +886,9 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		Create:   sectionCreateMenuToV1(headerCreateMenu(sections)),
 	}
 	resp.Entry.Owner = owner[result.Entry.ID]
-	// The serializer strips every roll-up name; the entry's computed values
-	// ride on result.Entry (executeViewBodies).
 	copyRollups(h.schema().Meta, result.Entry, resp.Entry.Properties)
-	// The entity page autosaves the entry's body and properties, so the
-	// entry carries their version tokens (TKT-2VDVHF). It has no relations
-	// token: the entry is serialized without the face-scoped neighbor filter
-	// a PATCH checks against, and the page does not write the entry's
-	// relations.
 	resp.Entry.Versions = fieldVersionsOf(&resp.Entry, h.schema().Meta)
 	resp.Entry.Versions.Relations = ""
-	// The advisory lease on the entry, after the version tokens so it moves
-	// none of them. Only the entry gets one: it is the entity the row gate
-	// above admitted, and the page shows its claim badge. Section rows do
-	// not.
 	resp.Entry.Lease = h.leases.entityLease(r.Context(), result.Entry.ID)
 
 	for _, sec := range sections {
@@ -1051,31 +923,26 @@ func ownerRows(entry *entityPkg.Entity, sections []SectionData) []*entityPkg.Ent
 // the resolved owners of the rows of `related` sections (see [ownerRows]).
 func viewSectionToV1(sec SectionData, owner map[string]*v1.EntityOwner) v1.ViewSection {
 	v1Sec := v1.ViewSection{
-		Heading:      sec.Heading,
-		SectionID:    sec.SectionID,
-		Display:      sec.Display,
-		IsEmpty:      sec.IsEmpty,
-		EmptyMessage: sec.EmptyMessage,
-		IsGrouped:    sec.IsGrouped,
-		Content:      sec.Content,
-		HasContent:   sec.HasContent,
-		// Already wire-shaped; nil for a section not in relation order.
+		Heading:       sec.Heading,
+		SectionID:     sec.SectionID,
+		Display:       sec.Display,
+		IsEmpty:       sec.IsEmpty,
+		EmptyMessage:  sec.EmptyMessage,
+		IsGrouped:     sec.IsGrouped,
+		Content:       sec.Content,
+		HasContent:    sec.HasContent,
 		RelationOrder: sec.RelationOrder,
 	}
 
-	// The opt-in create affordance. Nil for every section that did not
-	// declare `create:`, which keeps the response byte-identical there.
 	v1Sec.Create = sectionCreateToV1(sec.CreateInfo)
 	for _, t := range sec.totals {
 		v1Sec.Totals = append(v1Sec.Totals, v1.SectionTotal(t))
 	}
 
-	// Convert fields
 	for _, f := range sec.Fields {
 		v1Sec.Fields = append(v1Sec.Fields, v1.SectionField(f))
 	}
 
-	// Convert entities
 	for _, e := range sec.Entities {
 		v1e := sectionEntityToV1(e)
 		if sec.Display == dataentryconfig.DisplayRelated {
@@ -1089,7 +956,6 @@ func viewSectionToV1(sec SectionData, owner map[string]*v1.EntityOwner) v1.ViewS
 		v1Sec.Rows = append(v1Sec.Rows, viewRowToV1(row))
 	}
 
-	// Convert groups
 	for _, grp := range sec.Groups {
 		v1Grp := v1.ViewGroup{
 			GroupName:  grp.GroupName,
@@ -1105,7 +971,6 @@ func viewSectionToV1(sec SectionData, owner map[string]*v1.EntityOwner) v1.ViewS
 		v1Sec.Groups = append(v1Sec.Groups, v1Grp)
 	}
 
-	// Convert the nested tree
 	v1Sec.Truncated = sec.Truncated
 	v1Sec.Incomplete = sec.Incomplete
 	v1Sec.Source = sec.source
@@ -1213,14 +1078,12 @@ func editFormForType(cfg *dataentryconfig.Config, entityType string) string {
 		ids = append(ids, id)
 	}
 	natsort.Strings(ids)
-	// First pass: look for explicit edit mode
 	for _, id := range ids {
 		f := cfg.Forms[id]
 		if f.EntityType == entityType && f.Mode == "edit" {
 			return id
 		}
 	}
-	// Second pass: fall back to forms with no mode specified
 	for _, id := range ids {
 		f := cfg.Forms[id]
 		if f.EntityType == entityType && f.Mode == "" {
@@ -1231,33 +1094,17 @@ func editFormForType(cfg *dataentryconfig.Config, entityType string) string {
 }
 
 // inlineCreateForms maps each entity type the principal may create inline to
-// the form id to create it with. A type is present only when BOTH conditions of
-// TKT-OMUD56 hold — a create form resolves for it, and the ACL permits
-// `create` — so presence alone is the affordance and the SPA performs no
-// permission arithmetic of its own.
-//
-// The form lookup runs first because it is a pure config read: a type nothing
-// can create has no ACL question worth asking, so this also keeps the ACL
-// evaluations to the types that could actually be offered.
-//
-// The `create` verdict is the same OpCreate question computeCollectionActions
-// asks for a list response, so a type's verdict here cannot diverge from the
-// one on GET /api/v1/{plural}. UI hint only: the write endpoint re-authorizes
-// (affordances_contract_test.go pins that invariant).
-//
-// This loops over entity types, so it resolves the principal's Request ONCE and
-// reuses it. Going through the top-level ACL entry point per type would rebuild
-// that scope every iteration — and role resolution walks `member-of` through
-// the store, so an N-type metamodel would pay N graph traversals on every app
-// load. Reusing the scope is exactly what it exists for.
+// the form id to create it with. A type is present only when a create form
+// resolves for it and the ACL permits `create`, the same OpCreate question
+// computeCollectionActions asks. It is a UI hint: the write endpoint
+// re-authorizes. The form lookup runs first so only offerable types reach the
+// ACL, and the principal's Request is resolved once for the whole loop.
 func (h *viewsHandler) inlineCreateForms(ctx context.Context) map[string]string {
 	s := h.schema()
 	mayCreate := h.createAuthorizer(ctx)
 
 	var out map[string]string
 	for name := range s.Meta.Entities {
-		// Form lookup first: it is a pure config read, so a type nothing can
-		// create never costs an authorization.
 		formID := createFormForType(h.schema().Cfg, name)
 		if formID == "" {
 			continue
@@ -1354,24 +1201,13 @@ func findListByEntityType(s *Schema, entries []NavigationEntry, entityType strin
 	return ""
 }
 
-// resolveRelationColumns returns, for every row and every relation column,
-// the display titles of that row's related entities: result[rowID][columnIndex].
-// Property columns have no entry.
-//
-// It is batched per section (TKT-1U8XYN): one relation query per (column,
-// row type) — the row entity's own type anchors the direction inference, since
-// a section's rows come from a traversal and the type is only known per row —
-// then ONE content-free header read for every target of every column. The
-// former shape was one relation query plus one entity load per row per
-// column, which put a project view with a 40-row work table at over a
-// thousand statements.
-//
-// Targets are gated and redacted through the same viewReader seam as before
-// (DEC-ZBI39P), now over headers: a neighbor the principal may not read is
-// dropped, and a survivor whose display property is hidden falls back to its
-// id (BUG-R9EHKV). A viewReader without the header capability degrades to the
-// whole-entity Filter over the same batch — strictly more data, never less
-// gating.
+// resolveRelationColumns returns, for every row and relation column, the display
+// titles of that row's related entities: result[rowID][columnIndex]. Property
+// columns have no entry. It runs one relation query per (column, row type) and
+// one header read for all targets. Targets are gated and redacted through
+// viewReader: an unreadable neighbor is dropped, and a survivor whose display
+// property is hidden falls back to its id. A viewReader without the header
+// capability uses the whole-entity Filter over the same batch.
 func (h *viewsHandler) resolveRelationColumns(
 	ctx context.Context, s *Schema, columns []dataentryconfig.ListColumn, rows []*entityPkg.Entity,
 ) map[string]map[int][]string {
@@ -1421,16 +1257,11 @@ func (h *viewsHandler) relationColumnTargets(
 			q := store.RelationQuery{EntityIDs: ids, Type: col.Relation, Direction: relationDirection(dir)}
 			for r, err := range svc.Store.ListRelations(ctx, q) {
 				if err != nil {
-					// A view is a presentation surface; a section renders what it
-					// could load, but never quietly — the operator sees the fault.
 					slog.Warn("dataentry: view section relation column truncated; store read failed",
 						"relation", col.Relation, "type", typ, "rows", len(ids), "err", err)
 					break
 				}
 				rowID, targetID := r.From, r.To
-				// A content-scoped edge is served only with the face of its
-				// source that owns it (BUG-ISJHML): the row's face when the row
-				// is the source; see incomingOwnedAtZero for an incoming edge.
 				sourceFace := rowFace[rowID]
 				if dir.IsIncoming() {
 					rowID, targetID = r.To, r.From
@@ -1500,7 +1331,6 @@ func visibleHeaders(
 	if hf, ok := vr.(visibility.HeaderFilterer); ok {
 		visible = hf.FilterHeaders(ctx, headers)
 	} else {
-		// No header capability: gate the same batch as whole entities.
 		ents := make([]*entityPkg.Entity, 0, len(headers))
 		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{IDs: ids, Faces: sel}) {
 			if err != nil {
@@ -1528,10 +1358,6 @@ func visibleHeaders(
 // viewsHandler is at its plimsoll method load line.
 func writeViewError(w http.ResponseWriter, r *http.Request, vr visibility.Reader, id string, err error, absent func()) {
 	if errors.Is(err, errNoFaceInWorld) {
-		// The entity EXISTS and this caller may read it; it simply has no face
-		// in the world they asked for — the ordinary state of an unpublished
-		// draft. Answer with the face that does exist plus a marker, so the
-		// page can offer a way through rather than a dead end (BUG-1).
 		absent()
 		return
 	}

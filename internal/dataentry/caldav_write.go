@@ -57,48 +57,25 @@ func (b *caldavBackend) PutCalendarObject(
 	case hasExisting:
 		entityID = existing.EntityID
 	default:
-		// A resource we have no alias for. It may still correspond to an
-		// existing entity if the client is writing back a to-do we served, in
-		// which case the UID carries our own <type>--<id>@rela form.
 		if t, id, split := splitFeedUID(in.Todo.UID); split && t == cfg.EntityType {
 			entityID = id
 		}
 	}
 
 	if entityID == "" {
-		// No alias and no rela-shaped UID: nothing on this server has ever
-		// corresponded to this resource, so it is a genuine client-composed
-		// create.
 		return b.createFromTodo(ctx, name, href, m, in)
 	}
-	// A PUT of a to-do this principal has no alias for in this collection is
-	// the client putting it here: a move, or a copy to a second list. One with
-	// an alias is an edit of what the client already holds here.
 	return b.updateFromTodo(ctx, name, href, m, in, entityID, !hasExisting)
 }
 
-// checkPreconditions enforces If-Match / If-None-Match.
+// checkPreconditions enforces If-Match / If-None-Match, so a client that has
+// been offline cannot overwrite a change made elsewhere (412).
 //
-// Returning 412 on a stale If-Match is what stops a client that has been
-// offline from overwriting a change made elsewhere.
-//
-// The comparison is against the ETag the resource WOULD BE SERVED RIGHT NOW,
-// re-rendered here, not against any cached copy. Caching it in the alias table
-// looked like a cheap way to skip the render, but that value is refreshed only
-// by CalDAV writes — so any rela-side edit (the SPA, the CLI, MCP, an
-// automation, a git pull) leaves it stale, and the two ETags drift.
-//
-// Both consequences are data-loss bugs, and both were reproduced:
-//   - the client presents the tag the server JUST served it and gets a
-//     permanent 412, because the stored copy is older. Retrying cannot help:
-//     only a successful CalDAV write refreshes the stored tag, and that is
-//     precisely what is being refused. The client wedges.
-//   - a client holding the STALE tag succeeds, silently overwriting the newer
-//     rela-side edit — the exact overwrite this precondition exists to stop.
-//
-// This is the same rule renderObject states for the render itself: two call
-// sites deriving a conditional-request value independently is how conditional
-// requests start failing for no visible reason.
+// The comparison is against the ETag the resource would be served RIGHT NOW,
+// re-rendered here, never a cached copy: a cached tag goes stale on any
+// rela-side edit, which either wedges the client on a permanent 412 or lets a
+// stale tag overwrite a newer edit. A resource without an alias may still
+// exist under its derived href, so a missing alias alone never fails If-Match.
 func (b *caldavBackend) checkPreconditions(
 	ctx context.Context, opts *caldav.PutCalendarObjectOptions,
 	collection, href string, m *caldavMapper, existing caldavalias.Alias, hasExisting bool,
@@ -107,7 +84,6 @@ func (b *caldavBackend) checkPreconditions(
 		return nil
 	}
 	if opts.IfNoneMatch.IsSet() && hasExisting {
-		// "*" or any etag: the client asserted the resource is absent.
 		return webdav.NewHTTPError(http.StatusPreconditionFailed,
 			errors.New("caldav: resource already exists"))
 	}
@@ -118,21 +94,10 @@ func (b *caldavBackend) checkPreconditions(
 	if etagErr != nil {
 		return webdav.NewHTTPError(http.StatusBadRequest, etagErr)
 	}
-	// No alias does NOT mean no resource. A to-do rela has served but that no
-	// client has yet written back has no alias — it is addressed by the DERIVED
-	// href (<type>--<id>@rela.ics), and objectFor mints that on the fly. Failing
-	// the precondition here made every such resource permanently unwritable: the
-	// client holds a valid ETag, gets 412, and cannot recover, because only a
-	// successful write would create the alias that lets the check pass.
-	//
-	// Reproduced against Apple Reminders: toggling a never-before-synced to-do
-	// reverted every time, with the client retrying the same doomed PUT.
 	if !hasExisting {
 		derivedUID := strings.TrimSuffix(href, ".ics")
 		t, id, ok := splitFeedUID(derivedUID)
 		if !ok || t != m.cfg.EntityType {
-			// Not a derived href either, so nothing exists at this path: the
-			// client asserted a precondition against a resource that is not there.
 			return webdav.NewHTTPError(http.StatusPreconditionFailed,
 				errors.New("caldav: etag mismatch"))
 		}
@@ -176,10 +141,11 @@ func (b *caldavBackend) currentETag(
 
 // createFromTodo creates a new entity for a client-originated to-do.
 //
-// The client chose the href and UID (Apple uses a bare UUID for both), neither
-// of which can be a rela entity id, so the alias is what links them. Written
-// AFTER the entity exists: an alias pointing at a nonexistent entity would make
-// every later request 404.
+// The client chose the href and UID, neither of which can be a rela entity
+// id, so the alias links them. It is written AFTER the entity exists. A
+// denied create answers notFoundHere, the same 404 as every "nothing here",
+// so a caller cannot tell "create refused" from "resource exists but hidden".
+// In a dynamic collection the entity is linked through linkToDriver.
 func (b *caldavBackend) createFromTodo(
 	ctx context.Context, collection, href string, m *caldavMapper, in inboundTodo,
 ) (*caldav.CalendarObject, error) {
@@ -193,25 +159,13 @@ func (b *caldavBackend) createFromTodo(
 	}
 	created, err := b.app.entityManager.CreateEntity(ctx, newEntity, entitypkg.CreateOptions{})
 	if err != nil {
-		// A DENIED create has no stored entity to serve back, so the
-		// accept-and-show-the-truth answer used for updates is unavailable —
-		// there is no truth yet. 404 is the honest reply: nothing exists at this
-		// href, which is exactly what the client should conclude. Unlike a
-		// refused UPDATE, this leaves no divergent local copy to reconcile,
-		// because the client's item never became a server resource.
 		var denied *acl.ForbiddenError
 		if errors.As(err, &denied) {
-			// Same 404, same message as every other "nothing here" — see
-			// notFoundHere. A create-denial that named itself would let a caller
-			// separate "create refused" from "resource exists but hidden".
 			return nil, notFoundHere()
 		}
 		return nil, caldavWriteError(err)
 	}
 
-	// A DYNAMIC collection is defined by a relation, so an entry created inside
-	// one is not a member until that edge exists. See linkToDriver for why a
-	// failure here deletes the entity rather than leaving it.
 	if linkErr := b.linkToDriver(ctx, collection, created.Entity.Ref()); linkErr != nil {
 		return nil, linkErr
 	}
@@ -231,25 +185,19 @@ func (b *caldavBackend) createFromTodo(
 }
 
 // attachToDriver creates the relation that makes an entity a member of a
-// dynamic collection. A no-op for static collections, and idempotent: an entry
-// that is already a member reports success.
+// dynamic collection. It is a no-op for static collections and idempotent
+// for an entry that is already a member.
 //
-// With joining set, the write is the client putting the entity into this
-// collection, and on a single-valued membership it leaves the other one (see
-// singleMemberships). Without it, the write is an edit of a to-do the client
-// holds here already, and the membership is only re-asserted: a stale edit
-// from a list the entity has since moved out of must not move it back. The
-// bound then refuses the edge, with a CardinalityError.
-//
-// It has NO side effect on the entity. Whether a failure to attach should undo
-// anything depends on which flow is calling — see linkToDriver (create) and
-// updateFromTodo (update), which decide that differently and for good reason.
+// With joining set, a single-valued membership leaves the other collection
+// (see singleMemberships). Without it, the membership is only re-asserted, so
+// a stale edit cannot move the entity back. It has NO side effect on the
+// entity; linkToDriver and updateFromTodo decide what a failure undoes.
 func (b *caldavBackend) attachToDriver(
 	ctx context.Context, collection string, member entitypkg.Ref, joining bool,
 ) error {
 	dyn, driverID, ok := b.resolveDynamic(ctx, collection)
 	if !ok {
-		return nil // static collection: membership needs no edge
+		return nil
 	}
 	key := b.membershipKey(dyn, driverID, member)
 	var others []entitypkg.RelationKey
@@ -261,18 +209,11 @@ func (b *caldavBackend) attachToDriver(
 	}
 	var err error
 	if len(others) > 0 {
-		// A single-valued membership: joining this collection leaves the
-		// other, in one atomic replace (TKT-65LVAK). A client move is a PUT
-		// here and then a DELETE against the old collection; the create
-		// alone would be refused by the bound before that DELETE arrives.
 		_, err = b.app.entityManager.ReplaceRelations(ctx,
 			[]entitymanager.RelationCreate{{Key: key}}, others)
 	} else {
 		_, err = b.app.entityManager.CreateRelation(ctx, key, entitypkg.RelationOptions{})
 	}
-	// Already a member: the normal case on every edit, since an ordinary
-	// check-off re-asserts the membership it already has. Idempotent, never an
-	// error.
 	if err == nil || errors.Is(err, entitymanager.ErrRelationAlreadyExists) {
 		return nil
 	}
@@ -312,7 +253,6 @@ func singleMemberships(
 		if rel.Identity() == key {
 			continue
 		}
-		// An outgoing bound of a content-scoped relation counts per face.
 		if !incoming && rel.FromFace != key.FromFace {
 			continue
 		}
@@ -350,41 +290,13 @@ func (b *caldavBackend) membershipKey(
 	return entitypkg.RelationKey{From: member.ID, FromFace: tail, Type: dyn.Relation, To: driverID}
 }
 
-// linkToDriver attaches a NEWLY CREATED entity to its dynamic collection,
-// deleting that entity if the edge cannot be made.
+// linkToDriver attaches a NEWLY CREATED entity to its dynamic collection and
+// deletes that entity, non-cascading, if the edge cannot be made. Membership
+// IS the relation, so an entity without it would be an invisible orphan.
 //
-// # Why the entity is DELETED when the edge fails
-//
-// Membership in a dynamic collection IS the relation. An entity created without
-// it lands in the entity type but in no collection at all: it vanishes from the
-// client on the next sync, and it is invisible in every CalDAV view, so the user
-// has no way to find or fix it. That is worse than the create having failed —
-// a failed create is visible and retryable, an orphan is neither.
-//
-// So the create is undone. This is a compensating delete, not a transaction:
-// entitymanager exposes no Tx, and store.Tx would not help uniformly anyway —
-// fsstore keeps writes already made (no rollback, a deliberate reduced
-// guarantee), so the same compensation would be needed there regardless.
-//
-// The delete is NON-cascading: the entity is seconds old and its only possible
-// edge is the one that just failed to be created, so a cascade could only reach
-// relations some concurrent writer added — which are not ours to remove.
-//
-// # ONLY the create flow may call this
-//
-// The justification above rests entirely on the entity being seconds old and
-// wholly ours. On an EDIT of a pre-existing to-do none of that holds: the entity
-// is arbitrarily old, its patch already succeeded, and its content is the user's
-// — so undoing an attach failure by deleting it destroys data the caller never
-// asked to remove, for an assignment that merely could not be recorded. An ACL
-// deny makes that routine rather than exotic: a principal allowed to edit
-// to-dos but not to create the membership relation would lose one on every
-// ordinary check-off. The update flow therefore calls attachToDriver directly
-// and never this (BUG-2ATX4H).
-//
-// If the compensation ITSELF fails, the orphan survives and the error says so.
-// Nothing better is available at this layer, and a silent success would leave
-// the user with a to-do they cannot see.
+// ONLY the create flow may call this. On an edit the entity is arbitrarily old
+// and holds the user's data, so the update flow calls attachToDriver directly.
+// If the compensating delete itself fails, the error says so.
 func (b *caldavBackend) linkToDriver(ctx context.Context, collection string, member entitypkg.Ref) error {
 	entityID := member.ID
 	err := b.attachToDriver(ctx, collection, member, true)
@@ -400,6 +312,12 @@ func (b *caldavBackend) linkToDriver(ctx context.Context, collection string, mem
 }
 
 // updateFromTodo applies a client edit to an existing entity.
+//
+// A not-found from the manager may be a transient fault, so absence is
+// confirmed through entityIsGone before the permanent staleWriteResponse; an
+// unreadable row gets the same answer, so a 503 cannot confirm it exists.
+// Writing into a dynamic collection adds a membership through attachToDriver,
+// never linkToDriver, whose compensating delete would destroy user data.
 func (b *caldavBackend) updateFromTodo(
 	ctx context.Context, collection, href string, m *caldavMapper, in inboundTodo, entityID string,
 	joining bool,
@@ -413,27 +331,10 @@ func (b *caldavBackend) updateFromTodo(
 		return nil, caldavWriteError(err)
 	}
 	if ambiguous {
-		// No face to write is a permanent refusal, answered as one.
 		return b.refusedWriteResponse(ctx, collection, href, m, in, entityID)
 	}
 	res, err := b.app.entityManager.PatchEntity(ctx, addr, patch)
 	if errors.Is(err, entitymanager.ErrEntityNotFound) || errors.Is(err, store.ErrNotFound) {
-		// The alias points at an entity the write could not find, which USUALLY
-		// means it was deleted in rela (the SPA, the CLI, a git pull) while this
-		// client still held the resource — and the deletion should win.
-		//
-		// But "not found" here is not a trustworthy signal on its own:
-		// entitymanager collapses ANY GetEntity failure into ErrEntityNotFound
-		// (manager.go, "structural, not textual"), so malformed frontmatter from
-		// a bad merge, a transient EIO, or a dropped database connection all arrive
-		// looking like a deletion. Answering those with staleWriteResponse would
-		// be unrecoverable: the 404 is deliberately permanent so the client
-		// DROPS its local copy, and the entity is still on disk — the user loses
-		// the only copy they were looking at, to a transient fault.
-		//
-		// So confirm the absence positively before acting on it. A row the
-		// caller can no longer read is gone from their view too, and must get
-		// the same answer, or the 503 below would confirm that it exists.
 		if b.entityIsGone(ctx, m, entityID) || entityIsHidden(ctx, b.app, entityID) {
 			return nil, staleWriteResponse()
 		}
@@ -448,39 +349,10 @@ func (b *caldavBackend) updateFromTodo(
 		return nil, caldavWriteError(err)
 	}
 
-	// An EXISTING entity written into a dynamic collection it does not yet
-	// belong to is an assignment: the client put this to-do in this list.
-	// Without the edge the write is a silent no-op — the client shows it in the
-	// collection and the next poll does not.
-	//
-	// Additive unless the membership is single-valued: a client "move" and a
-	// client "copy-to-second-list" are indistinguishable on the wire (both are
-	// a PUT of the same UID into another collection), and Thunderbird supports
-	// assigning one to-do to several calendars. Dropping the old edge would
-	// silently break that, while adding one models it exactly: membership is a
-	// relation, so belonging to two projects is a legal graph state. A real
-	// move sends a DELETE against the source collection afterwards, which
-	// removes the other edge. Only a relation that allows one membership
-	// (max_outgoing or max_incoming 1) makes the join a move, and only when
-	// the client is joining this collection, not editing what it holds here
-	// (attachToDriver).
-	//
-	// A to-do served under its derived href has no alias until the client
-	// writes it, so a stale first edit of one in a collection the entity has
-	// left counts as joining it. The alias closes that after the first write.
-	// NEVER linkToDriver here: its compensating delete is a create-flow undo and
-	// would destroy this already-patched, arbitrarily-old entity (BUG-2ATX4H).
-	// The patch has landed and is the user's data; a membership that could not
-	// be recorded is not a reason to remove it.
 	if linkErr := b.attachToDriver(ctx, collection, res.Entity.Ref(), joining); linkErr != nil {
 		var linkDenied *acl.ForbiddenError
 		_, overBound := errors.AsType[*entitymanager.CardinalityError](linkErr)
 		if errors.As(linkErr, &linkDenied) || overBound {
-			// Same answer as a deny on the patch itself: accept, serve the
-			// stored state, withhold the ETag so the client refetches and
-			// reconciles. The edit is kept, the assignment is not made. A
-			// bound the membership would exceed is as permanent as a deny,
-			// so a 409 would have the client retry it forever.
 			return b.refusedWriteResponse(ctx, collection, href, m, in, entityID)
 		}
 		return nil, caldavWriteError(linkErr)
@@ -490,8 +362,6 @@ func (b *caldavBackend) updateFromTodo(
 	if err != nil {
 		return nil, err
 	}
-	// Refresh the stored ETag so the next If-Match compares against what the
-	// client now holds.
 	if err := b.app.caldavAliases.Put(ctx, caldavalias.Alias{
 		Principal:  aliasPrincipal(ctx),
 		Collection: collection, Href: href, UID: in.Todo.UID,
@@ -499,10 +369,6 @@ func (b *caldavBackend) updateFromTodo(
 	}); err != nil {
 		return nil, fmt.Errorf("caldav: record alias: %w", err)
 	}
-	// A `read_only:` field the client sent was discarded, so what we stored is
-	// NOT what was submitted and RFC 4791 §5.3.4 forbids a strong ETag here.
-	// Withholding it is also what makes the client re-read and show the real
-	// value, instead of caching its own rejected edit as current.
 	if m.droppedReadOnly(in) {
 		obj.ETag = ""
 	}
@@ -510,126 +376,46 @@ func (b *caldavBackend) updateFromTodo(
 }
 
 // refusedWriteResponse answers a DENIED write by accepting it and serving the
-// entity as it actually stands — unchanged.
+// entity as it actually stands, unchanged.
 //
-// # Why a refusal is reported as success
-//
-// Because the alternative does not work, and we do not control the clients.
-// A CalDAV client is software we cannot fix; when it mishandles a refusal the
-// user is left with a to-do app showing edits that will never exist, and no
-// status code recovers it:
-//
-//   - 403 — Thunderbird classifies it as an AUTH error, never reaches the code
-//     path that discards a pending edit, and keeps the local change forever
-//     (it lives in its offline_journal SQLite table, so a restart does not
-//     clear it). Verified on the wire and in its source.
-//   - 412/409 — reaches the reconciliation prompt, but "Submit my changes
-//     anyway" re-PUTs, is refused again, and re-prompts, with no retry counter
-//     anywhere in that path. It also fires during BACKGROUND playback, so a
-//     permanently-refused item raises a blocking modal on every sync. Tried
-//     against a live client and reverted; worse than 403.
-//   - 404 — does clear the client's copy, but it is a lie about a resource we
-//     are still serving, and the user loses a live to-do from their list.
-//
-// So the honest options all fail the user. Accepting the write and serving the
-// truth back is what makes the client converge: it drops its pending state and
-// re-reads, and the user watches their unauthorized edit revert. That was
-// verified end to end — an item stuck across restarts cleared instantly.
-//
-// This is not a workaround invented here. Apple's CalendarServer, the reference
-// implementation, does exactly this for VTODO: replaceMissingToDoProperties
-// restores organizer/attendee properties a client tried to remove, keeps the
-// 2xx, and suppresses the ETag. Server-owned fields are normalized, not refused.
-//
-// # What is NOT given up
-//
-// The denial is real. entitymanager already refused the write, the entity is
-// untouched, and an audit row records it with the principal, the rule, and the
-// attempted op. What changes is only what the CLIENT is told, and the client is
-// told the truth in the representation: it reads back the stored values.
-//
-// The cost is deliberate and worth naming: a caller cannot distinguish "written"
-// from "refused" by status alone, so a CalDAV client is not a way to probe
-// permissions. Anything that needs an authoritative answer uses the API, which
-// still answers 403.
-//
-// # The ETag MUST be suppressed
-//
-// RFC 4791 §5.3.4 and RFC 9110 §9.3.4: a server may only return a strong ETag
-// on PUT when the stored representation is octet-equal to what was submitted.
-// Here it never is — we stored nothing. Returning one would let the client cache
-// a tag for content it does not have, and a later If-Match against it would
-// succeed on a write we would have refused. Withholding it is also what MAKES
-// this work: with no valid tag the client must re-read to learn the state, which
-// is precisely the reconciliation we want.
+// CalDAV clients mishandle every refusal status (403 keeps the edit forever,
+// 412/409 loop on a modal, 404 drops a live to-do), so serving the truth back
+// is what makes them converge. The denial is still real and audited. The ETag
+// MUST be suppressed (RFC 4791 §5.3.4): nothing was stored. With no readable
+// entity it answers notFoundHere, never 403, which would be an existence
+// oracle. See docs/caldav-clients.md.
 func (b *caldavBackend) refusedWriteResponse(
 	ctx context.Context, collection, href string, m *caldavMapper, in inboundTodo, entityID string,
 ) (*caldav.CalendarObject, error) {
 	src := feedEntitySource{app: b.app}
 	e, found, err := src.getEntity(ctx, m.cfg.EntityType, entityID)
 	if err != nil || !found {
-		// No readable entity, so there is nothing truthful to hand back.
-		//
-		// This answers the SAME 404 a nonexistent href gets, and that is the
-		// whole point. getEntity returns !found for BOTH "absent" and "you may
-		// not read it" — deliberately indistinguishable (RR-NGMI). Returning 403
-		// here would undo that: a 403 would mean "an entity exists at this href
-		// and you cannot read it", against 404 for "nothing here", which is a
-		// clean existence oracle for any href an attacker can name. Entity
-		// existence is the thing the read gate is protecting.
-		//
-		// The message is byte-identical to the create-denial 404 for the same
-		// reason: two distinguishable 404s are still an oracle, just a quieter
-		// one.
 		return nil, notFoundHere()
 	}
 	obj, err := b.renderObject(ctx, collection, m, e, href, in.Todo.UID)
 	if err != nil {
 		return nil, err
 	}
-	// Stored bytes differ from the submitted ones (we stored none), so no ETag.
 	obj.ETag = ""
 	return obj, nil
 }
 
 // notFoundHere is the ONE answer for "there is nothing you can address at this
-// href", whatever the underlying reason.
-//
-// Four distinct conditions share it deliberately: the resource never existed,
-// it exists but the principal may not read it, the collection refuses creates,
-// and the entity was deleted after we served it. Distinguishing any of them
-// would leak the fact the read gate exists to hide — whether a given entity
-// EXISTS (RR-NGMI). The message carries no entity id, no type, and no hint of
-// which case fired.
-//
-// This costs an operator some debuggability, which is the accepted trade: the
-// audit log records the denial with the principal, the rule and the attempted
-// op, so the answer is available server-side to someone authorized to have it.
+// href": the resource never existed, is unreadable, the collection refuses
+// creates, or the entity was deleted after we served it. Telling these apart
+// would leak whether an entity EXISTS. The message carries no id, no type and
+// no hint of which case fired; the audit log has the details.
 func notFoundHere() error {
 	return webdav.NewHTTPError(http.StatusNotFound,
 		errors.New("caldav: no such to-do"))
 }
 
-// entityIsGone re-reads the entity to confirm it is genuinely absent, rather
-// than merely unreadable right now.
-//
-// Only a positive not-found answer justifies the permanent 404, because that
-// response tells the client to discard its copy. Anything else — an I/O error,
-// a parse failure, a dead connection — is reported as retryable, so a transient
-// fault costs a retry instead of the user's data.
-// The probe goes to the STORE, not through the ACL read path: the resolver maps
-// every store error to (nil,false,nil) on purpose, so that a denied read is
-// indistinguishable from a real miss — which is right for the read gate and
-// useless here, where telling those apart is the whole question. This asks only
-// "does this row exist?", never returning content, so it discloses nothing the
-// caller has not already proven it may write to (the alias binds this href to
-// this entity, and the write itself is separately authorized).
-//
-// An address naming a face is gone when that face is not stored: a faced
-// to-do is served under its face's address ([feedUID]), so deleting the face
-// retires the resource. A bare id is gone when no face of it is stored; a
-// faced type has no zero-face row (DEC-NPZICR), so probing the zero face
-// alone would call a live faced entity deleted.
+// entityIsGone reports whether the entity is positively absent, not merely
+// unreadable right now. Only that justifies the permanent 404; any other
+// failure is retryable. The probe goes to the STORE, not the ACL read path,
+// because the resolver maps every error to a miss. It returns no content, and
+// the caller has already proven write access to this href. A faced address is
+// gone when its face is not stored; a bare id when no face is stored.
 func (b *caldavBackend) entityIsGone(ctx context.Context, _ *caldavMapper, addr string) bool {
 	parsed, err := entitypkg.ParseAddress(addr)
 	if err != nil {
@@ -682,55 +468,21 @@ func entityIsHidden(ctx context.Context, app *App, addr string) bool {
 
 // staleWriteResponse answers a PUT whose alias points at an entity that is gone.
 //
-// # The alias table IS the tombstone
-//
-// An alias is a durable record that this server once served this resource. So
-// "alias exists, entity does not" is proof the entity was deleted after we
-// served it — an inference drawn entirely from server-side state. It therefore
-// holds no matter what the client does, unlike a marker property echoed in the
-// request body, which RFC 5545 3.8.8.2 lets any client silently drop ("User
-// agents ... can ignore them").
-//
-// It is also indifferent to HOW the entity was deleted, which is what makes it
-// work on the filesystem backend. A `rm`, a `git pull`, or an edit while the
-// server was stopped fires no event and reaches no hook — fsstore's startup
-// scan simply adopts whatever is on disk (see syncEntities), so the deletion
-// leaves no trace anywhere else. Asking "is it there now?" needs no event.
-//
-// # Why the alias is KEPT
-//
-// Deleting it would discard the very evidence the tombstone rests on: the next
-// PUT would find no alias, read as a create, and resurrect the entity. Keeping
-// it makes the 404 stable across every retry.
-//
-// 404 rather than 409 because the condition is permanent. A CalDAV client reads
-// 409 as "retry later" and re-sends every sync cycle forever; 404 tells it to
-// drop its local copy, which is the outcome that matches the deletion.
+// The alias table IS the tombstone: an alias without an entity proves a
+// deletion, however it happened. The alias is KEPT so the next PUT is not read
+// as a create that resurrects the entity. It answers 404 rather than 409 since
+// the condition is permanent, with the same opaque body as every other miss.
 func staleWriteResponse() error {
-	// Deliberately the same opaque 404 as every other "nothing here": a message
-	// naming the deletion would confirm the entity USED to exist, which is the
-	// same secret as confirming it exists now.
 	return notFoundHere()
 }
 
 // unlinkFromDriver removes the membership a DELETE against a dynamic collection
 // addresses, and reports whether the entity itself was also disposed of.
+// handled=false means the collection is static, so the caller applies
+// `on_delete:` to the entity.
 //
-// handled=false means the collection is static — there is no membership to
-// remove, so the caller applies `on_delete:` to the entity as before.
-//
-// # Removing the LAST membership
-//
-// An entity that now belongs to nothing is the only genuinely ambiguous case,
-// and [dataentryconfig.CalDAVUnlinkPolicy] decides it. Under the default
-// `auto`, the relation's own `min_outgoing` is the answer: a relation declared
-// mandatory means an orphan violates the operator's own schema, so `on_delete:`
-// applies; an optional one means belonging to nothing is a legal state and the
-// entity is kept.
-//
-// The edge is removed FIRST in either case. If the subsequent on_delete fails
-// the membership is still gone, which is the half the user actually asked for —
-// the reverse order could leave a cancelled entity still sitting in the list.
+// Removing the LAST membership is decided by [dataentryconfig.CalDAVUnlinkPolicy].
+// The edge is removed FIRST, so a failing on_delete still leaves it gone.
 func (b *caldavBackend) unlinkFromDriver(
 	ctx context.Context, collection, addr string,
 ) (handled, entityDisposed bool, err error) {
@@ -767,9 +519,6 @@ func (b *caldavBackend) unlinkFromDriver(
 	}
 	patch, hard, configured := m.deletePatch()
 	if !configured {
-		// No on_delete to apply. The membership is already gone, which is what
-		// the client asked for — refusing now would be a lie about what
-		// happened.
 		return true, false, nil
 	}
 	if hard {
@@ -878,7 +627,7 @@ func (b *caldavBackend) disposeOnLastUnlink(dyn dataentryconfig.CalDAVDynamicCol
 		return false
 	case dataentryconfig.CalDAVUnlinkDelete:
 		return true
-	default: // auto
+	default:
 		def, ok := b.app.State().Meta.Relations[dyn.Relation]
 		if !ok {
 			return false
@@ -890,11 +639,11 @@ func (b *caldavBackend) disposeOnLastUnlink(dyn dataentryconfig.CalDAVDynamicCol
 
 // DeleteCalendarObject applies the collection's configured delete behavior.
 //
-// The default is a STATUS TRANSITION, not an entity delete: the client gesture
-// is a swipe, rela has no soft-delete, and DeleteEntity cascades to relations —
-// so a mis-swipe would destroy a graph node and its edges. An operator opts into
-// a real delete with `on_delete: {hard: true}`; with no on_delete configured at
-// all the request is refused rather than guessed.
+// The default is a STATUS TRANSITION, not an entity delete. An operator opts
+// into a real delete with `on_delete: {hard: true}`; with no on_delete the
+// request is refused. A DELETE in a dynamic collection removes only the
+// membership. The alias is KEPT on every path, so a replayed PUT updates the
+// entity instead of creating a duplicate or reappearing under a new href.
 func (b *caldavBackend) DeleteCalendarObject(ctx context.Context, p string) error {
 	name, href, ok := b.splitPath(p)
 	if !ok || href == "" {
@@ -910,20 +659,15 @@ func (b *caldavBackend) DeleteCalendarObject(ctx context.Context, p string) erro
 		return webdav.NewHTTPError(http.StatusNotFound, errors.New("caldav: not found"))
 	}
 
-	// A DELETE against a DYNAMIC collection names a MEMBERSHIP, not the entity:
-	// the user removed this to-do from THIS project, not from existence.
-	// Applying on_delete: here would cancel it everywhere — in the static
-	// collection, in every other project, and in the web app — which is data
-	// loss from a gesture that meant "take it out of this list".
 	unlinked, entityGone, err := b.unlinkFromDriver(ctx, name, entityID)
 	if err != nil {
 		return err
 	}
 	if unlinked && !entityGone {
-		return nil // membership removed; the entity itself survives
+		return nil
 	}
 	if unlinked && entityGone {
-		return nil // last membership: on_delete already applied below-the-line
+		return nil
 	}
 
 	patch, hard, configured := m.deletePatch()
@@ -933,38 +677,13 @@ func (b *caldavBackend) DeleteCalendarObject(ctx context.Context, p string) erro
 	}
 
 	if hard {
-		// The alias is deliberately KEPT: it becomes the tombstone that lets a
-		// later PUT from a client that has not synced be refused rather than
-		// resurrecting this entity. See staleWriteResponse.
 		if err := b.deleteAddressed(ctx, entityID); err != nil {
 			return caldavWriteError(err)
 		}
 		return nil
 	}
 
-	if err := b.patchEntity(ctx, m, entityID, patch); err != nil {
-		return err
-	}
-	// The alias is KEPT, exactly as on the hard-delete path.
-	//
-	// Dropping it looked right — the resource is gone from the client's view —
-	// but it throws away the only record that this href belongs to this entity,
-	// and two bugs follow immediately:
-	//
-	//   - the resource comes BACK under a different href. objectFor falls back
-	//     to the derived <type>--<id>@rela.ics form when no alias exists, so if
-	//     the entity still matches `where:` after the transition it reappears
-	//     with a new identity, which a client reads as delete-plus-create.
-	//   - an offline client replaying its cached PUT creates a SECOND entity.
-	//     With no alias, and a client-minted UUID that cannot satisfy
-	//     splitFeedUID, the write falls through to createFromTodo — the exact
-	//     duplication registerCalDAVRoutes refuses to start without an alias
-	//     service to prevent.
-	//
-	// Both were reproduced. Keeping the alias means the href stays bound to the
-	// entity, so a replayed PUT is an update of the transitioned entity rather
-	// than a create.
-	return nil
+	return b.patchEntity(ctx, m, entityID, patch)
 }
 
 // entityIDFor resolves the entity behind a resource href, via the alias or the
@@ -980,8 +699,6 @@ func (b *caldavBackend) entityIDFor(ctx context.Context, collection, href string
 	if !ok {
 		return "", false
 	}
-	// The type is the family's, read over every stored face: a faced type has
-	// no zero-face row. A read error answers "" and so refuses.
 	if typ := storedTypeOf(ctx, b.app.Services().Store, addressID(id)); typ == "" || typ != m.cfg.EntityType {
 		return "", false
 	}
@@ -1052,49 +769,12 @@ func (b *caldavBackend) resolveEntityID(
 
 // caldavWriteError maps a write failure onto a CalDAV status.
 //
-// Most rela write failures are soft by policy (DEC-HWZHA) and never reach here.
-//
-// The status choice is load-bearing for client behavior, not cosmetic. A
-// CalDAV client treats 409 as "retry later" and will re-send the same request
-// on every sync cycle, forever, with no user-visible signal — so a PERMANENT
-// condition must never be reported as 409 or the client wedges. Only a
-// genuinely transient conflict (a unique-constraint collision that a later
-// write could win) earns it.
-//
-// # A denied write stays 403, and 412 was tried and reverted
-//
-// This is worth writing down because 412 looks like an improvement and is not.
-//
-// The observed problem: Thunderbird never discards a refused edit. It classifies
-// 403 as an auth error (CalDavRequest.sys.mjs: `get authError()` covers 401 and
-// 403) and only 409/412 reach `promptOverwrite`, the one path that can drop a
-// pending local change. So on 403 the edit stays in its local offline journal —
-// SQLite, so it survives a restart — is re-sent every sync, and the user goes on
-// seeing a change that will never exist. Mozilla bugs 1968933 / 2048378 / 1220745.
-//
-// 412 does reach that path, which is why it was tried. It is still worse:
-//
-//   - The dialog LIES. It reads "Item changed on server … Submitting your
-//     changes will overwrite the changes made on the server." Nothing changed on
-//     the server; the write was refused. Contention is the only cause the dialog
-//     contemplates.
-//   - "Submit my changes anyway" LOOPS. It re-PUTs with aIgnoreEtag=true and, for
-//     a permanent denial, gets 412 again and re-prompts. There is no retry
-//     counter or loop guard in that path. (A real etag race terminates because
-//     the retry drops If-Match and then succeeds — which is why the missing guard
-//     has never bitten.)
-//   - It fires in the BACKGROUND. playbackOfflineItems calls modifyItem with no
-//     user interaction and no suppression, so a permanently-refused item raises a
-//     blocking modal on every refresh — every 30 minutes, per item, indefinitely.
-//
-// So the choice is between a silent stale copy (403) and a recurring modal the
-// user cannot resolve (412). Silent-but-stable wins: it is recoverable by
-// removing and re-adding the calendar, where the modal is not escapable at all.
-//
-// The real fix is to not refuse the write. A collection that should not accept
-// client edits wants `read_only:` (accept the write, discard the field) rather
-// than an ACL denial — every write succeeds, Thunderbird re-fetches after any
-// 2xx, and no pending state is ever created. See docs/caldav-clients.md.
+// A client retries 409 forever, so only a transient conflict earns it; a
+// permanent condition such as a bound the write would exceed gets the deny
+// status. A denied write stays 403: 412 was tried and reverted because it
+// loops on a modal in Thunderbird. A missing entity gets the opaque body of
+// an unknown href, since the manager's text would separate absent from
+// hidden. See docs/caldav-clients.md.
 func caldavWriteError(err error) error {
 	if err == nil {
 		return nil
@@ -1103,17 +783,9 @@ func caldavWriteError(err error) error {
 	if errors.As(err, &denied) {
 		return webdav.NewHTTPError(http.StatusForbidden, err)
 	}
-	// A relation bound the write would exceed is as permanent as a deny, so
-	// it gets the same status. The update flow never gets here with one: it
-	// answers it with refusedWriteResponse.
 	if _, overBound := errors.AsType[*entitymanager.CardinalityError](err); overBound {
 		return webdav.NewHTTPError(http.StatusForbidden, err)
 	}
-	// The entity is gone. Permanent from the client's perspective: 404 tells it
-	// to drop the resource, where 409 would make it retry the same doomed write
-	// every cycle. The body is the one an unknown href gets: the manager also
-	// answers not-found for a row the caller cannot read, and its text names
-	// the id, so passing it on would tell the two apart.
 	if errors.Is(err, entitymanager.ErrEntityNotFound) || errors.Is(err, store.ErrNotFound) {
 		return webdav.NewHTTPError(http.StatusNotFound, errors.New("caldav: not found"))
 	}

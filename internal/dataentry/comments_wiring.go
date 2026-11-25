@@ -114,10 +114,6 @@ func (g commentPermissionGate) HoldsPermission(ctx context.Context, subjectID, p
 	if g.policy == nil {
 		return false
 	}
-	// Mirrors the transition guard (appbuild/transitions.go):
-	// inert when no policy exists at all, fail CLOSED when one does but the
-	// Request is missing or bound to another principal — a served path that
-	// lost its middleware must not silently open commenting.
 	req, err := g.policy.RequestFrom(ctx)
 	if err != nil {
 		return false
@@ -150,18 +146,10 @@ func (h *commentsHandler) commentAuthorizer() *comments.Authorizer {
 }
 
 // aclPolicy returns the declarative policy, and whether per-principal comment
-// permissions are enforced.
-//
-// Active only for a declarative policy — the deployment that actually has roles
-// and permissions to evaluate. A typed-nil policy is active with a nil policy,
-// so the gate fails closed on that wiring bug. [acl.NopACL] and
-// [acl.ReadOnlyACL] both leave it inactive: neither carries a role model, so demanding `comment:read` under
-// them would deny every request rather than authorize anything.
-//
-// ReadOnlyACL's write refusal is enforced separately by
-// commentWritesPermitted, NOT by pretending it is a permission policy:
-// it is a process-wide switch, and conflating the two made read-only instances
-// refuse comment READS as well.
+// permissions are enforced. Only a declarative policy is active; a typed-nil
+// one is active with a nil policy, so the gate fails closed. [acl.NopACL] and
+// [acl.ReadOnlyACL] are inactive because they carry no role model.
+// ReadOnlyACL's write refusal is enforced by commentWritesPermitted.
 func (h *commentsHandler) aclPolicy() (policy *acl.Declarative, active bool) {
 	policy, _ = h.acl().(*acl.Declarative)
 	return policy, access.ModeOf(h.acl()).PolicyConfigured()
@@ -197,24 +185,11 @@ type anchorContext struct {
 	loaded bool
 }
 
-// liveAnchors returns the set of anchor refs that currently resolve on the
-// target, or nil when the set could not be determined.
-//
-// A nil result means "do not flag anything as detached": failing to load the
-// entity must not make every comment on it look orphaned. That asymmetry is
-// deliberate — a false "detached" badge on a healthy thread is more alarming,
-// and less recoverable by the user, than a missing one.
-//
-// Only PROPERTY anchors are resolved, so the caller must not consult this for a
-// section anchor: a section ref names an operator-authored view heading that
-// lives in data-entry.yaml, not on the entity, and its absence from this set
-// means "not a property", not "gone".
-//
-// ent is the entity the target gate resolved, passed in rather than re-read:
-// the gate settled which FACE the thread belongs to, and a re-read by bare id
-// lands on the default face (or, under a world, must not name a face at all).
-// Reading it twice is how a draft thread came to resolve its anchors against
-// the published body.
+// liveAnchors returns the set of property anchor refs that resolve on the
+// target, or nil when it cannot be determined; nil means "flag nothing as
+// detached". Section anchors are not resolved, so callers must not consult
+// this for them. ent is the entity the target gate resolved, passed in so the
+// anchors resolve against the face the thread belongs to.
 func (h *commentsHandler) liveAnchors(target comments.Target, ent *entity.Entity) anchorContext {
 	def, ok := h.meta().GetEntityDef(target.Type)
 	if !ok || ent == nil {
@@ -222,8 +197,6 @@ func (h *commentsHandler) liveAnchors(target comments.Target, ent *entity.Entity
 	}
 
 	refs := comments.LiveProperties(def.Properties, ent.Properties)
-	// The body is the REDACTED entity's content, so a text anchor can only ever
-	// resolve against text this principal may already read.
 	return anchorContext{properties: refs, body: comments.NewBody(ent.Content), loaded: true}
 }
 

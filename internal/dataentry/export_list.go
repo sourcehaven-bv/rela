@@ -55,38 +55,20 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 // field-redacted, capped, and wrapped in the list's renderer. The export
 // route and rela.attach_render share it. An error is one
 // [writeListPipelineError] answers.
+// Rows are field-redacted before any cell renders, and the override is chosen
+// only after the read, redaction and cap.
 func (h *exportHandler) listExportRenderer(
 	ctx context.Context, typeName string, query map[string][]string,
 ) (transform.Renderer, error) {
 	q := url.Values(query)
-	// Resolve the effective list ONCE and derive both the columns and the
-	// render override from it — see resolveEffectiveList for why these must
-	// not be looked up independently.
 	effListID, effList, haveList := h.resolveEffectiveList(q.Get("list"), typeName)
 	columns := withSchemaLabels(h.meta(), []string{typeName}, listColumnsOf(effList, haveList))
 
-	// The WHOLE ACL-scoped, filtered, sorted set — pre-pagination. Reuses the
-	// exact read path the list view uses, so export can't widen past the view.
-	// That covers the ACL, the filters, the sort and the query scope; the
-	// list's `condition:` is applied separately just below, because it lives a
-	// layer above this shared path.
 	entities, err := h.scopedEntities(ctx, typeName, query)
 	if err != nil {
 		return nil, err
 	}
-	// The list's `condition:` is applied in listPage, ABOVE the shared read
-	// path above, so it has to be applied here too — otherwise the export
-	// renders rows the list on screen excludes, and "export mirrors the list"
-	// is false for exactly the views that needed a condition to express their
-	// membership rule.
-	//
-	// Before the cap and the total, so both describe the conditioned set: the
-	// truncation notice must count the rows this export would have rendered.
 	if cond := h.listCondition(effListID); cond != nil {
-		// A condition may name `current_user`, and this path resolves no scope
-		// of its own, so nothing has stamped the identity the evaluator needs.
-		// Without this the export 500s on exactly the per-user views the
-		// condition syntax exists to express.
 		if ctx, err = h.bindConditionIdentity(ctx, typeName, query); err != nil {
 			return nil, err
 		}
@@ -95,12 +77,6 @@ func (h *exportHandler) listExportRenderer(
 			return nil, err
 		}
 	}
-	// Field-redact every row through the visibility seam before any cell is
-	// rendered (the #1188 IB-review finding): a hidden property renders as
-	// an empty cell and a hidden display property falls back to the ID.
-	// The row-gate inside Filter is idempotent over the already-scoped set
-	// (one extra batched probe for the type — structural consistency over
-	// micro-optimization).
 	entities = h.visReader.Filter(ctx, entities)
 	total := len(entities)
 	truncated := false
@@ -109,22 +85,8 @@ func (h *exportHandler) listExportRenderer(
 		truncated = true
 	}
 
-	// Override selection happens HERE — after the ACL-scoped read, the
-	// field-redaction pass, and the cap. That ordering is load-bearing: a
-	// render override can only ever be handed rows that already survived
-	// every gate, and never more of them than the cap allows.
-	//
-	// haveList needs no test of its own: resolveEffectiveList returns a zero
-	// List when it finds none, and a zero List has no ExportRender.
 	renderer := h.listTableRenderer(entities, columns, total, truncated)
 	if effList.ExportRender != "" {
-		// The built-in table renders COLUMNS, so the content-free rows the
-		// shared read path yields are exactly right for it. A script is the
-		// one list consumer that can reach `row.content`, so it — and only
-		// it — pays for the bodies. After the cap, so this loads at most
-		// listExportCap of them and never a body that was paged or gated
-		// away. See the loadBodies field for why the failure it fixes is
-		// silent rather than loud.
 		if err := h.loadBodies(ctx, entities); err != nil {
 			return nil, fmt.Errorf("%w: %w", errListLoad, err)
 		}
@@ -149,46 +111,18 @@ type listOverride struct {
 	query    map[string][]string
 }
 
-// listOverrideRenderer builds the markdown renderer for a list export that
-// configures an `export_render:` Lua script — the per-list render OVERRIDE —
-// so exporting that list uses the operator's document instead of the built-in
-// column table.
-//
-// The rows were already resolved through the ACL read path, field-redacted,
-// and capped by the caller, so the override sees exactly the ROWS the
-// on-screen view resolved, with the same property redaction. The script is a
-// fixed config value, never request input: a request may choose a transform
-// NAME, never a renderer.
-//
-// It does NOT see only what the on-screen table showed. A row reaches the
-// script as a full entity table, so a script can render the entity BODY, which
-// the column table never displays. That is intended — a report override wants
-// bodies, and the entity export path already exposes them — but note that
-// `visibility.Redact` currently leaves `Content` verbatim (the body-redaction
-// TODO in internal/visibility/policyreader.go). When body redaction lands, this
-// is one of the paths that must route through it.
-//
-// Unlike the entity path there is no failure mode to report here — a list the
-// caller may not read resolves to an empty set and renders an empty document,
-// which is what the built-in table does too. A 404 would leak the difference
-// between "no rows" and "no access".
+// listOverrideRenderer builds the renderer for a list export whose list sets an
+// `export_render:` Lua script. The caller has already ACL-scoped, field-redacted
+// and capped the rows. The script is config, never request input. The script
+// sees whole entities, including the body, which `visibility.Redact` leaves
+// verbatim; route it through body redaction when that lands. An unreadable list
+// renders an empty document, never a 404, so "no rows" and "no access" look alike.
 func (h *exportHandler) listOverrideRenderer(in listOverride) transform.Renderer {
 	lrc := lua.ListRenderContext{
 		ListID: in.listID,
 		Rows:   entitySliceRows(in.rows),
 		Query:  buildListQuery(in),
 	}
-	// ConfigID is synthetic and namespaced: the "list:" infix keeps it from
-	// colliding with the entity path's "export:<type>" for a list whose id
-	// happens to equal an entity type name.
-	//
-	// No isSafePathSegment guard here, unlike the entity path (see
-	// exportRenderer): that one validates because an entity id is REQUEST
-	// input that reaches a document cache filename. This id is neither — it
-	// is a key that matched cfg.Lists, so it is operator-authored config, and
-	// RenderListMarkdown neither caches nor shells out, so the ConfigID's only
-	// consumers are a Lua string and an error message. If a list render ever
-	// gains a disk cache, this needs the guard.
 	cfg := documentRenderConfig{ConfigID: "export:list:" + in.listID, Script: in.script}
 
 	return transform.RendererFunc(func(ctx context.Context) ([]byte, error) {
@@ -227,13 +161,6 @@ func buildListQuery(in listOverride) lua.ListQuery {
 		Total:      in.total,
 	}
 
-	// filter[<key>]=<value> → {key: value}, parsed with the SAME helper the
-	// filter pipeline uses. Rolling our own TrimPrefix/TrimSuffix here would
-	// reintroduce RR-6RF60V: `filter[status][ne]` would key the table on
-	// "status][ne" instead of "status", so a script would see a filter name
-	// that never matches what was actually filtered on. The operator segment
-	// is intentionally dropped — this context reports WHICH properties were
-	// filtered, and the last value wins, matching applyV1Filters.
 	for k, vals := range in.query {
 		if !strings.HasPrefix(k, "filter[") || len(vals) == 0 {
 			continue
@@ -248,30 +175,15 @@ func buildListQuery(in listOverride) lua.ListQuery {
 		q.Filters[key] = vals[len(vals)-1]
 	}
 
-	// sort=-created,title, parsed by the same helper applyV1Sorting uses, so
-	// the sort reported to a script cannot drift from the sort applied.
-	// ListSortSpec aliases filter.SortSpec, so these pass straight through.
 	q.Sort = parseSortParam(in.query)
 	return q
 }
 
 // resolveEffectiveList returns the list configuration governing this export:
 // the named ?list= when it exists and matches the type, else the type's
-// default list from navigation, else ok=false.
-//
-// BOTH the column set and the render override MUST resolve through this. They
-// used to be one lookup because columns were the only thing a list
-// contributed; now that a list can also carry an `export_render:` script,
-// resolving them independently would let an export take its columns from one
-// list and its override from another — or, worse, silently skip an override
-// that is plainly configured.
-//
-// Note what this does NOT test: `len(Columns) > 0`. That predicate lives in
-// listColumnsOf, where it belongs — it is a statement about whether a list
-// can supply columns, not about which list this export is. A list configured
-// with `export_render:` and no `columns:` is perfectly valid (the script
-// renders whatever it likes), and folding the column check in here would make
-// its override silently not apply.
+// default list from navigation, else ok=false. Both the column set and the
+// render override must resolve through this so they come from the same list.
+// It does not require columns: a list with only `export_render:` is valid.
 func (h *exportHandler) resolveEffectiveList(
 	listID, typeName string,
 ) (string, dataentryconfig.List, bool) {
@@ -282,9 +194,6 @@ func (h *exportHandler) resolveEffectiveList(
 		}
 	}
 	if def := h.findListForType(typeName); def != "" {
-		// The EntityType re-check is belt-and-braces: findListForType only
-		// returns lists of this type, but it makes the contract total, so a
-		// future navigation change cannot hand back a mismatched list.
 		if l, ok := cfg.Lists[def]; ok && l.EntityType == typeName {
 			return def, l, true
 		}
@@ -301,9 +210,6 @@ func (h *exportHandler) resolveEffectiveList(
 // different list than the render override — see resolveEffectiveList.
 func listColumnsOf(l dataentryconfig.List, haveList bool) []dataentryconfig.ListColumn {
 	if haveList && len(l.Columns) > 0 {
-		// A busy column (TKT-TU3XH4) is live, per-principal channel state,
-		// not a document value, so the export leaves it out. It is never
-		// column 0, so the title column always stays.
 		cols := make([]dataentryconfig.ListColumn, 0, len(l.Columns))
 		for _, c := range l.Columns {
 			if c.Busy == "" {
@@ -334,7 +240,6 @@ func (h *exportHandler) listTableRenderer(
 
 		var b strings.Builder
 
-		// Header row.
 		b.WriteString("|")
 		for _, c := range columns {
 			fmt.Fprintf(&b, " %s |", transform.EscapeInline(columnLabel(c)))
@@ -345,7 +250,6 @@ func (h *exportHandler) listTableRenderer(
 		}
 		b.WriteString("\n")
 
-		// Body rows.
 		for _, e := range entities {
 			b.WriteString("|")
 			for _, c := range columns {
@@ -411,8 +315,6 @@ func (h *exportHandler) resolveListRelations(
 		return out, nil
 	}
 
-	// ONE batched visibility gate for the whole export, and ONE row load for
-	// every distinct visible neighbor (titles memoized in titleFor).
 	visible := visibleRelationIDs(ctx, h.visibleReader, allPeerIDs)
 	titleFor := h.memoNeighborTitle(ctx, meta, visible)
 
@@ -469,7 +371,6 @@ func (h *exportHandler) gatherListPeers(
 	}
 	meta := h.meta()
 	for i, e := range entities {
-		// Only the edges this row's face owns (BUG-ISJHML).
 		var outgoing, incoming []*entityPkg.Relation
 		if needOut {
 			outgoing = edgesOwnedBy(meta, outByRow[i], e.Face)
@@ -535,8 +436,6 @@ func (h *exportHandler) memoNeighborTitle(
 		}
 		t := ""
 		if node, ok := rows[id]; ok {
-			// Redact BEFORE deriving the title (RR-5N4K35 class): a visible
-			// neighbor with a hidden display property renders as its ID.
 			t = transform.DisplayTitle(meta, visibility.Redact(ctx, h.redactor, node))
 		}
 		titleByID[id] = t

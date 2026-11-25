@@ -50,7 +50,6 @@ func (h *appearanceHandler) handleAPIThemeExport(w http.ResponseWriter, r *http.
 	hdr := w.Header()
 	hdr.Set("Content-Type", "application/zip")
 	hdr.Set("Content-Disposition", `attachment; filename="`+filename+`"`)
-	// Exports reflect current state — never cache.
 	hdr.Set("Cache-Control", "no-store")
 	_, _ = w.Write(zipBytes)
 }
@@ -216,8 +215,6 @@ func writeThemeImportError(w http.ResponseWriter, err error) {
 		errors.Is(err, errDuplicateEntry):
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 	default:
-		// New sentinel added without being wired in here — still a
-		// 400 (least-privilege default), but log so it gets noticed.
 		slog.Warn("theme import: unmapped parse error", "err", err)
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 	}

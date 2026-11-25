@@ -14,35 +14,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 )
 
-// gateDocumentPermission enforces a document's optional `permission:`.
-// Returns true when the request may proceed; on deny it has already written
-// the response.
-//
-// A document without a permission is ungated — that is the default, and it is
-// deliberate. The confidentiality boundary for document content is the
-// ACL-gated reader the render's Lua uses (lua.ReadDeps.VisibleReader), not
-// this check: a principal who cannot read the underlying entities renders an
-// empty or partial document either way. `permission:` exists for documents
-// whose COMPOSITION is sensitive even though the parts are readable.
-//
-// The deny is a plain 403 NAMING the document, not a disguised 404. Which
-// documents exist is not a secret — they are keys in `data-entry.yaml`, an
-// operator-authored file in the repo (see "The configuration is not a secret;
-// the data is" in the root CLAUDE.md). Concealing a config key would buy
-// nothing and cost the operator a debuggable error. Contrast the entity-id
-// path, where a uniform 404 IS required: whether an entity exists is a genuine
-// secret.
-//
-// It fires before any renderer runs. Content would be safe regardless, but an
-// unauthorized caller must not be able to trigger an expensive Lua aggregation.
-//
-// A plain function rather than an *App method: it needs only the request's
-// read gate and the document's own config, and App sits on its plimsoll load
-// line (see the directive on the type).
-//
-// It returns nil when the document's `permission:` is absent or held, else
-// the 403 denial naming it. The routes write it with [writeRequestDenial];
-// rela.attach_render hands it to the script.
+// gateDocumentPermission enforces a document's optional `permission:`. It
+// returns nil when the permission is absent or held, else the 403 denial
+// naming the document. A document without one is ungated: content is bounded
+// by the ACL-gated reader the render uses, not by this check. The deny names
+// the document because config keys are not secret. It runs before any
+// renderer, so an unauthorized caller cannot trigger an expensive render.
 //
 //archplan:guard=authz reason="checks the document's config-declared permission"
 func gateDocumentPermission(ctx context.Context, docName string, docCfg dataentryconfig.DocumentConfig) error {
@@ -57,30 +34,18 @@ func gateDocumentPermission(ctx context.Context, docName string, docCfg dataentr
 }
 
 // authorizeElevatedDocument is the boundary for a document that declares
-// allow_acl_bypass (TKT-Y3JVFK). It is SEPARATE from gateDocumentPermission,
-// and both must pass, because the two answer different questions.
-//
-// gateDocumentPermission consults the request's read gate. That is correct for
-// an ordinary document, whose content is bounded by the ACL-gated reader
-// regardless — but readGateFromContext hands back nopReadGate under BOTH
-// acl.NopACL and acl.ReadOnlyACL, and its HoldsPermission returns TRUE
-// (readgate.go). A predicate written against the read gate alone therefore
-// FAILS OPEN, which is live bug RR-CWWJGW. For an elevated render the gate is
-// the only thing between a principal and everything the script reads, so it
-// keys on the ACL IMPLEMENTATION instead — the shape authorizeCommand uses and
-// documents.
-//
-// The decision per ACL mode is [access.Mode.PermitsElevatedRead]. It keys on
-// the ACL implementation, not the read gate, and denies under NopACL as well:
-// unlike commands, an elevated document has no pre-ACL behavior to preserve,
-// so granting would leave the boundary inert while it looks configured.
+// allow_acl_bypass, and must pass in addition to gateDocumentPermission. The
+// read gate returns nopReadGate under NopACL and ReadOnlyACL, whose
+// HoldsPermission is true, so a check on it alone FAILS OPEN. This keys on
+// the ACL implementation instead ([access.Mode.PermitsElevatedRead]) and
+// denies under NopACL too.
 //
 //archplan:guard=authz reason="boundary for an elevated document, keyed on the ACL implementation"
 func authorizeElevatedDocument(
 	ctx context.Context, aclImpl acl.ACL, docCfg dataentryconfig.DocumentConfig,
 ) bool {
 	if !docCfg.AllowACLBypass.Enabled() {
-		return true // not elevated: gateDocumentPermission is the whole story.
+		return true
 	}
 	return access.ModeOf(aclImpl).PermitsElevatedRead(ctx, readGateFromContext(ctx), docCfg.Permission)
 }
@@ -116,7 +81,7 @@ func gateElevatedDocument(
 func handleV1StandaloneDocument(a *App, w http.ResponseWriter, r *http.Request, docName string) {
 	resolved, ok := resolveStandaloneDocument(a, w, r, docName)
 	if !ok {
-		return // the resolver already wrote the response
+		return
 	}
 
 	returnPath := isSafeReturnPath(r.URL.Query().Get("return_to"))
@@ -135,13 +100,6 @@ func handleV1StandaloneDocument(a *App, w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	// EntityIDs is empty by construction: it drives the SPA's SSE live-reload
-	// subscription, and a standalone document has no entry entity whose
-	// changes would define staleness. Reloading is the refresh button until
-	// TKT-E1FO1 (rela.document.depends_on) gives scripts a way to declare
-	// their real dependencies. Cached is likewise always false — a standalone
-	// render has no entry hash to key a disk cache on, so `?refresh=true` is
-	// accepted and ignored rather than forgotten.
 	writeV1JSON(w, http.StatusOK, v1.DocumentResponse{
 		HTML:      RewriteDocumentLinks(html, returnPath, nil),
 		Cached:    false,

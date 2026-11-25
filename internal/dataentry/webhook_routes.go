@@ -106,34 +106,15 @@ type webhookRouter struct {
 const webhookMaxInFlight = 8
 
 // registerDeclarativeWebhookRoutes mounts POST /hooks/{id} for every configured
-// webhook.
-//
-// # Reachability
-//
-// Mounted on the OUTER mux, exactly like registerWebhookRoutes. `inner` is only
-// reachable under the `/api/` prefix, so registering a non-/api/ path there
-// leaves it unreachable and every request falls through to the SPA catch-all —
-// a 200 of HTML with the handler never running (BUG-F3ADZO). The route table in
-// router_walk_test.go is what keeps that from recurring.
-//
-// # Route shape
-//
-// One pattern per configured hook, resolved at registration from the config
-// snapshot. A single `/hooks/{id}` pattern with a runtime lookup would be
-// reloadable, but ServeMux gives no way to unregister, so the two would drift
-// after a config reload; registering per hook keeps the mounted set and the
-// validated set identical at startup. A hook added to data-entry.yaml therefore
-// needs a restart, matching how routes behave elsewhere in this package.
-// A free function taking the router explicitly rather than an App method: it is
-// route wiring, not application behavior, and App is at its plimsoll method load
-// line (the same reasoning as dispatchWebhookAction in webhook.go).
+// webhook. It mounts on the OUTER mux: `inner` only serves `/api/`, and a route
+// there would fall through to the SPA catch-all. One pattern per hook is
+// resolved from the config snapshot, since ServeMux cannot unregister; a new
+// hook needs a restart.
 func registerDeclarativeWebhookRoutes(mux *http.ServeMux, hooks *webhookRouter) {
 	cfg := hooks.state().Cfg
 	if len(cfg.Webhooks) == 0 {
 		return
 	}
-	// Deterministic order so registration is reproducible and a duplicate
-	// pattern (impossible today — map keys are unique) would fail predictably.
 	ids := make([]string, 0, len(cfg.Webhooks))
 	for id := range cfg.Webhooks {
 		ids = append(ids, id)
@@ -150,15 +131,13 @@ func registerDeclarativeWebhookRoutes(mux *http.ServeMux, hooks *webhookRouter) 
 
 // handleDeclarativeWebhook runs one delivery through the configured pipeline.
 //
+// The route is outside /api/, so it binds the hook identity itself and sets
+// no-store, since the response names an entity id.
+//
 //archplan:auth=none reason="declarative webhook; the proxy in front authenticates the producer (docs/webhooks.md) and writes are bounded by the hook principal grants in acl.yaml"
 func (h *webhookRouter) handle(w http.ResponseWriter, r *http.Request, hookID string) {
-	// Re-read config per request so a reload that changes a hook's BEHAVIOR
-	// takes effect without a restart (only the mounted route set is fixed).
 	hook, ok := h.state().Cfg.Webhooks[hookID]
 	if !ok {
-		// The route exists but the hook no longer does — a reload removed it.
-		// A hook id is config, not data, so naming it is not a disclosure (see
-		// "The configuration is not a secret" in CLAUDE.md).
 		http.Error(w, "unknown webhook: "+hookID, http.StatusNotFound)
 		return
 	}
@@ -177,30 +156,7 @@ func (h *webhookRouter) handle(w http.ResponseWriter, r *http.Request, hookID st
 	ctx, cancel := context.WithTimeout(r.Context(), webhookExecTimeout)
 	defer cancel()
 
-	// Attribute the write to the hook rather than to the data-entry default, so
-	// the audit log names which endpoint produced the entity.
-	//
-	// The name is under principal.ReservedPrefix deliberately. A hook is granted
-	// its write rights in acl.yaml — that is the only way it gets any — so this
-	// name is BOTH grantable and privileged, exactly the shape the reserved
-	// namespace exists to protect. Without the prefix, a deployment using
-	// -principal-header would let a caller assert `webhook:icinga-alert` on the
-	// ordinary /api/ surface and inherit the hook's grants, because the ACL
-	// resolves a principal by matching the raw string and cannot tell where it
-	// came from. Reusing the existing prefix inherits principal.IsReserved's
-	// refusal at every request-path entry point rather than adding a second
-	// boundary that must be remembered.
-	//
-	// The principal also carries principal_type `webhook`, so an acl.yaml
-	// baseline with `applies_to: [webhook]` caps every hook below its role and
-	// below `everyone`. The edge binds one Request for this principal, so the
-	// find, the write and any foreground automation the write fires all see
-	// the same ceiling.
 	ctx = principal.With(ctx, principal.Webhook(hookID))
-	// This route is outside /api/, so attachACLRequest did not run: resolve
-	// the hook's identity here, once, as every request edge does, and attach
-	// its read gate (a request under a policy with no gate is denied every
-	// read). Binding replaces any Request already on ctx.
 	ctx, err = acl.BindRequest(readtime.Ensure(ctx, nowFunc), h.write.acl())
 	if err != nil {
 		writeWebhookError(w, hookID, err)
@@ -219,10 +175,6 @@ func (h *webhookRouter) handle(w http.ResponseWriter, r *http.Request, hookID st
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	// The response names the entity it wrote, and entity ids are the one
-	// identifier rela treats as secret (hence the uniform 404 on reads). This
-	// route sits outside /api/, so noCacheMiddleware never runs for it — set the
-	// header here rather than relying on a middleware that does not apply.
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(hook.Respond.StatusOrDefault())
 	_ = json.NewEncoder(w).Encode(result)
@@ -235,8 +187,6 @@ func (h *webhookRouter) handle(w http.ResponseWriter, r *http.Request, hookID st
 func writeWebhookError(w http.ResponseWriter, hookID string, err error) {
 	switch {
 	case errors.Is(err, errWebhookBusy):
-		// Retry-After is what makes this actionable: a producer that honors it
-		// backs off instead of adding to the saturation it just hit.
 		w.Header().Set("Retry-After", "2")
 		slog.Warn("webhook shed load", "hook", hookID, "max_in_flight", webhookMaxInFlight)
 		http.Error(w, "server busy, retry shortly", http.StatusServiceUnavailable)
@@ -247,8 +197,6 @@ func writeWebhookError(w http.ResponseWriter, hookID string, err error) {
 		slog.Warn("webhook timed out", "hook", hookID)
 		http.Error(w, "webhook processing timed out", http.StatusGatewayTimeout)
 	default:
-		// Do not echo err: it can carry stored property values from the write
-		// path, and the producer is not necessarily entitled to them.
 		slog.Error("webhook failed", "hook", hookID, "error", err)
 		http.Error(w, "webhook processing failed", http.StatusInternalServerError)
 	}
@@ -261,11 +209,6 @@ func writeWebhookError(w http.ResponseWriter, hookID string, err error) {
 func (h *webhookRouter) runPipeline(
 	ctx context.Context, hookID string, hook dataentryconfig.Webhook, payload webhookPayload,
 ) (webhookResult, error) {
-	// Shed load BEFORE doing any work. Queueing here instead would mean an
-	// unauthenticated flood parks goroutines that each go on to scan the
-	// store; a fast 503 the producer can retry is the better answer. A nil
-	// channel means unbounded, which only happens in tests that construct the
-	// router directly.
 	if h.admit != nil {
 		select {
 		case h.admit <- struct{}{}:
@@ -348,9 +291,6 @@ func readWebhookPayload(r *http.Request, hook dataentryconfig.Webhook) (webhookP
 			p.body[k] = values.Get(k)
 		}
 	default:
-		// JSON is the default: it is what every webhook producer this targets
-		// sends, and an empty body is legitimate for a hook driven entirely by
-		// query parameters.
 		if len(raw) > 0 {
 			if err := json.Unmarshal(raw, &p.body); err != nil {
 				return webhookPayload{}, fmt.Errorf("parse json body: %w", err)
@@ -390,19 +330,12 @@ func (p webhookPayload) DefaultMatchRef(prop string) string {
 // authenticated by the fronting proxy and may send markdown on purpose.
 func (webhookPayload) Kind(string) ingest.ValueKind { return ingest.ValueRaw }
 
-// Resolve implements ingest.Source: it looks up one {{...}} reference,
-// returning "" when absent. Vocabulary, extending the automation template
-// namespace:
-//
-//	{{body.<path>}}   a field of the parsed body (dotted path into nested objects)
-//	{{query.<name>}}  a query-string parameter
-//	{{header.<name>}} an ALLOWLISTED request header (case-insensitive)
-//	{{now}}           delivery timestamp, RFC 3339 UTC
-//	{{today}}         delivery date, YYYY-MM-DD
-//
-// It returns the RAW producer-supplied value, which is not safe to write into a
-// document as-is. Only ingest.Interpolate may call it: that is where each value
-// is flattened, the one guard that stops a payload forging markdown structure.
+// Resolve implements ingest.Source: it looks up one {{...}} reference, returning
+// "" when absent. It supports {{body.<path>}}, {{query.<name>}},
+// {{header.<name>}} (allowlisted headers only), {{now}} and {{today}}.
+// It returns the RAW producer value, which is not safe to write into a document.
+// Only ingest.Interpolate may call it: that is where each value is flattened so
+// a payload cannot forge markdown structure.
 func (p webhookPayload) Resolve(ref string) string {
 	switch ref {
 	case "now":
@@ -462,8 +395,6 @@ func stringifyWebhookValue(v any) string {
 		}
 		return strconv.FormatFloat(t, 'f', -1, 64)
 	default:
-		// Objects and arrays: JSON, so a nested payload is at least faithfully
-		// representable rather than Go-syntax noise.
 		encoded, err := json.Marshal(t)
 		if err != nil {
 			return ""

@@ -99,33 +99,13 @@ func (s *logSampler) drain() int {
 	return n
 }
 
-// requireVerifiedJWT enforces that every data-API request carries a
-// cryptographically verified identity assertion, denying with 401 when it does
-// not. It is the fail-closed counterpart to [JWTPrincipalResolver]: where the
-// resolver returns a zero Principal on failure and lets the chain fall through
-// to the next source, this gate refuses the request outright.
-//
-// **Why a gate and not a resolver.** When JWT identity is enabled it is the ONLY
-// identity source — the wiring rejects --principal-header and $RELA_DATAENTRY_USER
-// alongside it at startup. A fall-through chain would mean a JWKS disruption
-// silently downgrades a verified identity to a spoofable proxy-trusted header, an
-// attacker-triggerable auth bypass. With exactly one source there is nothing to
-// fall through TO, so the resolver's zero-Principal signaling has no job to do
-// and [PrincipalResolver] keeps its single-return signature.
-//
-// **Scope.** Only [isAPIPath] requests are gated, extending the RR-T15E invariant
-// that [attachACLRequest] already relies on: the SPA shell and static assets must
-// stay reachable so a client can load and render a signed-out state, and so a
-// misconfiguration does not lock operators out of the recovery surface. Those
-// routes serve no entity data; every API call the SPA makes is still gated. The
-// self-authenticating IdP webhook (POST /webhooks/idp) verifies a signed body
-// with its own audience and is deliberately outside this gate — it will never
-// carry an identity assertion, and gating it would reject every legitimate
-// callback.
-//
-// **Denials never explain themselves.** The 401 body carries no verification
-// detail: the token is attacker-controlled input, and echoing why it failed is an
-// oracle. The reason is logged server-side instead (RR-372L).
+// requireVerifiedJWT denies with 401 any [isAPIPath] request that lacks a
+// verified identity assertion. It is a gate, not a resolver, because JWT is
+// then the ONLY identity source: a fall-through would let a JWKS disruption
+// downgrade to a spoofable header. The SPA shell, static assets and the
+// self-authenticating IdP webhook stay outside the gate. A reserved or
+// unusable subject is denied, never downgraded. The 401 body never explains
+// the failure, which would be an oracle; the reason is logged instead.
 func requireVerifiedJWT(next http.Handler, cfg JWTGateConfig) http.Handler {
 	g := &jwtGate{cfg: cfg}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -136,8 +116,6 @@ func requireVerifiedJWT(next http.Handler, cfg JWTGateConfig) http.Handler {
 
 		raw := stripBearer(r.Header.Get(cfg.HeaderName))
 		if raw == "" {
-			// Debug, not Info: unauthenticated probes and scanners are routine
-			// and would flood a production log at any higher level.
 			slog.DebugContext(r.Context(), "jwt gate: no assertion presented",
 				"path", r.URL.Path, "method", r.Method, "remote_addr", r.RemoteAddr)
 			g.deny(w, r)
@@ -151,28 +129,8 @@ func requireVerifiedJWT(next http.Handler, cfg JWTGateConfig) http.Handler {
 			return
 		}
 
-		// Project the verified claims into the stamped Principal. verifiedPrincipal
-		// is shared with JWTPrincipalResolver so the gate and the deprecated
-		// resolver sanitize the subject and filter roles identically. A control-only
-		// subject sanitizes away and is denied rather than silently downgraded.
-		//
-		// This carries org_id/org_slug/roles onto the Principal — without it an
-		// asserted_role_assignments policy grants nothing on the production path
-		// (TKT-OJL2GN). The claims flow on to the ACL via attachACLRequest.
 		p, reason := verifiedPrincipal(id, toolForPath(r.URL.Path))
 		if !reason.ok() {
-			// Two distinct causes, logged apart because they call for different
-			// operator action: an unusable subject is an IdP/claims problem,
-			// whereas a reserved one (TKT-9PCL7D) means an IdP is issuing
-			// subjects in rela's internal `system:` namespace — a
-			// misconfiguration or an impersonation attempt.
-			//
-			// The reason comes back FROM verifiedPrincipal rather than being
-			// re-derived from id.Subject here. Re-deriving would classify on the
-			// raw subject while the decision was made on the sanitized one, so a
-			// control-char-prefixed name like "\x01system:scheduler" — denied
-			// correctly — would log as merely unusable and never produce the WARN
-			// operators are told to grep for (RR-OJRCNY).
 			if reason == rejectReserved {
 				slog.WarnContext(r.Context(), "jwt gate: rejected reserved principal in verified assertion",
 					"user", id.Subject,
@@ -266,9 +224,6 @@ func (g *jwtGate) noteRecovery(r *http.Request) {
 
 // deny writes the 401. The detail is deliberately empty — see the type comment.
 func (g *jwtGate) deny(w http.ResponseWriter, r *http.Request) {
-	// RFC 6750: advertise the scheme when the assertion rides the standard
-	// Authorization header, so a client knows how to authenticate. For a custom
-	// proxy-injected header the challenge would be meaningless.
 	if strings.EqualFold(g.cfg.HeaderName, "Authorization") {
 		w.Header().Set("WWW-Authenticate", "Bearer")
 	}

@@ -77,7 +77,6 @@ func newDeclarativeFeed(
 	feedID string, cfg dataentryconfig.Feed, meta *metamodel.Metamodel, src entitySource, link deepLinker,
 	redactor visibility.FieldRedactor,
 ) (*declarativeFeed, error) {
-	// Validate sources reference known types up front so List/Get can assume it.
 	for i, s := range cfg.Sources {
 		if _, ok := meta.GetEntityDef(s.EntityType); !ok {
 			return nil, fmt.Errorf("feed %q: source[%d]: unknown entity type %q", feedID, i, s.EntityType)
@@ -102,22 +101,11 @@ func (d *declarativeFeed) calendarName() string {
 
 // List implements feedProvider. It enumerates every source, maps matching
 // entities to events, and returns the max entity modification time as the
-// cursor. opts.Since is honored as an extra "modified since" gate so a client
-// re-poll only re-emits changed events; unchanged content still yields a stable
-// ETag downstream, so ignoring or honoring Since is equally correct.
-//
-// Delta caveat: the returned cursor advances only over EMITTED events. An entity
-// whose change dropped it from the feed (e.g. a filter no longer matches) does
-// not advance the watermark and will not re-appear under a since-scoped poll — a
-// delta consumer must derive tombstones itself (by diffing against the last
-// served ETag set). The live ICS/JSON path is unaffected: it always calls List
-// with an empty Since (a full enumeration), and ICS has no delete semantics
-// anyway. Only a future delta/CalDAV client needs to handle this.
+// cursor. opts.Since filters to modified entities. The cursor advances only
+// over emitted events, so a delta consumer must derive tombstones itself.
 func (d *declarativeFeed) List(ctx context.Context, opts feedListOpts) ([]calfeed.Event, string, error) {
 	var since time.Time
 	if opts.Since != "" {
-		// Cursor is an RFC3339 timestamp we minted last time; tolerate a parse
-		// failure by treating it as a full sync (correctness over efficiency).
 		if t, err := time.Parse(time.RFC3339Nano, opts.Since); err == nil {
 			since = t
 		}
@@ -175,12 +163,6 @@ func (d *declarativeFeed) Get(ctx context.Context, uid string) (calfeed.Event, b
 		if err != nil {
 			return calfeed.Event{}, false, err
 		}
-		// getEntity may resolve by id alone (the production reader does), so an
-		// id shared across types could return a different type than the UID
-		// named. Reject the mismatch rather than map the wrong entity under this
-		// source's rules — mirrors the entity handlers' type guards. A bare
-		// UID on a faced type resolves to some face whose UID names it, so the
-		// served address must be the one asked for.
 		if !found || e.Type != entityType || e.Ref().String() != addr {
 			return calfeed.Event{}, false, nil
 		}
@@ -199,18 +181,9 @@ func (d *declarativeFeed) Get(ctx context.Context, uid string) (calfeed.Event, b
 }
 
 // redactFeedEntity returns a copy of e with `visible:`-hidden properties
-// removed, or e unchanged when nothing is hidden.
-//
-// A COPY, never a mutation: the entity comes from the shared store snapshot, so
-// deleting properties in place would redact it for every other reader in the
-// process.
-//
-// The DATE property is deliberately not special-cased. If an operator hides the
-// property a feed is anchored on, the entity has no usable date and drops out of
-// the calendar — which is the correct outcome: an event whose date the reader
-// may not see is not an event they should be shown. That it also removes the
-// entity from the feed is a disclosure the row-level ACL already governs (a
-// reader who cannot see the row never got here at all).
+// removed, or e unchanged when nothing is hidden. It never mutates e, which
+// belongs to the shared store snapshot. A hidden date property is not
+// special-cased: the entity then drops out of the calendar.
 func redactFeedEntity(
 	ctx context.Context, r visibility.FieldRedactor, e *entity.Entity,
 ) *entity.Entity {
@@ -236,21 +209,12 @@ func redactFeedEntity(
 // a date value, maps its properties to a calendar event. ok=false means the
 // entity is filtered out or has no usable date (it is silently skipped, not an
 // error — a task with no due date is simply not on the calendar).
+// The filter reads the raw entity and redaction applies only to the rendered
+// values, so feed membership does not vary by principal.
 func (d *declarativeFeed) mapEntity(
 	ctx context.Context,
 	e *entity.Entity, s dataentryconfig.FeedSource, entDef *metamodel.EntityDef, filters []*filter.Filter,
 ) (calfeed.Event, bool, error) {
-	// The FILTER runs against the raw entity, deliberately, and redaction is
-	// applied only afterwards to the values that get rendered.
-	//
-	// Order matters. Redacting first would make a `visible:`-hidden property
-	// read as empty inside `where:`, so feed MEMBERSHIP would vary by principal:
-	// the same feed would contain different events for different readers, and an
-	// entity would silently drop out of the calendar because a field the reader
-	// cannot see was filtered on. Which entities a feed selects is an
-	// operator-authored decision (row visibility is the ACL's job, and
-	// `src.listType` has already applied it); what their FIELDS say is the
-	// reader's business.
 	matched, err := filter.MatchAll(entityRecord(e), filters, entDef, d.meta)
 	if err != nil {
 		return calfeed.Event{}, false, err
@@ -262,14 +226,11 @@ func (d *declarativeFeed) mapEntity(
 
 	dateStr := e.GetString(s.Date)
 	if dateStr == "" {
-		return calfeed.Event{}, false, nil // no date → not on the calendar
+		return calfeed.Event{}, false, nil
 	}
 	dateDef := entDef.Properties[s.Date]
 	day, err := metamodel.ParseDateValue(dateStr, &dateDef)
 	if err != nil {
-		// An unparseable date on one entity (e.g. a bad hand-edit) skips that
-		// event rather than failing the whole feed — consistent with rela's
-		// "tolerate temporarily invalid data" write policy.
 		return calfeed.Event{}, false, nil //nolint:nilerr // skip malformed entity, not a feed error
 	}
 
@@ -283,10 +244,7 @@ func (d *declarativeFeed) mapEntity(
 		Summary: e.GetString(summaryProp),
 		Start:   day,
 		URL:     d.link(e.Type, e.ID),
-		// A datetime-typed source emits a timed event; a date-typed source
-		// stays all-day. The end_date (if any) is the same kind — enforced by
-		// feed-source validation — so no separate branch is needed for End.
-		Timed: dateDef.Type == metamodel.PropertyTypeDatetime,
+		Timed:   dateDef.Type == metamodel.PropertyTypeDatetime,
 	}
 	if s.Description != "" {
 		ev.Description = e.GetString(s.Description)

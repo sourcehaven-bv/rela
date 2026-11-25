@@ -179,8 +179,6 @@ func (h *reconcileHandler) handleV1Reconcile(w http.ResponseWriter, r *http.Requ
 			"Reconciliation is not available", "this server does not serve element ranges")
 		return
 	}
-	// The body is read and checked before admission, as on _batch: both are
-	// bounded and cheap, and a request refused here costs no slot.
 	var req reconwire.Request
 	if !decodeStrictBody(w, r, reconcileBodyLimit, "512 KiB", &req) {
 		return
@@ -203,12 +201,9 @@ func (h *reconcileHandler) handleV1Reconcile(w http.ResponseWriter, r *http.Requ
 	}
 	defer release()
 	out, failed, err := h.run(r.Context(), ops)
-	// The slot bounds the reads, not the write: a peer that stops reading
-	// its response must not hold a slot.
 	release()
 	switch {
 	case errors.Is(err, errReconcileClientGone):
-		// No one is left to answer; the status is for the access log.
 		w.WriteHeader(statusClientClosedRequest)
 	case err != nil:
 		writeReconcileError(w, r, failed, err)
@@ -248,7 +243,6 @@ func (h *reconcileHandler) run(parent context.Context, ops []reconcileOp) (recon
 		case parent.Err() != nil:
 			return out, i, errReconcileClientGone
 		case ctx.Err() != nil:
-			// The deadline, not the client, ended the call.
 			out.Ranges = append(out.Ranges, reconwire.Result{Status: reconwire.StatusNotRun})
 		default:
 			return out, i, err
@@ -286,9 +280,6 @@ func (h *reconcileHandler) answer(ctx context.Context, op reconcileOp) (reconwir
 func writeReconcileError(w http.ResponseWriter, r *http.Request, index int, err error) {
 	switch {
 	case errors.Is(err, visibility.ErrRelationMetaGated):
-		// The same for every principal: the policy can hide a meta key of
-		// this relation type, so its elements cannot be served yet
-		// (TKT-0RBFN0). The error text names the type; config is not secret.
 		writeReconcileRangeError(w, r, http.StatusUnprocessableEntity, "relation_meta_gated",
 			"Relation type not supported", index, err)
 	case errors.Is(err, store.ErrInvalidQuery):
@@ -371,8 +362,6 @@ func planReconcileRange(meta *metamodel.Metamodel, rr reconwire.Range) (reconcil
 		return op, fmt.Errorf("kind %q is not entity or relation", rr.Kind)
 	}
 	if len(rr.Entities) == 0 {
-		// A relation range needs them too: they are its endpoint scope, and
-		// without them it would answer an empty range that reads as in sync.
 		return op, errors.New("entities must name at least one entity type")
 	}
 	if err := checkTypeNames("entity", rr.Entities, func(n string) bool { _, ok := meta.Entities[n]; return ok }); err != nil {
@@ -382,8 +371,6 @@ func planReconcileRange(meta *metamodel.Metamodel, rr reconwire.Range) (reconcil
 		return op, err
 	}
 	for _, n := range rr.Relations {
-		// Like a range with no entity types, a relation type whose ends are
-		// not in scope would answer an empty range that reads as in sync.
 		def := meta.Relations[n]
 		inScope := func(t string) bool { return slices.Contains(rr.Entities, t) }
 		if !slices.ContainsFunc(def.From, inScope) || !slices.ContainsFunc(def.To, inScope) {
@@ -397,8 +384,6 @@ func planReconcileRange(meta *metamodel.Metamodel, rr reconwire.Range) (reconcil
 	case rr.After != nil && rr.Lo != "":
 		return op, errors.New("lo and after are exclusive")
 	case rr.After != nil:
-		// No address holds NUL, so the first address after After is at
-		// least After+"\x01".
 		op.r.Lo = *rr.After + "\x01"
 	default:
 		op.r.Lo = rr.Lo

@@ -35,21 +35,11 @@ func CardFigures(a *App) (CardFigureSource, error) {
 
 // CardFigure computes the figure of the card titled card on dashboard
 // ("default" or empty for the default dashboard) as the principal bound on
-// ctx, exactly:
-//
-//   - count: the rows of the card's list this principal reads;
-//   - ratio: matched rows as a percentage of those rows;
-//   - sum, avg, min, max: the folded value of a numeric property.
-//
-// The rows pass the read gate before anything folds, exactly as for
-// /api/v1/_dashboard/card. Only `list:` cards on a dashboard without
-// entity_type have a figure. A card's `permission:` is not consulted: it is a
-// UX filter on the dashboard, not an access control, and the rows are gated
-// either way.
-//
-// A sum, avg, min or max over a property hidden on some row is refused rather
-// than stored as a figure that covers fewer rows than it claims. So is a
-// ratio over no rows, and a fold with no value.
+// ctx: count, ratio (matched rows as a percentage), or sum/avg/min/max of a
+// numeric property. Rows pass the read gate before anything folds. Only
+// `list:` cards on a dashboard without entity_type have a figure; a card's
+// `permission:` is not consulted. A fold over a property hidden on some row,
+// a ratio over no rows, and a fold with no value are refused.
 func (c CardFigureSource) CardFigure(ctx context.Context, dashboard, card string) (*big.Rat, error) {
 	a := c.app
 	s := a.State()
@@ -186,7 +176,6 @@ func foldFigure(display, prop string, rows []*entityPkg.Entity) (*big.Rat, error
 		}
 		if v, set := e.Properties[prop]; set && v != nil && v != "" {
 			if _, _, err := metamodel.ParseDecimal(v); err != nil {
-				// Neither the row nor the value is named: the error is logged.
 				return nil, fmt.Errorf("%w: property %s holds a value that is not a number on some rows",
 					errCardNotCapturable, strconv.Quote(prop))
 			}

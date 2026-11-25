@@ -29,6 +29,9 @@ func newAnalyzeHandler(app *App) *analyzeHandler {
 	}
 }
 
+// handleV1Analyze runs the analysis gated per principal, so no output filter
+// is needed.
+//
 //archplan:auth=required
 func (h *analyzeHandler) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -38,11 +41,6 @@ func (h *analyzeHandler) handleV1Analyze(w http.ResponseWriter, r *http.Request)
 
 	analysisResult := h.svc.runAnalysis(r.Context(), h.schema().Meta)
 
-	// runAnalysis now reads GATED per the requesting principal (TKT-3FL2S6), so
-	// a hidden entity never enters a check and a visible entity is redacted
-	// before its value can reach an issue title or message. No post-hoc output
-	// filter is needed — the issues are already the requester's visible slice.
-	// Flatten sections to (issue, section) pairs for the wire builder.
 	visible := flattenIssues(analysisResult.Sections)
 
 	result := APIAnalysisResult{
@@ -50,17 +48,12 @@ func (h *analyzeHandler) handleV1Analyze(w http.ResponseWriter, r *http.Request)
 		ByCheck: make(map[string]int),
 	}
 
-	// Carry each section's truncation flag onto the flat response, so a
-	// capped check is visibly incomplete rather than silently short.
 	for _, section := range analysisResult.Sections {
 		if section.Truncated {
 			result.TruncatedChecks = append(result.TruncatedChecks, section.Name)
 		}
 	}
 
-	// Loopback gate: same policy as action / document surfaces.
-	// Non-loopback callers get a degraded envelope on script-error
-	// issues (no source slice, no stack, no captured output).
 	fullDetail := h.fullScriptDetail(r)
 
 	for _, vi := range visible {

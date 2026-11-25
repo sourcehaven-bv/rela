@@ -356,7 +356,6 @@ func (h *batchHandler) denyAfford(
 // operation it names, in the classes a single create uses.
 func (h *batchHandler) writeBatchError(w http.ResponseWriter, r *http.Request, plan *batchPlan, err error) {
 	if _, kept := errors.AsType[*entitymanager.BatchKeptError](err); kept {
-		// Unreachable on a store that rolls back. Ids only, never the rows.
 		writeInternalError(w, r, "batch_partially_written", "Batch partially written", err)
 		return
 	}
@@ -392,8 +391,6 @@ func (h *batchHandler) writeBatchError(w http.ResponseWriter, r *http.Request, p
 		writeBatchInvalid(w, r, err, opErr, pointer, op)
 		return
 	case entitymanager.CreateErrUnknown:
-		// A store or gate fault, not a refusal: its text can carry driver
-		// detail, and a client should retry it rather than fix the request.
 		if !writeNoIdentity(w, r, err) {
 			writeInternalError(w, r, "batch_failed", "Batch failed", err)
 		}
@@ -465,14 +462,11 @@ func (h *batchHandler) response(
 		e := c.Entity
 		item := v1.BatchCreatedEntity{Index: i, Ref: plan.req.Entities[i].Ref, ID: e.ID, Face: e.Face.String()}
 		if readable[e.Ref()] {
-			// Warnings are computed after the automations ran, so their text
-			// is only shown with the row it is about.
 			item.Warnings = c.Warnings
 			wire := h.serializer.forWireRelated(ctx, e, nil, nil, nil, meta, meta.Entities[e.Type].Plural)
 			item.Entity = &wire
 		}
 		if fErr := res.FollowUpErrs[i]; fErr != nil {
-			// The text can name rows the caller cannot read; it goes to the log.
 			slog.WarnContext(ctx, "dataentry: batch: a step after a create failed",
 				"entity", e.ID, "error", fErr)
 			item.FollowUpError = "follow_up_failed"

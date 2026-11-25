@@ -97,31 +97,19 @@ func parseThemePackageImpl(raw []byte) (*ParsedThemePackage, error) {
 		return nil, fmt.Errorf("%w: %w", errNotAZip, zerr)
 	}
 
-	// Defense-in-depth: catch zip-bombs before we ever read entries.
 	if err := checkZipExpansion(zr, int64(len(raw))); err != nil {
 		return nil, err
 	}
 
-	// Index entries by name for direct lookup. We only honor
-	// flat-filename entries that match our allowlist; everything else
-	// (READMEs, .DS_Store, future additions) is silently ignored.
 	entries := make(map[string]*zip.File)
 	for _, f := range zr.File {
 		name := f.Name
-		// Reject anything with path-like syntax. Zip stores POSIX-ish
-		// names; backslashes are still suspicious on any platform.
 		if strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") {
 			return nil, fmt.Errorf("%w: %q", errZipPathTraversal, name)
 		}
-		// Skip directory entries (technically still flat after the
-		// slash check, but be explicit).
 		if f.FileInfo().IsDir() {
 			continue
 		}
-		// Reject duplicate names. A polyglot zip with two `theme.yaml`
-		// or two `logo.<ext>` entries would otherwise let an attacker
-		// ship one set of bytes for inspection-via-iteration and a
-		// different set for our map-lookup-driven import.
 		if _, dup := entries[name]; dup {
 			return nil, fmt.Errorf("%w: %q", errDuplicateEntry, name)
 		}
@@ -160,9 +148,6 @@ func parseThemePackageImpl(raw []byte) (*ParsedThemePackage, error) {
 		if len(logoBytes) > MaxUserLogoBytes {
 			return nil, errLogoTooLarge
 		}
-		// Trust the actual bytes, not the manifest's claimed extension.
-		// sniffLogoMime is the same trust boundary the direct PUT path
-		// uses; reusing it keeps both paths in lockstep.
 		mime := sniffLogoMime(logoBytes)
 		ext := logoExtForMime(mime)
 		if ext == "" {
@@ -180,12 +165,9 @@ func parseThemePackageImpl(raw []byte) (*ParsedThemePackage, error) {
 // of the input size. Decompression itself is bounded again by
 // readZipEntry's LimitReader; this is the cheap layer that runs first.
 func checkZipExpansion(zr *zip.Reader, compressedTotal int64) error {
-	const maxRatioInput = (1 << 63) / themePackageMaxExpansion // guard the multiply
+	const maxRatioInput = (1 << 63) / themePackageMaxExpansion
 	var total uint64
 	for _, f := range zr.File {
-		// Saturating add: any entry that would push us over the cap
-		// (including a single attacker-controlled zip64 size near
-		// 2^64) is rejected before total wraps.
 		if f.UncompressedSize64 > ThemePackageMaxBytes ||
 			total > ThemePackageMaxBytes-f.UncompressedSize64 {
 
@@ -193,8 +175,6 @@ func checkZipExpansion(zr *zip.Reader, compressedTotal int64) error {
 		}
 		total += f.UncompressedSize64
 	}
-	// compressedTotal comes from len([]byte) of the upload, so it's
-	// bounded by ThemePackageMaxBytes — well under the multiply cap.
 	if compressedTotal < 0 || compressedTotal > maxRatioInput {
 		return errZipBomb
 	}

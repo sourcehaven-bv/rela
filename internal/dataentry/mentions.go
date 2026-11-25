@@ -12,28 +12,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
-// collectMentions scans the supplied markdown blobs for mentions
-// ([mentionspkg.All]) and returns the ones the principal is served, keyed by
-// id. Self-references (the viewer's own ID) are included: the renderer treats
-// them like any other reference and the SPA route handles them as no-op
-// navigation. Returns nil when no mentions are found so callers can rely on
-// JSON `omitempty` for empty maps.
-//
-// Each id resolves to the face the request's world serves among the faces
-// the principal may read ([visibility.Resolver.ResolveIDsErr]), the same
-// resolution relation neighbors use, so a mention of an entity whose type
-// has faces links like any other. An id a rename retired resolves to the
-// entity under its new id ([visibility.Resolver.ResolveMentions]), and the
-// mention carries that id. The header comes back gated and redacted
-// (DEC-ZBI39P): a mention of an entity the principal may not read is
-// dropped, and a survivor whose display property is hidden falls back to
-// its id (BUG-R9EHKV).
-//
-// A store failure is logged and drops every mention: a failed lookup must
-// not break the whole view-fetch response. The fall-through degrades to
-// "code span stays as <code>", which matches the unknown-ID UX. A cancelled
-// context skips the lookup: callers (HTTP handlers) have already bound the
-// request context, and a client that disconnected wants no answer.
+// collectMentions returns the mentions in the markdown blobs that the principal
+// is served, keyed by id, or nil when there are none. Each id resolves to the
+// face the world serves among the readable faces, following renames. Headers
+// are gated and redacted: an unreadable entity is dropped and a hidden display
+// property falls back to the id. A store failure is logged and drops every
+// mention; a cancelled context skips the lookup.
 func collectMentions(
 	ctx context.Context, vis visibility.Reader, meta *metamodel.Metamodel, contents ...string,
 ) map[string]v1.Mention {

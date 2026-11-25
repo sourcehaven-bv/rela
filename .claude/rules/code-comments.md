@@ -11,7 +11,9 @@ paths:
 - **No comment inside a function body, Go or TypeScript.** When a line needs
   explaining, rename the function or variable, extract a helper, or name the
   constant. Closures count as body. Directives are always fine (`//go:`,
-  `//nolint:`, `//plimsoll:`, `eslint-`, `@ts-`, coverage markers).
+  `//nolint:`, `//plimsoll:`, `eslint-`, `@ts-`, coverage markers). A Go
+  group that starts with `#nosec`, `nosemgrep`, `nolint` or `coverage-ignore`
+  is allowed whole, so its justification lines may follow it.
 - **A function doc is at most 10 prose lines.** Directive lines and blank
   lines do not count. Split the function or trim the doc to its contract.
 - **Escape hatch: `why: <reason>`.** For a fact no name can carry, such as a

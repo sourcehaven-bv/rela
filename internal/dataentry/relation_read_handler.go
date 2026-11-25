@@ -14,29 +14,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
-// handleV1GetRelationTarget serves a SINGLE relation's body — meta + content +
-// the `_redacted` names — with a relation-level ETag (RR-SYNCR1, TKT-8P1TM7).
-//
-// It is the GET of the single-relation resource that PATCH and DELETE also
-// address: the relation-type listing returns peer rows keyed to a source
-// entity and carries no relation body or per-relation hash. It was added for
-// the sync client (since removed) and stays as part of the public v1 API.
-//
-// Authorization gates BOTH endpoints, each on its stored type, never the URL
-// segment (RR-SDDYZO). The tail is gated per relationTailOr404: a
-// content-scoped edge tailed on a face the caller may not read is a 404
-// (design 8.2). The head is named by bare id, so the check is that some
-// face of it is readable. The head is gated BEFORE the edge is loaded: the
-// edge-miss 404 carries a different title, so gating after would tell a
-// caller whether an edge to a hidden entity exists.
-//
-// Field meta redaction reuses visibleRelationMeta against the source row the
-// gate resolved. The ETag hashes the relation as this caller sees it, with
-// hidden meta removed: a digest over a hidden value would let the caller
-// guess it offline, and a 304 would reveal when it changed (BUG-J01V0Q).
-//
-// It is a package function taking *App (not an App method) so it does not add
-// to App's god-object method count (plimsoll, TKT-N0IKN9).
+// handleV1GetRelationTarget serves a SINGLE relation's meta, content and
+// `_redacted` names with a relation-level ETag. Both endpoints are gated on
+// their stored type, never the URL segment: the tail per relationTailOr404, the
+// head by some readable face. The head is gated BEFORE the edge is loaded, so
+// the edge-miss 404 cannot reveal an edge to a hidden entity. Meta is redacted
+// via visibleRelationMeta, and the ETag hashes only what this caller sees.
 func handleV1GetRelationTarget(
 	a *App, w http.ResponseWriter, r *http.Request, typeName, addr, relType, targetID string,
 ) {
@@ -51,11 +34,6 @@ func handleV1GetRelationTarget(
 		return
 	}
 
-	// The edge at the ADDRESSED TAIL. store.GetRelation reads the default
-	// tail only, so on a faced source it would miss the edge entirely, or
-	// return a different face's (BUG-VFHUWO). An identity-scoped edge
-	// attaches to the entity, so its tail is always the zero face, whichever
-	// face of the source the address resolved to.
 	tail := src.Face
 	if !metamodel.IsContentScoped(mm, relType) {
 		tail = ""

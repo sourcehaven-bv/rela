@@ -18,54 +18,14 @@ import (
 )
 
 // candidates adapts the app's ACL-gated read paths into the
-// [nextaction.CandidateFunc] the engine takes.
-//
-// # Why this lives here and not in internal/nextaction
-//
-// Same reason the list-table renderer lives in dataentry rather than
-// internal/transform: the engine must never see an entity the request
-// principal cannot read, and the read gate is resolved per-request from the
-// context here. Keeping the adapter at this layer means the engine depends on
-// no store, searcher or ACL type, and cannot accidentally acquire an ungated
-// handle.
-//
-// # Which seam each source kind uses
-//
-//   - Query  -> App.executeQuery, the same helper /_search and scope
-//     navigation use. It resolves SearchScope from the read gate first, and
-//     for a query with no free text (which every structural next-action query
-//     is) routes to visibleListByTypes — a type-scoped store list, NOT the
-//     search index. So the "SearchVisible does not push filters down" caveat
-//     does not apply on this path.
-//   - Count  -> GraphCount over the type, for the entity-less first-run case.
-//     Uses the ungated count deliberately: see countCandidates.
-//   - Source flow_tasks -> FlowService.Tasks, the Flow tasks list itself
-//     (see flowTaskSource.candidates).
-//   - Context -> the entity the page is about (see contextCandidates). The
-//     page's source filter already dropped context sources for any other
-//     type, so this only runs on a page about an entity of src.Context.
-//
-// # The condition rides along with the query
-//
-// A source's `condition:` is evaluated per candidate by the engine (the
-// authoritative pass), but its store-evaluable conjuncts — `entity.assignee ==
-// current_user.id`, the is_current_user / has_current_user sugar, string
-// literals — are ALSO pushed into the candidate query here, through the
-// [ConditionPrefilterer] capability of that source's matcher. That is what
-// turns "tickets assigned to me" from a scan of every ticket into an indexed
-// lookup, and it is sound for the same reason the query's own pushdown is: the
-// store can only ever remove rows the engine's condition pass would also have
-// removed. `meta` and `lookup` are the request's snapshot and matcher lookup,
-// captured once by the caller.
-//
-// `meta` is the SAME snapshot the matchers were compiled against, which is
-// the coherence that matters: the condition's pre-filter and its Go pass must
-// agree on property types. executeQuery gates the QUERY's own pushdown against
-// the read bundle's metamodel, resolved separately; a reload landing between
-// the two can make one request mix snapshots for the two pushdowns, but each
-// pushdown is coherent with its own authoritative pass, and a gate can only
-// decline to push, never widen — so the divergence is tolerated rather than
-// threaded through queryService.
+// [nextaction.CandidateFunc] the engine takes, so the engine never sees an
+// entity the principal cannot read and depends on no store or ACL type.
+// Query sources run through App.executeQuery, count sources through
+// countCandidates, flow_tasks through FlowService.Tasks, and context sources
+// through contextCandidates. A source's store-evaluable condition conjuncts
+// are also pushed into the query; this is sound because the store only drops
+// rows the engine's authoritative condition pass would drop. meta and lookup
+// are the request's snapshot, captured once by the caller.
 func (h *nextActionHandler) candidates(
 	meta *metamodel.Metamodel, lookup nextaction.MatcherFunc, page nextActionPage,
 ) nextaction.CandidateFunc {
@@ -73,21 +33,13 @@ func (h *nextActionHandler) candidates(
 		ctx context.Context, id string, src dataentryconfig.NextActionSource, want nextaction.Want,
 	) ([]nextaction.Candidate, error) {
 		if src.IsFlowTasks() {
-			// The task list reads every face of the run headers and gates
-			// them itself; a flow_tasks source has no source world.
 			return h.flowTasks(ctx, meta, src, want)
 		}
-		// The SOURCE world is resolved per source, before any read, and
-		// REPLACES whatever world the request carried. See
-		// nextActionSourceWorld for why the caller's `?world=` must not reach
-		// a candidate query.
 		ctx, ok, err := nextActionSourceWorld(ctx, h.worlds(), h.defaultWorld(), src)
 		if err != nil {
 			return nil, err
 		}
 		if !ok {
-			// This principal holds no read grant for the source's world.
-			// Contribute nothing — deliberately a skip, not an error.
 			return nil, nil
 		}
 		switch {
@@ -157,83 +109,31 @@ func nextActionPrefilters(
 	return p.Prefilters(ctx, meta)
 }
 
-// nextActionSourceWorld rebinds ctx to the world a source's QUERY runs in,
+// nextActionSourceWorld rebinds ctx to the world a source's query runs in,
 // reporting ok=false when this principal may not read that world.
-//
-// # The source world REPLACES the request's world, never inherits it
-//
-// A next-action source answers "what should I do now?", and the answer is
-// almost always unfinished work — exactly what a publication world like
-// `published` excludes. A source that inherited the reader's world would
-// therefore be reliably empty in the world most people browse, which is why
-// the query world is operator-declared per source (`source_world:`) and an
-// absent one means the DEFAULT world rather than "whatever the caller asked
-// for".
-//
-// That is also the security-relevant half. The request's `?world=` is
-// caller-supplied; a source world is operator-supplied. Letting the URL
-// parameter widen or redirect a source's query would let a caller aim an
-// operator's rule at a world the operator never named. The caller's world
-// governs DISPLAY only (dataentryconfig.NextActionSource.VisibleWorlds,
-// applied in the handler); it is dropped here, so the two axes cannot be
-// conflated by a request.
-//
-// # The ACL check is not optional, and it is a SKIP
-//
-// A declared source world is config, so it is not itself an authorization: the
-// grant is re-checked per principal, exactly as resolveWorld does for `?world=`.
-// A principal with no read grant contributes no candidates from this source.
-//
-// SKIP rather than error, deliberately. This is an advisory surface that sits
-// on other pages, so failing the whole resolve would let one misconfigured
-// source blank the suggestion box for everyone it does not apply to — and the
-// principal who cannot read `editorial` is a perfectly ordinary user, not an
-// error condition. Skipping degrades to "no suggestion from this source",
-// which is a state the engine already handles on every quiet day.
-//
-// Note this is belt-and-braces rather than the boundary: candidates flow
-// through the caller's read gate regardless, so a missing grant here could at
-// most have produced rows the gate would then have withheld. Checking anyway
-// keeps the world grant meaningful as a grant and matches the request path.
-//
-// An infrastructure failure from the gate is NOT a denial and propagates —
-// rendering an outage as a quiet suggestion box hides it with no operator
-// signal (the RR-4TFZNL shape).
-//
-// Returns ctx unchanged for the default world, so a project that declares no
-// worlds takes exactly the path it did before this key existed.
-//
-// A free function taking the lookup rather than an App method, for the same
-// reason resolveWorld is one: it needs exactly one collaborator, and App is at
-// its plimsoll method cap because it has accreted for years — adding to it is
-// the habit that got it there.
+// The operator-declared source world replaces the request's `?world=`, which
+// governs display only, so a caller cannot aim an operator's rule at another
+// world. An absent source world means the default world, returned unchanged.
+// A missing read grant skips the source; a gate failure is not a denial and
+// propagates as an error.
 func nextActionSourceWorld(
 	ctx context.Context, lookup WorldLookup, defaultName string, src dataentryconfig.NextActionSource,
 ) (context.Context, bool, error) {
 	name := src.SourceWorld
 	if name == "" {
-		// A source that names no world reads in the default world, bound
-		// explicitly so a request that arrived with `?world=published`
-		// cannot leak its scope into a source that never named one.
 		name = defaultName
 	}
 	if lookup == nil {
 		if name == defaultName {
 			return withWorld(ctx, worldHandle{name: name, scope: defaultWorldHandle().scope}), true, nil
 		}
-		// Worlds were never wired, so no other name can resolve. Skip
-		// rather than silently querying the default world.
 		return ctx, false, nil
 	}
 	scope, known := lookup.Lookup(name)
 	if !known {
-		// Rejected at config load (validateNextActionWorlds). Reaching here
-		// means config and metamodel disagree at runtime; skip rather than
-		// widening to the default world.
 		return ctx, false, nil
 	}
 	if name == defaultName {
-		// The default world needs no grant beyond the per-entity gates.
 		return withWorld(ctx, worldHandle{name: name, scope: scope}), true, nil
 	}
 	permitted, err := readGateFromContext(ctx).PermitsWorld(ctx, name)
@@ -253,14 +153,12 @@ func nextActionSourceWorld(
 // Labels come from the entity's display title, which the read gate has
 // already approved — this is why the resolution belongs here and not in the
 // SPA: a client-side fetch would be a second read surface to gate.
+// Each option is redacted before its display title is taken, so a hidden title
+// never becomes a label.
 func (h *nextActionHandler) options(meta *metamodel.Metamodel) nextaction.OptionFunc {
 	return func(
 		ctx context.Context, src dataentryconfig.NextActionSource, query string, limit int,
 	) ([]nextaction.PickOption, error) {
-		// Options are scoped to the SOURCE's world, exactly like its
-		// candidates. An option list resolved in a different world than the
-		// suggestion it belongs to would offer the user entities that do not
-		// exist from where the suggestion was computed.
 		ctx, ok, err := nextActionSourceWorld(ctx, h.worlds(), h.defaultWorld(), src)
 		if err != nil {
 			return nil, err
@@ -279,19 +177,10 @@ func (h *nextActionHandler) options(meta *metamodel.Metamodel) nextaction.Option
 		ctx = primeVerdicts(ctx, h.fields(), entities)
 		aff := h.affordances()
 		for _, e := range entities {
-			// Redact BEFORE safeDisplayTitle: its guard is presence-based
-			// ("is the display property missing?"), so against an unredacted
-			// entity every property is present and it happily returns the
-			// hidden value.
 			red := redactedForSuggestion(ctx, aff, e)
 			out = append(out, nextaction.PickOption{
 				EntityID: e.ID,
-				// safeDisplayTitle, not the raw DisplayTitle: a redacted
-				// display property would otherwise render a PARTIAL title,
-				// leaking the readable half and confirming a hidden half
-				// exists (the BUG-R9EHKV leak class).
-				// The request's snapshot, taken once in the handler.
-				Label: safeDisplayTitle(meta, red),
+				Label:    safeDisplayTitle(meta, red),
 			})
 		}
 		return out, nil
@@ -299,23 +188,12 @@ func (h *nextActionHandler) options(meta *metamodel.Metamodel) nextaction.Option
 }
 
 // queryCandidates runs a source's query through the ACL-gated pipeline.
-//
-// Candidates are FIELD-REDACTED here, not merely row-gated. executeQuery
-// returns raw entities — every other consumer redacts at serialization (see
-// forWireRelated / stripHiddenProperties), but a suggestion never passes
-// through that seam: its message interpolates `{property}` straight into
-// text. Without this an operator writing `suggest: "{title} needs a look"` on
-// a type whose title is hidden by `visible:` would put the hidden value on
-// the wire — the BUG-R9EHKV leak class, through a new door.
-//
-// `prefilters` are the condition's store-evaluable conjuncts (see
-// nextActionPrefilters); nil pushes only the query's own filters.
-//
-// `want` bounds the read to the leading rows the engine keeps (TKT-CKLZMWB),
-// so a source matching thousands of rows reads about want.First of them. The
-// suggestion on screen (want.Keep) can lie past that prefix when the match set
-// changed since it was picked. When the read was cut short and missed it,
-// the source is read whole, as before, so the engine can keep it on screen.
+// Candidates are field-redacted here, not only row-gated, because a
+// suggestion interpolates `{property}` into text and never passes the
+// serialization redaction. prefilters are the condition's store-evaluable
+// conjuncts; nil pushes only the query's own filters. want bounds the read to
+// the leading rows the engine keeps; when that prefix misses want.Keep, the
+// source is read whole.
 func (h *nextActionHandler) queryCandidates(
 	ctx context.Context, query string, prefilters []store.PropPredicate, want nextaction.Want,
 ) ([]nextaction.Candidate, error) {
@@ -366,27 +244,14 @@ func suggestionRedactor(aff affordanceService) func(context.Context, *entityPkg.
 
 // countCandidates answers a `<entity_type> == 0` source: it yields exactly one
 // entity-less candidate when the type is empty, and none otherwise.
-//
-// GATED BY DEFAULT. The count runs through the same read path as every other
-// source, so it counts what THIS principal can see: "do I have any clients?",
-// not "does anyone?". An ungated count would disclose that entities of a type
-// exist to a principal permitted to read none of them, and entity existence is
-// the strongest secret rela's read model keeps (a hidden entity is
-// nonexistent, indistinguishable from a real 404).
-//
-// `ungated` (config: count_ungated) opts out for a genuinely operator-level
-// question — "has this deployment been set up at all?" — and is never
-// inferred. The safe default's failure mode is a principal who sees no clients
-// being repeatedly offered "add a client": mild, visible, and fixable in
-// config. The unsafe default's failure mode is a silent disclosure nobody
-// notices. Prefer the loud, fixable error.
+// The count is gated by default: it counts what this principal can see, since
+// an ungated count would disclose that hidden entities exist. `ungated`
+// (config: count_ungated) opts out explicitly and is never inferred.
 func (h *nextActionHandler) countCandidates(
 	ctx context.Context, count string, ungated bool,
 ) ([]nextaction.Candidate, error) {
 	entityType, ok := parseCountZero(count)
 	if !ok {
-		// Validated at config load; reaching here means the config was built
-		// in code. Yield nothing rather than failing the whole page.
 		return nil, nil
 	}
 
@@ -397,15 +262,14 @@ func (h *nextActionHandler) countCandidates(
 	if !empty {
 		return nil, nil
 	}
-	// One candidate with no entity — the engine keys it on the source alone.
 	return []nextaction.Candidate{{}}, nil
 }
 
 // countIsZero reports whether the caller sees no entities of entityType.
+// Unless ungated, it reads through the list's read gate, so a hidden entity does
+// not count.
 func (h *nextActionHandler) countIsZero(ctx context.Context, entityType string, ungated bool) (bool, error) {
 	if ungated {
-		// Every face: the operator question is "does anything exist?", and a
-		// type stored only at named faces must not look empty.
 		_, total, err := h.store().GraphCount(ctx, store.GraphQuery{
 			EntityType: entityType, Faces: store.AllFaces(),
 		})
@@ -415,20 +279,6 @@ func (h *nextActionHandler) countIsZero(ctx context.Context, entityType string, 
 		return total == 0, nil
 	}
 
-	// Gated: route through the same read gate the list pipeline uses, so a
-	// hidden entity does not count. scopedSortedEntities resolves the ACL
-	// verdict FIRST and returns empty on DenyAll, which is exactly the
-	// answer we want — a principal denied the type sees "none", and the
-	// first-run hint fires for them.
-	//
-	// The nil query means no `?query_scope=`, so the entity type's DEFAULT
-	// query scope applies and this counts what a screen would show rather
-	// than what the store holds. Intended: the hint answers "is there
-	// anything here for you", a presentation question, so a user whose every
-	// task is archived is better served by the empty-state hint than by a
-	// blank list with no explanation. This is why the non-SPA surfaces
-	// (analyze_*, validate, the tracer) deliberately do NOT resolve scopes —
-	// they answer what is true, and each has a test pinning that.
 	entities, err := h.scoped(ctx, entityType, nil)
 	if err != nil {
 		return false, fmt.Errorf("next-action count for %q: %w", entityType, err)
@@ -448,27 +298,12 @@ func parseCountZero(count string) (string, bool) {
 }
 
 // SetNextActions installs the next-action per-user state backend and the
-// predicate compiler backing a source's `condition:`.
-//
-// The state store has no default: until this is called the endpoints report
-// "not configured". This state is disposable, so an in-memory backend is
-// correct for a single-process deployment, where losing it on restart costs a
-// user one repeated suggestion. A deployment that wants snoozes to survive a
-// restart, or to be shared across processes, injects a persistent backend.
-//
-// The compiler arrives here rather than through NewApp because it lives above
-// this package, so the composition root supplies it rather than this package
-// importing it.
-//
-// Nil: rejected for both, rather than quietly disabling the feature. A
-// silently absent store would make the app stop honoring snoozes and mutes,
-// which users experience as the system ignoring them. A silently absent
-// compiler would leave every condition unevaluated, showing suggestions for
-// entities the operator explicitly excluded. Both are the deferred-failure
-// symptom the project's constructor rule exists to prevent.
+// predicate compiler backing a source's `condition:`. Until it is called the
+// endpoints report "not configured". The state is disposable, so an in-memory
+// backend suits a single process.
+// Nil: rejected for both. A missing store would ignore snoozes and mutes, and
+// a missing compiler would show suggestions the operator excluded.
 func (a *App) SetNextActions(state userstate.Store, matchers NextActionMatcherFunc) error {
-	// Both are checked before either is installed, so a refused call leaves
-	// the handler as it was.
 	if state == nil || matchers == nil {
 		return errors.New("dataentry.SetNextActions: state store and matcher func must be non-nil")
 	}

@@ -16,27 +16,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 )
 
-// StaticShell serves the embedded SPA shell and its static assets and
-// nothing else: the `/static/` mount and the shell catch-all of
-// [App.NewRouter], without an App.
-//
-// A multi-tenant host serves it to a request that has no tenant yet, so a
-// browser can load and render a signed-out state before it presents an
-// assertion. Every byte it can return is compiled into the binary, so it
-// reads no store and no project file and cannot disclose a tenant's data,
-// whichever path it is handed. The operator's `custom/` injection is left
-// out because it reads project files; a request with a verified tenant gets
-// the tenant's full router instead.
-//
-// boot names the shared project's app in the shell (see [ShellBoot]). It is
-// read once at startup from the operator's config, not per request, so the
-// handler still reads no project file and no store.
-//
-// Panics only if the binary was built without the embedded SPA filesystem,
-// which [CheckEmbeddedSPA] reports at startup.
-//
-// A headless build has no shell, so it serves the same root as
-// [App.NewRouter] does there: a text pointer to the API at `/`, 404 elsewhere.
+// StaticShell serves the embedded SPA shell and its static assets and nothing
+// else, for a multi-tenant request that has no tenant yet. Every byte it returns
+// is compiled in, so it reads no store or project file and cannot disclose
+// tenant data; the `custom/` injection is left out for that reason. boot is read
+// once at startup. It panics only without the embedded SPA filesystem, which
+// [CheckEmbeddedSPA] reports. A headless build serves a text pointer to the API
+// at `/` and 404 elsewhere.
 func StaticShell(boot ShellBoot) http.Handler {
 	if Headless {
 		return withSpecLink(headlessRoot())

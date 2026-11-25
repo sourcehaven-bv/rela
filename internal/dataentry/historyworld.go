@@ -29,36 +29,14 @@ type historySubject struct {
 	worldAbsent bool
 }
 
-// resolveHistorySubject decides which face lineage the address names and
-// whether this principal may read it. ok=false is the uniform not-found; an
-// error is a gate failure.
-//
-// A live face is resolved by the [visibility.Resolver], exactly as the
-// entity GET resolves the same address: a named face literally, a bare id
-// through the request's world. The two surfaces therefore agree on what an
-// address names and on who may read it, and a hidden face is the same 404 as
-// an absent one.
-//
-// A miss is then split, from a raw header read, into two cases the resolver
-// deliberately cannot tell apart:
-//
-//   - The addressed face is live but the gates refused it: hidden, another
-//     type, a denied world, or a bare id of a faced type in the default
-//     world. That is the uniform 404.
-//   - The face has no live row. A deleted face has no per-entity verdict
-//     left to evaluate, so its history needs the global
-//     acl.PermHistoryRead plus the face half of the read grant. A
-//     non-holder gets the same 404 as for an id that never existed. When
-//     sibling faces still live, the caller must also pass the entity's row
-//     gate on one of them.
-//
-// A failed stored-faces read is an error, never "deleted": the deleted-face
-// rule grants on a global permission, so a read fault must not reach it.
-//
-// A bare id in a non-default world that resolves no readable face is
-// worldAbsent when the principal may read some face of the entity: the
-// entity exists for this caller, it just has no face in this world. A denied
-// world answers the same way, so a denial looks like an empty world.
+// resolveHistorySubject decides which face lineage the address names and whether
+// this principal may read it; ok=false is the uniform not-found, an error a gate
+// failure. A live face resolves through the [visibility.Resolver] as the entity
+// GET does, and an unreadable live entity is the same 404 as a never-stored id.
+// A face with no live row needs the global acl.PermHistoryRead plus the face
+// read grant, and, while siblings live, the row gate on one of them. A failed
+// stored-faces read is an error, never "deleted". A bare id with no readable
+// face in a non-default world is worldAbsent when some face is readable.
 func resolveHistorySubject(
 	ctx context.Context, vr visibleReader, typeName string, ref entityPkg.Ref,
 ) (historySubject, bool, error) {
@@ -84,9 +62,6 @@ func resolveHistorySubject(
 		if readable {
 			return historySubject{ref: ref, worldAbsent: true}, true, nil
 		}
-		// A live entity the caller cannot read takes the same path as an
-		// id that was never stored. Answering it 404 while a never-stored
-		// id gets the empty world answer would tell a probe which ids exist.
 		stored = nil
 	}
 	if len(stored) > 0 {
@@ -94,10 +69,6 @@ func resolveHistorySubject(
 		case ref.Face.IsImplicit(), storedType != typeName, slices.Contains(stored, ref.Face):
 			return historySubject{}, false, nil
 		}
-		// A named face that was deleted while its siblings live on takes
-		// the deleted-face rule below, and the entity still has a row gate
-		// to evaluate: the caller must be able to read one of its live
-		// faces, as for any other read of a live entity.
 		if _, readable, ferr := vr.family(ctx, typeName, ref.ID); ferr != nil || !readable {
 			return historySubject{}, false, ferr
 		}
@@ -107,13 +78,9 @@ func resolveHistorySubject(
 		return historySubject{}, false, nil
 	}
 	if bareInWorld {
-		// A world resolves faces of live rows, so a deleted entity has none
-		// in it. Its history is read by naming the face, or without a world.
 		return historySubject{ref: ref, worldAbsent: true}, true, nil
 	}
 	if world.blocksAllReads() {
-		// A named face in a denied world is refused, as the live face is.
-		// Answering a deleted one differently would tell the two apart.
 		return historySubject{}, false, nil
 	}
 	if !faceReadable(ctx, typeName, ref.Face) {

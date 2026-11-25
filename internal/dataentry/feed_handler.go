@@ -46,10 +46,6 @@ func (a *App) handleV1Feed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Deep links must be absolute so a calendar client can open them: a
-	// relative path is useless once the .ics leaves the server. Scheme/host
-	// come from the request (matching however the client reached us — loopback,
-	// LAN, or a proxied hostname), mirroring appBaseURL.
 	base := feedBaseURL(r)
 	link := func(entityType, id string) string {
 		return base + "/entity/" + entityType + "/" + id
@@ -66,19 +62,6 @@ func (a *App) handleV1Feed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Feed bodies embed user-authored entity content (Summary/Description are
-	// read straight off entity properties in feed_provider.go), so the response
-	// must never be interpreted as HTML. Two things guarantee that:
-	//
-	//  1. The serializers escape structurally for their own grammar, not HTML:
-	//     iCalendar via calfeed.escapeText + writeLine's CRLF strip
-	//     (internal/calfeed/ical.go:166, :149), JSON via encoding/json, which
-	//     also escapes <, >, & to </>/& by default.
-	//  2. nosniff pins the declared Content-Type, so a browser cannot
-	//     MIME-sniff a text/calendar or application/json body into text/html
-	//     and execute a payload the escaping above deliberately left inert
-	//     (e.g. "<script>" inside an iCalendar SUMMARY, which is legal
-	//     iCalendar TEXT and must stay a literal string).
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
 	switch format {

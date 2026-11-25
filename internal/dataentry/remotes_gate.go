@@ -120,19 +120,6 @@ func (g remoteGate) entryVisible(ctx context.Context, e RemoteEntry) bool {
 
 // verdict answers whether the caller may take action on the visible entry
 // e. `_actions` and the POST routes both ask it, so they cannot disagree.
-//
-// Dismissing changes only the conflict list. Taking the local side changes
-// no local data either, but the next push sends the local value to the
-// remote as the remote's credential. That is the decision remote:sync
-// grants: the value is one the caller can read, and what the remote accepts
-// is up to the remote's own ACL. So remote:sync and read access suffice.
-// Taking the remote side
-// makes the next pull write the remote values into the local row, so it
-// also needs the caller's edit right on the row and on every field the
-// entry names. Linking does the same: the next pull takes the linked remote
-// row's value for every field the create tried to send. Taking the remote
-// side of a row the remote deleted deletes the local row, so it needs the
-// caller's delete right instead.
 func (h *remotesHandler) verdict(ctx context.Context, g remoteGate, e RemoteEntry, action string) remoteVerdict {
 	switch action {
 	case remoteActionResolveLocal:
@@ -202,9 +189,6 @@ func (h *remotesHandler) mayWriteRemoteValue(ctx context.Context, g remoteGate, 
 		return false
 	}
 	if e.Reason == remoteReasonRemoteDel {
-		// The pull deletes the whole family by bare id, which the gate can
-		// judge only from the one served face. A faced type is refused, as
-		// the DELETE route refuses a bare id on one.
 		if def, ok := h.app.Meta().Entities[row.Type]; !ok || len(def.Faces) > 0 {
 			return false
 		}

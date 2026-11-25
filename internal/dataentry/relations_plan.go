@@ -47,21 +47,13 @@ type edgeReader struct {
 	visible visibleReader
 }
 
-// plan turns one relation wrapper into the edge writes it asks for. It
-// is the one place a wrapper is matched against the current edges, shared by
-// the affordance check and the reconciler, so the two cannot disagree on
-// which edge a body names.
-//
-// The current set holds only the edges the principal can read
-// ([visibleReader.readableRelations]): an edge the caller cannot see is never
-// matched, so a `data` replace never deletes it and a `remove` cannot name
-// it. tail is the path entity's face; it picks the outgoing edges of a
-// content-scoped type, which belong to that face.
-//
-// A bare id for an incoming content edge names the edges that peer already
-// has to the path entity. `data` and `add` keep all of them; `remove` needs
-// exactly one, and answers face_required otherwise. A bare id with no edge
-// yet is resolved as a single create resolves it ([visibility.Resolver.WriteTarget]).
+// plan turns one relation wrapper into the edge writes it asks for. It is
+// the one place a wrapper is matched against the current edges, shared by the
+// affordance check and the reconciler. Only edges the principal can read are
+// matched. tail is the path entity's face. A bare id for an incoming content
+// edge names that peer's existing edges; `remove` needs exactly one, else
+// face_required. A bare id with no edge yet resolves via
+// [visibility.Resolver.WriteTarget].
 func (e edgeReader) plan(
 	ctx context.Context, entityID string, tail entity.Face, canonical string, incoming bool,
 	upd v1.RelationsUpdate, path string,

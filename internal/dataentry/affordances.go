@@ -31,30 +31,12 @@ import (
 )
 
 // translateVerb maps a wire-format verb to the [acl.WriteRequest] that
-// authorizes that operation. It is the single source of truth for the
-// "same code path" invariant: both the affordance serializer and the
-// write handlers route their [acl.WriteRequest] construction through
-// here. A grep test (`lint_test.go`) enforces that no other site in
-// internal/dataentry constructs `acl.WriteRequest{Op:` directly.
-//
-// The verb set is closed and lives next to its callers; the only sites
-// that pass verbs in are [perItemVerbs] and [perCollectionVerbs] in
-// this file. Adding a new verb requires an entry here plus an
-// [acl.Op] constant.
-//
-// entityID is the entity being acted on; empty for per-collection
-// verbs (e.g. "create" against a type, no instance yet). It populates
-// [acl.EntitySubject.ID] so the v1 ACL can evaluate entity-aware
-// local-role grants (e.g. "alice can edit TKT-042 because she's
-// assigned to it").
-//
-// face names the CONTENT STATE being acted on, and is REQUIRED rather
-// than optional: an affordance must answer the same question the write
-// will (BUG-Y0GNSB). Passing the zero face where a real one applies
-// reports `update: true` on a face the principal cannot write, which is
-// how the escalation this fixes stayed invisible in the API response.
-// Pass the face off the entity being described; the zero value is
-// correct only for a genuinely unfaced entity or a per-collection verb.
+// authorizes it. It is the single construction site for both affordances and
+// write handlers; `lint_test.go` forbids `acl.WriteRequest{Op:` elsewhere in
+// this package. entityID is empty for per-collection verbs. face is required:
+// an affordance must answer the same question the write will, so pass the
+// described entity's face; the zero face is correct only for an unfaced entity
+// or a per-collection verb.
 func translateVerb(verb, entityType, entityID string, face entityPkg.Face) acl.WriteRequest {
 	subject := acl.NewEntitySubject(entityType, entityID, face)
 	switch verb {
@@ -67,9 +49,6 @@ func translateVerb(verb, entityType, entityID string, face entityPkg.Face) acl.W
 	case "rename":
 		return acl.WriteRequest{Op: acl.OpRename, Subject: subject}
 	}
-	// Unreachable for the closed verb set above. A panic here would
-	// signal a bug in a future commit — better than silently returning
-	// a zero WriteRequest that maps every verb to OpCreate.
 	panic("dataentry.translateVerb: unknown verb: " + verb)
 }
 
@@ -197,7 +176,6 @@ var perCollectionVerbs = []string{"create"}
 func (svc affordanceService) computeActions(ctx context.Context, e *entityPkg.Entity) map[string]bool {
 	out := make(map[string]bool, len(perItemVerbs))
 	if _, past := asOfFromContext(ctx); past {
-		// A read at an instant is read-only: no verb is offered.
 		for _, v := range perItemVerbs {
 			out[v] = false
 		}
@@ -463,8 +441,6 @@ func withSchemaReadOnly(meta *metamodel.Metamodel, e *entityPkg.Entity, v FieldV
 		v.Writable = map[string]bool{}
 	}
 	for name, pd := range def.Properties {
-		// An external ref is written only by scripts, migrations and
-		// imports (TKT-SM20FG); the write path refuses it from here.
 		if pd.Computed != "" || pd.Rollup != nil || pd.Type == metamodel.PropertyTypeExternalRef {
 			v.Writable[name] = false
 		}
@@ -533,29 +509,12 @@ func (d AffordanceDenialError) Error() string {
 	return d.RuleID() + ": " + d.Reason
 }
 
-// validateFieldWrite reports the first AffordanceDenialError that the
-// proposed property writes trigger. Returns nil when every requested
-// field is permitted.
-//
-// The validator handles four classes of denial:
-//
-//  1. Unknown fields (not declared in the metamodel) — rejected with
-//     RuleFieldHidden so the response is byte-equivalent to a true
-//     hidden-field rejection. This closes the F8 side channel.
-//  2. Hidden fields — Visible[name] == false in the resolver verdict.
-//  3. Read-only fields — Writable[name] == false. Strict: same-value
-//     writes are not exempted (useAutoSave does no-op suppression
-//     client-side; the server doesn't repeat that logic).
-//  4. Filtered enum options — Options[name][value] == false.
-//
-// `setKeys` is the set of property names being written (from
-// `properties` in the PATCH body); `unsetKeys` is the set being
-// removed (`properties_unset`). Both are checked against the same
-// rules: hidden/read-only fields cannot be set OR unset.
-//
-// Values are required only for the enum-filter check; pass the
-// requested value for each key in setValues. Unknown values default
-// to allowed (an option entry of `nil` means "no override").
+// validateFieldWrite reports the first AffordanceDenialError the proposed
+// property writes trigger, or nil. It denies unknown fields (as RuleFieldHidden,
+// so they are indistinguishable from hidden ones), hidden fields, read-only
+// fields (same-value writes included) and filtered enum options. setKeys and
+// unsetKeys are checked against the same rules. setValues is needed only for
+// the enum check; an option entry of nil means allowed.
 func (svc affordanceService) validateFieldWrite(
 	ctx context.Context, e *entityPkg.Entity, setKeys map[string]any, unsetKeys []string,
 ) *AffordanceDenialError {
@@ -696,31 +655,14 @@ type relationSource struct {
 	unconditional bool
 }
 
-// relationSources returns what gates a per-relation write of relType. The
-// gate reads the edge's source: the path entity for an outgoing edge, the
-// peer for an incoming one (the path entity is then the TARGET, so the
-// resolver must be asked about the peer's affordance, not the path entity's).
-//
-// peer is the source at the edge's tail: the tail an existing edge carries, or
-// the tail a new incoming edge will get. It is read for an incoming edge only.
-//
-// An edge with no source row at its tail belongs to the whole source, and a
-// write passes only if every face the source's type declares permits it.
-// That is the case for a new or identity-scoped incoming edge from a faced
-// peer: its zero face holds no row (DEC-NPZICR), and falling back to the
-// path entity would judge the edge by the wrong type's policy. It is also
-// the case for an outgoing identity-scoped edge from a faced path entity: the
-// served face is one judgement among the family's, never the only one. An
-// outgoing content-scoped edge belongs to the served face and is judged on it
-// alone.
-//
-// Within a family, see [affordanceService.familySources].
-//
-// A peer with no readable row at all falls back to the path entity, so a
-// hidden peer is judged exactly as a missing one. The write refuses both as
-// a dangling peer.
-//
-// A read fault is returned: the caller must not write on a guess.
+// relationSources returns what gates a per-relation write of relType: the edge's
+// source, which is the path entity for an outgoing edge and peer for an incoming
+// one. peer is the tail row an existing or new incoming edge carries. An edge
+// with no source row at its tail belongs to the whole source family, and every
+// declared face must permit the write; an outgoing content-scoped edge is judged
+// on the served face alone. A peer with no readable row falls back to the path
+// entity, so a hidden peer is judged as a missing one. A read fault is returned:
+// the caller must not write on a guess.
 func (svc affordanceService) relationSources(
 	ctx context.Context, pathEntity *entityPkg.Entity, peer entityPkg.Ref, direction, relType string,
 ) ([]relationSource, error) {
@@ -813,20 +755,11 @@ func (svc affordanceService) verdictsOf(ctx context.Context, src relationSource)
 	return svc.resolver().RelationVerdicts(ctx, src.row)
 }
 
-// linkableFrom reports whether the principal may create a relType edge from
-// row to the entity on the request path, which /_search does not know and
-// neither gate reads. It runs the two gates a PATCH runs for an incoming add,
-// through the same functions: the affordance gate over
-// [affordanceService.relationSources] and the ACL request of
-// [translateRelationCreate]. The write re-authorizes; this is a hint.
-//
-// row is a served row, which the principal may read. The tail is the one the
-// write gets. A content-scoped edge belongs to the row's face; an
-// identity-scoped edge has the zero tail, and from a faced source the ACL
-// then requires every face the type declares.
-//
-// Cost per row: the source read of relationSources (the readable family and
-// the type's read verdict, for an identity edge from a faced source), one
+// linkableFrom reports whether the principal may create a relType edge from row
+// to the entity on the request path. It runs the same two gates a PATCH runs for
+// an incoming add: the affordance gate over [affordanceService.relationSources]
+// and the ACL request of [translateRelationCreate]. It is a hint; the write
+// re-authorizes. row must be a served row. Cost per row is one source read, one
 // verdict call per source and one AuthorizeWrite.
 func (svc affordanceService) linkableFrom(
 	ctx context.Context, row *entityPkg.Entity, relType string, scope metamodel.RelationScope,
@@ -842,7 +775,6 @@ func (svc affordanceService) linkableFrom(
 	}
 	for _, src := range sources {
 		if src.row == nil {
-			// The row's source is gone; the write would find no peer.
 			return false
 		}
 	}
@@ -894,7 +826,7 @@ func (svc affordanceService) validateRelationOp(
 	v := svc.verdictsOf(ctx, src)
 	rv, ok := v.Types[relType]
 	if !ok {
-		return nil // default-permissive
+		return nil
 	}
 	switch op {
 	case RelationOpCreate:
@@ -943,11 +875,10 @@ func (svc affordanceService) validateRelationsModernAffordances(
 		}
 		canonical, incoming, ok := resolveDirection(meta, bodyKey)
 		if !ok {
-			continue // structural error surfaces via the existing validator
+			continue
 		}
 		var ops []edgeOp
 		if entityID == "" {
-			// A create has no current edges to match: every listed edge is new.
 			ops = newEdgeOps(upd, incoming)
 		} else {
 			var err error
@@ -1082,13 +1013,12 @@ func (svc affordanceService) computeFieldAffordances(
 func computeFieldAffordancesFrom(v FieldVerdicts) map[string]v1.FieldAffordance {
 	out := make(map[string]v1.FieldAffordance)
 
-	// writable=false entries
 	for name, writable := range v.Writable {
 		if writable {
-			continue // sparse: default is writable
+			continue
 		}
 		if !v.Visible[name] && v.isHidden(name) {
-			continue // hidden takes precedence; skip from _fields entirely
+			continue
 		}
 		entry := out[name]
 		f := false
@@ -1096,7 +1026,6 @@ func computeFieldAffordancesFrom(v FieldVerdicts) map[string]v1.FieldAffordance 
 		out[name] = entry
 	}
 
-	// option-filter entries
 	for name, opts := range v.Options {
 		if v.isHidden(name) {
 			continue
@@ -1191,7 +1120,7 @@ func redactedPropertyNames(v FieldVerdicts) []string {
 			out = append(out, name)
 		}
 	}
-	sort.Strings(out) // deterministic wire
+	sort.Strings(out)
 	return out
 }
 
@@ -1294,8 +1223,6 @@ func andRelationVerdict(v, o RelationVerdict) RelationVerdict {
 		Removable:  v.Removable && o.Removable,
 		MetaClosed: v.MetaClosed || o.MetaClosed,
 	}
-	// v's attribution wins where both name a dimension, as before; o's
-	// covers a denial only o produced.
 	if len(v.Attribution)+len(o.Attribution) > 0 {
 		out.Attribution = maps.Clone(o.Attribution)
 		if out.Attribution == nil {
@@ -1362,31 +1289,16 @@ func (svc affordanceService) stripHiddenProperties(ctx context.Context, e *entit
 		return
 	}
 	if _, hiddenPrimary := hidden[primary]; hiddenPrimary {
-		// Fall back to the entity ID, matching DisplayTitle's
-		// missing-property branch. The ID is non-secret by design.
 		result.Title = e.ID
 	}
 }
 
-// visibleRelationMeta returns a copy of a relation edge's property map with
-// hidden meta keys removed, honoring the relation `visible:` grants resolved for
-// the edge's SOURCE entity (TKT-B1F5Q1). meta is the raw edge property map; from
-// is the relation's source entity (for incoming edges the peer, not the path
-// entity; see [affordanceService.visibleRelationMetaIncoming]); relType is the canonical relation type.
-//
-// It NEVER mutates the argument: when at least one key is redacted it returns a
-// fresh copy with those keys removed; when nothing is redacted it returns the
-// input map unchanged (the store-owned edge.Properties, which some backends share
-// across reads). Callers must therefore treat the result as read-only — the two
-// live call sites only reassign it into the wire `rel["meta"]` and serialize,
-// never mutate it. Returns the input unchanged when the active resolver does not
-// implement [RelationVisibilityResolver] (Nop / Demo): relations then serialize
-// un-redacted, matching pre-B1F5Q1 behavior. The deny universe is the meta map's
-// actual keys, so redaction covers exactly what would reach the wire (including
-// free-form keys not declared in the metamodel). Under a historical-subject ctx
-// (relation history) the underlying resolver fails closed; a holder of
-// history:read-redacted must skip this call entirely at the handler, not rely on
-// it.
+// visibleRelationMeta returns an edge's meta map with keys hidden by the
+// relation `visible:` grants of the source entity from removed. It never mutates
+// meta: it returns a copy when it redacts and the input otherwise, so treat the
+// result as read-only. Without a [RelationVisibilityResolver] it returns meta
+// unchanged. Under a historical-subject ctx the resolver fails closed; a holder
+// of history:read-redacted must skip this call at the handler.
 func (svc affordanceService) visibleRelationMeta(
 	ctx context.Context, from *entityPkg.Entity, relType string, meta map[string]any,
 ) map[string]any {
@@ -1412,17 +1324,10 @@ func (svc affordanceService) visibleRelationMeta(
 	return out
 }
 
-// visibleRelationMetaIncoming redacts an INCOMING edge's meta, resolving the
-// relation grant against the edge's true source (the peer's row at the edge's
-// tail) rather than the entity being viewed (the TO side). It FAILS CLOSED if the peer cannot be
-// fetched (RR-B1F5-N1): a peer deleted between the neighbor-visibility pass and
-// this read would otherwise leave the source unresolvable, and falling back to
-// the wrong-type path entity — whose type likely has no `visible:` block for this
-// relation — would silently emit the meta un-redacted. When the active resolver
-// can redact at all (implements [RelationVisibilityResolver]) and the source is
-// unresolvable, drop the whole meta map rather than leak it. The write gate,
-// [affordanceService.relationSources], resolves a missing tail row through the
-// family instead; this read keeps the stricter rule, which only ever hides meta.
+// visibleRelationMetaIncoming redacts an incoming edge's meta against the edge's
+// true source, the peer's row at the edge's tail. It fails closed: when the
+// resolver can redact and the peer cannot be fetched, it drops the whole meta
+// map rather than judge it by the path entity's type and leak it.
 func (svc affordanceService) visibleRelationMetaIncoming(
 	ctx context.Context, peer entityPkg.Ref, relType string, meta map[string]any,
 ) map[string]any {
@@ -1430,11 +1335,10 @@ func (svc affordanceService) visibleRelationMetaIncoming(
 		return meta
 	}
 	if _, canRedact := svc.resolver().(RelationVisibilityResolver); !canRedact {
-		return meta // Nop / Demo: no redaction at all, matching pre-B1F5Q1.
+		return meta
 	}
 	src, ok := svc.sourceRow(ctx, peer)
 	if !ok {
-		// Source gone mid-request → cannot resolve its grants → fail closed.
 		return map[string]any{}
 	}
 	return svc.visibleRelationMeta(ctx, src, relType, meta)
@@ -1465,27 +1369,12 @@ func (svc affordanceService) redactRelationMetaStrip(
 // field verdicts make read-only.
 const transitionReadOnly = "read-only"
 
-// computeTransitions returns the per-entity `_transitions` wire map: for each
-// state-machine-typed property, the resolved outgoing transitions for the ctx
-// principal on e. Returns nil (→ `_transitions` omitted from the wire) when the
-// active resolver does not implement [TransitionResolver] (Nop / Demo) or has no
-// machine-typed property for this entity — the SPA then falls back to the
-// ordinary enum control. An empty (non-nil) map is possible for a
-// TransitionResolver whose machines don't cover e's type; it serializes as
-// `_transitions: {}`, the same closed-world "resolver present, no deviations"
-// signal the other affordance maps use.
-//
-// fieldVerdicts is the same [FieldVerdicts] the caller resolved for `_fields` /
-// `_attachments`; a property hidden by field-visibility policy is OMITTED here
-// (RR-DENG8U). A machine's out-edge set is a function of its current value, so
-// emitting `_transitions` for a hidden field would leak that value back through
-// the wire past the strip that `stripHiddenProperties` performs on `properties`
-// / `_title` — mirror the same boundary attachments already keep.
-//
-// A property fieldVerdicts makes read-only (a `fields:` grant, or a flow's
-// `outside_edits:`, TKT-XI7IDBS) keeps its transitions, each reported not
-// allowed with reason [transitionReadOnly]: the PATCH that would perform one
-// is refused.
+// computeTransitions returns the `_transitions` wire map: the outgoing
+// transitions of each state-machine property of e for the ctx principal. It
+// returns nil without a [TransitionResolver] or machine property, and an empty
+// map when no machine covers e's type. A property fieldVerdicts hides is omitted,
+// because its transitions would leak its value. A read-only property keeps its
+// transitions, each not allowed with reason [transitionReadOnly].
 func (svc affordanceService) computeTransitions(
 	ctx context.Context, e *entityPkg.Entity, fieldVerdicts FieldVerdicts,
 ) map[string][]v1.Transition {
@@ -1497,7 +1386,7 @@ func (svc affordanceService) computeTransitions(
 	out := make(map[string][]v1.Transition, len(verdicts))
 	for prop, vs := range verdicts {
 		if !fieldVerdicts.IsVisible(prop) {
-			continue // hidden field: don't leak its state via out-edges
+			continue
 		}
 		writable := fieldVerdicts.IsWritable(prop)
 		wire := make([]v1.Transition, 0, len(vs))
@@ -1519,27 +1408,12 @@ func (svc affordanceService) computeTransitions(
 	return out
 }
 
-// applyCreateLock adjusts a create-candidate response so every state-machine
-// field is locked to its entry value (BUG-X1C7S / TKT-3G93B8). A create is an
-// ENTRY, not a transition: the machine field must not be freely editable and
-// must carry the initial value the server will accept. For each machine-typed
-// property of entityType it (a) pins result.Properties[field] to the entry
-// value, (b) marks it read-only in _fields so the SPA renders it locked and the
-// create-commit filter omits it (the server then applies the initial), and (c)
-// drops it from _transitions — offering "moves" on an entity that does not yet
-// exist would be nonsensical, and the SPA keys the locked-field render off the
-// entry, not off transitions.
-//
-// No-op when the resolver can't answer entry values (Nop / Demo) or the type has
-// no machine field. Called only from the create dry-run path — GET / PATCH keep
-// the normal editable + _transitions shape.
-//
-// A machine field hidden by field-visibility policy is skipped entirely
-// (RR-C3OJ33): stripHiddenProperties already removed it from result.Properties,
-// and re-inserting its entry value here would both re-leak it on the wire and
-// make it re-appear in the SPA create form (which derives visible create fields
-// from the response's property keys). Its create is still constrained — the
-// server rejects a non-entry value on the real create regardless of the hint.
+// applyCreateLock locks every state-machine field of a create-candidate response
+// to its entry value: it pins the property, marks it read-only in _fields, and
+// drops it from _transitions. It is a no-op without entry values or machine
+// fields, and runs only on the create dry-run path. A machine field hidden by
+// field visibility is skipped so it is not re-leaked; the real create still
+// rejects a non-entry value.
 func (svc affordanceService) applyCreateLock(
 	ctx context.Context, result *v1.Entity, candidate *entityPkg.Entity,
 ) {
@@ -1561,7 +1435,7 @@ func (svc affordanceService) applyCreateLock(
 	}
 	for prop, entry := range entries {
 		if !fieldVerdicts.IsVisible(prop) {
-			continue // hidden: leave it stripped, don't re-add to the wire
+			continue
 		}
 		result.Properties[prop] = entry
 		locked := false
@@ -1585,16 +1459,10 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	relations := svc.computeRelationAffordances(ctx, e)
 	result.FieldAffordances = &fields
 	result.RelationAffordances = &relations
-	// `_redacted` names what stripHiddenProperties removed, so a write surface
-	// can tell "hidden" from "never set" instead of guessing from absence
-	// (DEC-T0XIWQ). Rides the per-entity shapes only, like `_fields`.
 	redacted := redactedPropertyNames(verdicts)
 	result.Redacted = &redacted
 	result.Updated = updatedWhenWhole(e.UpdatedAt, len(redacted) == 0 && len(e.Inaccessible) == 0)
 	if _, past := asOfFromContext(ctx); past {
-		// A read at an instant is read-only: it offers no transition, copy,
-		// conversion or detail action. Attachment bytes keep no history, so
-		// none are listed rather than today's bytes under past names.
 		faces := svc.computeFaces(ctx, e)
 		result.Faces = &faces
 		attachments := map[string][]v1.Attachment{}
@@ -1621,31 +1489,16 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	}
 	faces := svc.computeFaces(ctx, e)
 	result.Faces = &faces
-	// Pass the same verdicts so a policy-hidden `file` property's attachments
-	// are omitted from `_attachments` — otherwise the hidden-field boundary
-	// the rest of the response maintains would leak the file's metadata and a
-	// working download href.
-	// Bytes are keyed per entity, but a face lists only the names its own
-	// value references (BUG-CTUW2N), so the hrefs carry the face address.
 	attachments := svc.computeAttachments(ctx, e, result.Self, verdicts)
 	result.Attachments = &attachments
 }
 
-// computeAttachments returns the per-property attachment metadata for an
-// entity, keyed by `file`-type property name. Only properties that carry
-// a file appear; an empty map means "no attachments". Rides every
-// per-entity v1.Entity response (GET, PATCH, POST, clone) alongside
-// `_fields` / `_relations`, never on list rows — same closed-world shape.
-//
-// selfHref is the entity's `_self` link (`/api/v1/{plural}/{id}`); each
-// file's download href is that plus `/_attachments/{property}/{fileName}`.
-// `_self` is always set by entityToV1 before this runs, so the
-// empty-selfHref guard is pure defense — when it can't build a valid href
-// it omits the entry rather than emit a broken relative link.
-//
-// The value per property is a LIST: a property may hold several files, and
-// even a single file is reported as a 1-element list (always-array wire
-// shape).
+// computeAttachments returns per-property attachment metadata for an entity,
+// keyed by `file`-type property name, as a list per property. Only properties
+// that carry a file appear. It rides per-entity responses, never list rows.
+// selfHref is the entity's `_self` link; each download href is that plus
+// `/_attachments/{property}/{fileName}`. With an empty selfHref the entry is
+// omitted rather than emitted as a broken link.
 func (svc affordanceService) computeAttachments(
 	ctx context.Context, e *entityPkg.Entity, selfHref string, verdicts FieldVerdicts,
 ) map[string][]v1.Attachment {
@@ -1655,11 +1508,6 @@ func (svc affordanceService) computeAttachments(
 	}
 	infos, err := svc.store.ListFamilyAttachments(ctx, e.ID)
 	if err != nil {
-		// Treat a list failure as "no attachments" rather than failing the
-		// whole entity response — the bytes endpoint still gates and serves
-		// correctly; this map is only a UI hint. But a real backend fault
-		// (not just a missing entity) is logged so operators aren't blind to
-		// an outage that silently empties every entity's _attachments.
 		if !errors.Is(err, store.ErrNotFound) && !errors.Is(ctx.Err(), context.Canceled) {
 			slog.Warn("dataentry: list attachments for serialization failed",
 				"err", err, "entity", e.ID)
@@ -1667,9 +1515,6 @@ func (svc affordanceService) computeAttachments(
 		return out
 	}
 	for _, info := range attachment.FaceAttachments(e, infos) {
-		// A property hidden from this viewer by field-visibility policy must
-		// not leak its files (metadata or a working download href) — mirror
-		// the hidden-field boundary the rest of the response maintains.
 		if !verdicts.IsVisible(info.Property) {
 			continue
 		}
@@ -1685,26 +1530,12 @@ func (svc affordanceService) computeAttachments(
 	return out
 }
 
-// computeFaces lists the entity's OTHER content states — the input to a
-// "view the published face" / "go to draft" link.
-//
-// A face NAME is config (declared in schema.yaml, public). Whether THIS
-// entity has that face, and whether this principal may read it, is data. Both
-// come from [visibility.Resolver.Family], which runs the row gate and the
-// per-face verdict a GET of each face runs, so a listed face always opens.
-// Gating on the `type@face` grant alone is not enough: a face can be
-// readable by one entity's owner edge and not another's.
-//
-// World-read is deliberately not checked. It is a GLOBAL, role-level grant
-// (acl.Request.PermitsWorld takes a world name and nothing else) that the
-// client already has from `/_schema`.worlds.
-//
-// It runs on per-entity responses only, never on list rows, so the one
-// family read cannot become an N+1 over a page.
-//
-// Returns an empty (non-nil) slice when the entity has no other readable
-// face, which is a real answer. That differs from the `_copies` convention,
-// where nil means "capability not wired".
+// computeFaces lists the entity's other content states the principal may read.
+// Face existence and readability are data, so they come from
+// [visibility.Resolver.Family], which runs the same gates a GET of each face
+// runs. World-read is not checked; it is a global grant the client has from
+// `/_schema`. It runs on per-entity responses only. It returns an empty non-nil
+// slice when there is no other readable face.
 func (svc affordanceService) computeFaces(
 	ctx context.Context, e *entityPkg.Entity,
 ) []v1.Face {
@@ -1723,13 +1554,9 @@ func (svc affordanceService) computeFaces(
 	if svc.family == nil || !otherFaceGranted(ctx, def, e) {
 		return out
 	}
-	// The faces of e the principal may read: the resolver applies the row
-	// gate and the per-face verdict, the same gates a GET of each face
-	// runs. A face it withholds is not listed, so the menu never offers an
-	// address that answers 404.
 	fam, ok, err := svc.family(ctx, e.Type, e.ID)
 	if err != nil {
-		if !errors.Is(ctx.Err(), context.Canceled) { // a canceled request is not a fault (TKT-T2I7P2)
+		if !errors.Is(ctx.Err(), context.Canceled) {
 			slog.Warn("dataentry: reading an entity's faces failed", "id", e.ID, "err", err)
 		}
 		return out
@@ -1740,28 +1567,17 @@ func (svc affordanceService) computeFaces(
 	for _, f := range fam.Faces {
 		stored := f.String()
 		if f == e.Face {
-			continue // the face being served is not somewhere else to go
+			continue
 		}
 		if _, declared := def.Faces[stored]; !declared {
 			continue
 		}
-		// The operator's `label:` when declared, else the coordinate name.
-		// Both are operator-authored config, so neither discloses anything
-		// the schema endpoint does not already serve.
-		//
-		// The address is spelled with the DECLARED name so the bare face
-		// gets an explicit form too (`POL-1@draft`), which is what makes it
-		// literal under a world that would otherwise resolve `POL-1` away
-		// from it. A bare face with no declared name has no such spelling.
 		out = append(out, v1.Face{
 			Face:  stored,
 			Label: metamodel.FaceLabel(m, e.Type, stored),
 			Ref:   faceRef(e, stored),
 		})
 	}
-	// Sorted by the DECLARED name, not the label: the order must not shuffle
-	// when an operator edits display text, and a label is optional so sorting
-	// by it would interleave labeled and unlabeled faces arbitrarily.
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Face < out[j].Face
 	})
@@ -1799,26 +1615,11 @@ type copyOffersFunc func(
 	ctx context.Context, entityType, face, sourceID string,
 ) ([]entitymanager.CopyOffer, error)
 
-// computeCopyOffers lists the copy affordances available from e's current
-// face — RULING 9's promote and translate buttons (TKT-F2D5U5).
-//
-// # Omitted, never silently empty
-//
-// Returns nil when the capability is not wired or the query fails, so
-// `_copies` is OMITTED rather than sent as `[]`. An empty list is a legitimate
-// answer ("this face declares no copies"), so emitting one for a missing
-// capability would render a wiring gap as a domain fact — the visible symptom
-// being "the promote button never appears", which sends someone hunting
-// through schema.yaml for a definition that is correctly declared. A failure
-// is logged for the same reason: an unlogged omission would look like "no
-// copies here".
-//
-// The verdicts come from the kernel's own authorization path, not a
-// re-derivation here, which is what stops this hint drifting from what the
-// write actually does. This service must never compute invocability itself.
-//
-// The face is e's stored face: an affordance is offered FROM the face being
-// viewed, so a promote appears on the draft and not on the published face.
+// computeCopyOffers lists the copy affordances available from e's stored face.
+// It returns nil, so `_copies` is omitted, when the capability is not wired or
+// the query fails; a failure is logged. An empty list means the face declares
+// no copies. The verdicts come from the kernel's authorization path; this
+// service must never compute invocability itself.
 func (svc affordanceService) computeCopyOffers(
 	ctx context.Context, e *entityPkg.Entity,
 ) []v1.CopyOffer {
@@ -1827,7 +1628,7 @@ func (svc affordanceService) computeCopyOffers(
 	}
 	offers, err := svc.copies(ctx, e.Type, e.Face.String(), e.ID)
 	if err != nil {
-		if !errors.Is(ctx.Err(), context.Canceled) { // a canceled request is not a fault (TKT-T2I7P2)
+		if !errors.Is(ctx.Err(), context.Canceled) {
 			slog.Warn("dataentry: computing copy offers failed; _copies omitted",
 				"entity", e.ID, "type", e.Type, "err", err)
 		}
@@ -1897,11 +1698,6 @@ func copyOnSuccessWire(s metamodel.CopyOnSuccess) *v1.CopyOnSuccess {
 	if s.Message == "" && s.Landing.IsZero() {
 		return nil
 	}
-	// The arms are mutually exclusive by construction — the loader refuses a
-	// landing naming both a world and a face (validateCopyLanding) rather
-	// than resolving it by precedence, and this projection must not quietly
-	// introduce the precedence the loader declined to. So the arms test the
-	// full shape, and an impossible combination falls to `written`.
 	l := s.Landing
 	landing := v1.CopyLanding{Mode: metamodel.LandingWritten}
 	switch {

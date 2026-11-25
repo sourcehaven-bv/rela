@@ -188,7 +188,6 @@ func changeTitles(ctx context.Context, a *App, self string, page []visibility.Ch
 		}
 	}
 	for _, c := range page {
-		// The entity on screen may itself be the person who made a change.
 		if actorMayBeEntity(c.User) {
 			add(c.User)
 		}

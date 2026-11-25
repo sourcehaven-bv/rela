@@ -28,32 +28,13 @@ const nestedNodeBudget = 2000
 // ChildCount, which the UI renders as "Showing N of M".
 const nestedChildPreview = 25
 
-// buildNestedTree assembles the parent rows of a `display: nested` section,
-// each with the children nested under it, and reports whether the budget cut
-// anything visible.
-//
-// parents arrives ALREADY row-gated and field-redacted: the Redact/Filter
-// block at the end of [viewsHandler.executeViewRef] (views.go) runs
-// viewReader.Filter over every collection once, before any section builder,
-// and PolicyReader.Filter redacts each surviving row. Children are resolved by
-// looking their ids up in the equally-gated child collection, so that lookup
-// IS the row gate: an id in result.Parents naming an entity this caller cannot
-// read simply misses, and is dropped.
-//
-// Nothing here re-reads the store, which is what keeps the gate in one place
-// (DEC-ZBI39P) and is the property that would make a future rollup safe to
-// fold here (TKT-ZAD9PS).
-//
-// Truncated reports that some VISIBLE row was not emitted — either a parent the
-// node budget could not afford, or children beyond one parent's preview cap. It
-// is never set merely because the budget reached zero, so a caller whose gated
-// tree fits sees false even when the ungated tree would not, and the flag
-// cannot be used to probe how much is being withheld (the gantt's rule).
-//
-// It is deliberately COARSER than the per-node HasMoreChildren and implied by
-// it: any parent over the preview cap sets both. The section-level flag exists
-// for the case HasMoreChildren cannot express — a parent dropped entirely
-// leaves no row to carry a signal.
+// buildNestedTree assembles the parent rows of a `display: nested` section with
+// their children, and reports whether the budget cut anything visible. parents
+// and the child collection arrive row-gated and redacted, so a child id this
+// caller cannot read misses the lookup and is dropped; nothing here re-reads
+// the store. Truncated is set only when a visible row was not emitted, never
+// merely because the budget ran out, so it cannot probe withheld rows. It also
+// covers a parent dropped entirely, which HasMoreChildren cannot express.
 func (h *viewsHandler) buildNestedTree(
 	ctx context.Context, sec ViewSection, parents []*entity.Entity, result *viewResult,
 ) ([]SectionTreeNode, bool) {
@@ -62,23 +43,12 @@ func (h *viewsHandler) buildNestedTree(
 	}
 	s := h.schema()
 
-	// Children of every parent, gated by the lookup described above. Built
-	// once for the section so the row builders below get one relation batch
-	// rather than one per parent.
 	childByID := make(map[string]*entity.Entity, len(result.Collections[sec.Children]))
 	for _, e := range result.Collections[sec.Children] {
 		childByID[e.ID] = e
 	}
 	edges := result.Parents[sec.Children]
 
-	// Decide WHAT will be emitted before resolving anything about it.
-	//
-	// Selection first, then resolution: relation columns cost a query per
-	// (column, row type) plus a gated header batch over every neighbor, so
-	// resolving over all visible children rather than the emitted ones would
-	// do that work for rows the budget is about to discard. On a 1,400-epic
-	// project with 200 tasks each that is ~280k ids to render at most
-	// nestedNodeBudget rows.
 	plan, truncated := planNestedRows(parents, edges, childByID,
 		newEntitySorter(sec.ParentSort, parents, s.Meta),
 		newEntitySorter(sec.ChildSort, result.Collections[sec.Children], s.Meta))
@@ -89,17 +59,8 @@ func (h *viewsHandler) buildNestedTree(
 		rowEntities = append(rowEntities, row.children...)
 	}
 
-	// ONE resolution for the emitted rows — parents and children together —
-	// instead of one per node (TKT-1U8XYN).
-	//
-	// Resolved over the UNION of every level's columns, because a row's own
-	// columns depend on its type and level; resolving per (level, type) would
-	// reissue the query per group. resolveRelationColumns keys its result by
-	// entity id and column index, so each row then reads the indices of the
-	// columns it actually renders — see nestedColumnsFor.
 	allColumns, columnIndex := nestedColumnUnion(sec)
 	relValues := h.resolveRelationColumns(ctx, s, allColumns, rowEntities)
-	// Every emitted row carries `_fields`: one run lookup for all of them.
 	ctx = primeFlowRuns(ctx, h.affordances.resolver(), rowEntities)
 
 	nodes := make([]SectionTreeNode, 0, len(plan))
@@ -216,33 +177,19 @@ type nestedRow struct {
 }
 
 // planNestedRows picks the rows a nested section will emit, spending the node
-// budget across parents and their children, and reports whether anything
-// visible was cut.
-//
-// edges may name children this caller cannot read — it was built from raw
-// store rows before the gate. childByID holds only readable children, so a
-// missing id is a hidden one and skipping it IS the row gate. Every count
-// returned is therefore over readable children only, and cannot disclose a
-// hidden child's existence.
-//
-// truncated is true when a VISIBLE row was not emitted (a dropped parent or
-// children past the preview cap), never merely because the budget reached zero
-// — so it cannot be used to probe how large the ungated tree is. Same rule as
-// the gantt's budget.
+// budget across parents and their children. edges may name unreadable
+// children; childByID holds only readable ones, so skipping a missing id is the
+// row gate and every count covers readable children only. truncated is true
+// only when a visible row was not emitted, so it cannot probe the ungated tree.
 func planNestedRows(
 	parents []*entity.Entity, edges map[string][]string, childByID map[string]*entity.Entity,
 	sortParents, sortChildren entitySorter,
 ) (rows []nestedRow, truncated bool) {
 	budget := nestedNodeBudget
 	rows = make([]nestedRow, 0, len(parents))
-	// Ordering the parents decides which of them the node budget can afford,
-	// so it has to happen before the loop rather than on the emitted rows.
 	parents = sortParents(parents)
 	for _, p := range parents {
 		if budget <= 0 {
-			// A visible parent we cannot emit: that IS the truncation signal.
-			// Note a dropped parent leaves no row to carry HasMoreChildren,
-			// so this flag is the only way the caller learns of it.
 			return rows, true
 		}
 		budget--
@@ -254,10 +201,6 @@ func planNestedRows(
 			}
 		}
 
-		// BEFORE the cap: `kids[:limit]` keeps a prefix, so an unsorted slice
-		// would show whichever children the traversal happened to reach
-		// first, and a `child_sort:` would only reorder that arbitrary
-		// subset. The preview is meant to be the TOP rows.
 		kids = sortChildren(kids)
 
 		limit := min(len(kids), nestedChildPreview, budget)

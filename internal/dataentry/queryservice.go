@@ -71,37 +71,13 @@ func newQueryService(app *App) *queryService {
 	}
 }
 
-// executeQuery parses a search query and returns all matching entities.
-// It supports the same query syntax as the search page: type:, prop:, status:,
-// and free text. Free-text words use OR logic with fuzzy matching via the full-text index;
-// results are ranked by score.
-//
-// It runs the search-view pipeline under the ctx principal's
-// read scope (TKT-BA8BSX). Every consumer — handleV1Search, the
-// _position search scope (resolveScope), and the next-action engine —
-// inherits the gate from here, so no future consumer can run an ungated
-// search by accident.
-//
-// Ordering of the gate: the scope resolves FIRST, and an
-// all-effective-DenyAll scope returns before any backend work — a
-// denied principal must not be able to probe search-backend latency
-// (RR-X56H pattern, pinned with a recording searcher in
-// acl_search_test.go). The free-text branch then runs through
-// search.VisibleSearcher so hidden hits never have their bodies
-// loaded; the type-listing branch resolves the per-type verdict
-// against the store directly.
-//
-// The maxSearchResults bound counts entities that survived
-// BOTH visibility and property filters (post-visibility truncation —
-// a pre-visibility cap starves restricted principals; a pre-filter
-// cap would starve filtered queries the same way).
-//
-// Errors: visibility-scope failures wrap errACLListQuery (mapped by
-// writeGateError: cancel-silent / 504 / 500 acl_query_failed with
-// constant detail), store-load failures wrap errListLoad, and plain
-// search-backend failures pass through (500 search_failed). The
-// pre-TKT-BA8BSX version swallowed both error classes into silently
-// truncated results.
+// executeQuery parses a search query and returns all matching entities, with
+// the search page's syntax. It runs under the ctx principal's read scope, so
+// every consumer inherits the gate. The scope resolves first, and a fully
+// denied scope returns before any backend work, so latency reveals nothing.
+// maxSearchResults counts rows that survived visibility and property
+// filters. Scope failures wrap errACLListQuery, store-load failures wrap
+// errListLoad, and search-backend failures pass through.
 func (q *queryService) executeQuery(ctx context.Context, query string) ([]*entity.Entity, error) {
 	return q.executeQueryWith(ctx, query, queryOptions{})
 }
@@ -131,27 +107,11 @@ type queryOptions struct {
 }
 
 // freeTextLimit is the relevance cap for a free-text search. It is
-// maxSearchResults unless the caller keeps only opts.limit rows AND
-// every row the search returns is one the caller keeps, in the order it
-// keeps them:
-//
-//   - no property filter, which runs in Go after the cap;
-//   - no `sort:` clause, which reorders the capped set: sorting the top 50
-//     by relevance is not the top 50 of the sorted top 1000;
-//   - no type the caller drops: either opts.exactType is unset or the
-//     query's types are exactly it. A `type:` already in q unions with the
-//     spliced one, so its hits would take slots the exact filter then
-//     empties.
-//
-// A caller that keeps more than maxSearchResults rows (searchPage, for a
-// page that ends past the cap) gets one hit more than the cap, so it can
-// tell a result cut at the cap from one that ends there. It serves no row
-// past the cap.
-//
-// Two drops remain after the search and are accepted: a hit deleted
-// between the search and the header read, and a face the row gate refuses
-// (visibility.SearchScoped). Both are rare; they can return fewer than
-// limit rows where the 1000 cap would have filled them.
+// maxSearchResults unless the caller keeps only opts.limit rows and every
+// returned row is kept, in order: no property filter, no `sort:` clause, and
+// no type the caller drops. A caller keeping more than maxSearchResults rows
+// gets one hit past the cap, so it can tell a cut result from one that ends
+// there.
 func freeTextLimit(sq *searchparser.SearchQuery, opts queryOptions) int {
 	if opts.limit > maxSearchResults {
 		return maxSearchResults + 1
@@ -174,25 +134,11 @@ func freeTextLimit(sq *searchparser.SearchQuery, opts queryOptions) int {
 	return opts.limit
 }
 
-// executeQueryWith is executeQuery with options: extra store predicates
-// ANDed into the no-free-text branch's pushdown, and the caller's limit.
-//
-// `opts.prefilters` is for a caller that will apply a FURTHER authoritative filter of
-// its own over the result — the next-action engine's `condition:` — and has
-// lowered the store-safe part of it (queryplan.ConditionPrefilters). The
-// contract is the same belt-and-braces one as the query's own pushdown: the
-// predicates may only ever remove rows the caller's Go pass would also
-// remove, so the outcome is identical to fetching everything, minus the I/O.
-// Nothing here evaluates them; a caller that passes a predicate it does not
-// also enforce has widened nothing but has narrowed on its own authority.
-//
-// They are ignored on the free-text branch, which runs through the search
-// index rather than a type-scoped store list. That branch is also
-// relevance-CAPPED (maxSearchResults) before any caller's pass runs,
-// so a selection predicate over it would be lossy; the only caller with a
-// condition — the next-action engine — is refused a free-text query at load
-// (conditionlint) for exactly that reason, and this comment is the reminder
-// for the next one.
+// executeQueryWith is executeQuery with options: extra store predicates ANDed
+// into the no-free-text branch's pushdown, and the caller's limit.
+// opts.prefilters may only remove rows the caller's own authoritative filter
+// would also remove. They are ignored on the free-text branch, which is
+// relevance-capped, so no caller with a condition may pass free text.
 func (q *queryService) executeQueryWith(
 	ctx context.Context, query string, opts queryOptions,
 ) ([]*entity.Entity, error) {
@@ -212,9 +158,6 @@ func (q *queryService) executeQueryCut(
 	if sq.IsEmpty() {
 		return nil, false, nil
 	}
-	// A denied handle carries the ZERO scope, which IS the default world, so
-	// both branches below would otherwise search everything under a world the
-	// principal may not read. Same guard as freeTextIDsForType.
 	if worldFromContext(ctx).blocksAllReads() {
 		return []*entity.Entity{}, false, nil
 	}
@@ -232,32 +175,11 @@ func (q *queryService) executeQueryCut(
 
 	var candidates []*entity.Entity
 	if sq.HasFreeText() {
-		// Hits arrive in relevance order. Scores are dropped because
-		// executeQuery never sorted by them. A hit past the cap only says
-		// the cap cut the result; it is dropped before any later pass, so
-		// the rows are the top maxSearchResults whatever the caller asked.
 		candidates, err = q.runVisibleFreeTextSearch(ctx, svc, sq, scope, freeTextLimit(sq, opts))
 		if cut = len(candidates) > maxSearchResults; cut {
 			candidates = candidates[:maxSearchResults]
 		}
 	} else {
-		// Push the equality filters into the store as a PRE-FILTER, cutting
-		// the rows loaded. The Go pass below still evaluates every filter,
-		// including the pushed ones, and remains authoritative.
-		//
-		// That belt-and-braces is deliberate rather than redundant.
-		// store.PropPredicate compares by STRING FORM; filter.MatchAll is
-		// metamodel-aware. On a typed property they disagree — `count!=03`
-		// against an integer 3 is a non-match typed and a match as strings,
-		// and an enum filter naming an undeclared value ERRORS in Go
-		// (surfacing the operator's typo) while the store silently returns
-		// nothing. Dropping a pushed filter from the Go pass would let the
-		// looser of the two decide, WIDENING results on a path /_search and
-		// scope navigation share.
-		//
-		// Keeping both makes the outcome provably identical to the
-		// pre-pushdown behavior — the store can only ever remove rows the Go
-		// pass would also have removed — while still winning the I/O.
 		pushed := pushdownPrefilters(sq.PropertyFilters, svc.Meta, sq.EntityTypes)
 		pushed = append(pushed, opts.prefilters...)
 		if opts.firstN > 0 && !sq.HasSort() && len(sq.EntityTypes) > 0 {
@@ -280,7 +202,6 @@ func (q *queryService) executeQueryCut(
 		}
 	}
 
-	// Apply sort from query syntax (free-text results are already ranked by relevance)
 	if sq.HasSort() {
 		q.sortEntitiesMulti(results, sq.SortClauses)
 	}
@@ -289,24 +210,11 @@ func (q *queryService) executeQueryCut(
 }
 
 // firstNByTypes is the branch of executeQueryWith without free text for a
-// caller that keeps only the first n results (TKT-CKLZMWB). It returns the
-// same leading rows as visibleListByTypes followed by the property-filter
-// pass, in the same order, but reads the store in windows and stops once it
-// has n. Each type is read in id order, which is the order an unpaged read
-// returns too, and the types in the order visibleListByTypes takes them. cut
-// reports that it stopped early, so rows past the first n were not read.
-//
-// The windows exist because the property filters run in Go after the read:
-// pushdownPrefilters pushes only some of them, so a window of n rows can hold
-// fewer than n results. Each window is four times the last, and after
-// maxQueryWindows windows the rest of the type is read in one go, so a sparse
-// match costs at most one read more than an unpaged one. The row gate and the
-// world are applied in the store query of every window, so the kept rows are
-// counted after the gate. A row that moves between two windows because of a
-// concurrent write is kept once.
-//
-// Not for a query with a `sort:` clause: that sorts the whole result, so no
-// prefix of the store order is a prefix of it.
+// caller that keeps only the first n results. It returns the same leading
+// rows, in the same order, as visibleListByTypes plus the property filters,
+// but reads the store in growing windows and stops once it has n. cut reports
+// that it stopped early. The row gate and world apply in every window's store
+// query. Not for a query with a `sort:` clause.
 func (q *queryService) firstNByTypes(
 	ctx context.Context, svc Services, sq *searchparser.SearchQuery, scope map[string]search.TypeScope,
 	pushed []store.PropPredicate, n int,
@@ -316,15 +224,12 @@ func (q *queryService) firstNByTypes(
 	for _, typ := range sq.EntityTypes {
 		ts, ok := search.ResolveTypeScope(scope, typ)
 		if !ok {
-			continue // denied type
+			continue
 		}
 		offset, window := 0, n-len(results)
 		for reads := 1; ; reads++ {
 			var rows []*entity.Entity
 			if reads > maxQueryWindows {
-				// The rest of the type in one read, through the whole-type
-				// scan and its allowlist entry. window 0 marks the type as
-				// exhausted after this read.
 				window = 0
 				rows, err = visibleEntitiesOfType(ctx, svc, typ, ts, pushed, offset)
 			} else {
@@ -344,7 +249,7 @@ func (q *queryService) firstNByTypes(
 				}
 			}
 			if window == 0 || len(rows) < window {
-				break // the type is exhausted
+				break
 			}
 			offset, window = offset+window, 4*window
 		}
@@ -381,8 +286,6 @@ func (q *queryService) runVisibleFreeTextSearch(
 		Limit: limit,
 		World: worldScopeFrom(ctx),
 	}
-	// The one gated search path ([visibility.SearchScoped]): the field scope
-	// and the face check are added there, as for every other gated search.
 	var hits []search.Hit
 	var types []string
 	if svc.Meta != nil {
@@ -398,18 +301,10 @@ func (q *queryService) runVisibleFreeTextSearch(
 		}
 		hits = append(hits, hit)
 	}
-	// Load the FACE each hit matched, not the bare id, in ONE read per
-	// distinct face rather than one per hit (TKT-1U8XYN). Under the default
-	// world every hit carries the zero face and this is one query. The
-	// searcher already resolved which face matched; a bare-id re-read would
-	// render default-face bytes for a hit scored against another face.
 	loaded, err := loadHitHeaders(ctx, svc.Store, hits)
 	if err != nil {
 		return nil, fmt.Errorf("free-text search: %w", err)
 	}
-	// Emit in ranked hit order; a hit the store no longer has (deleted
-	// between index query and read) is skipped so the result stays a
-	// coherent set of currently-existing entities.
 	out := make([]*entity.Entity, 0, len(hits))
 	for _, hit := range hits {
 		if e, ok := loaded[entity.Ref{ID: hit.ID, Face: hit.Face}]; ok {
@@ -419,29 +314,12 @@ func (q *queryService) runVisibleFreeTextSearch(
 	return out, nil
 }
 
-// freeTextIDsForType runs a free-text search constrained to the given entity
-// type and returns the matching ids. Empty / whitespace queries (and queries
-// like `prop:status=open` that have no free-text words) return HasFilter=false
-// so the caller skips intersection entirely. Searcher errors are surfaced —
-// the list handler converts them to HTTP 500 rather than rendering an empty
-// list and pretending the search succeeded.
-//
-// Used by the list endpoint to support `?q=` without going through the full
-// executeQuery path: a list is already type-scoped, so any `type:` token from
-// the query string is intentionally ignored — we always pin the type to the
-// list's type to keep the surface predictable.
-//
-// The search is WORLD-SCOPED off ctx, and that is what makes `?q=` safe to
-// combine with `?world=` at all (TKT-9KZGJO step 5). The scope decides which
-// FACE of each entity the text is matched against, so a `published`-world
-// search never matches on draft-only text; an entity the world excludes
-// resolves to no face and cannot appear. A denied world yields nothing here
-// for the same reason the list itself does — see the blocksAllReads guard.
-//
-// attachWorld refused `?world=` combined with `?q=` outright
-// (`world_search_unsupported`) until that step landed. Do not restore that
-// refusal without also reverting this threading: a bare refusal would leave the
-// per-world index built and unreachable.
+// freeTextIDsForType runs a free-text search constrained to the given type
+// and returns the matching ids. A query without free-text words returns
+// HasFilter=false; any `type:` token is ignored. Searcher errors are
+// returned, never an empty match. The search is world-scoped off ctx, which
+// makes `?q=` safe to combine with `?world=`: text matches only the face the
+// world resolves, and an excluded entity cannot appear.
 func (q *queryService) freeTextIDsForType(
 	ctx context.Context, query, typeName string,
 ) (freeTextIDsForTypeResult, error) {
@@ -455,19 +333,10 @@ func (q *queryService) freeTextIDsForType(
 	}
 	sq.EntityTypes = []string{typeName}
 
-	// A denied world must find NOTHING, and saying so here rather than relying
-	// on the caller is deliberate. scopedSortedEntities returns early on a
-	// denied handle today, so this is unreachable through it — but a denied
-	// handle carries the ZERO scope (resolveWorld never built one), and a zero
-	// scope IS the default world. Any future caller reaching this without the
-	// early return would therefore get a full default-world search under a
-	// world the principal may not read. Fail closed at the seam that would leak.
 	if worldFromContext(ctx).blocksAllReads() {
 		return freeTextIDsForTypeResult{IDs: nil, HasFilter: true}, nil
 	}
 
-	// The list rows are gated already; the search is scoped the same way
-	// so it can drop a hit that matched a hidden field only.
 	scope := readGateFromContext(ctx).SearchScope(ctx, sq.EntityTypes)
 	if len(scope) == 0 {
 		return freeTextIDsForTypeResult{IDs: map[string]struct{}{}, HasFilter: true}, nil
@@ -548,23 +417,12 @@ func loadHitHeaders(ctx context.Context, st store.Store, hits []search.Hit) (map
 }
 
 // searchPage is the read behind /_search: one page of the query's result,
-// of opts.exactType only when it is set, and the number of rows the query
-// matched in all.
-//
-// The page holds at most opts.limit rows, or maxSearchResults when no limit
-// is set, so no branch returns an unbounded slice (TKT-T0DK37). It starts
-// opts.offset rows into the result; the rows before it are ones the
-// principal may read, so a hidden row neither takes a slot nor shifts a page.
-//
-// A structured query the store can answer ([planSearch]) reads only the
-// rows it returns and counts the rest in the store (TKT-D3RAB0E), so its
-// total is every match. Every other query takes executeQueryWith and is cut
-// here; its total is the length before the cut. For free text that length
-// is bounded by the relevance cap (freeTextLimit), so there it is a lower
-// bound. The read asks for one row past the page, so a total above
-// offset+size still says that more rows follow. capped reports that free
-// text matched more than maxSearchResults hits, the rows past which no
-// page reaches.
+// limited to opts.exactType when set, and the total number of matches. The
+// page holds at most opts.limit rows (maxSearchResults by default) starting
+// opts.offset readable rows in, so hidden rows never shift a page. A query
+// [planSearch] can push down counts in the store; others are cut here, and
+// for free text the total is a lower bound under the relevance cap. capped
+// reports that free text matched more than maxSearchResults hits.
 func (q *queryService) searchPage(
 	ctx context.Context, query string, opts queryOptions,
 ) (rows []*entity.Entity, total int, capped bool, err error) {
@@ -588,13 +446,9 @@ func (q *queryService) searchPage(
 	if err != nil {
 		return nil, 0, false, err
 	}
-	// The exact filter stays: a `type:` clause already in the query unions
-	// with the caller's type.
 	if opts.exactType != "" {
 		rows = slices.DeleteFunc(rows, func(e *entity.Entity) bool { return e.Type != opts.exactType })
 	}
-	// Cut after the read gate and the type filter, so the cap counts only
-	// rows this principal may see and a hidden row cannot take a slot.
 	total = len(rows)
 	rows = rows[min(offset, len(rows)):min(offset+size, len(rows))]
 	return rows, total, capped, nil
@@ -610,8 +464,6 @@ func (q *queryService) searchPosition(
 	svc := q.services()
 	plan, scope, ok := structuredPlan(ctx, svc, query, exactType)
 	if !ok || len(plan.types) > 1 {
-		// Several types concatenate per-type results, which is not one
-		// store query.
 		return store.Position{}, false, false, nil
 	}
 	if len(scope) == 0 {

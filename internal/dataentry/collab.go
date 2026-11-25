@@ -175,14 +175,10 @@ func NewCollabRelay(build string) *CollabRelay {
 		delete(c.roomBytes, room)
 		c.mu.Unlock()
 	}
-	// requireSameOrigin already checked the Origin of the upgrade, with
-	// the server's own allow-list; ygo's check would repeat it without
-	// that list and refuse the dev origins it admits.
 	srv.AllowedOrigins = []string{"*"}
 	srv.Authorize = func(r *http.Request) (ygows.ConnectionConfig, bool) {
 		adm, ok := r.Context().Value(collabAdmitKey{}).(collabAdmission)
 		if !ok {
-			// Not admitted by the handler: fail closed.
 			return ygows.ConnectionConfig{}, false
 		}
 		return ygows.ConnectionConfig{
@@ -202,7 +198,7 @@ func (c *CollabRelay) Epoch() string { return c.epoch }
 
 func newCollabEpoch() string {
 	b := make([]byte, 8)
-	_, _ = rand.Read(b) // crypto/rand.Read never returns an error
+	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
 
@@ -271,8 +267,6 @@ func EnableCollab(a *App, relay *CollabRelay) error {
 	if relay == nil {
 		return errors.New("dataentry: EnableCollab requires a relay")
 	}
-	// The relay accepts any Origin because requireSameOrigin, which the
-	// security config installs, checks the upgrade first.
 	if a.security == nil {
 		return errors.New("dataentry: EnableCollab requires SetSecurityConfig first")
 	}
@@ -356,9 +350,6 @@ func handleCollab(h *collabHandler, w http.ResponseWriter, r *http.Request) {
 	go h.watch(ctx, r, e, writable, cancel)
 
 	if refuse := h.refusal(r); refuse != nil {
-		// Admit read-only, then close with the code as soon as the upgrade
-		// is done: a browser cannot read an HTTP refusal of a WebSocket,
-		// only a close code.
 		writable = false
 		w = &hijackHook{ResponseWriter: w, after: func() { cancel(*refuse) }}
 	}

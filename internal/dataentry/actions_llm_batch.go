@@ -66,7 +66,6 @@ func (o actionOps) runLLMBatch(
 	ctx context.Context, s *Schema, id string, action dataentryconfig.Action,
 	addresses []string, deps lua.WriteDeps,
 ) (*script.ActionResponse, *opFailure) {
-	// As for the single-row gate in run: judge the config the run uses.
 	if o.h.schema() != s {
 		return nil, failV1(http.StatusConflict, "config_reloaded",
 			"The configuration was reloaded; retry the action")
@@ -133,8 +132,6 @@ func (o actionOps) runLLMBatch(
 		}
 		return nil, failLLMInternal(err)
 	}
-	// One line per call that sent entity data to the provider. Not the
-	// ids: the log is read by more people than the data.
 	slog.Info("llm action: batch run", "action", id, "rows", len(rows),
 		"failed", len(parsed.Failed), "model", resp.Model)
 	parsed.Skipped = out.Skipped
@@ -183,15 +180,10 @@ func (o actionOps) batchRows(
 		hdr, ok := served[addr.ID()]
 		named, isNamed := addr.Named()
 		if !ok || (isNamed && named.Face != hdr.Face) {
-			// A face other than the served one is skipped. llm actions
-			// run only on types without faces (validateLLMAction), so
-			// no readable row is lost here; revisit with face support.
 			continue
 		}
 		key := entityPkg.Ref{ID: hdr.ID, Face: hdr.Face}
 		if taken[key] {
-			// Two addresses for one row, such as a bare id and its
-			// served face: the row runs once.
 			sent--
 			continue
 		}
@@ -208,9 +200,6 @@ func (o actionOps) batchRows(
 			raws = append(raws, e)
 		}
 	}
-	// The header read above gated each id; the rows were read again
-	// afterwards. Gate what was read, so a row that became unreadable in
-	// between is not sent. One probe per type.
 	raws = o.h.visible.filterVisible(ctx, raws)
 	return batchActionGate{svc: o.h.affordances}.rows(ctx, s, id, action, raws), sent, nil
 }

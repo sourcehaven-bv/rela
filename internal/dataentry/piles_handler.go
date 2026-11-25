@@ -26,28 +26,13 @@ const (
 // errPilesBodyTooLarge reports a body over [pilesBodyLimit].
 var errPilesBodyTooLarge = errors.New("request body too large")
 
-// handleV1Piles serves every route under /api/v1/_piles:
-//
-//	GET    /_piles                          list (counts of readable items)
-//	POST   /_piles                          create
-//	GET    /_piles/{id}                     one pile with its readable items
-//	PATCH  /_piles/{id}                     rename / re-icon
-//	DELETE /_piles/{id}                     delete
-//	POST   /_piles/{id}/items               add addresses
-//	POST   /_piles/{id}/items/_remove       remove addresses (always 204)
-//	POST   /_piles/{id}/items/_read         mark addresses read (always 204)
-//	POST   /_piles/{id}/_read_all           mark every item read
-//	POST   /_piles/_read                    the owner opened addresses: mark
-//	                                        them read on auto-read piles
-//	GET    /_piles/{id}/_export?transform=  download
-//
-// A pile is private to its owner. Every per-pile route reaches the service
-// with the acting user as owner, and the store answers another user's pile
-// exactly like a missing one, so a foreign id is the same 404 as an unknown
-// one. Items are read through the visibility resolver in the request's
-// world; a hidden item is absent from every answer, counts included.
-//
-// Pile names are user content: they are never logged.
+// handleV1Piles serves every route under /api/v1/_piles: list, create, get,
+// rename, delete, add, remove and mark-read of items, read-all, auto-read,
+// and `_export?transform=` download.
+// A pile is private to its owner: another user's pile is the same 404 as a
+// missing one. Items are read through the visibility resolver in the
+// request's world, so a hidden item is absent everywhere, counts included.
+// Pile names are user content and are never logged.
 //
 //archplan:auth=required
 func (h *pilesHandler) handleV1Piles(w http.ResponseWriter, r *http.Request) {
@@ -55,8 +40,6 @@ func (h *pilesHandler) handleV1Piles(w http.ResponseWriter, r *http.Request) {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Not found", "")
 		return
 	}
-	// Every route needs an owner. Checking it first gives a principal with
-	// no identity one answer, whatever path it asks for.
 	if _, err := h.svc.Owner(r.Context()); err != nil {
 		writePilesError(w, r, err)
 		return
@@ -198,14 +181,14 @@ func (h *pilesHandler) createPile(w http.ResponseWriter, r *http.Request) {
 	h.writePile(w, r, http.StatusCreated, p)
 }
 
+// addItems adds addresses to a pile. The pile is looked up before any address
+// is resolved, so a foreign pile gets its 404 before anything about the
+// addresses is revealed.
 func (h *pilesHandler) addItems(w http.ResponseWriter, r *http.Request, id string) {
 	var req v1.PileItemsRequest
 	if !decodePilesBody(w, r, &req) {
 		return
 	}
-	// The pile is looked up before any address is resolved, so a foreign
-	// pile answers its 404 without first telling the caller anything about
-	// the addresses.
 	if _, err := h.svc.Get(r.Context(), id); err != nil {
 		writePilesError(w, r, err)
 		return
@@ -317,12 +300,11 @@ func (h *pilesHandler) addRefs(w http.ResponseWriter, r *http.Request, addrs []s
 		writeGateError(w, r, err)
 		return nil, false
 	}
-	var pending []string // bare ids of a readable family that need a face
+	var pending []string
 	for _, ref := range refs {
 		res, found := resolved[ref]
 		switch {
 		case ref.Face.IsImplicit() && found && res.Served() && res.Header.Face.IsImplicit():
-			// A faceless type: the bare id is the ref.
 		case !ref.Face.IsImplicit() && found && res.Served():
 		case ref.Face.IsImplicit() && found && res.Family:
 			pending = append(pending, ref.ID)

@@ -77,16 +77,8 @@ func todoFromICal(cal *ical.Calendar) (inboundTodo, error) {
 		Description: textProp(comp, ical.PropDescription),
 		URL:         textProp(comp, ical.PropURL),
 		Location:    textProp(comp, ical.PropLocation),
-		// RRULE is parsed but never written back: the collection's `rrule:` is
-		// either a literal the operator set or a property rela owns, so a
-		// client-edited recurrence has nowhere to land. Reading it keeps the
-		// value visible to the mapper without implying a write path.
-		RRule: rawProp(comp, ical.PropRecurrenceRule),
+		RRule:       rawProp(comp, ical.PropRecurrenceRule),
 	}
-	// CATEGORIES may REPEAT, and clients differ: rela emits one comma-separated
-	// line, while Thunderbird sends a separate line per category (verified on
-	// the wire). Reading only Props.Get would silently keep the first and drop
-	// the rest — the user's other tags vanish on the next sync.
 	for _, cats := range comp.Props.Values(ical.PropCategories) {
 		values, err := cats.TextList()
 		if err != nil {
@@ -95,8 +87,6 @@ func todoFromICal(cal *ical.Calendar) (inboundTodo, error) {
 		td.Categories = append(td.Categories, values...)
 	}
 	if td.UID == "" {
-		// The UID is the client's own identifier for the resource; without one
-		// there is nothing to alias it by.
 		return inboundTodo{}, errors.New("caldav: VTODO has no UID")
 	}
 
@@ -123,24 +113,12 @@ func todoFromICal(cal *ical.Calendar) (inboundTodo, error) {
 		}
 		td.Due, td.Timed = when, timed
 	}
-	// Clamped ON INGEST, not just on render. calfeed normalizes these on the way
-	// OUT, which protects the wire but not the store: an unclamped
-	// `PRIORITY:2147483647` was written into the mapped entity property
-	// verbatim, so every other consumer — the SPA, the CLI, exports, validation,
-	// Lua — saw a value the metamodel would have rejected, while the render kept
-	// clamping it and hiding the damage.
-	//
-	// Clamping rather than rejecting matches the outbound rule: a nonsense
-	// priority degrades that one property, it does not fail the whole write (and
-	// with it the completion tick the user actually meant).
 	if n, err := strconv.Atoi(textProp(comp, ical.PropPriority)); err == nil {
 		td.Priority = calfeed.ClampPriority(n)
 	}
 	if n, err := strconv.Atoi(textProp(comp, ical.PropPercentComplete)); err == nil {
 		td.PercentComplete = calfeed.ClampPercentComplete(n)
 	}
-	// STATUS is an enumerated value: an unrecognized one is dropped rather than
-	// written through, or a garbage string would become a status WRITE.
 	if raw := textProp(comp, ical.PropStatus); raw != "" {
 		switch calfeed.TodoStatus(raw) {
 		case calfeed.TodoNeedsAction, calfeed.TodoCompleted,
@@ -156,18 +134,6 @@ func todoFromICal(cal *ical.Calendar) (inboundTodo, error) {
 			return inboundTodo{}, fmt.Errorf("caldav: COMPLETED: %w", err)
 		}
 		td.Completed = when
-		// A COMPLETED timestamp is evidence the work finished, and RFC 5545
-		// does not require STATUS alongside it. Promote so a client that sends
-		// only the timestamp is not silently ignored: without this the write
-		// succeeds, changes nothing, and the next sync renders
-		// STATUS:NEEDS-ACTION back — the checkbox reverts under the user with
-		// no error anywhere.
-		//
-		// This mirrors calfeed.Todo.normalized() ("a timestamp is the stronger
-		// signal"), which the OUTBOUND path already applies. Only the promotion
-		// arm belongs here: normalized() also DEMOTES a COMPLETED with no
-		// timestamp, which would be wrong inbound — a client legitimately sends
-		// STATUS:COMPLETED alone, and mapCompletion stamps the time itself.
 		if td.Status == "" {
 			td.Status = calfeed.TodoCompleted
 			sent[ical.PropStatus] = true

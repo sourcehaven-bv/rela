@@ -184,10 +184,6 @@ func (s *commandFileStore) mint(
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Opportunistic sweep: nothing drains this table in the background, so
-	// cleanup has to ride on a call. Mint is the right one — it runs once per
-	// emitted file, where lookup runs once per download. (lookup also drops
-	// the single entry it finds expired, but it never sees the rest.)
 	s.sweepLocked()
 
 	s.byToken[token] = commandFileEntry{

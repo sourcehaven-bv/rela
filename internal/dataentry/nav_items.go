@@ -27,9 +27,6 @@ import (
 // the same for every principal (docs/acl-security.md, "Sidebar menu structure
 // is principal-independent"). It is also kept apart from /api/v1/_nav_status,
 // whose labels must never carry entity content.
-//
-// A package function taking the App rather than a method: App is at its
-// plimsoll load line, and this needs only what it names.
 func handleV1NavItems(a *App, w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -43,8 +40,6 @@ func handleV1NavItems(a *App, w http.ResponseWriter, r *http.Request) {
 	for _, ni := range sidebarNavItemsEntries(ctx, aclImpl, s.Cfg, r.URL.Query().Get("space")) {
 		list, err := navItemsFor(ctx, a, s, *ni.Entry.ItemsFrom)
 		if err != nil {
-			// One group that cannot be read must not blank the others, and an
-			// absent group is the honest answer for it.
 			slog.Log(ctx, sidebarSkipLevel(err), "nav items: group skipped",
 				"group", ni.Entry.Group, "list", ni.Entry.ItemsFrom.List, "error", err)
 			continue
@@ -52,8 +47,6 @@ func handleV1NavItems(a *App, w http.ResponseWriter, r *http.Request) {
 		items[ni.Key] = list
 	}
 
-	// Per principal; writeV1JSON already marks every v1 response no-store,
-	// which is what keeps a shared cache from holding one principal's titles.
 	writeV1JSON(w, http.StatusOK, v1.NavItemsResponse{Items: items})
 }
 
@@ -77,10 +70,6 @@ func navItemsFor(
 	query := navItemsListQuery(from.List, listCfg)
 	rows, total, _, err := a.lists.listPage(ctx, listCfg.EntityType, query, 1, limit)
 	if refusal, ok := errors.AsType[*propertyNotVisibleError](err); ok && refusal.use == "sort" {
-		// The list sorts or groups on a property this reader cannot see on
-		// every row. The group's entries are still the list's rows, so drop
-		// the order and read again, as the SPA list does (withSortFallback).
-		// A refused filter stands: dropping it would widen the group.
 		delete(query, "sort")
 		rows, total, _, err = a.lists.listPage(ctx, listCfg.EntityType, query, 1, limit)
 	}
@@ -88,11 +77,6 @@ func navItemsFor(
 		return v1.NavItemList{}, err
 	}
 
-	// Primed so the redaction below resolves local roles and grant
-	// traversals for the whole group in one batch rather than per row
-	// (TKT-YLG695). listPage primes too when the list has a condition, but
-	// over the whole population and on a ctx it does not return, so this
-	// is a second, fixed-size batch rather than a duplicate.
 	ctx = primeVerdicts(ctx, a.fieldResolver, rows)
 	red := appRedactor(a)
 	redacted := make([]*entityPkg.Entity, 0, len(rows))
@@ -117,9 +101,6 @@ func navItemsFor(
 	for _, e := range entries {
 		ids = append(ids, e.ID)
 	}
-	// A count or child level that cannot be read, such as one whose list
-	// filters on a property hidden from this principal, is left out; the
-	// entries themselves stand.
 	statuses, err := navItemStatuses(ctx, a, s, from.Status, ids)
 	if err != nil {
 		slog.Log(ctx, sidebarSkipLevel(err), "nav items: counts skipped", "list", from.List, "error", err)
@@ -145,8 +126,6 @@ func navItemsListQuery(listID string, listCfg dataentryconfig.List) map[string][
 	query[listIDParam] = []string{listID}
 	var sort []string
 	if g := listCfg.GroupBy; g != nil && g.Property != "" {
-		// Newest-first date sections read the group property descending, as
-		// groupedSort in listParams.ts does.
 		if g.Buckets.Descending() {
 			sort = append(sort, "-"+g.Property)
 		} else {
@@ -266,8 +245,6 @@ func navItemNeighbors(
 // returns the initial of each one the principal may read, taken from its
 // redacted title.
 func navItemNeighborInitials(ctx context.Context, a *App, s *Schema, ids []string) (map[string]string, error) {
-	// One gated batch read, each id resolved to the face the request's
-	// world selects.
 	headers, err := a.visibleReader.resolver.ResolveIDsErr(ctx, worldFromContext(ctx).visibility(), ids)
 	if err != nil {
 		return nil, err
@@ -276,9 +253,6 @@ func navItemNeighborInitials(ctx context.Context, a *App, s *Schema, ids []strin
 	out := make(map[string]string, len(headers))
 	for _, h := range headers {
 		rh := visibility.RedactHeader(ctx, red, h)
-		// A title that fell back to the id means the display property is
-		// unset or hidden, and a letter of the id says nothing about who
-		// the neighbor is.
 		if title := s.Meta.DisplayTitle(rh.ID, rh.Type, rh.Properties); title != rh.ID {
 			out[h.ID] = firstLetter(title)
 		}

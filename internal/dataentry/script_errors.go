@@ -62,19 +62,11 @@ func (a *App) allowFullScriptDetail(r *http.Request) bool {
 }
 
 // buildScriptErrorEnvelope renders a *lua.ScriptError as the structured
-// wire envelope. Shared by the action surface (writeV1ScriptError) and
-// the analyze surface (which embeds the envelope inside an AnalysisIssue
-// instead of returning it as the top-level body).
-//
-// fullDetail decides whether the gated fields (Source, Stack,
-// CapturedOutput) cross the wire. The caller obtains it from
-// security.AllowFullScriptDetail so the loopback decision lives next
-// to the rest of the host-trust policy.
-//
-// correlationID overrides whatever the engine stamped on the
-// *ScriptError — important because singleflight may hand the same
-// *ScriptError to multiple requests, and each one needs its own id in
-// the response. Pass "" to fall back to se.CorrelationID.
+// wire envelope, for the action and analyze surfaces. fullDetail, from
+// security.AllowFullScriptDetail, decides whether Source, Stack and
+// CapturedOutput cross the wire. correlationID overrides the engine's id,
+// because singleflight may share one *ScriptError across requests; pass ""
+// to fall back to se.CorrelationID.
 func buildScriptErrorEnvelope(se *lua.ScriptError, fullDetail bool, correlationID string) ScriptErrorEnvelope {
 	corrID := correlationID
 	if corrID == "" {

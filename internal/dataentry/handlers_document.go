@@ -14,14 +14,11 @@ import "time"
 // the default in one place per renderer prevents silent drift.
 func (a *App) toDocumentRenderConfig(configID string, cfg *DocumentConfig) documentRenderConfig {
 	return documentRenderConfig{
-		ConfigID: configID,
-		Command:  cfg.Command,
-		Script:   cfg.Script,
-		Timeout:  time.Duration(cfg.Timeout) * time.Second,
-		// Only `read` reaches here: validateDocuments rejects write and
-		// read+write on a document, so AllowsRead is the whole condition.
-		Elevated: cfg.AllowACLBypass.AllowsRead(),
-		// TKT-YH52OM: an undeclared block grants nothing.
+		ConfigID:     configID,
+		Command:      cfg.Command,
+		Script:       cfg.Script,
+		Timeout:      time.Duration(cfg.Timeout) * time.Second,
+		Elevated:     cfg.AllowACLBypass.AllowsRead(),
 		Capabilities: luaCapabilities(cfg.Capabilities),
 	}
 }

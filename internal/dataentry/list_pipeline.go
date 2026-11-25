@@ -93,9 +93,6 @@ func newListPipeline(app *App) *listPipeline {
 func (p *listPipeline) listPage(
 	ctx context.Context, typeName string, query map[string][]string, page, perPage int,
 ) (rows []*entityPkg.Entity, total int, ordering *relationOrdering, err error) {
-	// FIRST, before anything reads a row: the field gate's answer depends on
-	// the policy and the caller's roles only, so the refusal must not vary
-	// with what the type holds.
 	state := p.schema()
 	gated, err := p.gate(ctx, state, typeName, query)
 	if err != nil {
@@ -122,11 +119,6 @@ func (p *listPipeline) listPage(
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	// AFTER the ACL scope and every filter, BEFORE paging and the count: the
-	// condition narrows the population the page and total describe, so
-	// applying it later would page one set and count another.
-	// Prime only when a condition will judge every row: otherwise the page
-	// is primed below, and priming the whole population here is wasted.
 	if cond != nil {
 		ctx = primeVerdicts(ctx, p.fields(), all)
 	}
@@ -143,35 +135,20 @@ func (p *listPipeline) listPage(
 	return all[start:end], total, ordering, nil
 }
 
-// scopedSortedEntities runs the shared list pipeline — ACL read scope,
-// load, free-text intersection (?q=), structured filters (filter[...]),
-// then the configured sort — and returns the fully ordered result set
-// *before* pagination. Both handleV1ListEntities and
-// handleV1EntityPosition call this, so a list and its scope navigator
-// are guaranteed to observe identical ordering (under ACL both operate
-// on the same visible subset — hidden entities don't occupy ordinals).
+// scopedSortedEntities runs the shared list pipeline (ACL read scope, load,
+// ?q= intersection, filter[...] and the configured sort) and returns the full
+// ordered set before pagination, so a list and its position navigator agree.
 //
-// ACL ordering contract (TKT-VMD8, RR-X56H + RR-3IO2): the read-scope
-// verdict resolves FIRST. DenyAll returns before the search backend,
-// filters, or sort run — a denied principal must not be able to probe
-// backend latency through ?q=. A composed Query loads the visible
-// subset via store.GraphQuery; search/filter/sort then operate on that
-// filtered slice only (search-after-ACL). AllowAll keeps the pre-ACL
-// load path byte-identical.
+// The read-scope verdict resolves FIRST: DenyAll returns before the search
+// backend runs, so a denied principal cannot probe it through ?q=. Search,
+// filters and sort only see the visible subset.
 //
-// Errors: free-text search failures surface verbatim (HTTP 500
-// search_failed at the call site); ACL query failures are wrapped in
-// errACLListQuery so call sites map them via writeGateError. Everything
-// else degrades to an empty/whole set as the list endpoint always did.
+// Search failures surface verbatim; ACL query failures wrap errACLListQuery.
 func (p *listPipeline) scopedSortedEntities(
 	ctx context.Context,
 	typeName string,
 	query map[string][]string,
 ) ([]*entityPkg.Entity, error) {
-	// Resolves the scope from the request's ?query_scope= (absent = the
-	// type's default), so every caller of this function is scoped too:
-	// export mirrors the list it names, and _position navigates the set the
-	// list actually showed.
 	scopeName, err := queryScopeParam(query)
 	if err != nil {
 		return nil, err
@@ -202,14 +179,10 @@ func (p *listPipeline) scopedSortedEntitiesScoped(
 	scope resolvedQueryScope,
 ) ([]*entityPkg.Entity, *relationOrdering, error) {
 	params := query.params
-	// Stamp the scope's request-scoped state ONCE, before any row is
-	// evaluated — a scope reading current_user resolves it here, not per row.
 	ctx, err := scope.bind(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	// The page scope resolves BEFORE the load, so an anchor the principal
-	// cannot see answers the uniform 404 whatever the type's verdict is.
 	pageIDs, ordering, pageScoped, err := p.pageScope(ctx, params, typeName)
 	if err != nil {
 		return nil, nil, err
@@ -217,32 +190,15 @@ func (p *listPipeline) scopedSortedEntitiesScoped(
 	if query.reach != nil {
 		pageIDs, pageScoped = narrowToReach(pageIDs, pageScoped, query.reach), true
 	}
-	// The verdict switch, the world scope, the face allowlist and the query
-	// scope all live in scopedread.go (scopedQuery, scopedHeaders and
-	// scanHeaders); see the scopedHeaders doc for why they must not be
-	// re-implemented per handler.
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 	if readWithheld(ctx, rqr) {
-		// Return BEFORE the free-text search: a principal who may read
-		// nothing must not be able to probe the search backend's latency or
-		// induce load through ?q= (RR-X56H).
 		return []*entityPkg.Entity{}, nil, nil
 	}
 
-	// Free-text search: the hits narrow the read when ?q=... is present.
-	// Full-text scores are discarded — the list's configured sort wins over
-	// relevance ranking, same approach SearchView uses for filtering.
-	// Backend errors surface as HTTP 500 rather than rendering an empty list
-	// and pretending the search succeeded.
 	searchResult, err := p.queries().freeTextIDsForType(ctx, queryGet(params, "q"), typeName)
 	if err != nil {
 		return nil, nil, err
 	}
-	// The page scope and the hits each name the rows the list may hold, so
-	// the read asks for those ids only rather than scanning the type
-	// (TKT-F2EJQY8). Each id still passes the verdict, the world, the faces
-	// and the query scope in scopedHeaders, so neither can surface a row the
-	// full read would not admit.
 	ids, byIDs := narrowingIDs(pageScoped, pageIDs, searchResult)
 	req := scopeRequest{
 		Type:        typeName,
@@ -263,8 +219,6 @@ func (p *listPipeline) scopedSortedEntitiesScoped(
 		return nil, nil, err
 	}
 
-	// Each filter[<key>] param was classified as property vs relation ONCE,
-	// by the gate, so both passes agree on routing with the gate itself.
 	entities, err = withQueriedRollups(ctx, p.rollups(), typeName, query, entities,
 		func(rows []*entityPkg.Entity) ([]*entityPkg.Entity, error) {
 			rows, ferr := applyV1Filters(rows, query)
@@ -299,8 +253,6 @@ func (p *listPipeline) scanType(
 		return nil, err
 	}
 	if withheld {
-		// Unreachable after the readWithheld check in the caller (same ctx
-		// and verdict); kept so the empty shape does not depend on that check.
 		return []*entityPkg.Entity{}, nil
 	}
 	headers, err := scanHeaders(ctx, p.services(), q, errClass, req)
@@ -310,42 +262,15 @@ func (p *listPipeline) scanType(
 	return headerEntities(headers), nil
 }
 
-// applyRelationFilters keeps only the entities that match every relation
-// filter present in the query. isRelationKey (the config-backed classifier
-// built in scopedSortedEntities) decides which `filter[<key>]` params are
-// relation filters; property filters are handled by applyV1Filters. Matching is
-// direction-aware: the FilterControl config on a list or kanban of this
-// entity type supplies the direction (default outgoing; precedence in
-// dataentryconfig.Config.RelationFilterDirection), and an entity matches iff
-// it has an edge of that (relation, direction) to a READABLE neighbor whose
-// display title equals the requested value.
+// applyRelationFilters keeps the entities that match every relation filter in
+// query; isRelationKey decides which params are relation filters. An entity
+// matches when it has an edge of that relation, in the configured direction,
+// to a READABLE neighbor whose title equals the value. An unreadable neighbor
+// never matches, so the filter is no title-inference channel.
 //
-// Operators: only `eq` (the bare `filter[<rel>]` form) and `ne`
-// (`filter[<rel>][ne]`) are supported. Any other operator segment is rejected
-// with errBadFilter → HTTP 400, matching applyV1Filters. This supersedes the
-// RR-6RF60V drop-to-zero-rows behavior: both were fail-closed, but zero rows
-// reads as "no data" while a 400 names the broken operator to the caller.
-// Never fail open.
-//
-// ACL (RR-HK1XNO): neighbor titles are resolved through the read gate, so a
-// filter value matching a neighbor the caller cannot read does NOT include the
-// edged rows (no title-match inference channel). Neighbors are gated in one
-// batch per relation param via matchRelationFilter → visibleNeighborTitles.
-// NOTE: when the sibling helper App.visibleRelationIDs (TKT-ODHV2D) merges,
-// this should converge on it; today it uses the same readGate.ReadableFacesMany
-// batching pattern inline.
-//
-// Cost (RR-38K7K9): this runs over the entire type's visible set BEFORE
-// pagination, doing ListRelations + a batched GetEntity per row. It is
-// therefore O(N·edges) per request, uncached, where N is the unpaginated
-// visible row count — acceptable for the current dataset sizes but NOT a
-// store-side pushdown. A future optimization is to push the relation-title
-// predicate into the store query. Each row short-circuits: matchRelationFilter
-// stops scanning a row's edges as soon as one matches.
-//
-// This runs in scopedSortedEntities so BOTH the list handler and scope nav
-// (_position, via resolveScope) observe identical relation filtering — they
-// share this pipeline. Property filters are untouched (TKT-5U7QBR).
+// Only `eq` and `ne` are supported; any other operator is errBadFilter (400),
+// never a silent fail-open. It runs over the whole visible set before
+// pagination, so the list and _position agree.
 func (p *listPipeline) applyRelationFilters(
 	ctx context.Context, entities []*entityPkg.Entity, query map[string][]string, typeName string,
 	isRelationKey func(string) bool,
@@ -357,19 +282,15 @@ func (p *listPipeline) applyRelationFilters(
 		}
 		relation, operator, ok := parseRelationFilterKey(key)
 		if !ok || !isRelationKey(relation) {
-			continue // malformed, or a property filter handled elsewhere
+			continue
 		}
 		want := values[len(values)-1]
 		if want == "" {
-			continue // empty control value = no constraint
+			continue
 		}
 
-		// Reject any operator we don't support for relations. Never fall
-		// through and leave the set unfiltered (that would be the fail-open
-		// bug RR-6RF60V); see the doc comment on the 400-over-zero-rows choice.
 		switch operator {
 		case "eq", "ne":
-			// supported below
 		default:
 			return nil, fmt.Errorf("%w: unknown operator %q in relation filter key %q (supported: eq, ne)",
 				errBadFilter, operator, key)

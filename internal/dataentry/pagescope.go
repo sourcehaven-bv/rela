@@ -42,22 +42,12 @@ func hasPageScope(query map[string][]string) bool {
 
 // resolvePageScope returns the ids of the rows a page tab keeps for its
 // anchor: the entities the anchor reaches over the tab's scope relation.
-// active is false when the request names no page scope.
-//
-// ordering is non-nil when the rows are to be shown in relation order: the
-// tab reaches its rows over edges of a relation orderable on the tab's
-// side, and the request names no sort of its own. The edge values come from
-// the relation query the scope runs anyway.
-//
-// Errors: a malformed or unknown page, tab or type is errBadFilter (400); an
-// anchor the principal cannot see is errPageAnchorNotFound (the uniform 404);
-// a read-gate failure is wrapped in errACLListQuery; a store failure in
-// errListLoad.
-//
-// Cost: one gated anchor read and ONE relation query, whatever the number of
-// rows; an incoming scope adds one batched edge gate (anchorReach). An
-// incoming ordering adds one batch of source reads for its movable check,
-// also independent of the number of rows.
+// active is false when the request names no page scope. ordering is non-nil
+// when rows show in relation order. Errors: a bad page, tab or type is
+// errBadFilter; an anchor the principal cannot see is errPageAnchorNotFound
+// (the uniform 404); gate and store failures wrap errACLListQuery and
+// errListLoad. Cost: one gated anchor read and ONE relation query, plus
+// batched gates independent of the number of rows.
 func resolvePageScope(
 	ctx context.Context, a *App, query map[string][]string, typeName string,
 ) (ids map[string]bool, ordering *relationOrdering, active bool, err error) {
@@ -93,8 +83,6 @@ func resolvePageScope(
 		return nil, nil, false, err
 	}
 	if len(parseSortParam(query)) == 0 && orderPropertyOf(state.Meta, tab.Scope.Relation, dir.IsIncoming()) != "" {
-		// anchorReach gated incoming edges before the places fold into the
-		// order; see newRelationOrdering.
 		ordering, err = newRelationOrdering(ctx, a.affordances, state.Meta, e, tab.Scope.Relation,
 			dir.IsIncoming(), rels)
 		if err != nil {
@@ -119,18 +107,12 @@ func readPageAnchor(ctx context.Context, a *App, anchorType, anchor string) (*en
 	return e, nil
 }
 
-// anchorReach returns the edges of the scope's relation at the anchor and
-// the ids of the entities at their other end: the rows a relation-scoped
-// list tab or dashboard card keeps. An outgoing scope keeps only the edges
-// the anchor's face owns, as on the entity page. An incoming scope keeps
-// only the edges whose source the reader may read at the edge's tail face
-// (Relation.FromFace), the rule visibility.Resolver.EndpointsReadable
-// applies: a row is never reached through a face the reader may not read.
-//
-// The ids are a narrowing, not a source of rows: a caller intersects them
-// with rows that already passed the read gate. Cost: ONE relation query; an
-// incoming scope adds one batched endpoint gate, independent of the number
-// of edges.
+// anchorReach returns the edges of the scope's relation at the anchor and the
+// ids at their other end. An outgoing scope keeps only edges the anchor's
+// face owns; an incoming scope keeps only edges whose source the reader may
+// read at the tail face, so a row is never reached through an unreadable
+// face. The ids are a narrowing to intersect with gated rows. Cost: ONE
+// relation query plus one batched endpoint gate.
 func anchorReach(
 	ctx context.Context, a *App, meta *metamodel.Metamodel, e *entityPkg.Entity, sc dataentryconfig.PageTabScope,
 ) ([]*entityPkg.Relation, map[string]bool, error) {

@@ -88,8 +88,6 @@ func (h *taskItemConversionHandler) handleV1TaskItemConversions(w http.ResponseW
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "No such task item conversion", name)
 		return
 	}
-	// The client read the offer from this schema snapshot. If the converter
-	// holds another one, a reload landed in between.
 	if kernelDef, kernelHas := h.conv.Definition(name); !kernelHas || !reflect.DeepEqual(declared, kernelDef) {
 		writeV1Error(w, r, http.StatusConflict, "schema_changed",
 			"Task item conversion changed; reload and try again", "")
@@ -144,9 +142,6 @@ func (h *taskItemConversionHandler) handleV1TaskItemConversions(w http.ResponseW
 			Detail: "the entity and its relation were created; a step after the create failed",
 		})
 	}
-	// The title is read back through the read gate, as the editor's other
-	// references are: an automation may have hidden the new entity, or its
-	// display property, from the caller.
 	if m, ok := h.mention(r.Context(), snapshot.Meta, res.Entity.Ref()); ok && !m.Inaccessible {
 		out.Title = m.Title
 	}
