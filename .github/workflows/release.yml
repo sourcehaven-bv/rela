@@ -49,7 +49,9 @@ jobs:
         run: bwrap --unshare-all --ro-bind / / /bin/true
 
       - name: Run tests
-        run: go test -v -race ./...
+        # -timeout 20m as in ci.yml: internal/dataentry takes about 10 minutes
+        # under -race, past go test's default, which failed v26.11.6 to v26.11.8.
+        run: go test -v -race -timeout 20m ./...
 
   security:
     name: Security
