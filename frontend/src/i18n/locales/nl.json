@@ -1255,7 +1255,8 @@
     "editEntity": "Item bewerken",
     "deleteEntity": "Item verwijderen",
     "submit": "Opslaan / versturen",
-    "cancelBack": "Annuleren en teruggaan"
+    "cancelBack": "Annuleren en teruggaan",
+    "quickEntry": "Snel invoeren"
   },
   "piles": {
     "itemCount": "{n} item | {n} items",
@@ -1734,5 +1735,11 @@
     "refused": "{count} item kon niet worden verplaatst | {count} items konden niet worden verplaatst",
     "notInList": "Verplaatst, maar {count} item past niet bij de voorwaarde van de lijst | Verplaatst, maar {count} items passen niet bij de voorwaarde van de lijst",
     "wrongType": "Dit menu-item accepteert dat soort item niet"
+  },
+  "quickEntry": {
+    "title": "Snel invoeren",
+    "saved": "Opgeslagen",
+    "notConfigured": "Snel invoeren is niet ingesteld.",
+    "noDefaults": "De standaardwaarden van de lijst konden niet worden geladen. Het nieuwe item staat misschien niet in de lijst."
   }
 }

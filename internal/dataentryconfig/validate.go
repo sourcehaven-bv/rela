@@ -53,6 +53,7 @@ var validTopLevelKeys = map[string]bool{
 	"account":              true,
 	"piles":                true,
 	"channels":             true,
+	"quick_entry":          true,
 	"header_buttons":       true,
 	"entity_panels":        true,
 	"list_buttons":         true,
@@ -539,6 +540,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateCommands(cfg, meta)...)
 	errs = append(errs, validateActions(cfg, meta)...)
 	errs = append(errs, validateAssigns(cfg, meta)...)
+	errs = append(errs, validateQuickEntry(cfg)...)
 	errs = append(errs, validateWebhooks(cfg, meta)...)
 	errs = append(errs, validateApp(cfg, meta)...)
 	errs = append(errs, validateDocuments(cfg)...)

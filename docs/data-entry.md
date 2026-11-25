@@ -7822,6 +7822,45 @@ after the write, a notice says so. Loading fails when an assign names an
 unknown property or relation, a computed property, an enum value that does not
 exist, or a relation that does not start at the item type.
 
+### Quick entry (`quick_entry`)
+
+`quick_entry` opens one create form from anywhere. Use it to capture a new
+item without leaving what you are doing.
+
+```yaml
+quick_entry:
+  form: todo-form            # a create form
+  list: inbox                # optional: the list whose assign fills the form
+  shortcut: CmdOrCtrl+Shift+Space   # optional, desktop app only
+```
+
+- In the browser, press `q` on any page, or open `/quick`. After a save the
+  form shows a message and opens empty again.
+- In the desktop app, the shortcut works even when another application is in
+  front. It opens a small window on the active project. The window closes
+  after a save. Pressing the shortcut again brings an open window to the
+  front. When you switch projects, the shortcut moves to the new project and
+  an open window closes.
+
+When `list:` is set, the form is filled in with that list's `assign`, so a new
+item lands in the list. The list must have an `assign` block and the same
+entity type as the form.
+
+The shortcut is a set of modifiers and one key joined with `+`. Modifiers are
+`CmdOrCtrl`, `Cmd`, `Ctrl`, `Alt`, `Option`, `OptionOrAlt`, `Shift` and
+`Super`. At least one modifier is required. The key is a letter, a digit,
+`F1` to `F12` or `Space`. The shortcut works in every application, so a
+letter, a digit or `Space` also needs `Shift` or `Alt`. That keeps keys such
+as `Cmd+V` free. Without `shortcut:` the desktop app uses
+`CmdOrCtrl+Shift+Space`. When another application already holds the shortcut,
+the desktop app logs a warning and `q` still works. A changed shortcut takes
+effect when the project is opened again.
+
+While `quick_entry` is set, no action may use `key: q`; loading fails if one
+does.
+
+The form is saved with your own permissions, like any create form.
+
 ### Buttons on a list (`toolbar_actions`)
 
 `toolbar_actions` on a list shows actions as buttons in the list's header, next to the "New"

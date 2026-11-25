@@ -47,6 +47,7 @@ const shortcuts = computed(() => [
       { keys: '?', description: t('shortcuts.showShortcuts') },
       { keys: '/', description: t('shortcuts.focusSearch') },
       { keys: `${mod.value} + K`, description: t('shortcuts.quickJump') },
+      { keys: 'Q', description: t('shortcuts.quickEntry') },
       { keys: 'Esc', description: t('shortcuts.closeModal') },
     ],
   },

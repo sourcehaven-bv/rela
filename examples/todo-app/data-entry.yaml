@@ -13,6 +13,12 @@ styles:
     anytime: blue
     someday: gray
 
+# Press q, or CmdOrCtrl+Shift+Space in the desktop app, to add a to-do for
+# today from anywhere.
+quick_entry:
+  form: quick_todo
+  list: today
+
 forms:
   # Quick entry: the title is the only field.
   quick_todo:

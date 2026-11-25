@@ -4,6 +4,8 @@ import { defineComponent, nextTick } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { paletteOpen, shortcutsModalOpen, useKeyboardShortcuts } from './useKeyboardShortcuts'
 import { _resetModalStack, registerModal } from './modalStack'
+import { createPinia, setActivePinia } from 'pinia'
+import { useSchemaStore } from '@/stores/schema'
 
 // Helper to create a keyboard event
 function createKeyEvent(key: string, options: Partial<KeyboardEvent> = {}): KeyboardEvent {
@@ -27,6 +29,7 @@ describe('useKeyboardShortcuts', () => {
     shortcutsModalOpen.value = false
     paletteOpen.value = false
     _resetModalStack()
+    setActivePinia(createPinia())
 
     // Create router with routes
     router = createRouter({
@@ -35,6 +38,7 @@ describe('useKeyboardShortcuts', () => {
         { path: '/', name: 'home', component: { template: '<div/>' } },
         { path: '/dashboard', name: 'dashboard', component: { template: '<div/>' } },
         { path: '/search', name: 'search', component: { template: '<div/>' } },
+        { path: '/quick', name: 'quick', component: { template: '<div/>' } },
         { path: '/analyze', name: 'analyze', component: { template: '<div/>' } },
         { path: '/form/create/:id', name: 'form-create', component: { template: '<div/>' } },
         { path: '/form/edit/:id/:entityId', name: 'form-edit', component: { template: '<div/>' } },
@@ -72,6 +76,56 @@ describe('useKeyboardShortcuts', () => {
 
       document.dispatchEvent(createKeyEvent('Escape'))
       expect(shortcutsModalOpen.value).toBe(false)
+    })
+  })
+
+  describe('quick entry', () => {
+    it('opens /quick with q when configured', async () => {
+      useSchemaStore().quickEntry = { form: 'f' }
+      await mountWithRouter()
+      document.dispatchEvent(createKeyEvent('q'))
+      await vi.runAllTimersAsync()
+      expect(router.currentRoute.value.name).toBe('quick')
+    })
+
+    it('ignores Cmd+Q and Ctrl+Q', async () => {
+      useSchemaStore().quickEntry = { form: 'f' }
+      await router.push('/')
+      await mountWithRouter()
+      document.dispatchEvent(createKeyEvent('q', { metaKey: true }))
+      document.dispatchEvent(createKeyEvent('q', { ctrlKey: true }))
+      await vi.runAllTimersAsync()
+      expect(router.currentRoute.value.name).toBe('home')
+    })
+
+    it('Escape on /quick with no history goes to the start page', async () => {
+      await router.push('/quick')
+      window.history.replaceState({}, '')
+      await mountWithRouter()
+      document.dispatchEvent(createKeyEvent('Escape'))
+      await vi.runAllTimersAsync()
+      expect(router.currentRoute.value.name).toBe('home')
+    })
+
+    it('Escape in the desktop popup closes the window', async () => {
+      const close = vi.fn()
+      ;(window as unknown as { wails?: unknown }).wails = { Window: { Close: close } }
+      try {
+        await router.push('/quick?popup=1')
+        await mountWithRouter()
+        document.dispatchEvent(createKeyEvent('Escape'))
+        expect(close).toHaveBeenCalled()
+      } finally {
+        delete (window as unknown as { wails?: unknown }).wails
+      }
+    })
+
+    it('ignores q when not configured', async () => {
+      await router.push('/')
+      await mountWithRouter()
+      document.dispatchEvent(createKeyEvent('q'))
+      await vi.runAllTimersAsync()
+      expect(router.currentRoute.value.name).toBe('home')
     })
   })
 

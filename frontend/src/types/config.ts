@@ -12,6 +12,12 @@ export interface ResolvedPalette {
   darkDisabled?: boolean
 }
 
+export interface QuickEntryConfig {
+  form: string
+  list?: string
+  shortcut?: string
+}
+
 export interface Config {
   app: AppConfig
   /** Deployment description for the global "About" help (TKT-DUQBD0). */
@@ -147,6 +153,8 @@ export interface ActionConfig {
 }
 
 export interface AppConfig {
+  /** The data-entry.yaml `quick_entry:` block (TKT-24L1H36), served under `app`. */
+  quick_entry?: QuickEntryConfig
   name: string
   description?: string
   /**

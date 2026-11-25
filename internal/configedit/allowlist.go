@@ -239,6 +239,10 @@ var editable = map[File][]string{
 		"piles.toggles.[].**",
 		"lists.*.condition",
 		"lists.*.create_form",
+
+		// Quick entry (TKT-24L1H36) names a form, a list and a desktop hotkey;
+		// it runs no code and grants nothing the form does not.
+		"quick_entry.**",
 		"lists.*.description",
 		"lists.*.edit_form",
 		"lists.*.empty_message",
