@@ -1105,6 +1105,26 @@ schema: a select for a property with values, a multi-select for a list property
 A relation's `widget:` (`select`, `multi-select`, `cards`, `search`) is still a choice and
 is not affected.
 
+### Typing a date in words
+
+A `date` field has a text box beside its date picker. Type a date in words, in
+English or Dutch, and the picker shows the date at once. Press Enter or leave
+the box to keep it. Both languages work whatever the interface language is.
+
+| You type | Means |
+| --- | --- |
+| `today`, `tomorrow`, `yesterday`, `vandaag`, `morgen`, `overmorgen` | That day |
+| `friday`, `next friday`, `last friday`, `vrijdag`, `volgende vrijdag` | That weekday; `next` never means today |
+| `in 3 days`, `over 2 weken`, `3 days ago`, `+3d`, `-1w`, `+3` | An offset; a bare number counts days |
+| `next week`, `volgende maand`, `komende week` | The same day a week, month or year on |
+| `5 march`, `march 5`, `5 mrt 2027` | That day; without a year, the next one |
+| `5/3`, `5/3/27`, `5-3-2027` | Day first, then month |
+| `end of month`, `einde van de maand` | The last day of this month |
+
+A phrase the box does not understand changes nothing. It is marked invalid
+and a message explains what to try. A two-digit year is read only after a
+slash, so `26-11-24` is refused rather than guessed.
+
 ### Datetime fields and time zones
 
 A `datetime` property renders as a native date + time picker. Because a

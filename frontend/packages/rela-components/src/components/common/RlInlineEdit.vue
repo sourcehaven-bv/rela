@@ -196,7 +196,9 @@ function onKeydown(event: KeyboardEvent) {
     // Stopped so an inline edit inside a modal does not close the modal too.
     event.stopPropagation()
     stop('cancel')
-  } else if (event.key === 'Enter' && !keepsEnter(event.target)) {
+  } else if (event.key === 'Enter' && !event.defaultPrevented && !keepsEnter(event.target)) {
+    // A control that handled Enter itself (prevented it) keeps the edit open,
+    // for example to show that what was typed was not understood.
     // A multi-line control keeps Enter for newlines; everything else treats it as done.
     event.preventDefault()
     stop('commit')

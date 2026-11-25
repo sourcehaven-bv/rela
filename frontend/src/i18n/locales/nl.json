@@ -770,6 +770,13 @@
     },
     "fileCell": {
       "count": "{n} bestand | {n} bestanden"
+    },
+    "date": {
+      "natural": {
+        "label": "Datum in woorden",
+        "placeholder": "bijv. volgende vrijdag",
+        "invalid": "Deze datum begrijpen we niet. Probeer \"morgen\", \"volgende vrijdag\" of \"5 maart\"."
+      }
     }
   },
   "form": {
