@@ -704,8 +704,6 @@ const queryParams = computed((): ListParams => {
   // list query, the grouped loader and the live path all read these params.
   if (busyType.value) params.busy = busyType.value
 
-  // A list with `order: manual` shows the reader's own order until they sort
-  // it themselves (TKT-AVNEX5T). A relation-ordered tab keeps that order.
   if (manualOrdered.value) params.manual_order = 1
 
   Object.assign(params, tabScope.params.value)

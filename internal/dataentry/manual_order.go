@@ -69,7 +69,8 @@ func manualListFor(s *Schema, query map[string][]string) (string, *dataentryconf
 // applyManualOrder puts rows in the caller's stored order of list. On a
 // grouped list the order applies inside each run of equal group values, so
 // the sections keep the order the sort gave them. A failed read keeps the
-// sort: an order is presentation, not data.
+// sort: an order is presentation, not data. Call it after every filter and
+// before paging, so it permutes only the gated rows the page describes.
 func applyManualOrder(
 	ctx context.Context, store listOrderStore, listID string, l *dataentryconfig.List, rows []*entityPkg.Entity,
 ) []*entityPkg.Entity {
@@ -128,7 +129,8 @@ type listOrderRequest struct {
 // handleV1ListOrder serves POST /api/v1/_list_order?list_id=…: it moves one
 // row of a manual list next to a neighbor in the caller's own order. The
 // query carries the same parameters as the list read on screen, so the
-// move is judged against exactly the rows the caller sees. A row or
+// move is judged against exactly the rows the caller sees, always in the
+// stored order. A row or
 // neighbor that is not among them is the uniform 404, whether it is
 // hidden, missing, or in another list.
 //
@@ -141,7 +143,6 @@ func handleV1ListOrder(a *App, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query, s := r.URL.Query(), a.State()
-	// A move is always judged against the rows in the stored order.
 	query.Set(manualOrderParam, "1")
 	listID, l := manualListFor(s, query)
 	if a.listOrder == nil || l == nil {

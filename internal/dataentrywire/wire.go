@@ -182,8 +182,6 @@ func wireOptionalStores(app *dataentry.App, svc *appbuild.Services) error {
 			return fmt.Errorf("wire piles: %w", err)
 		}
 	}
-	// Without a state KV manual lists show their sort and the move route
-	// 404s (TKT-AVNEX5T).
 	if kv := svc.State(); kv != nil {
 		lo, err := listorder.New(kv)
 		if err != nil {

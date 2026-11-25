@@ -135,8 +135,6 @@ func (p *listPipeline) listPage(
 		return nil, 0, nil, err
 	}
 	if manual != nil && ordering == nil {
-		// AFTER every filter, BEFORE paging: the stored order permutes only
-		// the gated rows the page and total describe.
 		all = applyManualOrder(ctx, orders, manualID, manual, all)
 	}
 	total = len(all)
