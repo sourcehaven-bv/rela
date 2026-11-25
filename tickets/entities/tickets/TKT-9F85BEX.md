@@ -5,7 +5,9 @@ title: 'List buckets: relative_weeks with this week and next week'
 kind: enhancement
 priority: medium
 effort: s
-status: ready
+started: "2026-11-25"
+completed: "2026-11-25"
+status: done
 ---
 
 ## Description
