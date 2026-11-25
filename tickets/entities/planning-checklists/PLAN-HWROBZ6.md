@@ -40,7 +40,7 @@ write as a user without `hr`.
 `set` output that would satisfy a change branch does not move the run.
 5. Run move commits with the write: a write that fails after the hook (rolls
 back) leaves the run where it was. Test on postgres/sqlite: forced txCheck
-failure.
+failure. (Deferred to TKT-FHH2JNJ; it needs store fault injection.)
 6. A change while the token is settling (pending mark, e.g. a job step) is kept
 on the mark and taken once the state's outputs and job are done, when no `done`
 branch applies. Test: engine unit test with a pending run.
@@ -55,7 +55,9 @@ create that matches. No run when it already matched before the write.
 10. Predicate starts caused by a flow's own writes are bounded by the create
 depth (8). Test: chain bounded test.
 11. A sync script (scheduled Lua, `run_as: integration:github`) write moves a
-run on a branch with `roles: [integration]`; the timeline records `By`.
+run on a branch with `roles: [integration]`; the timeline records `By`. Test:
+TestFlowWriteEvents_Lua (a script write moves the run as the script's
+principal); the role gate is the one criterion 2 tests.
 
 ## Research
 
@@ -172,6 +174,15 @@ admits any writer who may make its `when` true: the operator's choice; docs
 advise `roles:` for sync-driven branches.
 - Header writes as `system:flow`, prebound before the Tx.
 - Guard evaluation errors may quote values: logged at debug only.
+- Predicate starts: any principal who may update the subject so that `when:`
+becomes true starts a run, whose outputs then write as the flow's `run_as`. This
+is the same as an `on: create` start. Bounds: `per_subject: one` is required
+(`many` is refused at load), the false-to-true edge, and the create depth (8).
+- Deferred change: a `change` kept while the state settles is taken later by
+the flow worker and attributed to the writer. The writer's roles are judged at
+write time only. When the event is taken, the guard is checked again on the
+current subject, and so is the claim (`keptChangeHolds`); if either fails, the
+event is dropped.
 
 ## Test Plan
 
@@ -182,7 +193,7 @@ advise `roles:` for sync-driven branches.
 
 **Test Scenarios:** criteria 1-11 above; engine unit tests in
 `flowengine/onchange_test.go`; cross-backend in
-`appbuild/flowupdateevents_test.go` (fs default, `-tags postgres`, `-tags
+`appbuild/flowwriteevents_test.go` (fs default, `-tags postgres`, `-tags
 sqlite`); flowrun state round-trip for `Pending.Change`.
 
 **Edge Cases:** stranded state (skip); run ended between list and move (lost
@@ -191,8 +202,9 @@ on old (counts as not matching) and on new (no start, logged); write by
 `system:*` principal with empty roles; body-only change; flow removed from
 flows.yaml while runs open (flowOf pins version).
 
-**Negative Tests:** author without role; guard false; rolled-back write;
-FlowStep on ctx; no-op write; already-matching predicate.
+**Negative Tests:** author without role; update inside a caller's transaction
+(no role held); guard false; FlowStep on ctx; no-op write; already-matching
+predicate. The rolled-back write is deferred to TKT-FHH2JNJ.
 
 ## Risk Assessment
 
@@ -205,7 +217,11 @@ FlowStep on ctx; no-op write; already-matching predicate.
 bounded by indexed List and MaxRunsPerSubject; only watched types.
 - Nested writes in the update Tx (header create for predicate start): same as
 create starts, proven there.
-- Postgres Tx abort from a failing statement: header patches deferred to after commit.
+- Header patches run inside the write's transaction. When PrepareUpdate ran, a
+failure to bind system:flow fails the write. For an update inside a caller's
+transaction the binding happens in the Tx; a failure there leaves the header
+lagging its run and is logged ("run header lags its run"); the run state is
+correct.
 - Loops between flows: change events skip flow writes; predicate starts depth-bounded.
 
 Effort: l

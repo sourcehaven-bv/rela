@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // writeEventProject is the onboarding sample with alice (hr) and dora, a
@@ -110,4 +111,26 @@ func TestFlowWriteEvents_PredicateStart(t *testing.T) {
 		entity.Patch{Properties: map[string]any{"name": "Ada C"}})
 	require.NoError(t, err)
 	require.Len(t, flowHeadersFor(t, svc, "PER-1"), 1)
+}
+
+// TestFlowWriteEvents_InCallerTxHoldsNoRole pins that an update joined to
+// a transaction its caller opened holds no role: its author's roles are
+// not read there, so a branch with roles does not move.
+func TestFlowWriteEvents_InCallerTxHoldsNoRole(t *testing.T) {
+	svc, ctl := writeEventProject(t)
+	addFlowPerson(t, svc, "PER-1", map[string]any{"name": "Ada", "status": "hired"})
+	alice := flowUser(t, svc, "alice")
+	id, err := ctl.Start(alice, "onboarding", "PER-1")
+	require.NoError(t, err)
+
+	require.NoError(t, svc.Store().Tx(alice, func(view store.Store) error {
+		_, perr := svc.EntityManager().PatchEntity(store.ContextWithTxView(alice, view), "PER-1",
+			entity.Patch{Properties: map[string]any{"documents": true}})
+		return perr
+	}))
+	require.Equal(t, true, subjectProp(t, svc, "PER-1", "documents"))
+
+	hdr, err := svc.Store().GetEntity(context.Background(), entity.Ref{ID: string(id)})
+	require.NoError(t, err)
+	require.Equal(t, "collect", hdr.Properties[metamodel.FlowRunPropState])
 }
