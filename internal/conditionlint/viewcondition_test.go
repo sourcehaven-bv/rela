@@ -355,3 +355,27 @@ func TestCompileViewConditions_LLMCandidates(t *testing.T) {
 		})
 	}
 }
+
+func TestCompileViewConditions_ListGroups(t *testing.T) {
+	grouped := func(cond string) *dataentryconfig.Config {
+		return &dataentryconfig.Config{Lists: map[string]dataentryconfig.List{
+			"taken": {EntityType: "taak", GroupBy: &dataentryconfig.ListGroupBy{Groups: []dataentryconfig.ListGroup{
+				{ID: "done", Condition: cond}, {ID: "rest"},
+			}}},
+		}}
+	}
+	progs, problems := CompileViewConditions(grouped("entity.afgerond_op ~= nil and entity.afgerond_op <= today()"), vcMeta())
+	require.Empty(t, problems)
+	require.Len(t, progs, 1)
+	require.Contains(t, progs, ViewConditionKey{ViewConditionListGroup, dataentryconfig.ListGroupConditionID("taken", "done")})
+
+	lookup, problems := ViewConditionMatchers(grouped("entity.status == 'gereed'"), vcMeta())
+	require.Empty(t, problems)
+	m, ok := lookup(string(ViewConditionListGroup), dataentryconfig.ListGroupConditionID("taken", "done"))
+	require.True(t, ok)
+	require.Equal(t, "taak", m.EntityType())
+
+	_, problems = CompileViewConditions(grouped("entity.nope == 1"), vcMeta())
+	require.Len(t, problems, 1)
+	require.Contains(t, problems[0], `lists["taken"].group_by.groups[done]`)
+}

@@ -168,7 +168,6 @@
   "src/composables/useKanbanCollapse.ts": 3,
   "src/composables/useKeyboardShortcuts.ts": 23,
   "src/composables/useListActions.ts": 11,
-  "src/composables/useListGrouping.ts": 7,
   "src/composables/useListKeyboard.ts": 12,
   "src/composables/useLiveSubscription.ts": 5,
   "src/composables/useMarkRead.ts": 7,

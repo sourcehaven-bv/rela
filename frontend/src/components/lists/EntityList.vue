@@ -22,6 +22,8 @@ import { listEntities, listAllEntities, getErrorMessage, withSortFallback, type 
 import { entityKeys } from '@/queries/entities'
 import { liveListPath } from '@/api/live'
 import { toBusyEntries } from '@/utils/busy'
+import { isToggleColumn } from '@/utils/toggleCell'
+import ListToggleCell from './ListToggleCell.vue'
 import { useLiveSubscription } from '@/composables/useLiveSubscription'
 import { beginOptimisticRemove } from '@/queries/optimisticList'
 import { filterStateToApiParams } from '@/utils/filters'
@@ -441,6 +443,11 @@ const { target: createFormTarget, targetWorld: createWorld } = useCreateTarget(
 
 // New opens the create form in a dialog over the list; the new entity then
 // opens in the detail panel, as if its row had been clicked.
+// A toggle's PATCH may have run triggers that changed more of the row, or
+// moved it out of the list's filter, so the page is read again.
+function refreshAfterToggle() {
+  void queryCache.invalidateQueries({ key: entityKeys.list(listConfig.value?.entity ?? '') })
+}
 function refreshAfterCreate() {
   void queryCache.invalidateQueries({ key: entityKeys.list(listConfig.value?.entity ?? '') })
 }
@@ -563,6 +570,16 @@ const entityType = computed(() => {
 // The channel type of the list's busy column (TKT-TU3XH4), if it has one.
 // The load check allows at most one busy column per list.
 const busyType = computed(() => listConfig.value?.columns?.find((c) => c.busy)?.busy)
+
+// The properties of the list's toggle columns, comma-separated (TKT-M0AT73B).
+// Sent as field_verdicts, so the server answers each row's write verdict for
+// them once per page.
+const toggleProperties = computed(() =>
+  (listConfig.value?.columns ?? [])
+    .filter((c) => isToggleColumn(c) && c.property)
+    .map((c) => c.property)
+    .join(','),
+)
 
 /** The row's busy channels of the busy column's type, for the indicator. */
 function busyEntries(entity: Entity): BusyIndicatorEntry[] {
@@ -703,6 +720,7 @@ const queryParams = computed((): ListParams => {
   // flyout, which shows no busy column, does not pay for the busy read. The
   // list query, the grouped loader and the live path all read these params.
   if (busyType.value) params.busy = busyType.value
+  if (toggleProperties.value) params.field_verdicts = toggleProperties.value
 
   if (manualOrdered.value) params.manual_order = 1
 
@@ -1753,6 +1771,13 @@ watch(searchQuery, () => {
           <RlBusyIndicator
             v-if="listColumnOf(column!)?.busy"
             :entries="busyEntries(item as Entity)"
+          />
+          <ListToggleCell
+            v-else-if="isToggleColumn(listColumnOf(column!))"
+            :entity="item as Entity"
+            :column="listColumnOf(column!)!"
+            :entity-type="listConfig.entity"
+            @changed="refreshAfterToggle"
           />
           <span
             v-else-if="listColumnOf(column!) && isCellInaccessible(item as Entity, listColumnOf(column!)!)"

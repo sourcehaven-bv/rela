@@ -125,6 +125,11 @@ const routes: RouteRecordRaw[] = [
     props: true,
   },
   {
+    path: '/quick',
+    name: 'quick',
+    component: () => import('@/views/QuickEntryView.vue'),
+  },
+  {
     path: '/search',
     name: 'search',
     component: () => import('@/views/SearchView.vue'),

@@ -18,6 +18,11 @@
  *   arrive.
  * A row with no value goes in a trailing "(none)" section, shown only when a
  * row needs it.
+ *
+ * A computed grouping (`groups:` with conditions and no property) is decided
+ * by the server, which stamps each row's `_group`. Its sections come in
+ * declared order, empty ones left out; a row in no group goes in a trailing
+ * "Other" section.
  */
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import { useRelationColumns, OTHER_COLUMN } from '@/composables/useRelationColumns'
@@ -112,6 +117,11 @@ function isEmptyValue(value: unknown): boolean {
   return value === undefined || value === null || value === ''
 }
 
+/** Mirrors ListGroupBy.Computed on the server. */
+function isComputedGroupBy(groupBy: ListGroupBy): boolean {
+  return !groupBy.property && !groupBy.relation
+}
+
 /** Splits rows into sections. See the file comment for the rules. */
 export function groupRows(
   rows: Entity[],
@@ -119,6 +129,7 @@ export function groupRows(
   entityType: EntityType | undefined,
   options: GroupOptions
 ): ListSection[] {
+  if (isComputedGroupBy(groupBy)) return computedSections(rows, groupBy)
   const property = groupBy.property ?? ''
   const def = entityType?.properties[property]
   if (groupBy.buckets && typeof groupBy.buckets === 'object') {
@@ -151,9 +162,6 @@ export function groupRows(
     const key = String(value)
     let section = byKey.get(key)
     if (!section) {
-      // A value the enum does not declare (hand-edited data), or any value
-      // of a non-enum property. It gets a section of its own after the
-      // declared ones rather than disappearing.
       section = {
         id: `value:${key}`,
         title: formatCellValue(value, property, entityType, options.tz) || key,
@@ -172,6 +180,29 @@ export function groupRows(
       (includeEmpty && filtersAdmit(options.filterParams, property, s.id.slice('value:'.length)))
   )
   if (none.items.length > 0) sections.push(none)
+  return sections
+}
+
+const OTHER_ID = 'other'
+
+/** Sections for a computed grouping; see the file comment. */
+function computedSections(rows: Entity[], groupBy: ListGroupBy): ListSection[] {
+  const byId = new Map<string, ListSection>()
+  for (const g of groupBy.groups ?? []) {
+    if (!g.id) continue
+    byId.set(g.id, {
+      id: `group:${g.id}`,
+      title: g.label || g.id,
+      color: namedColor(g.color),
+      items: [],
+    })
+  }
+  const other: ListSection = { id: OTHER_ID, title: t('list.group.other'), items: [] }
+  for (const row of rows) {
+    ;((row._group && byId.get(row._group)) || other).items.push(row)
+  }
+  const sections = [...byId.values()].filter((s) => s.items.length > 0)
+  if (other.items.length > 0) sections.push(other)
   return sections
 }
 
@@ -202,8 +233,6 @@ function bucketSections(
       {
         id: `bucket:${bucket}`,
         title: groupBy.labels?.[bucket] || defaultBucketLabel(bucket),
-        // Overdue is the one bucket that asks for action; the rest are only
-        // a when.
         color: bucket === 'overdue' ? 'red' : undefined,
         prefill: date && groupBy.property ? { [groupBy.property]: date } : undefined,
         bucket,
@@ -269,7 +298,7 @@ function readCollapsed(listId: string): Set<string> {
       Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []
     )
   } catch {
-    // A corrupt entry costs the reader their closed sections, not the list.
+    // why: a corrupt entry costs the reader their closed sections, not the list.
     return new Set()
   }
 }
@@ -311,8 +340,6 @@ export function useListGrouping(options: {
 
   const grouped = computed(() => options.groupBy() !== undefined)
 
-  // Grouping on a relation: the sections are the relation's targets, the
-  // same ones a relation-backed board shows as columns.
   const relationColumns = useRelationColumns(
     computed(() => (options.groupBy()?.relation ? options.groupBy() : undefined)),
     computed(() => options.pageScope?.()),
@@ -379,7 +406,7 @@ export function useListGrouping(options: {
     try {
       localStorage.setItem(collapsedStorageKey(options.listId()), JSON.stringify([...next]))
     } catch {
-      // Storage full or disabled: the choice holds for this visit only.
+      // why: storage full or disabled: the choice holds for this visit only.
     }
   }
 

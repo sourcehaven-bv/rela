@@ -32,6 +32,8 @@ export interface Entity {
   // with `comment_counts`, and only when the reader holds comment:read across
   // the project (TKT-WA25G2). Absent means not served, never zero.
   _comment_count?: number
+  /** The computed group (list `group_by.groups` with conditions) the row falls in. */
+  _group?: string
   // The busy channels of the type a list asked for with `?busy=<type>`:
   // channels whose session is in a state with status `working`. Present
   // as `[]` when none is busy; absent when the list did not ask or the
@@ -588,6 +590,9 @@ export interface ListParams extends ListQueryScope {
   // Asks each row to carry `_busy` for this channel type. Set when a kanban
   // card has a `busy:` field or a list has a busy column.
   busy?: string
+  // Asks each row to carry `_fields` and `_redacted` for these properties
+  // (comma-separated). Set when a list has toggle columns (TKT-M0AT73B).
+  field_verdicts?: string
   // world selects which FACE of each entity is served, and which entities
   // appear at all — an entity with no face in the requested world is omitted
   // entirely, because existence in a world IS the publication bit.

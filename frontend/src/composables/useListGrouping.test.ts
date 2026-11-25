@@ -276,6 +276,40 @@ describe('filtersAdmit', () => {
   })
 })
 
+describe('groupRows by condition', () => {
+  const groupBy: ListGroupBy = {
+    max_rows: 500,
+    groups: [
+      { id: 'today', label: 'Today', condition: 'entity.start_date <= today()' },
+      { id: 'later', condition: "entity.when == 'scheduled'" },
+      { id: 'rest', label: 'Anytime' },
+    ],
+  }
+
+  it('follows the server-stamped _group in declared order, dropping empty groups', () => {
+    const rows = [
+      { ...task('a', {}), _group: 'rest' },
+      { ...task('b', {}), _group: 'today' },
+      { ...task('c', {}), _group: 'rest' },
+    ]
+    const sections = groupRows(rows, groupBy, taskType, { now, tz })
+    expect(ids(sections)).toEqual([
+      ['group:today', ['b']],
+      ['group:rest', ['a', 'c']],
+    ])
+    expect(sections.map((s) => s.title)).toEqual(['Today', 'Anytime'])
+  })
+
+  it('puts a row without _group under Other', () => {
+    expect(ids(groupRows([task('a', {})], groupBy, taskType, { now, tz }))).toEqual([['other', ['a']]])
+  })
+
+  it('puts a row with an undeclared _group under Other', () => {
+    const rows = [{ ...task('b', {}), _group: 'gone' }]
+    expect(ids(groupRows(rows, groupBy, taskType, { now, tz }))).toEqual([['other', ['b']]])
+  })
+})
+
 describe('groupRows with calendar buckets', () => {
   const rows = [
     task('old', { due: '2026-06-01' }),

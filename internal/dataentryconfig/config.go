@@ -110,7 +110,7 @@ func (d Direction) IsIncoming() bool {
 // (TKT-91BK6F), `header_buttons` (TKT-31822PN) and `list_buttons`
 // (TKT-UP0AYVN) are the most recent.
 //
-//plimsoll:max-fields=33
+//plimsoll:max-fields=34
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -182,6 +182,35 @@ type Config struct {
 	// by its realtime.yaml labels, required properties first. See
 	// [ChannelPresentation].
 	Channels map[string]ChannelPresentation `yaml:"channels,omitempty" json:"channels,omitempty"`
+
+	// QuickEntry names the form a quick capture opens (TKT-24L1H36). Nil:
+	// accepted, means no quick entry: the web shortcut does nothing and the
+	// desktop app registers no hotkey. See [QuickEntry].
+	QuickEntry *QuickEntry `yaml:"quick_entry,omitempty" json:"quick_entry,omitempty"`
+}
+
+// QuickEntry is the `quick_entry:` block: one create form, opened by a key
+// in the web app and by a global hotkey in the desktop app.
+type QuickEntry struct {
+	// Form is the form to open, a key of `forms:`.
+	Form string `yaml:"form" json:"form"`
+	// List optionally names a list whose `assign:` block fills the form's
+	// defaults, as for a row created in that list.
+	List string `yaml:"list,omitempty" json:"list,omitempty"`
+	// Shortcut is the desktop hotkey, for example "CmdOrCtrl+Shift+Space".
+	// Empty means [DefaultQuickEntryShortcut].
+	Shortcut string `yaml:"shortcut,omitempty" json:"shortcut,omitempty"`
+}
+
+// DefaultQuickEntryShortcut is the desktop hotkey when `shortcut:` is unset.
+const DefaultQuickEntryShortcut = "CmdOrCtrl+Shift+Space"
+
+// Accelerator is the desktop hotkey for this block.
+func (q *QuickEntry) Accelerator() string {
+	if q.Shortcut == "" {
+		return DefaultQuickEntryShortcut
+	}
+	return q.Shortcut
 }
 
 // EntityViewConfig declares UX bindings for a metamodel entity type.
@@ -1125,6 +1154,15 @@ type ListColumn struct {
 	// other columns go. The title column always stays. Lists only: dashboard
 	// card and view section columns refuse it.
 	Primary *bool `yaml:"primary,omitempty" json:"primary,omitempty"`
+	// Widget renders a list property column as a control the user flips in
+	// place (TKT-M0AT73B): [ColumnWidgetToggle] for a checkbox,
+	// [ColumnWidgetSwitch] for a switch. On and Off name the enum values the
+	// two states write; a boolean property takes neither. Other says what a
+	// row holding a third value shows. Lists only; see checkListToggleColumn.
+	Widget string `yaml:"widget,omitempty" json:"widget,omitempty"`
+	On     string `yaml:"on,omitempty" json:"on,omitempty"`
+	Off    string `yaml:"off,omitempty" json:"off,omitempty"`
+	Other  string `yaml:"other,omitempty" json:"other,omitempty"`
 }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.

@@ -449,6 +449,7 @@ func (h *schemaHandler) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		App: v1.AppConfig{
 			Name:              s.Cfg.App.Name,
 			Description:       s.Cfg.App.Description,
+			QuickEntry:        s.Cfg.QuickEntry,
 			Language:          s.Cfg.App.Language,
 			Languages:         s.Cfg.App.Languages,
 			PlantUMLServerURL: s.Cfg.App.PlantUMLServerURL,

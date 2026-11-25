@@ -202,6 +202,10 @@ type Activity struct {
 	// status working, which the caller may read. Nil is absent ("not
 	// served"); an empty slice is `[]` ("none busy that you may see").
 	Busy []BusyChannel `json:"_busy,omitzero"`
+	// Group is the id of the computed group (TKT-QS024L0) the row falls in,
+	// set on list rows when the request names a list whose group_by is
+	// computed. Empty means the row matched no group.
+	Group string `json:"_group,omitempty"`
 	// Updated is when the row last changed, in RFC 3339, set on the
 	// per-entity responses only. It is absent when any property of the row
 	// is hidden from or inaccessible to the caller, because the time says
@@ -888,6 +892,11 @@ type CustomType struct {
 	Values  []string          `json:"values"`
 	Labels  map[string]string `json:"labels,omitempty"` // Display labels keyed by value; value stays the wire identity
 	Default string            `json:"default,omitempty"`
+	// Moves maps each value to the values a declared transition may move it
+	// to (TKT-M0AT73B), for a type that is a state machine. Edges only: the
+	// labels, help, guards and preconditions stay off the wire. A UI hint;
+	// the write path enforces the machine.
+	Moves map[string][]string `json:"moves,omitempty"`
 }
 
 // Config is the JSON representation of the UI config.
@@ -1012,6 +1021,10 @@ type AppConfig struct {
 	// below the description. Absent when neither is configured. A link the
 	// server cannot serve safely is left out.
 	About *AppAbout `json:"about,omitempty"`
+	// QuickEntry is the top-level data-entry.yaml `quick_entry:` block
+	// (TKT-24L1H36). It rides in `app` because it configures the whole app,
+	// not one view, and it keeps Config at its field pin.
+	QuickEntry *dataentryconfig.QuickEntry `json:"quick_entry,omitempty"`
 }
 
 // AppAbout is [AppConfig.About].

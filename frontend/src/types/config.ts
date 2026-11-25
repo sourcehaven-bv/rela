@@ -12,6 +12,12 @@ export interface ResolvedPalette {
   darkDisabled?: boolean
 }
 
+export interface QuickEntryConfig {
+  form: string
+  list?: string
+  shortcut?: string
+}
+
 export interface Config {
   app: AppConfig
   /** Deployment description for the global "About" help (TKT-DUQBD0). */
@@ -147,6 +153,8 @@ export interface ActionConfig {
 }
 
 export interface AppConfig {
+  /** The data-entry.yaml `quick_entry:` block (TKT-24L1H36), served under `app`. */
+  quick_entry?: QuickEntryConfig
   name: string
   description?: string
   /**
@@ -507,8 +515,16 @@ export interface ListGroupBy {
   max_rows: number
 }
 
+/**
+ * One group of a list's `groups:`. With `property`, `value` names the enum
+ * value it restyles. Without `property` or `relation`, the grouping is
+ * computed: `id` names the section, and the server stamps it on each row as
+ * `_group` from the group's `condition`.
+ */
 export interface ListGroup {
-  value: string
+  value?: string
+  id?: string
+  condition?: string
   label?: string
   color?: ColorName
 }
@@ -593,6 +609,16 @@ export interface ListColumn {
    * the face and the busy indicator stay. Lists only.
    */
   primary?: boolean
+  /**
+   * Renders the property as a checkbox (`toggle`) or switch the user flips
+   * in place (TKT-M0AT73B). `on`/`off` are the enum values the two states
+   * write (absent for a boolean); `other` is how a row holding a third
+   * value shows. Lists only.
+   */
+  widget?: 'toggle' | 'switch'
+  on?: string
+  off?: string
+  other?: 'disabled' | 'hidden' | 'on'
 }
 
 export interface ListFilter {

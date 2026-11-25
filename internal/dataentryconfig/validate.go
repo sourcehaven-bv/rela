@@ -53,6 +53,7 @@ var validTopLevelKeys = map[string]bool{
 	"account":              true,
 	"piles":                true,
 	"channels":             true,
+	"quick_entry":          true,
 	"header_buttons":       true,
 	"entity_panels":        true,
 	"list_buttons":         true,
@@ -539,6 +540,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateCommands(cfg, meta)...)
 	errs = append(errs, validateActions(cfg, meta)...)
 	errs = append(errs, validateAssigns(cfg, meta)...)
+	errs = append(errs, validateQuickEntry(cfg)...)
 	errs = append(errs, validateWebhooks(cfg, meta)...)
 	errs = append(errs, validateApp(cfg, meta)...)
 	errs = append(errs, validateDocuments(cfg)...)
@@ -1311,6 +1313,7 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 		busyColumns := 0
 		for i, c := range list.Columns {
 			errs = append(errs, refuseColumnRender(fmt.Sprintf("list %q: column[%d]", listID, i), c)...)
+			errs = append(errs, checkListToggleColumn(listID, i, c, entDef, meta)...)
 			if c.Busy != "" {
 				errs = append(errs, checkListBusyColumn(listID, i, c, busyColumns > 0)...)
 				busyColumns++

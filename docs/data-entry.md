@@ -1105,6 +1105,26 @@ schema: a select for a property with values, a multi-select for a list property
 A relation's `widget:` (`select`, `multi-select`, `cards`, `search`) is still a choice and
 is not affected.
 
+### Typing a date in words
+
+A `date` field has a text box beside its date picker. Type a date in words, in
+English or Dutch, and the picker shows the date at once. Press Enter or leave
+the box to keep it. Both languages work whatever the interface language is.
+
+| You type | Means |
+| --- | --- |
+| `today`, `tomorrow`, `yesterday`, `vandaag`, `morgen`, `overmorgen` | That day |
+| `friday`, `next friday`, `last friday`, `vrijdag`, `volgende vrijdag` | That weekday; `next` never means today |
+| `in 3 days`, `over 2 weken`, `3 days ago`, `+3d`, `-1w`, `+3` | An offset; a bare number counts days |
+| `next week`, `volgende maand`, `komende week` | The same day a week, month or year on |
+| `5 march`, `march 5`, `5 mrt 2027` | That day; without a year, the next one |
+| `5/3`, `5/3/27`, `5-3-2027` | Day first, then month |
+| `end of month`, `einde van de maand` | The last day of this month |
+
+A phrase the box does not understand changes nothing. It is marked invalid
+and a message explains what to try. A two-digit year is read only after a
+slash, so `26-11-24` is refused rather than guessed.
+
 ### Datetime fields and time zones
 
 A `datetime` property renders as a native date + time picker. Because a
@@ -2194,6 +2214,8 @@ the face each row was served in, or a busy indicator. Set exactly one of `proper
 | `direction` | string | Relation columns only: `"outgoing"` or `"incoming"`; inferred when omitted   |
 | `face`      | bool   | Shows the label of the face each row was served in; faced types only        |
 | `busy`      | string | Channel type; shows a busy indicator while a channel of this type on the row is in a working state; lists only |
+| `widget`    | string | `toggle` or `switch`: the user flips the property in place; lists only; see [Toggle columns](#toggle-columns) |
+| `on`, `off`, `other` | string | The values a toggle writes, and how a row with another value shows; see [Toggle columns](#toggle-columns) |
 | `primary`   | bool   | Keeps or drops the column on a narrow list, as on a phone; on a table section, `false` drops it from a stacked row; see [Columns on a phone](#columns-on-a-phone) |
 | `label`     | string | Column header (defaults to the schema label, then the property / relation name, `Face` or `Busy`) |
 | `sortable`  | bool   | Column can be sorted by clicking the header                                 |
@@ -2309,6 +2331,38 @@ A `display: table` section of a view takes `primary:` too. It does not drop
 columns by default: see [Table sections on a phone](#table-sections-on-a-phone).
 On a dashboard card, and on a view section that is not `display: table`,
 `primary:` is a config error, because those surfaces do not drop columns.
+
+### Toggle columns
+
+A list column with `widget: toggle` shows a checkbox, and `widget: switch` a
+switch. A click writes the property at once, so a to-do list can tick items
+off without opening them.
+
+```yaml
+columns:
+  - property: title
+  - property: status
+    widget: toggle
+    on: done          # written when the box is checked
+    off: open         # written when it is cleared
+    other: disabled   # a row with another value: disabled, hidden or on
+  - property: flagged # a boolean takes no on or off
+    widget: switch
+```
+
+- The property is a boolean or an enum. A boolean writes `true` and `false`.
+  An enum names the two values in `on` and `off`.
+- When the enum has other values, `other:` is required, or the configuration
+  fails to load. `disabled` shows a locked, empty box. `hidden` shows nothing.
+  `on` shows a checked box, and a click on it writes `off`.
+- A click is a normal save. The field permission, transition guards and
+  triggers apply. The control is disabled on a row whose reader may not
+  write the property or move it to the target value, and hidden when the
+  reader may not see the property.
+- The list reads again after a click, because a trigger may change more of
+  the row, or the row may leave the list.
+- Only list columns take `widget:`, and never the first column, which is the
+  row title.
 
 ### Static Filters
 
@@ -2860,6 +2914,40 @@ would lose the value.
 
 You can close a section with its arrow. The browser remembers which sections
 you closed, per list.
+
+### Computed groups
+
+A list can also be grouped by conditions instead of by one value. Leave out
+`property` and `relation`, and give each group an `id` and a `condition:`.
+The condition uses the same language as a list's `condition:`. A row goes in
+the first group whose condition it matches. One group without a condition may
+come last: it takes every row the others did not. Rows that match no group go
+in a trailing **Other** section.
+
+```yaml
+lists:
+  todos:
+    entity: todo
+    group_by:
+      groups:
+        - id: today
+          label: Today
+          condition: "entity.start_date ~= nil and entity.start_date <= today()"
+        - id: evening
+          label: This evening
+          condition: "entity.part_of_day == 'evening'"
+        - id: anytime
+          label: Anytime
+```
+
+The server evaluates the conditions on each served page, after the access
+rules have removed the fields the reader may not see. A condition over a hidden
+field sees no value, so the group a row lands in says nothing about that
+field. `today()` is the date in UTC, as in every other condition.
+
+Each `id` must match `^[a-z0-9_-]+$` and be unique, and a list may have at most
+20 groups. Empty groups are not shown. A computed grouping cannot use `buckets`
+or a group `value`.
 
 ### Date buckets
 
@@ -7842,6 +7930,45 @@ undoing the others. When an item still does not match the list's condition
 after the write, a notice says so. Loading fails when an assign names an
 unknown property or relation, a computed property, an enum value that does not
 exist, or a relation that does not start at the item type.
+
+### Quick entry (`quick_entry`)
+
+`quick_entry` opens one create form from anywhere. Use it to capture a new
+item without leaving what you are doing.
+
+```yaml
+quick_entry:
+  form: todo-form            # a create form
+  list: inbox                # optional: the list whose assign fills the form
+  shortcut: CmdOrCtrl+Shift+Space   # optional, desktop app only
+```
+
+- In the browser, press `q` on any page, or open `/quick`. After a save the
+  form shows a message and opens empty again.
+- In the desktop app, the shortcut works even when another application is in
+  front. It opens a small window on the active project. The window closes
+  after a save. Pressing the shortcut again brings an open window to the
+  front. When you switch projects, the shortcut moves to the new project and
+  an open window closes.
+
+When `list:` is set, the form is filled in with that list's `assign`, so a new
+item lands in the list. The list must have an `assign` block and the same
+entity type as the form.
+
+The shortcut is a set of modifiers and one key joined with `+`. Modifiers are
+`CmdOrCtrl`, `Cmd`, `Ctrl`, `Alt`, `Option`, `OptionOrAlt`, `Shift` and
+`Super`. At least one modifier is required. The key is a letter, a digit,
+`F1` to `F12` or `Space`. The shortcut works in every application, so a
+letter, a digit or `Space` also needs `Shift` or `Alt`. That keeps keys such
+as `Cmd+V` free. Without `shortcut:` the desktop app uses
+`CmdOrCtrl+Shift+Space`. When another application already holds the shortcut,
+the desktop app logs a warning and `q` still works. A changed shortcut takes
+effect when the project is opened again.
+
+While `quick_entry` is set, no action may use `key: q`; loading fails if one
+does.
+
+The form is saved with your own permissions, like any create form.
 
 ### Buttons on a list (`toolbar_actions`)
 
