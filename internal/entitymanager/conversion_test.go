@@ -184,7 +184,7 @@ func newConversionFixture(t *testing.T, opts conversionOptions) conversionFixtur
 		Transitions: transitions, FieldGate: fields,
 		CopyReadGate: entitymanager.AllowAllCopyReadGate{}, CopyVisibility: visibility,
 		AliasRewriter: hooks, VersionRecorder: hooks, RelationVersionRecorder: hooks,
-		AnchorGuard: guard, RenameGuard: opts.renameGuard,
+		AnchorGuard: guard, TxHooks: entitymanager.TxHooks{RenameGuard: opts.renameGuard},
 	})
 	if err != nil {
 		t.Fatalf("manager: %v", err)

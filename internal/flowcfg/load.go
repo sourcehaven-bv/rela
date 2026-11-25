@@ -476,6 +476,10 @@ func (l *loader) starts(key string, raw []rawStart, subject string, per PerSubje
 			if r.When == "" {
 				l.add(sk+".when", "is required for on: predicate")
 			}
+			if per == PerSubjectMany {
+				l.add(sk, "on: predicate needs per_subject: one; with many, each edit that makes when: "+
+					"true again starts another run")
+			}
 		case StartManual:
 			l.noKeys(sk, r, "every")
 			s.Permission = l.permission(sk+".permission", r.Permission)

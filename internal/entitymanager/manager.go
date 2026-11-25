@@ -239,17 +239,20 @@ var _ autocascade.Mutator = (*Manager)(nil)
 // convert interpolation. It is a seam value like ValidationMode, so it has
 // no sub-struct to join either.
 //
-// 23 -> 24 (TKT-XI7IDBS): [Deps.RenameGuard], so a subject an unfinished
+// 23 -> 24 (TKT-XI7IDBS): RenameGuard, so a subject an unfinished
 // flow run holds keeps its id. Like AnchorGuard it must run inside the
 // rename's transaction, which no post-commit hook can do. The optional-hook
 // sub-struct named above would take it along.
 //
-// 24 -> 25 (FEAT-J0O10QI `on: create`): [Deps.CreateHook], so a flow that
+// 24 -> 25 (FEAT-J0O10QI `on: create`): CreateHook, so a flow that
 // starts on create stores its run in the create's transaction. Like
 // RenameGuard it must run inside that transaction; the same sub-struct
 // would take it along.
 //
-//plimsoll:max-fields=25
+// 25 -> 24 (TKT-GYXOTQC): RenameGuard and CreateHook moved into
+// [Deps.TxHooks], which also takes the new [TxHooks.UpdateHook].
+//
+//plimsoll:max-fields=24
 type Deps struct {
 	// Store is the authoritative persistence layer. Required.
 	Store store.Store
@@ -409,18 +412,8 @@ type Deps struct {
 	// channels does.
 	AnchorGuard AnchorGuard
 
-	// RenameGuard refuses a rename that state kept outside the graph under
-	// the old id forbids (see [RenameGuard]).
-	//
-	// Nil: accepted — no such state, as a build without flows has.
-	RenameGuard RenameGuard
-
-	// CreateHook is told of each new entity inside the create's store
-	// transaction (see [CreateHook]).
-	//
-	// Nil: accepted — nothing watches creates, as a build without a flow
-	// that starts on create has.
-	CreateHook CreateHook
+	// TxHooks are told of writes inside their store transaction.
+	TxHooks TxHooks
 
 	// ValidationMode is the deployment's validation policy (DEC-OYV2AK).
 	// The zero value is [ValidationAdvisory].
@@ -1771,10 +1764,10 @@ func (m *Manager) updateCore(
 	// the fixed write pipeline, so no update path can skip legality/guard/
 	// precondition. An empty enforcer (metamodel with no transitions) is a
 	// no-op.
-	if err := m.deps.Transitions.EnforceUpdate(
+	if terr := m.deps.Transitions.EnforceUpdate(
 		ctx, oldEntity, e, m.deps.TransitionGuard, m.deps.TransitionGraph,
-	); err != nil {
-		return nil, m.mapTransitionError(ctx, acl.NewEntitySubject(e.Type, e.ID, e.Face), err)
+	); terr != nil {
+		return nil, m.mapTransitionError(ctx, acl.NewEntitySubject(e.Type, e.ID, e.Face), terr)
 	}
 
 	// Enforce `unique: true` natural-key constraints against the final
@@ -1790,17 +1783,12 @@ func (m *Manager) updateCore(
 	// zero condition: an unconditional write, for a caller that owns the
 	// whole entity (UpdateEntity).
 	txCheck = chainTxChecks(txCheck, relationRuleCheck(m.deps, oldEntity, e))
-	summary := updateEntitySummary(oldEntity, e)
-	write := func(ctx context.Context, st store.Store) error {
-		if _, werr := st.UpdateEntityIf(ctx, e, store.UpdateCondition{
-			ExpectedVersion: store.EntityVersion(expectedVersion),
-		}); werr != nil {
-			return werr
-		}
-		// The record joins the write's transaction (DEC-U78WD7Y), before
-		// the cascade runs.
-		return m.recordEntityAudit(ctx, st, audit.OpUpdateEntity, e, summary)
+	ctx, op, txCheck, err := beginUpdate(ctx, m.deps, oldEntity, e, txCheck)
+	if err != nil {
+		return nil, err
 	}
+	summary := updateEntitySummary(oldEntity, e)
+	write := updateWrite(m, e, oldEntity, expectedVersion, summary)
 	// A replace joined to this update (PatchWithRelations) is checked and
 	// written in the same transaction.
 	joined := joinedFor(ctx, e.ID)
@@ -1810,7 +1798,9 @@ func (m *Manager) updateCore(
 		txCheck = chainTxChecks(joined.check, txCheck)
 		write = joined.after(write)
 	}
-	if err := writeChecked(ctx, m.deps, e, e.ID, txCheck, write); err != nil {
+	err = writeChecked(ctx, m.deps, e, e.ID, txCheck, write)
+	defer op.finish(ctx, m.deps, err)
+	if err != nil {
 		var invalid *ValidationError
 		if errors.As(err, &invalid) {
 			return nil, err
@@ -1885,6 +1875,29 @@ func (m *Manager) processUpdateAutomation(
 		return nil, true, err
 	}
 	return result, true, nil
+}
+
+// updateWrite returns the store write of updateCore: the row, its audit
+// record and the update hook, in one transaction where there is one.
+func updateWrite(m *Manager, e, oldEntity *entity.Entity, expectedVersion, summary string,
+) func(context.Context, store.Store) error {
+	return func(ctx context.Context, st store.Store) error {
+		prior, perr := priorRow(ctx, m.deps, st, e, oldEntity)
+		if perr != nil {
+			return perr
+		}
+		if _, werr := st.UpdateEntityIf(ctx, e, store.UpdateCondition{
+			ExpectedVersion: store.EntityVersion(expectedVersion),
+		}); werr != nil {
+			return werr
+		}
+		// The record joins the write's transaction (DEC-U78WD7Y), before
+		// the cascade runs.
+		if aerr := m.recordEntityAudit(ctx, st, audit.OpUpdateEntity, e, summary); aerr != nil {
+			return aerr
+		}
+		return runUpdateHook(ctx, m.deps, st, prior, e)
+	}
 }
 
 // authorizeCascadeRelations checks the principal may delete every relation

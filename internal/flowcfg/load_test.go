@@ -256,6 +256,8 @@ func TestParse_Problems(t *testing.T) {
 			"flows.onboarding.states.collect.outputs[1].create.properties", "required"},
 		{"schedule with many", [2]string{"per_subject: one", "per_subject: many"},
 			"flows.onboarding.start[3]", "per_subject: one"},
+		{"predicate with many", [2]string{"per_subject: one", "per_subject: many"},
+			"flows.onboarding.start[1]", "per_subject: one"},
 		{"two sets", [2]string{"          - create:", "          - set: { properties: { stage: x } }\n          - create:"},
 			"flows.onboarding.states.collect.outputs[1]", "at most one set"},
 	}

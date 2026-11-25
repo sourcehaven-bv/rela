@@ -24,8 +24,10 @@ type OnCreate struct{ e *Engine }
 func NewOnCreate(e *Engine) *OnCreate { return &OnCreate{e: e} }
 
 // StartCreated starts a run of every flow that starts on the create of
-// subj (`on: create`) and whose `when:`, if any, subj satisfies. A flow
-// with several such starts gets one run.
+// subj (`on: create`) and whose `when:`, if any, subj satisfies, and of
+// every flow with an `on: predicate` start that subj satisfies: a new
+// subject that matches has come to match. A flow with several such
+// starts gets one run.
 //
 // It runs inside the create's store transaction, so the runs commit or
 // roll back with subj: runs is the run store on that transaction, and ctx
@@ -49,8 +51,8 @@ func (o *OnCreate) StartCreated(ctx context.Context, runs flowrun.Store, subj *e
 		if f.Subject() != subj.Type {
 			continue
 		}
-		starts := createStarts(f)
-		if len(starts) == 0 || !o.anyHolds(ctx, f, starts, subj) {
+		starts := append(startsOn(f, flowcfg.StartCreate), startsOn(f, flowcfg.StartPredicate)...)
+		if len(starts) == 0 || !anyStartHolds(ctx, e, f, starts, subj) {
 			continue
 		}
 		fctx := audit.WithFlowStep(ctx, audit.FlowStep{By: f.RunAs()})
@@ -68,31 +70,31 @@ func (o *OnCreate) StartCreated(ctx context.Context, runs flowrun.Store, subj *e
 	return ids, nil
 }
 
-// createStarts returns the `on: create` starts of f.
-func createStarts(f *flowcfg.Flow) []flowcfg.Start {
+// startsOn returns the starts of f on the event on.
+func startsOn(f *flowcfg.Flow, on flowcfg.StartOn) []flowcfg.Start {
 	var out []flowcfg.Start
 	for _, s := range f.Starts() {
-		if s.On == flowcfg.StartCreate {
+		if s.On == on {
 			out = append(out, s)
 		}
 	}
 	return out
 }
 
-// anyHolds reports whether subj satisfies one of starts. A start without
-// `when:` always holds; one whose `when:` fails to evaluate does not.
-func (o *OnCreate) anyHolds(ctx context.Context, f *flowcfg.Flow, starts []flowcfg.Start, subj *entity.Entity) bool {
+// anyStartHolds reports whether subj satisfies one of starts. A start
+// without `when:` always holds; one whose `when:` fails to evaluate does
+// not.
+func anyStartHolds(ctx context.Context, e *Engine, f *flowcfg.Flow, starts []flowcfg.Start,
+	subj *entity.Entity) bool {
 	for _, s := range starts {
 		if s.When == nil {
 			return true
 		}
-		ok, err := o.e.g.holds(ctx, s.When, subj)
+		ok, err := e.g.holds(ctx, s.When, subj)
 		if err != nil {
-			// The error can quote a property value of the subject, so it
-			// stays at debug level.
-			slog.WarnContext(ctx, "flowengine: a create start condition failed", "flow", f.Name(),
+			slog.WarnContext(ctx, "flowengine: a start condition failed", "flow", f.Name(),
 				"subject", subj.ID, "when", s.When.Source())
-			slog.DebugContext(ctx, "flowengine: create start condition error", "flow", f.Name(),
+			slog.DebugContext(ctx, "flowengine: start condition error", "flow", f.Name(),
 				"subject", subj.ID, "error", err)
 			continue
 		}

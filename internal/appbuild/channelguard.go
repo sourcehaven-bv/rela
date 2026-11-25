@@ -80,6 +80,8 @@ type guardInputs struct {
 	flowRuns flowrun.Store
 	// flowStarts is nil when no flow starts on create.
 	flowStarts *flowCreateStarts
+	// flowEvents is nil without flows.
+	flowEvents *flowUpdateEvents
 }
 
 // newChannelGuard returns the guard over in.store, reading the realtime

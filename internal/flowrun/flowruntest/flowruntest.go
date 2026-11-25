@@ -341,7 +341,8 @@ func fullState() flowrun.State {
 			{Name: "legal", Instance: in("legal", 4, 20),
 				Pending: &flowrun.Pending{State: "legal", Generation: 4, Done: 1, Failures: 2,
 					Job: &flowrun.JobAttempt{Seq: 3, Failed: 1, Unsent: 2, Phase: flowrun.JobFinished,
-						Outcome: flowrun.JobRetryable, QueuedAt: at(7), Deadline: at(9), StartedAt: at(8)}},
+						Outcome: flowrun.JobRetryable, QueuedAt: at(7), Deadline: at(9), StartedAt: at(8)},
+					Change: &flowrun.DeferredChange{Branch: 1, By: "carol", At: at(7)}},
 				Claim: &flowrun.Claim{Generation: 4, By: "bob", At: at(6)}},
 			{Name: "finance", Instance: in("reviewed", 6, 30), Arrived: true},
 			{Name: "it", Instance: in("it", 7, 40),
@@ -366,6 +367,7 @@ func testUpdateBranches(t *testing.T, h Harness) {
 	requireCovers(t, b0, b1)
 	requireCovers(t, *b0.Pending)
 	requireCovers(t, *b0.Pending.Job, *full.Branches[2].Pending.Job)
+	requireCovers(t, *b0.Pending.Change)
 	requireCovers(t, *b0.Claim)
 	requireCovers(t, full.Log[0], full.Log[1], full.Log[2])
 	requireCovers(t, full.Instance, b0.Instance, b1.Instance)

@@ -25,14 +25,14 @@ type RenameGuard interface {
 	CheckRename(ctx context.Context, id string) error
 }
 
-// checkRenameGuard asks deps.RenameGuard whether id may be renamed.
+// checkRenameGuard asks deps.TxHooks.RenameGuard whether id may be renamed.
 //
-// Nil: deps.RenameGuard accepted (nothing refuses).
+// Nil: deps.TxHooks.RenameGuard accepted (nothing refuses).
 func checkRenameGuard(ctx context.Context, deps Deps, id string) error {
-	if deps.RenameGuard == nil {
+	if deps.TxHooks.RenameGuard == nil {
 		return nil
 	}
-	return deps.RenameGuard.CheckRename(ctx, id)
+	return deps.TxHooks.RenameGuard.CheckRename(ctx, id)
 }
 
 // recordRenameRefusal records a [RenameGuard] refusal of a new id for id as

@@ -108,6 +108,14 @@ func TestCheckArguments(t *testing.T) {
 			Pending: &flowrun.Pending{State: "open", Done: flowrun.MaxPendingDone + 1}}, t0), false},
 		{"update pending negative generation", flowrun.CheckUpdate("FR-1", 1, flowrun.State{Instance: inst,
 			Pending: &flowrun.Pending{State: "open", Generation: -1}}, t0), false},
+		{"update kept change", flowrun.CheckUpdate("FR-1", 1, flowrun.State{Instance: inst,
+			Pending: &flowrun.Pending{State: "open", Change: &flowrun.DeferredChange{Branch: 1, By: "bob", At: t0}}},
+			t0), true},
+		{"update kept change bad branch", flowrun.CheckUpdate("FR-1", 1, flowrun.State{Instance: inst,
+			Pending: &flowrun.Pending{State: "open",
+				Change: &flowrun.DeferredChange{Branch: flowrun.MaxEventBranches, At: t0}}}, t0), false},
+		{"update kept change no time", flowrun.CheckUpdate("FR-1", 1, flowrun.State{Instance: inst,
+			Pending: &flowrun.Pending{State: "open", Change: &flowrun.DeferredChange{}}}, t0), false},
 		{"update bad instance", flowrun.CheckUpdate("FR-1", 1, flowrun.State{Instance: flow.Instance{State: "X"}}, t0), false},
 		{"delete", flowrun.CheckDelete("FR-1", 1), true},
 		{"delete bad id", flowrun.CheckDelete("", 1), false},
@@ -166,7 +174,8 @@ func TestStateRoundTrip(t *testing.T) {
 	require.NotContains(t, string(data), `"pending"`)
 	require.Equal(t, flow.NormTime(t0), got.Instance.EnteredAt)
 
-	mark := &flowrun.Pending{State: "open", Generation: 2, Done: 1}
+	mark := &flowrun.Pending{State: "open", Generation: 2, Done: 1,
+		Change: &flowrun.DeferredChange{Branch: 1, By: "bob", At: flow.NormTime(t0)}}
 	data, err = flowrun.EncodeState(flowrun.State{Instance: inst, Pending: mark})
 	require.NoError(t, err)
 	got, err = flowrun.DecodeState(data)
