@@ -335,10 +335,9 @@ it checks the `when:` again on the subject as it is then, and the claim:
 if the guard no longer holds or another person has claimed the step, the
 event is dropped.
 
-A `when:` reads the subject as stored, including properties that the
-author cannot see. Whether a run moved after an edit then tells the
-author something about such a property. Write `change` and predicate
-guards over properties that the people who edit the subject can read.
+Whether a run moved after an edit tells the author whether `when:`
+holds. That is why a `when:` may not read a property that a `visible:`
+grant in acl.yaml restricts: rela refuses such a flow when it loads.
 
 A script needs a role of the branch, just as a person does. Give the
 principal a sync runs as a role in acl.yaml, and name it in `roles:`.
