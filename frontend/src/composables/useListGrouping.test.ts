@@ -160,6 +160,34 @@ describe('groupRows by date buckets', () => {
     expect(sections[0].color).toBe('red')
   })
 
+  it('splits the rest of the week and next week with relative_weeks', () => {
+    const rows = [
+      task('T-1', { due: '2026-06-11' }),
+      task('T-2', { due: '2026-06-12' }),
+      task('T-3', { due: '2026-06-14' }),
+      task('T-4', { due: '2026-06-15' }),
+      task('T-5', { due: '2026-06-22' }),
+    ]
+    const sections = groupRows(
+      rows,
+      {
+        property: 'due',
+        buckets: 'relative_weeks',
+        labels: { this_week: 'Deze week' },
+        max_rows: 500,
+      },
+      taskType,
+      { now, tz }
+    )
+    expect(ids(sections)).toEqual([
+      ['bucket:tomorrow', ['T-1']],
+      ['bucket:this_week', ['T-2', 'T-3']],
+      ['bucket:next_week', ['T-4']],
+      ['bucket:later', ['T-5']],
+    ])
+    expect(sections.map((s) => s.title)).toEqual(['Tomorrow', 'Deze week', 'Next week', 'Later'])
+  })
+
   it('prefills the day for today and tomorrow on a date property', () => {
     const rows = [task('T-1', { due: '2026-06-10' }), task('T-2', { due: '2026-06-01' })]
     const sections = groupRows(rows, groupBy, taskType, { now, tz })

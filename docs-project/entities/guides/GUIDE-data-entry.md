@@ -2908,6 +2908,12 @@ The **Add** button of **Today** and **Tomorrow** fills in that date on a `date`
 property. The other buckets span more than one day, and a `datetime` needs a
 time as well, so they fill in nothing.
 
+`buckets: relative_weeks` replaces `next_7_days` with two buckets, in this
+order: `this_week` (after tomorrow, up to and including Sunday) and `next_week`
+(the following Monday to Sunday). A week starts on Monday. `later` then holds
+everything after next week. A bucket with no rows is not shown, so on a Sunday
+there is no **This week**. `labels` takes these keys instead of `next_7_days`.
+
 ### Calendar buckets
 
 A mapping under `buckets:` gives one section per calendar day, week, month or
