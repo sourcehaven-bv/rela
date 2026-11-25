@@ -52,7 +52,7 @@ watch(
       try {
         assign.value = await getAssign({ list })
       } catch {
-        // The form still opens, but the new item may not land in the list.
+        // why: the form still opens; the new item may just miss the list.
         ui.warning(t('quickEntry.noDefaults'))
       }
     }

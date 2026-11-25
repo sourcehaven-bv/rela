@@ -80,9 +80,7 @@ func checkAccelerator(s string) string {
 	if !quickEntryKey(key) {
 		return fmt.Sprintf("unknown key %q; use a letter, a digit, F1 to F12 or Space", key)
 	}
-	// The shortcut is OS-wide. Cmd+V or Ctrl+C alone would take an editing
-	// key from every application, so a letter, digit or Space needs Shift or
-	// Alt as well.
+	// why: the shortcut is OS-wide; Cmd+V alone would take it from every app.
 	if !strings.HasPrefix(key, "f") || len(key) == 1 {
 		if !slices.ContainsFunc(mods, func(m string) bool { return quickEntryShiftAlt[m] }) {
 			return "a letter, digit or Space needs Shift or Alt too, so it does not take a key other applications use"

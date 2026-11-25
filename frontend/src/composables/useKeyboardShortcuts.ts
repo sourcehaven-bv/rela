@@ -109,7 +109,6 @@ export function useKeyboardShortcuts() {
       return
     }
 
-    // q = quick entry, when data-entry.yaml configures it (TKT-24L1H36).
     if (e.key === 'q' && !e.metaKey && !e.ctrlKey && !e.altKey && schemaStore.quickEntry) {
       router.push('/quick')
       return

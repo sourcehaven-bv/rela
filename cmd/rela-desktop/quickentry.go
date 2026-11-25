@@ -95,8 +95,7 @@ func (q *quickEntryHotkey) swap(prev, accel string) string {
 		return ""
 	}
 	if err := q.reg.Register(accel, q.trigger); err != nil {
-		// Another application may hold the shortcut. The SPA's `q` key and
-		// the /quick route still work, so this is a warning, not a failure.
+		// why: another app may hold the shortcut; the SPA's q key still works.
 		slog.Warn("quick entry: register shortcut", "accelerator", accel, "error", err)
 		return ""
 	}
@@ -157,8 +156,7 @@ func syncQuickEntry(d *Desktop) {
 		app := d.app
 		d.mu.RUnlock()
 		if app != nil {
-			// Bound to the project explicitly, so a save can only reach the
-			// project that owned the shortcut when the popup opened.
+			// why: a save may only reach the project that owned the shortcut.
 			route = joinBase("/p/"+projectID(app.ProjectRoot())+"/", quickEntryRoute)
 			if qe := app.Cfg().QuickEntry; qe != nil {
 				accel = qe.Accelerator()
@@ -173,8 +171,7 @@ func newQuickEntryHotkey(app *application.App, d *Desktop) *quickEntryHotkey {
 	return &quickEntryHotkey{
 		reg: app.GlobalShortcut,
 		open: func(route string, onClose func()) popupWindow {
-			// The shortcut callback runs off the main thread, and windows
-			// must be created on it.
+			// why: the callback runs off the main thread; windows need it.
 			return application.InvokeSyncWithResult(func() popupWindow {
 				return openQuickEntryWindow(app, route, d.projectTitle(), onClose)
 			})
