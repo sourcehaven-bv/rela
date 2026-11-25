@@ -38,8 +38,8 @@ export function toggleCellState(
   const onValue: unknown = isBool ? true : column.on
   const offValue: unknown = isBool ? false : column.off
   const raw = entity.properties?.[prop]
-  // A field withheld by `visible:` has no value to show or flip.
-  if (entity._redacted?.includes(prop)) {
+  const withheldByVisible = entity._redacted?.includes(prop)
+  if (withheldByVisible) {
     return { hidden: true, checked: false, disabled: true, target: undefined }
   }
   let checked: boolean

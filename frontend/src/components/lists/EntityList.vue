@@ -566,6 +566,8 @@ const entityType = computed(() => {
 const busyType = computed(() => listConfig.value?.columns?.find((c) => c.busy)?.busy)
 
 // The properties of the list's toggle columns, comma-separated (TKT-M0AT73B).
+// Sent as field_verdicts, so the server answers each row's write verdict for
+// them once per page.
 const toggleProperties = computed(() =>
   (listConfig.value?.columns ?? [])
     .filter((c) => isToggleColumn(c) && c.property)
@@ -712,8 +714,6 @@ const queryParams = computed((): ListParams => {
   // flyout, which shows no busy column, does not pay for the busy read. The
   // list query, the grouped loader and the live path all read these params.
   if (busyType.value) params.busy = busyType.value
-  // Toggle columns (TKT-M0AT73B) need each row's write verdict for their
-  // property, which the server answers once per page.
   if (toggleProperties.value) params.field_verdicts = toggleProperties.value
 
   Object.assign(params, tabScope.params.value)

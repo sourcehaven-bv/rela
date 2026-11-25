@@ -328,9 +328,6 @@ export const useSchemaStore = defineStore('schema', () => {
     })
   }
 
-  // The declared transition edges of a state-machine property, value → the
-  // values it may move to (TKT-M0AT73B), or undefined when any move is legal.
-  // A UI hint: the write path enforces the machine and its guards.
   function movesForProperty(
     property: string,
     entityType?: string | EntityType,

@@ -81,7 +81,7 @@ func checkListToggleColumn(
 	}
 	pd, ok := entDef.Properties[c.Property]
 	if !ok {
-		return nil // the unknown property is reported by the column check
+		return nil
 	}
 	if pd.List || pd.Computed != "" {
 		return []string{fmt.Sprintf("%s: widget %s cannot edit property %q, which is a list or computed",
