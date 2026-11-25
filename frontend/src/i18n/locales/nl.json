@@ -952,6 +952,9 @@
     "noItems": "Niets gevonden.",
     "createOne": "Aanmaken",
     "inaccessible": "niet toegankelijk",
+    "toggle": {
+      "label": "{field}: {title}"
+    },
     "moveFailed": "Kon de rij niet verplaatsen",
     "pagination": {
       "summary": "{first} - {last} van {total}"

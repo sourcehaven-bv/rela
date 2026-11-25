@@ -885,6 +885,11 @@ type CustomType struct {
 	Values  []string          `json:"values"`
 	Labels  map[string]string `json:"labels,omitempty"` // Display labels keyed by value; value stays the wire identity
 	Default string            `json:"default,omitempty"`
+	// Moves maps each value to the values a declared transition may move it
+	// to (TKT-M0AT73B), for a type that is a state machine. Edges only: the
+	// labels, help, guards and preconditions stay off the wire. A UI hint;
+	// the write path enforces the machine.
+	Moves map[string][]string `json:"moves,omitempty"`
 }
 
 // Config is the JSON representation of the UI config.

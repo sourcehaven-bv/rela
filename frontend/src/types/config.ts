@@ -593,6 +593,16 @@ export interface ListColumn {
    * the face and the busy indicator stay. Lists only.
    */
   primary?: boolean
+  /**
+   * Renders the property as a checkbox (`toggle`) or switch the user flips
+   * in place (TKT-M0AT73B). `on`/`off` are the enum values the two states
+   * write (absent for a boolean); `other` is how a row holding a third
+   * value shows. Lists only.
+   */
+  widget?: 'toggle' | 'switch'
+  on?: string
+  off?: string
+  other?: 'disabled' | 'hidden' | 'on'
 }
 
 export interface ListFilter {

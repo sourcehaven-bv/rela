@@ -160,7 +160,16 @@ body:
         "open",
         "closed",
         "archived"
-      ]
+      ],
+      "moves": {
+        "closed": [
+          "open",
+          "archived"
+        ],
+        "open": [
+          "closed"
+        ]
+      }
     }
   },
   "worlds": {

@@ -232,6 +232,12 @@ var editable = map[File][]string{
 		"lists.*.columns.[].link",
 		// Which columns stay on a phone (TKT-3VLKP3D); display only.
 		"lists.*.columns.[].primary",
+		// Toggle columns (TKT-M0AT73B) place a control whose flip is an
+		// ordinary PATCH; the field permission and transitions still apply.
+		"lists.*.columns.[].widget",
+		"lists.*.columns.[].on",
+		"lists.*.columns.[].off",
+		"lists.*.columns.[].other",
 		"lists.*.columns.[].property",
 		"lists.*.columns.[].relation",
 		"lists.*.columns.[].sortable",
@@ -470,6 +476,11 @@ var locked = map[File][]string{
 		"dashboard.cards.[].columns.[].busy", "dashboards.*.cards.[].columns.[].busy",
 		// So is primary (TKT-3VLKP3D).
 		"dashboard.cards.[].columns.[].primary", "dashboards.*.cards.[].columns.[].primary",
+		// So are toggle columns (TKT-M0AT73B).
+		"dashboard.cards.[].columns.[].widget", "dashboards.*.cards.[].columns.[].widget",
+		"dashboard.cards.[].columns.[].on", "dashboards.*.cards.[].columns.[].on",
+		"dashboard.cards.[].columns.[].off", "dashboards.*.cards.[].columns.[].off",
+		"dashboard.cards.[].columns.[].other", "dashboards.*.cards.[].columns.[].other",
 		// Editable columns are view-table-only (TKT-4Q2EIVZ); the load refuses them here.
 		"lists.*.columns.[].render", "dashboard.cards.[].columns.[].render",
 		"dashboards.*.cards.[].columns.[].render",

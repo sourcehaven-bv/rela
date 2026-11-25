@@ -168,7 +168,6 @@ func (h *entityReadHandler) handleV1ListEntities(w http.ResponseWriter, r *http.
 		writeV1Error(w, r, http.StatusBadRequest, relErr.Code, relErr.Detail, relErr.Path)
 		return
 	}
-
 	entities, total, ordering, err := h.lists().listPage(r.Context(), typeName, query, page, perPage)
 	if err != nil {
 		writeListPipelineError(w, r, err)
@@ -214,7 +213,7 @@ func (h *entityReadHandler) handleV1ListEntities(w http.ResponseWriter, r *http.
 	// Build response - always include relations for relation column support
 	data := make([]v1.Entity, 0, len(entities))
 	var included map[string]v1.Entity // nil when none; both encoders omit it
-	pageCtx := primeVerdicts(r.Context(), h.fields(), entities)
+	pageCtx, rowFields := primeRowFields(r.Context(), h.fields(), entities, query)
 	for i, e := range entities {
 		v1Entity := h.serializer().forWireRelated(
 			pageCtx, e,
@@ -223,6 +222,7 @@ func (h *entityReadHandler) handleV1ListEntities(w http.ResponseWriter, r *http.
 			visibleNeighbors,
 			state.Meta, plural,
 		)
+		attachRowFields(pageCtx, h.affordances(), e, &v1Entity, rowFields)
 		// Face provenance per ROW (BUG-3). Under a chain a row that fell back
 		// to a later candidate is byte-identical to a first-choice hit — same
 		// id, same title — and only `_world` separates them. Without it a

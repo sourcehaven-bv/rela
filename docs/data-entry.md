@@ -2214,6 +2214,8 @@ the face each row was served in, or a busy indicator. Set exactly one of `proper
 | `direction` | string | Relation columns only: `"outgoing"` or `"incoming"`; inferred when omitted   |
 | `face`      | bool   | Shows the label of the face each row was served in; faced types only        |
 | `busy`      | string | Channel type; shows a busy indicator while a channel of this type on the row is in a working state; lists only |
+| `widget`    | string | `toggle` or `switch`: the user flips the property in place; lists only; see [Toggle columns](#toggle-columns) |
+| `on`, `off`, `other` | string | The values a toggle writes, and how a row with another value shows; see [Toggle columns](#toggle-columns) |
 | `primary`   | bool   | Keeps or drops the column on a narrow list, as on a phone; on a table section, `false` drops it from a stacked row; see [Columns on a phone](#columns-on-a-phone) |
 | `label`     | string | Column header (defaults to the schema label, then the property / relation name, `Face` or `Busy`) |
 | `sortable`  | bool   | Column can be sorted by clicking the header                                 |
@@ -2329,6 +2331,38 @@ A `display: table` section of a view takes `primary:` too. It does not drop
 columns by default: see [Table sections on a phone](#table-sections-on-a-phone).
 On a dashboard card, and on a view section that is not `display: table`,
 `primary:` is a config error, because those surfaces do not drop columns.
+
+### Toggle columns
+
+A list column with `widget: toggle` shows a checkbox, and `widget: switch` a
+switch. A click writes the property at once, so a to-do list can tick items
+off without opening them.
+
+```yaml
+columns:
+  - property: title
+  - property: status
+    widget: toggle
+    on: done          # written when the box is checked
+    off: open         # written when it is cleared
+    other: disabled   # a row with another value: disabled, hidden or on
+  - property: flagged # a boolean takes no on or off
+    widget: switch
+```
+
+- The property is a boolean or an enum. A boolean writes `true` and `false`.
+  An enum names the two values in `on` and `off`.
+- When the enum has other values, `other:` is required, or the configuration
+  fails to load. `disabled` shows a locked, empty box. `hidden` shows nothing.
+  `on` shows a checked box, and a click on it writes `off`.
+- A click is a normal save. The field permission, transition guards and
+  triggers apply. The control is disabled on a row whose reader may not
+  write the property or move it to the target value, and hidden when the
+  reader may not see the property.
+- The list reads again after a click, because a trigger may change more of
+  the row, or the row may leave the list.
+- Only list columns take `widget:`, and never the first column, which is the
+  row title.
 
 ### Static Filters
 

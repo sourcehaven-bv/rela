@@ -36,15 +36,16 @@ func refuseListOnlyColumn(prefix string, c ListColumn) []string {
 	if c.Primary != nil {
 		errs = append(errs, prefix+": primary is only supported on list columns and view display: table section columns")
 	}
-	return errs
+	return append(errs, refuseToggleColumn(prefix, c)...)
 }
 
 // refuseBusyColumn rejects a busy column outside a list.
 func refuseBusyColumn(prefix string, c ListColumn) []string {
+	errs := refuseToggleColumn(prefix, c)
 	if c.Busy != "" {
-		return []string{prefix + ": busy is only supported on list columns"}
+		errs = append(errs, prefix+": busy is only supported on list columns")
 	}
-	return nil
+	return errs
 }
 
 // refuseSectionBusyColumns checks the list-only keys on every column list of

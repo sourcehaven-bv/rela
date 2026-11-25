@@ -330,6 +330,17 @@ export const useSchemaStore = defineStore('schema', () => {
     })
   }
 
+  function movesForProperty(
+    property: string,
+    entityType?: string | EntityType,
+  ): Record<string, string[]> | undefined {
+    return scanPropertyDefs(property, entityType, (def) => {
+      if (!def) return undefined
+      const ct = def.type ? customTypes.value.get(def.type) : undefined
+      return ct?.moves
+    })
+  }
+
   // Shared resolution scaffold for the per-property lookups above/below:
   // walk the property defs named `property` (given entityType first, then
   // entity then relation types) and return the first def the extractor
@@ -677,6 +688,7 @@ export const useSchemaStore = defineStore('schema', () => {
 
     // Getters
     getEntityType,
+    movesForProperty,
     pluralLabel,
     getRelationType,
     worldReadable,

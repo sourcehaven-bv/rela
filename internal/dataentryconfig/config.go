@@ -1151,6 +1151,15 @@ type ListColumn struct {
 	// other columns go. The title column always stays. Lists only: dashboard
 	// card and view section columns refuse it.
 	Primary *bool `yaml:"primary,omitempty" json:"primary,omitempty"`
+	// Widget renders a list property column as a control the user flips in
+	// place (TKT-M0AT73B): [ColumnWidgetToggle] for a checkbox,
+	// [ColumnWidgetSwitch] for a switch. On and Off name the enum values the
+	// two states write; a boolean property takes neither. Other says what a
+	// row holding a third value shows. Lists only; see checkListToggleColumn.
+	Widget string `yaml:"widget,omitempty" json:"widget,omitempty"`
+	On     string `yaml:"on,omitempty" json:"on,omitempty"`
+	Off    string `yaml:"off,omitempty" json:"off,omitempty"`
+	Other  string `yaml:"other,omitempty" json:"other,omitempty"`
 }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.
