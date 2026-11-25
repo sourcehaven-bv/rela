@@ -23,7 +23,7 @@ import (
 // The wire carries the form the YAML used, so the SPA reads the same keys the
 // operator wrote. Exactly one form is set; validateListBuckets enforces it.
 type ListBuckets struct {
-	// Scheme is the scalar form. Only [BucketsRelative] is valid.
+	// Scheme is the scalar form. [BucketsRelative] or [BucketsRelativeWeeks].
 	Scheme string
 	// By is the calendar unit of each section: one of BucketUnits.
 	By string
@@ -40,6 +40,10 @@ type ListBuckets struct {
 
 // BucketsRelative is the scalar bucketing scheme.
 const BucketsRelative = "relative"
+
+// BucketsRelativeWeeks is BucketsRelative with this week and next week
+// (Monday to Sunday) in place of next 7 days.
+const BucketsRelativeWeeks = "relative_weeks"
 
 // Calendar bucket units, finest first.
 const (

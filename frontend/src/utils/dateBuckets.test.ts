@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { BUCKET_ORDER, bucketDate, bucketMeta, bucketOf } from './dateBuckets'
+import { BUCKET_ORDER, WEEK_BUCKET_ORDER, bucketDate, bucketMeta, bucketOf } from './dateBuckets'
 
 const AMS = 'Europe/Amsterdam'
 const NYC = 'America/New_York'
@@ -77,6 +77,40 @@ describe('bucketOf', () => {
       'today',
       'tomorrow',
       'next_7_days',
+      'later',
+      'no_date',
+    ])
+  })
+})
+
+describe('bucketOf with weeks', () => {
+  const wed = new Date('2026-11-25T12:00:00Z')
+  const sun = new Date('2026-11-29T12:00:00Z')
+
+  it('splits the days after tomorrow into this week, next week and later', () => {
+    const of = (d: string, now = wed) => bucketOf(d, now, AMS, true, true)
+    expect(of('2026-11-26')).toBe('tomorrow')
+    expect(of('2026-11-27')).toBe('this_week')
+    expect(of('2026-11-29')).toBe('this_week')
+    expect(of('2026-11-30')).toBe('next_week')
+    expect(of('2026-12-06')).toBe('next_week')
+    expect(of('2026-12-07')).toBe('later')
+    expect(of('2026-11-24')).toBe('overdue')
+    expect(of('')).toBe('no_date')
+  })
+
+  it('has no this-week days left on a Sunday', () => {
+    expect(bucketOf('2026-11-30', sun, AMS, true, true)).toBe('tomorrow')
+    expect(bucketOf('2026-12-01', sun, AMS, true, true)).toBe('next_week')
+  })
+
+  it('lists the week buckets in date order', () => {
+    expect(WEEK_BUCKET_ORDER).toEqual([
+      'overdue',
+      'today',
+      'tomorrow',
+      'this_week',
+      'next_week',
       'later',
       'no_date',
     ])

@@ -451,7 +451,8 @@ export interface ListConfig {
 }
 
 /** The relative date buckets, in the order their sections appear. */
-export type DateBucket = 'overdue' | 'today' | 'tomorrow' | 'next_7_days' | 'later' | 'no_date'
+export type DateBucket =
+  'overdue' | 'today' | 'tomorrow' | 'next_7_days' | 'this_week' | 'next_week' | 'later' | 'no_date'
 
 /** A calendar bucket unit, finest first. */
 export type CalendarUnit = 'day' | 'week' | 'month' | 'year'
@@ -492,7 +493,7 @@ export interface ListGroupBy {
    * Sorts a date property into date sections. Exclusive with `groups`. The
    * string is the relative scheme; the mapping is calendar sections.
    */
-  buckets?: 'relative' | CalendarBuckets
+  buckets?: 'relative' | 'relative_weeks' | CalendarBuckets
   /** Bucket titles by bucket key; a key left out keeps the English default. */
   labels?: Partial<Record<DateBucket | CalendarFixedBucket, string>>
   /** How many rows a grouped list loads. A grouped list is not paged. */

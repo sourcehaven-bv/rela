@@ -25,7 +25,13 @@ import type { DotColor } from 'rela-components/types'
 import { namedColor } from '@/utils/styleColors'
 import { useUIStore } from '@/stores'
 import { formatCellValue } from '@/utils/format'
-import { BUCKET_ORDER, bucketDate, bucketOf, defaultBucketLabel } from '@/utils/dateBuckets'
+import {
+  BUCKET_ORDER,
+  WEEK_BUCKET_ORDER,
+  bucketDate,
+  bucketOf,
+  defaultBucketLabel,
+} from '@/utils/dateBuckets'
 import {
   calendarBucketDate,
   calendarBucketOf,
@@ -187,14 +193,15 @@ function bucketSections(
   isDate: boolean
 ): ListSection[] {
   const { now, tz } = options
+  const weeks = groupBy.buckets === 'relative_weeks'
   const byBucket = new Map<DateBucket, Entity[]>()
   for (const row of rows) {
-    const bucket = bucketOf(row.properties[groupBy.property ?? ''], now, tz, isDate)
+    const bucket = bucketOf(row.properties[groupBy.property ?? ''], now, tz, isDate, weeks)
     const items = byBucket.get(bucket) ?? []
     items.push(row)
     byBucket.set(bucket, items)
   }
-  return BUCKET_ORDER.flatMap((bucket): ListSection[] => {
+  return (weeks ? WEEK_BUCKET_ORDER : BUCKET_ORDER).flatMap((bucket): ListSection[] => {
     const items = byBucket.get(bucket)
     if (!items) return []
     const date = isDate ? bucketDate(bucket, now, tz) : undefined

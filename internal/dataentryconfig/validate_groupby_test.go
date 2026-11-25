@@ -72,6 +72,15 @@ func TestValidateListGroupBy(t *testing.T) {
 			name:    "date buckets with labels",
 			groupBy: &ListGroupBy{Property: "due", Buckets: &ListBuckets{Scheme: "relative"}, Labels: map[string]string{"overdue": "Te laat", "today": "Vandaag"}},
 		},
+		{
+			name:    "week buckets with labels",
+			groupBy: &ListGroupBy{Property: "due", Buckets: &ListBuckets{Scheme: "relative_weeks"}, Labels: map[string]string{"this_week": "Deze week", "next_week": "Volgende week"}},
+		},
+		{
+			name:    "week buckets reject next_7_days",
+			groupBy: &ListGroupBy{Property: "due", Buckets: &ListBuckets{Scheme: "relative_weeks"}, Labels: map[string]string{"next_7_days": "x"}},
+			wantErr: `labels has unknown bucket "next_7_days"`,
+		},
 		{name: "datetime buckets", groupBy: &ListGroupBy{Property: "at", Buckets: &ListBuckets{Scheme: "relative"}}},
 		{name: "calendar months", groupBy: &ListGroupBy{Property: "due", Buckets: &ListBuckets{By: "month", Order: "desc"}}},
 		{

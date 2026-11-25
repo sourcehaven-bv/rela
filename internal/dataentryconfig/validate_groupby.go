@@ -13,6 +13,9 @@ import (
 // sections appear. The SPA's utils/dateBuckets.ts holds the same set.
 var DateBucketKeys = []string{"overdue", "today", "tomorrow", "next_7_days", "later", "no_date"}
 
+// WeekBucketKeys are the bucket keys of the relative_weeks scheme, in order.
+var WeekBucketKeys = []string{"overdue", "today", "tomorrow", "this_week", "next_week", "later", "no_date"}
+
 // Row caps for a grouped list. The default matches the size a reader can
 // still scan in sections; the ceiling keeps one page load bounded, since a
 // grouped list is fetched whole rather than paged.
@@ -103,9 +106,9 @@ func validateListGroupBy(
 func validateListBuckets(prefix string, g *ListGroupBy) []string {
 	b := g.Buckets
 	var errs []string
-	if !b.Calendar() && b.Scheme != BucketsRelative {
-		errs = append(errs, fmt.Sprintf("%s: buckets %q is not valid (valid: %s, or a mapping with by)",
-			prefix, b.Scheme, BucketsRelative))
+	if !b.Calendar() && b.Scheme != BucketsRelative && b.Scheme != BucketsRelativeWeeks {
+		errs = append(errs, fmt.Sprintf("%s: buckets %q is not valid (valid: %s, %s, or a mapping with by)",
+			prefix, b.Scheme, BucketsRelative, BucketsRelativeWeeks))
 	}
 	if b.Calendar() {
 		errs = append(errs, validateCalendarBuckets(prefix, *b)...)
@@ -164,6 +167,9 @@ func validateCalendarBuckets(prefix string, b ListBuckets) []string {
 // form names only its fixed sections; the per-day, per-week and per-month
 // sections take titles from the calendar.
 func BucketLabelKeys(b ListBuckets) []string {
+	if b.Scheme == BucketsRelativeWeeks {
+		return WeekBucketKeys
+	}
 	if !b.Calendar() {
 		return DateBucketKeys
 	}
