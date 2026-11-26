@@ -320,7 +320,7 @@ func validateTraversalProps(meta *metamodel.Metamodel, targetType string, spec p
 			// reads, and an empty value is refused when it is bound. A user
 			// id is never a declared enum value, so on an enum it would match
 			// nothing and `not related(...)` would match every row.
-			if enumValues(meta, pd) != nil {
+			if len(metamodel.EnumValues(pd, meta)) > 0 {
 				return fmt.Errorf("related: property %q on %q is an enum and cannot be compared "+
 					"against current_user", name, targetType)
 			}
@@ -339,22 +339,10 @@ func validateTraversalProps(meta *metamodel.Metamodel, targetType string, spec p
 		}
 		// A misspelled enum value would match nothing, so `not related(...)`
 		// would quietly match every row.
-		if allowed := enumValues(meta, pd); allowed != nil && !slices.Contains(allowed, str.String()) {
+		if allowed := metamodel.EnumValues(pd, meta); len(allowed) > 0 && !slices.Contains(allowed, str.String()) {
 			return fmt.Errorf("related: %q is not a declared value of %q on %q (allowed: %s)",
 				str.String(), name, targetType, strings.Join(allowed, ", "))
 		}
-	}
-	return nil
-}
-
-// enumValues returns the declared values of an enum-shaped property: inline
-// `values:` or a custom type's. Nil means the property is not an enum.
-func enumValues(meta *metamodel.Metamodel, pd metamodel.PropertyDef) []string {
-	if len(pd.Values) > 0 {
-		return pd.Values
-	}
-	if ct, ok := meta.Types[pd.Type]; ok && len(ct.Values) > 0 {
-		return ct.Values
 	}
 	return nil
 }

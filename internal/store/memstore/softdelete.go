@@ -152,7 +152,7 @@ func (d softDeleter) Unmark(_ context.Context, id string) (*store.DeleteResult, 
 	for _, r := range sortedRelations(fam.relations) {
 		// An edge whose other end is still marked stays hidden and moves to
 		// that family, so it comes back when that one does.
-		if other, stillMarked := m.marked[otherEnd(r, id)]; stillMarked {
+		if other, stillMarked := m.marked[r.OtherEnd(id)]; stillMarked {
 			other.relations[r.Key()] = r
 			continue
 		}
@@ -244,14 +244,6 @@ func revealedRelations(ctx context.Context, m *MemStore, match func(*entity.Rela
 		}
 	}
 	return out
-}
-
-// otherEnd returns the endpoint of r that is not id; for a self-loop, id.
-func otherEnd(r *entity.Relation, id string) string {
-	if r.From == id {
-		return r.To
-	}
-	return r.From
 }
 
 func sortedEntities(in map[string]*entity.Entity) []*entity.Entity {
