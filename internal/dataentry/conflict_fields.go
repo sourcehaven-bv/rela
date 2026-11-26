@@ -71,16 +71,6 @@ func resolvedProperties(e *entityPkg.Entity, rel *entityPkg.Relation) map[string
 // 403 and audit row, so a caller cannot decide a field's value by choosing a
 // side.
 //
-// An entity's verdicts are judged on each parsed side, as the row at the
-// file's face, because a `when:` can read either side's values; a field
-// either side denies is refused. A relation's meta is judged on the edge's
-// source rows, as a relation update judges it. A source with no readable row
-// returns [errConflictSourceUnreadable] rather than being judged permissive.
-// It runs after the read gate and the row write check have passed.
-//
-// cf: Nil: rejected by the caller; conflict.Resolve has parsed it. Exactly
-// one of e and rel is non-nil, the resolved row.
-//
 //archplan:guard=authz reason="field write check for the properties a conflict resolution writes"
 func conflictFieldDenial(
 	ctx context.Context, svc affordanceService, id conflictIdentity, cf *conflict.ConflictedFile,

@@ -3355,9 +3355,9 @@
         }
       },
       {
-        "at": "2026-11-26T21:00:00Z",
+        "at": "2026-11-26T19:30:00Z",
         "change": "loosen",
-        "reason": "PR #2618: components/sidebar becomes its own SPA component; the views that already used those files now reach a separate node (+0.1)",
+        "reason": "Merge with develop: #2617 adds the leaf internal/httpscheme, imported across the HTTP clients, so develop's own model is at 9.3. This PR only removes comments. Only propagation_cost changes; the traced weights keep their values.",
         "metrics": {
           "propagation_cost": [
             9.2,

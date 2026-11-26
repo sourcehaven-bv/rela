@@ -328,7 +328,6 @@ func applyAssign(a *App, r *http.Request, s *Schema, vals assignValues, addrs []
 			res.Code = errorCodeOf(rec.Body.Bytes())
 		}
 		if res.OK {
-			// The bare id: membership is judged per entity.
 			if id, _, err := entityPkg.ParseStateRef(addr); err == nil {
 				res.ID = id
 			}

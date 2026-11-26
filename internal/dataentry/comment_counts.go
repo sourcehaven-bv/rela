@@ -48,25 +48,19 @@ func serveListRowExtras(
 	return serveListGroups(w, r, a, query, rows, data)
 }
 
-// serveCommentCounts sets the comment count on each row in data, which is
-// parallel to rows. A failed count is logged and leaves every count absent:
-// the count decorates a list, so it must not fail the list.
+// serveCommentCounts sets the comment count on each row in data, parallel to
+// rows. A failed count is logged and leaves every count absent.
 //
-// The rows have already passed the read gate, so the read floor that
-// [comments.Authorizer.CanRead] adds is satisfied. What remains is
-// `comment:read`, and it is checked ONCE for the whole page, as a global
-// grant: the per-entity form walks ancestors and role relations per row, which
-// is a per-row store read on a collection path. The consequence is deliberate
-// and fails closed: a principal whose `comment:read` comes only from a local
-// role gets no count on list rows, though the thread itself stays readable on
-// the entity.
+// The rows already passed the read gate. `comment:read` is checked once per
+// page as a global grant, to avoid per-row store reads; this fails closed, so
+// a principal holding it only through a local role sees no counts on lists.
 func (h *commentsHandler) serveCommentCounts(ctx context.Context, rows []*entityPkg.Entity, data []v1.Entity) {
 	if h.svc == nil || !h.readsCommentsEverywhere(ctx) {
 		return
 	}
 	policy := h.commentPolicy()
 	targets := make([]comments.Target, 0, len(rows))
-	at := make([]int, 0, len(rows)) // at[j] is the row of targets[j]
+	at := make([]int, 0, len(rows))
 	for i, e := range rows {
 		if policy.Commentable(e.Type) {
 			targets = append(targets, comments.Target{Type: e.Type, ID: e.ID, Face: e.Face})

@@ -30,8 +30,6 @@ func (h *pilesHandler) exportPile(w http.ResponseWriter, r *http.Request, id str
 	if !ok {
 		return
 	}
-	// `piles.export:` narrows the registry. Config is not a secret, but the
-	// same unknown_transform answer keeps one meaning for "not offered here".
 	if pc := h.cfg().Piles; pc != nil && len(pc.Export) > 0 && !slices.Contains(pc.Export, name) {
 		writeV1Error(w, r, http.StatusNotFound, "unknown_transform",
 			"Unknown transform", "no such export format is configured")

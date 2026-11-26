@@ -12,21 +12,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// restoreHistoryVersion restores an entity's content + properties to a past
-// version. It is modeled as "a PATCH whose body is the historical values":
-// the diff between the live entity and the snapshot is run through
-// validateFieldWrite BEFORE applying, so a principal cannot use restore to set
-// or clear a field they lack write access to (RR-VOYXRV) — the whole reason
-// restore is not a raw snapshot replay through UpdateEntity.
-//
-// If the entity currently exists it is updated; if it was deleted it is
-// re-created. The restore is itself a normal write: authorized, validated,
-// audited, and captured as a new version.
-//
-// Scope: entity content + properties only. The entity's relation set as-of the
-// version is NOT restored (relation history is a separate capability), and
-// neither are file values: a restore keeps the live ones (BUG-CTUW2N), since
-// an old value may name bytes that are gone or that another face now owns.
+// restoreHistoryVersion restores an entity's content and properties to a past
+// version, as a PATCH whose body is the historical values: the diff is checked
+// with validateFieldWrite first, so restore cannot set or clear a field the
+// principal may not write. A live entity is updated, a deleted one is
+// re-created, and the restore is a normal authorized, audited write.
+// The snapshot's type must match the URL type. Relations and file values are
+// not restored; live file values are kept.
 func restoreHistoryVersion(a *App,
 	w http.ResponseWriter, r *http.Request, reader store.HistoryReader,
 	typeName string, subject historySubject, versionStr string,
@@ -48,12 +40,6 @@ func restoreHistoryVersion(a *App,
 		writeGateError(w, r, err)
 		return
 	}
-	// The snapshot's type must match the URL type: a lineage can span an id
-	// that once held another type. A mismatch is an indistinguishable 404, so
-	// the caller does not learn that an entity of a different type held this
-	// id. The face check is belt-and-braces: the reader is already scoped to
-	// the addressed face, and a snapshot of another face must never be
-	// written onto this one.
 	if snap.Type != typeName || snap.Face != subject.ref.Face {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
@@ -77,8 +63,6 @@ func restoreOntoLive(a *App,
 	ctx := r.Context()
 	props := entitymanager.CarryFileValues(a.Meta(), typeName, snap.Properties, live)
 
-	// Property diff: keys the snapshot sets to a new/changed value, and keys the
-	// live entity has that the snapshot does not (to be unset).
 	setKeys := make(map[string]any)
 	for k, v := range props {
 		if cur, ok := live.Properties[k]; !ok || !reflect.DeepEqual(cur, v) {
@@ -92,18 +76,11 @@ func restoreOntoLive(a *App,
 		}
 	}
 
-	// Gate exactly the fields that would change — same chokepoint a PATCH uses
-	// (RR-VOYXRV). A field the principal can't write blocks the restore rather
-	// than silently applying.
 	if denial := a.affordances.validateFieldWrite(ctx, live, setKeys, unsetKeys); denial != nil {
 		a.denyAffordance(ctx, w, live, *denial)
 		return
 	}
 
-	// Write exactly the gated set as a patch through the manager's grant: a
-	// property the caller could not see is left as stored, and the write
-	// asks the flow edit part of the field check again inside its
-	// transaction (TKT-XI7IDBS).
 	grant, err := a.write.manager.AuthorizeUpdate(ctx, live)
 	if err != nil {
 		writeRestoreWriteError(w, r, err)
@@ -116,8 +93,6 @@ func restoreOntoLive(a *App,
 		return
 	}
 
-	// The response target: live entity with the snapshot's content +
-	// properties.
 	target := entityPkg.New(live.ID, live.Type)
 	target.Face = live.Face
 	target.Content = snap.Content
@@ -139,25 +114,13 @@ func restoreRecreate(a *App,
 	target := entityPkg.New(ref.ID, snap.Type)
 	target.Face = ref.Face
 	target.Content = snap.Content
-	// No live value to keep: file values are left out, as on any create.
 	target.Properties = entitymanager.CarryFileValues(a.Meta(), snap.Type, snap.Properties, nil)
 
-	// Gate every snapshot property as a field write against the (would-be)
-	// entity, so a field the principal cannot write blocks the resurrection.
 	if denial := a.affordances.validateCreateFieldWrite(ctx, target, target.Properties); denial != nil {
 		a.denyAffordance(ctx, w, target, *denial)
 		return
 	}
 
-	// The row comes back at the address it was deleted from: the same id,
-	// and the face of the addressed lineage. CreateEntity cannot do that,
-	// because it mints a new id for any type without manual ids.
-	// RecreateEntity writes the named row, authorized as a create on
-	// `type@face`, validated and audited. It is create-only: a face
-	// recreated since resolveHistorySubject saw it deleted is a 409, never
-	// a whole-record overwrite of a live row. It runs no automation: a
-	// restore brings back content, it does not create a new record for
-	// on-create automations to react to.
 	if _, err := a.recreator.RecreateEntity(ctx, target); err != nil {
 		writeRestoreWriteError(w, r, err)
 		return
@@ -193,9 +156,6 @@ func writeRestoreResult(a *App,
 	if def, ok := meta.GetEntityDef(e.Type); ok {
 		plural = def.GetPlural(e.Type)
 	}
-	// The restored face's own edges, through the neighbor-gated seam the GET
-	// uses (BUG-ISJHML), so the response names no neighbor the caller
-	// cannot read.
 	rels, visibleNeighbors, rerr := a.faceEdges.read(r.Context(), e)
 	if rerr != nil {
 		writeGateError(w, r, rerr)

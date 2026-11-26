@@ -71,10 +71,6 @@ func standaloneDocumentGates(
 			"Path must be /_documents/{docName} or /_documents/{docName}/{entityId}")
 	}
 
-	// Validated even though a standalone render writes no cache file today:
-	// docName reaches the script engine as a config key, and the guard costs
-	// nothing. Keeping it means a future cache keyed on docName cannot
-	// reintroduce a traversal.
 	if !isSafePathSegment(docName) {
 		return resolvedDocument{}, deny(http.StatusBadRequest, "invalid_path", "Path segment contains forbidden characters")
 	}
@@ -84,17 +80,11 @@ func standaloneDocumentGates(
 		return resolvedDocument{}, deny(http.StatusNotFound, "document_not_found", "Document config not found")
 	}
 
-	// The mirror of the standalone rejection in handleV1Documents: an
-	// entity-anchored document needs an entry id this shape cannot supply.
-	// Rejecting beats rendering it against a guessed or empty entity.
 	if !docCfg.IsStandalone() {
 		return resolvedDocument{}, deny(http.StatusBadRequest, "document_kind_mismatch",
 			documentKindMismatchAnchored(docName, docCfg))
 	}
 
-	// Gate BEFORE rendering — see gateDocumentPermission. Both gates apply:
-	// the permission check, and (for an elevated document) the closed switch
-	// on the ACL implementation that the read gate alone cannot provide.
 	if err := gateDocumentPermission(ctx, docName, docCfg); err != nil {
 		return resolvedDocument{}, err
 	}
@@ -120,50 +110,13 @@ func resolveAnchoredDocument(
 
 // anchoredDocumentGates runs the full gate chain for an entity-anchored
 // document and returns its render config plus the entry entity ID. A denial
-// is a [*denialError] or a gate error.
-//
-// Gate ORDER is the whole point of this function, and two orderings are
-// load-bearing:
-//
-//   - The ACL read gate runs BEFORE the store read. A hidden entity and a
-//     nonexistent one must be indistinguishable — in the response body AND in
-//     timing. Reading the store first (as this code did before TKT-K7J6FL) made
-//     a missing id answer "entity %q not found" while a denied id answered the
-//     uniform entityNotFoundTitle, so a principal who could not read the type
-//     could still enumerate which ids existed. That is the RR-NGMI invariant
-//     handleV1GetEntity protects by gating first, for the same reason.
-//   - The type-mismatch check runs BELOW the read gate, so a denied principal
-//     gets the uniform 404 rather than a 400 that reveals the entity's type
-//     (pinned by TestAnchoredDocument_GateOrderingNoTypeOracle).
-//
-// What this function deliberately does NOT do is touch the document cache.
-// documentService.GetCached keys on the entry id and content hash with neither
-// the ConfigID nor the principal in the key, so it is only safe where it is
-// used today: reads skipped for script: documents, writes only for
-// principal-independent command: renders. A per-principal caller reading that
-// cache would reintroduce RR-2QSGLU.
+// is a [*denialError] or a gate error. The ACL read gate runs BEFORE the store
+// read, so a hidden id and a missing one are indistinguishable. The type
+// check runs below the read gate, so a denial never reveals the type. It does
+// not touch the document cache, whose key has no principal.
 func anchoredDocumentGates(
 	ctx context.Context, a *App, s *Schema, docName, entityID string,
 ) (resolvedDocument, error) {
-	// Both segments flow into the on-disk document cache filename
-	// (document.go GetCached/doRender). Reject anything that could escape the
-	// cache directory before any filesystem work happens.
-	//
-	// The entity segment is an ADDRESS — `ID` or `ID@face` — so it is
-	// validated as a state ref rather than a plain segment (BUG-VFHUWO).
-	// isSafeStateRefSegment applies isSafePathSegment to the bare id and
-	// entity.ParseFace to the suffix, so neither half can carry a separator;
-	// `@` itself is inert in a filename, and the faced address keys a cache
-	// entry distinct from the bare one, which is correct — they render
-	// different content.
-	//
-	// A malformed address is a 400 here rather than the uniform 404 the entity
-	// routes give one, and that difference is deliberate: this segment also
-	// names a CACHE FILE, so "this path is unusable" is the honest answer and
-	// the caller learns nothing about which entities exist — the id never
-	// reaches the store. It is also what keeps a reserved segment in the entity
-	// position (`/_documents/sales/_EXPORT`) a 400: `entity.ParseRef` rejects a
-	// leading underscore, which is exactly the case this route must not serve.
 	ref, refErr := entity.ParseRef(entityID)
 	if !isSafePathSegment(docName) || !isSafeStateRefSegment(entityID) || refErr != nil {
 		return resolvedDocument{}, deny(http.StatusBadRequest, "invalid_path", "Path segment contains forbidden characters")
@@ -174,33 +127,11 @@ func anchoredDocumentGates(
 		return resolvedDocument{}, deny(http.StatusNotFound, "document_not_found", "Document config not found")
 	}
 
-	// A standalone document has no entry entity, so an entity-anchored
-	// request for one is a category error, not a document to render against
-	// the supplied id. Reject rather than silently ignoring the id.
 	if docCfg.IsStandalone() {
 		return resolvedDocument{}, deny(http.StatusBadRequest, "document_kind_mismatch",
 			documentKindMismatchStandalone(docName))
 	}
 
-	// ACL gates (TKT-C0R07J), FIRST — see the ordering note in the doc
-	// comment. Document rendering serves entity-derived content and may run a
-	// Lua script that reads related entities, so a denied caller must never
-	// reach the renderer, and must not learn whether the id exists.
-	//
-	// The resolver runs the gates every addressed read owes (BUG-8J3LSB): the
-	// face-blind row gate on the BARE id, then the face gate on the row it
-	// read. A denied face answers the same not-found as a missing entity, so a
-	// `policy@published` reader cannot render a document over the draft.
-	//
-	// The row is judged against its OWN stored type, not the document's. A
-	// grant covering every row of the document's type would pass whatever id
-	// it is handed, so judging a row of another type against it would let the
-	// type-mismatch 400 below become an existence and type oracle on rows the
-	// caller may not read.
-	//
-	// An absent id still runs the gates, against the document's type, so a
-	// miss costs at least what a denial does and the response time does not
-	// tell a hidden id from an absent one (RR-NGMI).
 	typ := a.visibleReader.storedType(ctx, ref.ID)
 	if typ == "" {
 		typ = docCfg.EntityType
@@ -213,39 +144,19 @@ func anchoredDocumentGates(
 		return resolvedDocument{}, deny(http.StatusNotFound, "not_found", entityNotFoundTitle)
 	}
 
-	// A doc-level `permission:` applies IN ADDITION to the per-entity gate
-	// above — it narrows, never widens (a holder still needs to pass the
-	// entity read gate).
 	if err := gateDocumentPermission(ctx, docName, docCfg); err != nil {
 		return resolvedDocument{}, err
 	}
 
-	// An entity-anchored document may also be elevated (TKT-Y3JVFK), in which
-	// case BOTH this and the per-entity gate above must pass. The entity gate
-	// governs the entry entity; elevation governs what the script may read
-	// BEYOND it, so neither subsumes the other.
 	if err := gateElevatedDocument(ctx, a.acl, docName, docCfg); err != nil {
 		return resolvedDocument{}, err
 	}
 
-	// Enforce the doc's entity_type: a release-notes script authored for
-	// releases must not run against a ticket. The frontend already filters the
-	// docs shown for an entity, but an HTTP caller can hit
-	// /_documents/<doc>/<wrong-type-id> directly.
-	//
-	// The row has cleared the gates against its own type above, so naming
-	// that type here discloses nothing the caller may not read.
 	if ent.Type != docCfg.EntityType {
 		return resolvedDocument{}, deny(http.StatusBadRequest, "entity_type_mismatch",
 			documentTypeMismatch(docName, docCfg.EntityType, entityID, ent.Type))
 	}
 
-	// The render is keyed on the address of the row the gates cleared, so the
-	// renderer reads that same row rather than the zero face.
-	//
-	// This address is also what a script sees as rela.document.entry_id. For a
-	// faceless type it is the bare id, exactly as before; for a faced row it is
-	// `ID@face`, which no bare-id request could render until BUG-8J3LSB.
 	return resolvedDocument{cfg: a.toDocumentRenderConfig(docName, &docCfg), entryID: ent.Ref().String()}, nil
 }
 
@@ -267,9 +178,6 @@ func handleV1ExportDocument(a *App, w http.ResponseWriter, r *http.Request, docN
 		return
 	}
 
-	// Transform resolution first: it is pure caller input, and rejecting a bad
-	// one costs nothing. It reveals only which formats are configured, which is
-	// already public via GET /_transforms.
 	name, reg, ok := a.export.resolveTransform(w, r)
 	if !ok {
 		return
@@ -282,18 +190,9 @@ func handleV1ExportDocument(a *App, w http.ResponseWriter, r *http.Request, docN
 		resolved, ok = resolveAnchoredDocument(a, w, r, docName, entityID)
 	}
 	if !ok {
-		return // the resolver already wrote the response
+		return
 	}
 
-	// A command: renderer is refused on BOTH document shapes. For a standalone
-	// document there is no entry entity to hand it as {in} at all; for an
-	// anchored one it would work, so this half is a policy choice — supporting
-	// export on one document kind but not the other is a worse contract than
-	// supporting neither, and a command: render's output is the one thing the
-	// entry-hash disk cache is built for. Script-only keeps the two kinds
-	// symmetric. The render layer carries the same assertion as a backstop
-	// (RenderStandaloneMarkdown); this one exists to give the operator a clear
-	// 400 instead of a generic render failure.
 	if len(resolved.cfg.Command) > 0 {
 		writeV1Error(w, r, http.StatusBadRequest, "export_unsupported_renderer",
 			"This document cannot be exported",

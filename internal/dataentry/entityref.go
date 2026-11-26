@@ -29,19 +29,11 @@ func isExplicitAddress(raw string) bool {
 	return err == nil && !ref.Face.IsImplicit()
 }
 
-// addressedProvenance labels a face served because the CALLER NAMED IT, as
-// opposed to one the world resolved (see [worldProvenance]).
-//
-// The rule is `unscoped`: no resolution was applied. That is the same word a
-// faceless type and the default world get, and it is the honest one here too
-// — the world made no choice, the address did. Reporting the chain position
-// the face happens to occupy in the request's world would claim the world
-// picked it, and a client keying a stand-in badge on `chain_position` would
-// then badge a page the reader navigated to on purpose.
-//
-// The world NAME is still the request's: neighbors and included peers on
-// this response resolve through it, so naming it keeps the block truthful
-// about everything on the page that a world did touch.
+// addressedProvenance labels a face served because the caller named it, as
+// opposed to one the world resolved (see [worldProvenance]). The rule is
+// `unscoped`, since the address chose the face, not the world. The world
+// name is still the request's, because neighbors on the response resolve
+// through it.
 func addressedProvenance(ctx context.Context, e *entity.Entity) *v1.EntityWorld {
 	if e == nil {
 		return nil

@@ -47,3 +47,9 @@ lines only).
 - Go: in-repo analyzer under tools/ with its own tests. TS: local ESLint rule in frontend/eslint.config.js.
 - Add `.claude/rules/code-comments.md` and a row in the CLAUDE.md rules table.
 - Acceptance: testdata cases for each exemption; baseline fails on a new comment and passes after removal; `just ci` runs both checks.
+
+## Follow-up
+
+The `internal/dataentry` baseline was burned down to 0. The gate now allows a
+comment group that starts with `#nosec`, `nosemgrep`, `nolint` or
+`coverage-ignore`, so suppression justifications stay in place.

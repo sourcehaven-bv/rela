@@ -25,19 +25,11 @@ import (
 // `/api`.
 const MCPPath = "/api/v1/_mcp"
 
-// toolForPath returns the audit Tool attribution for the surface a request
-// arrived on. Everything is [principal.ToolDataEntry] except the remote MCP
-// endpoint, which is [principal.ToolMCP].
-//
-// This exists because [principal.VerifiedFrom] is the only constructor that
-// populates the unexported org/role/scope fields, so a caller cannot swap the
-// Tool afterwards without dropping every asserted role — the Tool has to be
-// decided before the projection. Deriving it from the path keeps that decision
-// in one place rather than duplicating the projection per surface (RR-H8S10M).
-//
-// The MCP endpoint has no sub-paths today; the prefix form is deliberate so a
-// future `/api/v1/_mcp/…` route cannot silently fall back to `data-entry`
-// attribution.
+// toolForPath returns the audit Tool for the surface a request arrived on:
+// [principal.ToolMCP] for the remote MCP endpoint and its prefix, else
+// [principal.ToolDataEntry]. The Tool must be decided before the
+// [principal.VerifiedFrom] projection, which cannot be changed afterwards
+// without dropping the asserted roles.
 func toolForPath(p string) string {
 	if p == MCPPath || strings.HasPrefix(p, MCPPath+"/") {
 		return principal.ToolMCP
@@ -212,30 +204,14 @@ func mcpWorldReadable(ctx context.Context, a *App, name string) (bool, error) {
 	return true, nil
 }
 
-// SetRemoteMCP enables the remote MCP endpoint, which is OFF by default.
+// SetRemoteMCP enables the remote MCP endpoint, which is off by default. It
+// must be called before [App.NewRouter].
 //
-// It refuses a configuration that cannot be served safely, at startup, rather
-// than at first request:
-//
-//   - a nil factory has nothing to serve;
-//   - a factory that errors means the MCP wiring is broken;
-//   - **no JWT gate is refused outright.** The endpoint needs a CSRF exemption
-//     (a non-browser MCP client sends no Origin), and that exemption is only
-//     sound while rela itself verifies a bearer token and requires it. In
-//     header-identity mode `requireVerifiedJWT` is never wrapped and the
-//     terminal resolver yields `User: "unknown"` — combining that with the
-//     exemption would publish an unauthenticated remote write surface. A
-//     declarative-ACL deployment would still fail closed
-//     (`acl.ErrUnstampedPrincipal` rejects `unknown`), but a NopACL deployment
-//     would not, and this must not depend on a second, unrelated setting.
-//     The MCP SDK's DNS-rebinding guard is disabled on the same grounds (see
-//     mcp.Server.HTTPHandler); relaxing this refusal must re-enable it.
-//
-// The same reasoning as `validateIdentityFlags` in cmd/rela-server: an
-// auth downgrade happens per request, long after anyone reads a startup
-// warning, so it is refused rather than warned about.
-//
-// Must be called before [App.NewRouter].
+// It refuses at startup a nil factory, a factory that errors, and a missing
+// JWT gate. The endpoint needs a CSRF exemption, which is only sound while
+// rela verifies a required bearer token; without the gate it would publish an
+// unauthenticated write surface under NopACL. The MCP SDK's DNS-rebinding
+// guard is disabled on the same grounds, so relaxing this must re-enable it.
 func (a *App) SetRemoteMCP(factory MCPHandlerFactory) error {
 	if factory == nil {
 		return errors.New("dataentry: remote MCP requires a non-nil handler factory")

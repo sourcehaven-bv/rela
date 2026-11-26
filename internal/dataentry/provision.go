@@ -13,48 +13,17 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/readtime"
 )
 
-// maybeProvision implements `unmatched_principal: provision` (TKT-ANUJDS): when
-// the request's principal was cryptographically verified but resolved to no
-// user entity, it lazily creates a bare stub user entity so the principal gains
-// a graph identity, then re-stamps ctx to the newly-created entity and returns
-// it for the handler to adopt.
-//
-// # Where it is called
-//
-// At the top of every entity-write handler, via withProvision
-// (handleV1CreateEntity, ...Update, ...Delete, the relation handlers, the
-// Lua-action handler, attachment put/delete). Two properties make that the
-// right seam rather than a wrapping middleware:
-//
-//   - Routes are not method-split at registration (GET and the mutating verbs
-//     share the /api/v1/ catch-all), so "wrap only writes" is not cleanly
-//     registrable.
-//   - Every write path reaches this helper, so provision covers CRUD, action,
-//     and attachment uniformly — the same anti-bypass property reject
-//     gets from the single AuthorizeWrite choke point.
-//
-// # What it returns
-//
-// The ctx the handler must ADOPT (r = r.WithContext(returned)) before calling
-// the manager and before its response-shaping read-back. On the provisioned
-// path the returned ctx carries: (1) a principal re-stamped to the resolved
-// entity ID (so manager.CreateEntity/UpdateEntity authorizes and audits to the
-// real entity, not the anonymous principal — RR-VI9XMY gap 1), and (2) a fresh
-// acl.Request + read gate built on that principal (so the write handler's
-// read-back through h.reader/h.serializer cannot redact or 404 the entity it
-// just created — RR-VI9XMY gap 2). On every non-provision path it returns ctx
-// UNCHANGED, so a normal write pays only a Request lookup.
-//
-// It never fails the request: a provision error is logged and the ORIGINAL ctx
-// is returned, so the write proceeds under the unmatched principal and is
-// gated/rejected by normal authorization — fail-closed, never fail-open to a
-// forged identity.
+// maybeProvision implements `unmatched_principal: provision`: when the
+// request's principal was verified but resolved to no user entity, it creates
+// a bare stub user under system:provisioner, re-stamps ctx to that entity with
+// a fresh acl.Request and read gate, and returns the ctx the handler must
+// ADOPT. Every entity-write handler calls it via withProvision. A reserved
+// `system:*` subject is never persisted as a stub's join key. On every other
+// path ctx is returned unchanged. It never fails the request: on error the
+// ORIGINAL ctx is returned and normal authorization gates the write.
 func maybeProvision(
 	ctx context.Context, d *acl.Declarative, m entityProvisioner, meta metaView,
 ) context.Context {
-	// Fast path: only a verified-but-unmatched principal under a provision
-	// policy does anything. Both are cheap ctx/field reads. A ctx without a
-	// usable Request is not provisioned; the write gate denies it.
 	if d == nil {
 		return ctx
 	}
@@ -66,31 +35,16 @@ func maybeProvision(
 		return ctx
 	}
 
-	// Both binds below judge conditional grants at this request's read time.
 	ctx = readtime.Ensure(ctx, nowFunc)
 	p := principal.From(ctx)
-	sub := p.User // the verified subject; the lookup found no entity for it
+	sub := p.User
 
-	// Never persist a reserved identity as a stub's principal_property join key
-	// (TKT-9PCL7D). The boundary checks in stampAuditPrincipal/verifiedPrincipal
-	// mean a `system:*` subject cannot reach here today, but the invariant "a
-	// reserved name never becomes durable graph state" must not depend on an
-	// upstream check: a stub carrying `system:scheduler` as its join key would
-	// make the principal_property lookup map that name to a real entity. Belt and braces on
-	// the write side, matching the read-side rejection.
-	//
-	// This gates the SUBJECT, not the actor: the create below is stamped
-	// UserProvisioner, which is itself reserved and must keep working.
 	if principal.IsReserved(sub) {
 		slog.WarnContext(ctx, "dataentry: provision: refusing to provision a reserved principal",
 			"sub", sub, "user_type", pol.UserEntityType)
 		return ctx
 	}
 
-	// Create the stub under system:provisioner — a create-user-only identity, so
-	// the write authorizes and audits to it while it cannot touch anything but a
-	// fresh stub of the user type (bare-stub containment, RR-28SCW3).
-	// The provisioner is its own identity, resolved here like any other.
 	provCtx, err := acl.BindRequest(principal.With(ctx, principal.Principal{
 		User: principal.UserProvisioner,
 		Tool: principal.ToolProvisioner,
@@ -104,27 +58,15 @@ func maybeProvision(
 	_, err = m.CreateEntity(provCtx, stub, entity.CreateOptions{})
 	switch {
 	case err == nil:
-		// created
 	case errors.Is(err, entitymanager.ErrEntityAlreadyExists), entitymanager.IsUniqueViolation(err):
-		// A concurrent first-write (another request, another process, or the
-		// IdP webhook) already provisioned this sub. The stubs carry different
-		// minted ids, so the collision surfaces on the unique
-		// `principal_property`, not on the id: fall through and re-resolve to
-		// whatever exists now.
 	default:
 		slog.Warn("dataentry: provision: stub create failed; proceeding as unmatched",
 			"sub", sub, "user_type", pol.UserEntityType, "err", err)
 		return ctx
 	}
 
-	// Re-resolve the (now-existing) entity and re-stamp ctx to it, rebuilding the
-	// ACL request + read gate on the resolved principal so both the manager call
-	// and the response-shaping read see the new entity.
 	provisioned, req, rerr := access.Restamp(ctx, d)
 	if rerr != nil {
-		// Ambiguous or errored re-resolve, or no request for the resolved
-		// principal: proceed as unmatched rather than guess. The write is then
-		// normally authorized.
 		slog.Warn("dataentry: provision: re-stamp after create failed; proceeding as unmatched",
 			"sub", sub, "err", rerr)
 		return ctx

@@ -237,49 +237,25 @@ func (svc analyzeService) runAnalysis(ctx context.Context, meta *metamodel.Metam
 // It also does not avoid any work despite the "without building the full
 // issue details" claim it used to carry — it calls runAnalysis and discards
 // everything but two integers.
-//
-// No production caller today (only its own test). If a dashboard badge ever
-// wants these numbers, give it a real count-only path — one that counts
-// without materializing issues and without the cap — rather than reusing
-// this; a silently-capped "12,431 problems" badge reading "200" is worse
-// than no badge.
 func (svc analyzeService) analysisIssueCounts(ctx context.Context, meta *metamodel.Metamodel) (errors, warnings int) {
 	result := svc.runAnalysis(ctx, meta)
 	return result.ErrorCount, result.WarningCount
 }
 
 // analyzeOrphans finds entities with no connections.
+// Each orphan is re-loaded through the gated reader before it becomes an issue,
+// so a hidden entity is dropped and a visible one is redacted.
 func (svc analyzeService) analyzeOrphans(ctx context.Context, meta *metamodel.Metamodel) AnalysisSection {
 	section := AnalysisSection{
 		Name:        "Orphans",
 		Description: "Entities with no incoming or outgoing relations",
 	}
 
-	// The tracer is gated: an orphan is judged over the edges and faces
-	// this principal may read, and Faces lists only readable faces
-	// (RR-VN71BT). A family counts once, on any face (BUG-95W7MV).
 	found, err := svc.tracer.FindOrphans(ctx)
 	if err != nil {
 		return checkFailed(ctx, section, "Orphans", err)
 	}
 
-	// Each orphan is re-loaded through the GATED reader before it can become
-	// an issue: a hidden entity is not served and is dropped, and a visible
-	// one is redacted. So even if the tracer yielded a raw id (it does not —
-	// svc.tracer is gated too), no hidden entity reaches the wire. Do NOT emit
-	// an issue straight from an orphan id/type without this gated re-load —
-	// that would reopen the leak this arc closed (TKT-3FL2S6).
-	//
-	// The ids are sorted BEFORE loading, and loading stops one past the cap:
-	// a project where every entity is an orphan would otherwise re-load the
-	// entire store (TKT-1ESTYJ). Sorting first keeps WHICH orphans get
-	// reported deterministic and id-ordered rather than dependent on how far
-	// the load got. The re-load is batched (TKT-QM833U) and reads headers
-	// only: an orphan issue needs the type and the display title, never the
-	// body.
-	//
-	// A faced family has no row at the bare id, so it is re-loaded at its
-	// first readable face and reported with its faces.
 	sort.Slice(found, func(i, j int) bool { return natsort.Less(found[i].ID, found[j].ID) })
 	for start := 0; start < len(found) && len(section.Issues) <= maxSectionIssues; start += resolveBatch {
 		chunk := found[start:min(start+resolveBatch, len(found))]
@@ -324,14 +300,6 @@ func (svc analyzeService) analyzeDuplicates(ctx context.Context, meta *metamodel
 		Description: "Entities with identical titles",
 	}
 
-	// The one analyzer that genuinely CANNOT stream: a title is not known
-	// to be duplicated until its second occurrence, which may be the last
-	// row scanned, so the grouping must see the whole set. Grouping HEADERS
-	// rather than entities is what makes that affordable — the map holds
-	// ids and properties, never bodies.
-	//
-	// Every face row takes part, but rows of one id are never duplicates of
-	// each other: a group counts only when it spans two ids (BUG-95W7MV).
 	titleGroups := make(map[string][]store.EntityHeader)
 	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
@@ -343,7 +311,6 @@ func (svc analyzeService) analyzeDuplicates(ctx context.Context, meta *metamodel
 		}
 	}
 
-	// Collect groups with duplicates, sorted by title
 	var titles []string
 	for title, group := range titleGroups {
 		if distinctHeaderIDs(group) > 1 {
@@ -381,8 +348,6 @@ func (svc analyzeService) analyzeGaps(ctx context.Context, meta *metamodel.Metam
 		Description: "Missing numbers in auto-generated ID sequences",
 	}
 
-	// Build prefix → entity type lookup and the manual-prefix skip set
-	// in a single pass over the metamodel.
 	manualPrefixes := make(map[string]bool)
 	typeByPrefix := make(map[string]string)
 	for typeName, entityDef := range meta.Entities {
@@ -396,8 +361,6 @@ func (svc analyzeService) analyzeGaps(ctx context.Context, meta *metamodel.Metam
 		}
 	}
 
-	// Group IDs by prefix. Every face is scanned so a faced type is never
-	// absent; each id counts once (BUG-95W7MV).
 	prefixGroups := make(map[string][]int)
 	seen := make(map[string]bool)
 	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
@@ -418,7 +381,6 @@ func (svc analyzeService) analyzeGaps(ctx context.Context, meta *metamodel.Metam
 		prefixGroups[parsed.Prefix] = append(prefixGroups[parsed.Prefix], parsed.Number)
 	}
 
-	// Sort prefixes for deterministic output
 	prefixes := make([]string, 0, len(prefixGroups))
 	for prefix := range prefixGroups {
 		prefixes = append(prefixes, prefix)
@@ -436,10 +398,6 @@ func (svc analyzeService) analyzeGaps(ctx context.Context, meta *metamodel.Metam
 			}
 		}
 
-		// EntityType is populated from the prefix → type map so the
-		// data-entry UI's type column renders the type badge. The row
-		// stays inert (EntityID is empty), so isClickable in the SPA
-		// remains false; the type is informational only.
 		entityType := typeByPrefix[strings.TrimSuffix(prefix, "-")]
 		for _, n := range gaps {
 			missingID := fmt.Sprintf("%s%03d", prefix, n)
@@ -508,19 +466,10 @@ func (svc analyzeService) analyzeProperties(ctx context.Context, meta *metamodel
 
 	metaValidator := metamodel.NewValidator(meta)
 
-	// Streams: an issue is emitted as its row is scanned, so peak memory is
-	// proportional to the ISSUES found, not to the entities examined. The
-	// previous shape drained every entity into a slice purely to sort it —
-	// sorting the (far smaller) issue list afterwards is equivalent, since
-	// each entity contributes a contiguous run of issues in ID order.
-	//
-	// Every face row is validated: each holds its own values, and a faced
-	// type has no default row (BUG-95W7MV).
 	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			break
 		}
-		// The row is redacted: findings on hidden fields are dropped.
 		for _, verr := range metaValidator.ValidateReadable(h.ID, h.Type, h.Properties, h.Redacted) {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   h.ID,
@@ -531,19 +480,6 @@ func (svc analyzeService) analyzeProperties(ctx context.Context, meta *metamodel
 				Severity:   "error",
 			})
 		}
-		// Abandon the scan once one issue past the cap has been seen:
-		// stopping here is what keeps a pathological project cheap rather
-		// than merely quiet.
-		//
-		// WHICH issues survive is then "the first 100 in store order",
-		// which the sort below renders in natural order. Store order is
-		// ascending by id and natural order is not (E-10 precedes E-9
-		// lexicographically but follows it naturally), so on a truncated
-		// section the reported set is not necessarily the naturally-first
-		// 100. That is acceptable — the set is a bounded sample of a list
-		// too long to act on, flagged as truncated — but it is a real
-		// difference from sorting the complete set, so do not describe
-		// truncated output as "the first N issues".
 		if sectionFull(&section) {
 			break
 		}
@@ -568,11 +504,6 @@ func (svc analyzeService) analyzeValidations(ctx context.Context, meta *metamode
 
 	validator := svc.validator
 
-	// Every rule runs, also once the section is full: complete reporting was
-	// chosen over the time a full section could save (TKT-QM833U). Only the
-	// violations that can still be reported are re-loaded: issues are capped
-	// in order (see [capIssues]), so a violation past one-beyond-the-cap could
-	// never reach the wire.
 	for _, rule := range meta.Validations {
 		full, err := validator.CheckRuleFull(ctx, rule)
 		if err != nil {
@@ -585,11 +516,6 @@ func (svc analyzeService) analyzeValidations(ctx context.Context, meta *metamode
 		if err != nil {
 			section.Issues = append(section.Issues, ruleNotChecked(ctx, rule.Name, err))
 		}
-		// Surface Lua failures and load failures so the UI shows
-		// "rule did not run" rather than silently dropping them.
-		// These are always error severity — a broken rule is not a
-		// warning condition, it's a config-level problem the
-		// operator needs to see.
 		for _, se := range full.ScriptErrors {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:    se.EntityID,
@@ -626,8 +552,6 @@ func (svc analyzeService) violationIssues(
 	severity := rule.GetSeverity()
 	for start := 0; start < len(violations) && len(out) < room; start += resolveBatch {
 		chunk := violations[start:min(start+resolveBatch, len(violations))]
-		// A violation id that is not an address is a miss, as GetAddress
-		// answered it: it gets no ref and so no issue.
 		refs := make([]entity.Ref, len(chunk))
 		parsed := make([]bool, len(chunk))
 		batch := make([]entity.Ref, 0, len(chunk))
@@ -711,9 +635,6 @@ func scriptErrorSummary(se *lua.ScriptError) string {
 		return ""
 	}
 	msg := se.Error()
-	// Replace newlines so a multi-line wrapped error renders as a
-	// single AnalysisIssue.Message rather than corrupting the JSON
-	// shape consumers expect.
 	msg = strings.ReplaceAll(msg, "\n", " ")
 	msg = strings.ReplaceAll(msg, "\r", " ")
 	return strings.Join(strings.Fields(msg), " ")

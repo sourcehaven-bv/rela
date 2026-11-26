@@ -175,7 +175,6 @@ func (h *gitHandler) handleGitSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Analyze changes and generate commit message
 	changes, err := gitOps.AnalyzeChanges()
 	if err != nil {
 		resp.Error = "failed to analyze changes: " + err.Error()
@@ -186,13 +185,10 @@ func (h *gitHandler) handleGitSync(w http.ResponseWriter, r *http.Request) {
 
 	message := changes.GenerateCommitMessage()
 
-	// Perform sync
 	if err := gitOps.Sync(message); err != nil {
 		resp.Error = err.Error()
-		// Check if it's a conflict
 		status, _ := gitOps.GetStatus()
 		if status != nil && status.Conflict {
-			// The same paths the status lists (BUG-197XPAU).
 			files, gerr := h.conflictPaths(r.Context(), h.schema().Meta, status.ConflictFiles)
 			if gerr != nil {
 				writeGateError(w, r, gerr)
@@ -207,7 +203,6 @@ func (h *gitHandler) handleGitSync(w http.ResponseWriter, r *http.Request) {
 
 	resp.Success = true
 
-	// Broadcast git status update
 	h.broker().broadcastGitStatus()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -224,7 +219,7 @@ func (h *gitHandler) startFetch() (stop func()) {
 	cfg := h.schema().Cfg.Git
 
 	if gitOps == nil || cfg == nil || cfg.FetchInterval <= 0 {
-		return func() {} // no-op if git not configured or fetch disabled
+		return func() {}
 	}
 
 	// coverage-ignore-start: os-fs-event: background goroutine driven by a real time.Ticker running git fetch (project
@@ -240,7 +235,6 @@ func (h *gitHandler) startFetch() (stop func()) {
 				if err := gitOps.Fetch(); err != nil {
 					slog.Warn("git fetch error", "error", err)
 				} else {
-					// Broadcast git status update so UI can refresh
 					h.broker().broadcast("git")
 				}
 			case <-done:

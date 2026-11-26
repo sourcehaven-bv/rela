@@ -39,8 +39,6 @@ func navRelatedRows(
 	}
 	resolved := dataentryconfig.NavItemsInitial{Relation: via, Direction: dir}.
 		ResolvedDirection(listCfg.EntityType, s.Meta)
-	// The query runs from the owners' side, so its direction is the
-	// opposite of the row's.
 	qdir := store.DirectionIncoming
 	if resolved.IsIncoming() {
 		qdir = store.DirectionOutgoing
@@ -66,8 +64,6 @@ func navRelatedRows(
 		ownersOf[rowID] = append(ownersOf[rowID], ownerID)
 		reach[rowID] = true
 	}
-	// No candidates means no rows. A nil reach would mean no narrowing and
-	// read the whole list, so the read is skipped instead.
 	if len(reach) == 0 {
 		return ctx, nil, nil
 	}
@@ -148,7 +144,6 @@ func navItemChildren(
 	if len(shown) == 0 {
 		return nil
 	}
-	// Redacted once and primed for the whole group, as the parents are.
 	ctx = primeVerdicts(ctx, a.fieldResolver, shown)
 	red := appRedactor(a)
 	childIDs := make([]string, 0, len(shown))
@@ -157,7 +152,6 @@ func navItemChildren(
 	}
 	statuses, err := navItemStatuses(ctx, a, s, c.Status, childIDs)
 	if err != nil {
-		// The children stand without their counts, as the entries do.
 		slog.Log(ctx, sidebarSkipLevel(err), "nav items: child counts skipped", "list", c.List, "error", err)
 	}
 	for i := range entries {

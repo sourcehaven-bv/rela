@@ -114,8 +114,8 @@ func (s *ganttSpan) union(o ganttSpan) {
 //
 // {id} is a CONFIG key, so an unknown one gets a plain named 404 (config is
 // not a secret). ?root= is an ENTITY id, so a hidden, missing, or
-// out-of-scope root all get the uniform entity 404 — indistinguishable by
-// contract.
+// out-of-scope root all get the uniform entity 404. Drilled requests without
+// a reader's own search or filters try the SQL-scoped subtree first.
 //
 //archplan:auth=required
 func (h *ganttHandler) handleV1Gantt(w http.ResponseWriter, r *http.Request) {
@@ -138,11 +138,6 @@ func (h *ganttHandler) handleV1Gantt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Drilled requests try the SQL-scoped subtree first (TKT-5LUGYP): the
-	// full forest is built only when the fast path cannot answer with
-	// identical ACL semantics. A request with a reader's own search or
-	// filters skips it: the filter runs in the full build's node load, and
-	// answering from there keeps the two paths from drifting.
 	var forest *ganttForest
 	if rootParam != "" && uq.empty() {
 		sub, gerr := h.buildGanttSubtree(r.Context(), s, g, rootParam)
@@ -150,7 +145,7 @@ func (h *ganttHandler) handleV1Gantt(w http.ResponseWriter, r *http.Request) {
 			gerr.write(w, r)
 			return
 		}
-		forest = sub // nil means "fast path declined": the full build answers
+		forest = sub
 	}
 	if forest == nil {
 		full, gerr := h.buildGanttForest(r.Context(), s, g, uq)
@@ -163,9 +158,6 @@ func (h *ganttHandler) handleV1Gantt(w http.ResponseWriter, r *http.Request) {
 
 	rootIDs := forest.roots
 	if rootParam != "" {
-		// Drill-down re-root. Reachable-and-visible is the only way in; a
-		// hidden root was never in the forest, so it falls into the same
-		// uniform 404 as a genuinely absent id.
 		if _, ok := forest.nodes[rootParam]; !ok || !forest.reachable[rootParam] {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 			return
@@ -231,10 +223,10 @@ func (h *ganttHandler) buildGanttForest(
 // finishGanttForest runs the shared tail of both build paths: parent
 // selection, the multi-parent and cycle policies, and the fold. Shared so the
 // subtree fast path cannot drift from the full build's semantics.
-//
-// edges holds the admissible hierarchy edges per relation type: both
-// endpoints are in nodes. checkMultiParent limits the multi_parent:"error"
-// check to those nodes; nil checks every node (the full build).
+// edges holds the admissible hierarchy edges per relation type; nil
+// checkMultiParent checks every node. Cycle detection runs on the VISIBLE
+// subgraph only: a loop through hidden nodes must not be reportable, or
+// on_cycle:error becomes a one-bit oracle on hidden topology.
 func finishGanttForest(
 	g dataentryconfig.Gantt, nodes map[string]*ganttNode, edges map[string][][2]string,
 	checkMultiParent map[string]bool,
@@ -257,10 +249,6 @@ func finishGanttForest(
 				strings.Join(dedupSorted(multiParent), ", ")}
 	}
 
-	// Under "mark", re-seating repairs nodes the sort-order parent choice
-	// stranded inside a loop, and reports the back edges it cut doing so.
-	// Loops it could NOT repair (no member has a reachable alternative
-	// parent) survive into the fold, which cuts them instead.
 	reseated := map[string]bool{}
 	if g.OnCycle == "mark" {
 		reseated = reseatCycleParents(nodes, parent, allParents)
@@ -274,14 +262,6 @@ func finishGanttForest(
 	}
 	sort.Strings(f.roots)
 
-	// Step 3: fold, post-order from the roots. Under multi_parent:first every
-	// node has at most one parent, so the reachable set is a forest and the
-	// walk cannot revisit a node. What it CANNOT reach is a containment loop
-	// — a component whose every member's parent stays inside the loop — which
-	// is exactly the cycle case. Detection is therefore "any gated node left
-	// unreached", and it runs on the VISIBLE subgraph only: a loop through
-	// hidden nodes must not be reportable, or on_cycle:error becomes a
-	// one-bit oracle on hidden topology.
 	markCycles := g.OnCycle == "mark"
 	for _, rootID := range f.roots {
 		foldGantt(f, rootID, markCycles)
@@ -291,13 +271,6 @@ func finishGanttForest(
 	}
 
 	if markCycles {
-		// A pure loop — a component with no parentless member — has no root to
-		// enter by, so the walk above never saw it and it would vanish exactly
-		// as under "prune". Give each such component an entry point: the
-		// lowest-sorting unreached node becomes a root, and folding from there
-		// cuts the back edge that returns to it. Repeated because one pass
-		// reaches one component; each pass strictly shrinks the unreached set
-		// (it folds at least its own entry node), so this terminates.
 		for len(f.reachable) < len(nodes) {
 			var entry string
 			for _, id := range ganttSortedKeys(nodes) {
@@ -314,8 +287,6 @@ func finishGanttForest(
 	}
 
 	if g.OnCycle == "prune" {
-		// The loop members simply do not render; nothing visible is lost
-		// (no root can reach them) and nothing hidden is disclosed.
 		return f, nil
 	}
 	var cyclic []string
@@ -381,9 +352,6 @@ func newGanttHandler(app *App, st store.Store) *ganttHandler {
 		schema: app.State,
 		store:  st,
 		scoped: app.lists.scopedSortedEntities,
-		// Every readable row of the source type: the chart, its where:
-		// filters and the roll-ups past the node cap need the whole set.
-		// TKT-DIDCQS6 bounds it.
 		scanTypeHeaders: func(ctx context.Context, typeName string) ([]store.EntityHeader, error) {
 			rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 			req := scopeRequest{Type: typeName, Faces: rqr.Faces}
@@ -413,8 +381,6 @@ func ganttReadVerdict(ctx context.Context, typeName string) (ganttVerdict, *gant
 	case rqr.AllowAll:
 		return ganttAllow, nil
 	case rqr.Query == nil:
-		// Defensive: fail loud instead of silently widening (see
-		// scopedSortedEntities, which carries the same arm).
 		return ganttDeny, &ganttError{http.StatusInternalServerError, "internal",
 			"Invalid read verdict", ""}
 	default:
@@ -423,18 +389,10 @@ func ganttReadVerdict(ctx context.Context, typeName string) (ganttVerdict, *gant
 }
 
 // loadGanttType returns the REDACTED entities of one source type, honoring
-// the per-request read-gate verdict (TKT-5LUGYP):
-//
-//   - DenyAll: nothing.
-//   - AllowAll: the fast path — store.ListEntityHeaders streams
-//     ID/Type/Properties WITHOUT markdown bodies (which the gantt never
-//     reads; profiling showed body decode dominated the request), redacted
-//     via visibility.RedactHeader.
-//   - scoped Query verdict: the scoped lister, which reads content-free
-//     rows through the ACL pushdown (rowcontent.go).
-//
-// Redaction happens HERE, exactly once per entity on either path
-// (visibility.Redact/RedactHeader must never see already-redacted input).
+// the per-request read-gate verdict: DenyAll yields nothing, AllowAll
+// streams content-free headers, and a scoped Query verdict reads through the
+// ACL-narrowing funnel. Redaction happens HERE, exactly once per entity on
+// either path, because visibility.Redact is non-composable.
 func (h *ganttHandler) loadGanttType(
 	ctx context.Context, typeName string,
 ) ([]*entity.Entity, *ganttError) {
@@ -446,10 +404,6 @@ func (h *ganttHandler) loadGanttType(
 	case ganttDeny:
 		return nil, nil
 	case ganttAllow:
-		// Headers via the shared funnel (scopedread.go) so every narrowing
-		// reaches this path too; redaction stays HERE because the funnel is
-		// deliberately ACL-narrowing only and must never return
-		// already-redacted rows (visibility.Redact is non-composable).
 		hdrs, err := h.scanTypeHeaders(ctx, typeName)
 		if err != nil {
 			slog.Error("gantt: header list failed", "type", typeName, "error", err)
@@ -511,7 +465,7 @@ func (h *ganttHandler) addGanttNodes(
 	src := g.Sources[typeName]
 	entDef, ok := s.Meta.GetEntityDef(typeName)
 	if !ok {
-		return nil // validated at load; a raced schema change degrades, not panics
+		return nil
 	}
 	tooltipProps := make([]string, 0, len(g.Tooltip.Fields))
 	for _, f := range g.Tooltip.Fields {
@@ -523,20 +477,12 @@ func (h *ganttHandler) addGanttNodes(
 	}
 	filters, ferr := parseWhereAt(src.Where, now)
 	if ferr != nil {
-		// Load validation makes this unreachable; refusing (rather than
-		// proceeding unfiltered) keeps the failure direction closed.
 		return &ganttError{http.StatusInternalServerError, "internal", "Invalid source filter", ""}
 	}
 	for _, red := range ents {
 		if len(filters) > 0 {
 			matched, merr := filter.MatchAll(entityRecord(red), filters, entDef, s.Meta)
 			if merr != nil {
-				// A match ERROR (an unparseable stored value, not a
-				// non-match) excludes the entity — for a filter that is
-				// the closed direction — but never silently: exclusion
-				// also narrows every ancestor's rolled span, which is
-				// exactly the "looks on schedule" failure this view
-				// exists to prevent, so the drop is logged.
 				slog.Warn("gantt: where filter errored; entity excluded",
 					"entity", red.ID, "error", merr)
 				continue
@@ -546,9 +492,6 @@ func (h *ganttHandler) addGanttNodes(
 			}
 		}
 		if prev, dup := nodes[red.ID]; dup && prev.face != red.Face {
-			// A node knows one face, and ganttEdges decides edge
-			// ownership by it, so two faces of one id would make the tree
-			// depend on read order. Refuse rather than pick one.
 			slog.Error("gantt: two faces of one entity in the node set",
 				"entity", red.ID, "faces", []entity.Face{prev.face, red.Face})
 			return &ganttError{http.StatusInternalServerError, "internal", "Ambiguous entity face", ""}
@@ -591,7 +534,7 @@ const ganttClosureMaxRounds = 25
 func ganttSubtreeVerdicts(
 	ctx context.Context, g dataentryconfig.Gantt,
 ) (map[string]bool, *ganttError) {
-	verdicts := map[string]bool{} // type -> AllowAll
+	verdicts := map[string]bool{}
 	for _, typeName := range ganttSortedKeys(g.Sources) {
 		verdict, gerr := ganttReadVerdict(ctx, typeName)
 		if gerr != nil {
@@ -603,7 +546,7 @@ func ganttSubtreeVerdicts(
 		case ganttAllow:
 			verdicts[typeName] = true
 		default:
-			return nil, nil // scoped verdict: full build only
+			return nil, nil
 		}
 	}
 	return verdicts, nil
@@ -624,64 +567,32 @@ func ganttHasFacedSource(meta *metamodel.Metamodel, g dataentryconfig.Gantt) boo
 	return false
 }
 
-// buildGanttSubtree is the ?root= fast path (TKT-5LUGYP, closes RR-FJWAZS):
-// resolve the drilled subtree with per-type GraphQuery pushdown instead of
-// building and discarding the global forest. Its reads scale with the drilled
-// subtree, not with the rest of the graph.
-//
-// EQUIVALENCE IS THE CONTRACT: for any input this path answers, the response
-// must be byte-identical to the full build's subtree (pinned by
-// TestGantt_SubtreeDrillMatchesFullBuild and the generated-graph property
-// test). A parent OUTSIDE the loaded subtree can still win a node away from
-// it under multi_parent:first, so those parents are fetched and gated exactly
-// like the full build's nodes (see subtreeGanttEdges) and then take part in
-// parent selection. Where equivalence cannot be guaranteed the path DECLINES
-// (returns nil forest, no error) and the caller runs the full build:
-//
-//   - a scoped ACL Query verdict on any source type (cannot compose with the
-//     subtree predicate in one query);
-//   - an edge from inside the loaded set back to the drilled root (a cycle
-//     through the root);
-//   - on_cycle "mark" when a node inside the subtree has a parent outside it:
-//     whether that parent is reachable from a root decides re-seating, and
-//     that depends on ancestry this path does not load;
-//   - a closure that does not stabilize within ganttClosureMaxRounds.
-//
-// multi_parent "error" is evaluated over the drilled SUBTREE (the root and
-// its descendants), counting every visible parent of those entities wherever
-// it sits. An offender elsewhere in the graph fails the root view, not this
-// drill. With no offender in the subtree, every node in it has exactly one
-// parent, so the subtree is the same as under "first".
-//
-// on_cycle "error" (the DEFAULT) does NOT decline: the cycle diagnostic is
-// evaluated over the drilled SUBTREE. A cycle inside it 422s exactly like the
-// full build; a cycle through the drilled root bails to the full build (see
-// above); a cycle DISJOINT from the subtree is reported by the root view, not
-// by this drill. Declining would forfeit the fast path for every
-// default-config gantt while the landing view still surfaces the corruption.
-//
-// A root that is denied, missing, not a source type, or filtered out by its
-// where: clause yields an empty forest, which the caller turns into the
-// uniform entity 404.
+// buildGanttSubtree is the ?root= fast path: it resolves the drilled subtree
+// with per-type GraphQuery pushdown instead of building the global forest.
+// Its response must be byte-identical to the full build's subtree; outside
+// parents are fetched and gated like full-build nodes. Where equivalence
+// cannot be guaranteed (scoped ACL verdict, a cycle through the root,
+// on_cycle "mark" with an outside parent, an unstable closure) it returns a
+// nil forest and no error, and the caller runs the full build. A root that
+// is denied, missing, not a source type, or filtered out by its where:
+// clause yields an empty forest, which the caller turns into the uniform 404.
 func (h *ganttHandler) buildGanttSubtree(
 	ctx context.Context, s *Schema, g dataentryconfig.Gantt, rootID string,
 ) (*ganttForest, *ganttError) {
 	if ganttHasFacedSource(s.Meta, g) {
-		return nil, nil // the root read has no face; see ganttHasFacedSource
+		return nil, nil
 	}
 	if worldFromContext(ctx).blocksAllReads() {
-		return nil, nil // the full build answers a denied world with nothing
+		return nil, nil
 	}
 	verdicts, verdictErr := ganttSubtreeVerdicts(ctx, g)
 	if verdicts == nil {
-		return nil, verdictErr // scoped verdict (nil,nil) or a real error
+		return nil, verdictErr
 	}
 
 	nodes := map[string]*ganttNode{}
 	empty := &ganttForest{nodes: nodes, reachable: map[string]bool{}}
 
-	// The root itself: must exist, be a permitted source type, and survive
-	// its own where: filter — otherwise it is indistinguishable from absent.
 	rootEnt, err := h.store.GetEntity(ctx, entity.Ref{ID: rootID})
 	if err != nil || rootEnt == nil {
 		return empty, nil
@@ -697,15 +608,11 @@ func (h *ganttHandler) buildGanttSubtree(
 		return empty, nil
 	}
 
-	// Iterative descendant closure: query descendants of the frontier, feed
-	// newly discovered ids back in, stop when a round finds nothing new.
-	// rejected holds ids the closure read but the where: filter dropped, so
-	// neither a later round nor the parent lookup reads them again.
 	rejected := map[string]bool{}
 	frontier := []string{rootID}
 	for round := 0; len(frontier) > 0; round++ {
 		if round >= ganttClosureMaxRounds {
-			return nil, nil // did not stabilize: decline, never truncate
+			return nil, nil
 		}
 		next, gerr := h.collectGanttRound(ctx, s, g, verdicts, frontier, nodes, rejected)
 		if gerr != nil {
@@ -716,7 +623,7 @@ func (h *ganttHandler) buildGanttSubtree(
 
 	edges, subtree, gerr := h.subtreeGanttEdges(ctx, s, g, verdicts, nodes, rejected, rootID)
 	if gerr != nil || edges == nil {
-		return nil, gerr // nil edges without an error: decline
+		return nil, gerr
 	}
 	return finishGanttForest(g, nodes, edges, subtree)
 }
@@ -733,25 +640,17 @@ func (h *ganttHandler) collectGanttRound(
 		if !verdicts[typeName] {
 			continue
 		}
-		// A traversal, not the read gate's HasInbound slot: under ?as_of= it
-		// follows the hierarchy as it stood at the instant (DEC-TDEF3GD).
 		q := store.GraphQuery{
 			EntityType: typeName,
 			Related: []store.DirectedRelation{{Incoming: true, Pred: store.RelationPredicate{
-				// Endpoints expand through the hierarchy closure, so the
-				// predicate matches descendants of the frontier.
 				Endpoints:      frontier,
 				OfTypes:        g.Hierarchy,
 				InheritThrough: g.Hierarchy,
 				Depth:          ganttClosureRoundDepth,
 			}}},
 		}
-		// The same world and face ceiling the full build's scanHeaders
-		// read applies, so both paths pick the same row per id.
 		rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 		q = stampScope(ctx, q, scopeRequest{Type: typeName, Faces: rqr.Faces})
-		// Headers: the gantt reads ids, types and properties, never a body
-		// (TKT-U9DYW4). Redaction happens here, exactly once per entity.
 		var fresh []*entity.Entity
 		for hdr, qerr := range store.GraphQueryHeaders(ctx, h.store, q) {
 			if qerr != nil {
@@ -779,26 +678,18 @@ func (h *ganttHandler) collectGanttRound(
 	return next, nil
 }
 
-// subtreeGanttEdges loads the hierarchy edges the drilled subtree needs: the
-// INCOMING edges of every loaded node, one query per relation type. A parent
-// outside the loaded set is then read (one query per permitted source type)
-// and gated exactly as the full build gates its nodes: read verdict, world
-// and face narrowing, redaction, then the where: filter. One that survives
-// joins nodes as an extra root, so parent selection sees the same candidates
-// as the full build. One that does not is simply absent, as it is there, so a
-// hidden parent can neither win a node nor count toward multi_parent.
-//
-// It returns the admissible edges and the drilled subtree (the root plus
-// every node reachable from it over those edges) that multi_parent:"error"
-// is checked against. Nil edges with a nil error means the fast path must
-// decline; buildGanttSubtree's doc lists when.
+// subtreeGanttEdges loads the incoming hierarchy edges of every loaded node,
+// one query per relation type. Outside parents are read and gated exactly as
+// the full build gates its nodes, so a hidden parent can neither win a node
+// nor count toward multi_parent. It returns the admissible edges and the
+// drilled subtree. Nil edges with a nil error means the fast path declines.
 func (h *ganttHandler) subtreeGanttEdges(
 	ctx context.Context, s *Schema, g dataentryconfig.Gantt, verdicts map[string]bool,
 	nodes map[string]*ganttNode, rejected map[string]bool, rootID string,
 ) (edges map[string][][2]string, subtree map[string]bool, gerr *ganttError) {
 	raw, outside, cyclic, gerr := h.incomingGanttEdges(ctx, g, nodes, rejected, rootID)
 	if gerr != nil || cyclic {
-		return nil, nil, gerr // cycle through the drilled root: decline
+		return nil, nil, gerr
 	}
 	if gerr := h.addOutsideParents(ctx, s, g, verdicts, ganttSortedKeys(outside), nodes); gerr != nil {
 		return nil, nil, gerr
@@ -809,7 +700,7 @@ func (h *ganttHandler) subtreeGanttEdges(
 	for relType, list := range raw {
 		for _, e := range list {
 			if nodes[e[0]] == nil {
-				continue // parent the principal cannot see or the filter drops
+				continue
 			}
 			edges[relType] = append(edges[relType], e)
 			children[e[0]] = append(children[e[0]], e[1])
@@ -821,7 +712,7 @@ func (h *ganttHandler) subtreeGanttEdges(
 		for relType := range edges {
 			for _, e := range edges[relType] {
 				if e[1] != rootID && subtree[e[1]] && !subtree[e[0]] {
-					return nil, nil, nil // outside parent under "mark": full build decides
+					return nil, nil, nil
 				}
 			}
 		}
@@ -849,7 +740,7 @@ func (h *ganttHandler) incomingGanttEdges(
 					"Failed to list relations", ""}
 			}
 			if rel.From == rel.To || nodes[rel.To] == nil {
-				continue // self-loop, or an endpoint this query did not ask for
+				continue
 			}
 			if rel.To == rootID && nodes[rel.From] != nil {
 				return nil, nil, true, nil
@@ -922,32 +813,16 @@ func (h *ganttHandler) addOutsideParents(
 }
 
 // linkGanttParents picks each node's parent from the admissible hierarchy
-// edges (see finishGanttForest). Extra parents are collected for the
-// multi_parent policy rather than silently dropped.
-//
-// allParents carries EVERY candidate parent per node, because the winner is
-// chosen by sort order alone and that order is blind to whether the winner is
-// itself inside a loop. A node contained by both a genuine root and a loop
-// member can therefore be claimed by the loop, which strands it (and the
-// root's real child) where no root can reach it. "error" and "prune" never
-// notice — they discard the whole component — but "mark" renders it, so it
-// re-seats such a node via reseatCycleParents. Keeping the full candidate set
-// here means that repair reuses this function's edge filtering rather than
-// re-deriving which edges were admissible.
+// edges. Extra parents are collected for the multi_parent policy rather than
+// dropped. allParents carries every candidate per node so that
+// reseatCycleParents can repair a node a loop claimed by sort order.
 func linkGanttParents(
 	g dataentryconfig.Gantt, nodes map[string]*ganttNode, edgesByType map[string][][2]string,
 ) (parent map[string]string, allParents map[string][]string, multiParent []string) {
 	parent = map[string]string{}
-	// allParents records every candidate edge, not just the winner, so the
-	// "mark" policy can re-seat a node whose first-sorting parent turned out
-	// to sit inside a loop. Collected unconditionally (it is one map append
-	// per edge) rather than behind the policy flag, so the two paths cannot
-	// see different edge sets.
 	allParents = map[string][]string{}
 	for _, relType := range g.Hierarchy {
 		edges := edgesByType[relType]
-		// Deterministic parent choice under multi_parent:first — sort within
-		// the relation type, and relation types apply in config order.
 		sort.Slice(edges, func(i, j int) bool {
 			if edges[i][0] != edges[j][0] {
 				return edges[i][0] < edges[j][0]
@@ -963,9 +838,6 @@ func linkGanttParents(
 				continue
 			}
 			parent[e[1]] = e[0]
-			// Guard adjacent to the deref, not 20 lines up: the edge loaders
-			// filter unknown endpoints today, but this must not become a
-			// panic if a future edge source skips that filter.
 			if p := nodes[e[0]]; p != nil {
 				p.children = append(p.children, e[1])
 			}
@@ -974,29 +846,18 @@ func linkGanttParents(
 	return parent, allParents, multiParent
 }
 
-// reseatCycleParents repairs the one shape where sort-order parent selection
-// strands a node under on_cycle:"mark": the chosen parent cannot be reached
-// from any root, but another candidate can. It moves the node to that
-// candidate so it renders where an operator expects, leaving the loop to be
-// broken by the fold's back-edge cut instead of by an accident of id order.
-//
-// Only nodes whose current parent is root-unreachable are touched, so a graph
+// reseatCycleParents moves a node whose chosen parent is unreachable from
+// any root to the first candidate parent that is reachable, under
+// on_cycle:"mark". Nodes with a reachable parent are untouched, so a graph
 // with no loop is left byte-identical. Candidates are tried in the order
-// linkGanttParents collected them (sorted within each relation type, relation
-// types in config order), so the outcome does not depend on map iteration.
+// linkGanttParents collected them, so the outcome is deterministic.
 //
-// Nil: nodes/parent/allParents are never nil — finishGanttForest builds all
-// three before calling.
+// Nil: nodes/parent/allParents are never nil; finishGanttForest builds them.
 func reseatCycleParents(
 	nodes map[string]*ganttNode, parent map[string]string, allParents map[string][]string,
 ) (cyclic map[string]bool) {
 	cyclic = map[string]bool{}
 
-	// reachable holds nodes whose parent chain is known to terminate at a
-	// root. Seeded with the parentless nodes and grown downward, so it is
-	// built by walking children — never by following parents upward, which
-	// would recurse on a DATA-controlled chain and risk the goroutine stack
-	// overflow foldGantt is iterative to avoid.
 	reachable := make(map[string]bool, len(nodes))
 	growFrom := make([]string, 0, len(nodes))
 	grow := func(seed string) {
@@ -1018,10 +879,6 @@ func reseatCycleParents(
 		}
 	}
 
-	// Anything still unreachable sits in a loop. Re-seat the ones that have a
-	// reachable alternative parent; each success grows the reachable set,
-	// which may in turn rescue nodes hanging off the repaired one. Sorted
-	// order keeps the choice independent of map iteration.
 	for _, id := range ganttSortedKeys(nodes) {
 		if reachable[id] {
 			continue
@@ -1030,13 +887,6 @@ func reseatCycleParents(
 			if cand == parent[id] || !reachable[cand] {
 				continue
 			}
-			// Detach from the loop parent, attach to the reachable one. The
-			// edge just dropped IS the back edge — parent links are
-			// single-valued, so once this node moves the loop no longer
-			// exists in the structure the fold walks and nothing downstream
-			// could rediscover it. Record both ends here: the node the edge
-			// pointed at is what gets flagged, and the loop parent keeps it
-			// as a cut child so it does not read as a leaf.
 			loopParent := parent[id]
 			if p := nodes[loopParent]; p != nil {
 				p.children = removeGanttChild(p.children, id)
@@ -1045,7 +895,7 @@ func reseatCycleParents(
 			cyclic[id] = true
 			parent[id] = cand
 			nodes[cand].children = append(nodes[cand].children, id)
-			grow(id) // this node and its subtree are reachable now
+			grow(id)
 			break
 		}
 	}
@@ -1110,7 +960,7 @@ func (h *ganttHandler) ganttEdges(
 				return nil, &ganttError{http.StatusInternalServerError, "internal", "Failed to list relations", ""}
 			}
 			if rel.From == rel.To {
-				continue // self-loop: degenerate cycle, never a tree edge
+				continue
 			}
 			if nodes[rel.From] == nil || nodes[rel.To] == nil {
 				continue
@@ -1125,35 +975,20 @@ func (h *ganttHandler) ganttEdges(
 }
 
 // foldGantt computes every node's rolled span, post-order, and marks
-// reachability. Iterative on an explicit stack: recursion depth here is
-// DATA-controlled (a chain of containment edges), and a deep-enough chain
-// would overflow the goroutine stack — which kills the process, not the
-// request. The emit walk is depth-capped so it has no such exposure.
-//
-// markCycles arms back-edge detection for on_cycle:"mark". An edge to a node
-// already ON THE ACTIVE STACK closes a loop; the walk records the target in
-// f.cyclic, drops that one edge, and carries on. On-stack is the precise test
-// — a node merely already-visited is a multi-parent diamond, which
-// multi_parent has already resolved and which must NOT be reported as a
-// cycle. Without the flag the walk is unchanged, because "error" and "prune"
-// derive their answer from the unreached set instead and must keep byte-
-// identical output.
-//
-// Cutting the back edge cannot lose a node: the target is by definition
-// already on the stack, so it is reachable and folds through its first
-// parent. What it does drop is that edge's span contribution to its own
-// ancestor — correct, since including it would make a node contribute to its
-// own roll-up.
+// reachability. It is iterative because recursion depth is data-controlled
+// and a stack overflow kills the process. With markCycles set, an edge to a
+// node on the active stack closes a loop: the target goes into f.cyclic and
+// that one edge is cut, which drops no node. A merely visited node is a
+// multi-parent diamond, not a cycle.
 func foldGantt(f *ganttForest, rootID string, markCycles bool) {
 	type frame struct {
 		id   string
-		next int // index into children; len(children) means "fold and pop"
+		next int
 	}
 	stack := []frame{{id: rootID}}
 	f.reachable[rootID] = true
 	sort.Strings(f.nodes[rootID].children)
 
-	// onStack is the active path, maintained only when detecting back edges.
 	var onStack map[string]bool
 	if markCycles {
 		onStack = map[string]bool{rootID: true}
@@ -1167,9 +1002,6 @@ func foldGantt(f *ganttForest, rootID string, markCycles bool) {
 			top.next++
 			if markCycles {
 				if onStack[childID] {
-					// Back edge: flag the node it points at and cut it. The
-					// child keeps its place under the parent that first
-					// reached it; only this repeat descent stops.
 					f.cyclic[childID] = true
 					n.cutChildren = append(n.cutChildren, childID)
 					continue
@@ -1181,8 +1013,6 @@ func foldGantt(f *ganttForest, rootID string, markCycles bool) {
 			stack = append(stack, frame{id: childID})
 			continue
 		}
-		// Post-order: children folded; contribute upward the union of what
-		// this node declares and what rolled into it.
 		stack = stack[:len(stack)-1]
 		if markCycles {
 			delete(onStack, top.id)
@@ -1223,10 +1053,6 @@ func emitGanttNode(f *ganttForest, id string, depth, maxDepth int, budget *gantt
 	out.Breach.After = n.end != nil && n.rolled.end != nil && n.rolled.end.After(*n.end)
 	out.InCycle = f.cyclic[id]
 
-	// Under on_cycle:"mark" a cut edge stays in n.children (the fold only
-	// declined to DESCEND it), so emit must skip it too — following it here
-	// would walk the loop the fold just broke, bounded only by maxDepth and
-	// rendering the same node repeatedly.
 	children := n.children
 	if len(n.cutChildren) > 0 {
 		cut := map[string]bool{}
@@ -1239,17 +1065,10 @@ func emitGanttNode(f *ganttForest, id string, depth, maxDepth int, budget *gantt
 				children = append(children, childID)
 			}
 		}
-		// The cut edge is a real containment edge that this response does not
-		// carry, so the node is not a leaf — same contract as the depth cap.
 		out.HasMoreChildren = true
 	}
 
 	if depth >= maxDepth {
-		// Children beyond the cap are not emitted, but their dates are
-		// already inside this node's rolled span — the fold ran first.
-		// HasMoreChildren keeps the withholding visible on the wire: with
-		// Children omitempty, a capped node would otherwise be
-		// byte-identical to a genuine leaf.
 		out.HasMoreChildren = out.HasMoreChildren || len(children) > 0
 		return out
 	}

@@ -41,11 +41,6 @@ func (h *writeHandler) validateRelationsModern(
 	}
 	meta := h.schema().Meta
 
-	// Self-loop shape_conflict detection: a body that references the
-	// path entity under BOTH a canonical name AND its inverse for the
-	// same canonical relation refers to the same physical edge twice.
-	// Skipped for symmetric relations (whose inverse equals canonical
-	// and which have no preferred direction).
 	if err := detectSelfLoopShapeConflict(meta, entityID, desired); err != nil {
 		return nil, err
 	}
@@ -60,9 +55,6 @@ func (h *writeHandler) validateRelationsModern(
 		warnings = append(warnings, ws...)
 	}
 
-	// An incoming content edge names a face of its peer, and remove may
-	// name only edges that exist; planning reports either failure. The
-	// tail is unused: it picks outgoing edges only.
 	for bodyKey, upd := range desired {
 		canonical, incoming, _ := resolveDirection(meta, bodyKey)
 		if !incoming || !meta.Relations[canonical].Scope.IsContent() {
@@ -90,21 +82,12 @@ type edgeCheck struct {
 	peer        entity.Address // the ref's id, parsed; see peerAddress
 }
 
-// checkRelationEdges runs the checks of a relation body that refuse it: the
+// checkRelationEdges runs the refusing checks of a relation body: the
 // structural ones, then the type allowlist on both ends of every upserted
-// edge (DEC-0D8UZX3). pathEntityType is the type of the entity the body is
-// sent to; it needs no id, so a create checks the body before the entity
-// exists. It returns the upserted edges and the readable types of their
-// peers, for the soft checks.
-//
-// The structural checks run first, so a request they reject pays no read.
-// Every peer is then gated in one batch, so the cost does not grow with the
-// number of edges. Each edge is then checked in the manager's order: a peer
-// the caller may not read is refused as missing, then the source end, then
-// the target end. A hidden peer is answered like an absent one and is never
-// type-checked, so the 422 reveals neither its existence nor its type, and an
-// edge wrong at both ends gets the same code as on the other surfaces. Body
-// keys are walked in sorted order, so the error does not depend on map order.
+// edge (DEC-0D8UZX3). It returns the upserted edges and their peers' readable
+// types. Peers are gated in one batch. A peer the caller may not read is
+// refused as missing and never type-checked, so the 422 reveals neither its
+// existence nor its type. Body keys are walked in sorted order.
 func (h *writeHandler) checkRelationEdges(
 	ctx context.Context, pathEntityType string, desired map[string]v1.RelationsUpdate,
 ) ([]edgeCheck, map[string]string, error) {
@@ -132,9 +115,6 @@ func (h *writeHandler) checkRelationEdges(
 		for i, ref := range upd.Upserts() {
 			edgePath := fmt.Sprintf("/relations/%s%s/%d", v1.JSONPointerEscape(bodyKey), upsertKey(upd), i)
 
-			// Content on a non-content-bearing relation type is a
-			// structural impossibility — the file format can't hold
-			// a body for that type.
 			if ref.Content != nil && !relDef.Content {
 				return nil, nil, &structuralError{
 					Code:   "content_not_supported",
@@ -143,9 +123,6 @@ func (h *writeHandler) checkRelationEdges(
 				}
 			}
 
-			// Wire-format violation for managed order properties: only
-			// finite numeric values are acceptable on _order_out / _order_in
-			// because the engine's sort/midpoint math depends on them.
 			if err := validateManagedOrderMeta(canonical, ref, edgePath, &relDef); err != nil {
 				return nil, nil, err
 			}
@@ -170,8 +147,6 @@ func (h *writeHandler) checkRelationEdges(
 		if peerType == "" {
 			return nil, nil, danglingPeerError(e.relType, e.ref.ID)
 		}
-		// The path entity is the source of an outgoing edge and the target
-		// of an incoming one; the peer is the other end.
 		source, sourcePath, target, targetPath := pathEntityType, e.wrapperPath, peerType, e.path
 		if e.incoming {
 			source, sourcePath, target, targetPath = peerType, e.path, pathEntityType, e.wrapperPath
@@ -265,15 +240,11 @@ func (h *writeHandler) collectEdgeWarnings(
 		})
 	}
 
-	// Managed order properties are recognized when the relation type is
-	// orderable on the corresponding side. They are not declared in
-	// relDef.Properties — the engine reserves them.
 	isManagedOrderProperty := func(name string) bool {
 		return (name == metamodel.OrderPropertyOut && relDef.OutgoingOrderProperty() != "") ||
 			(name == metamodel.OrderPropertyIn && relDef.IncomingOrderProperty() != "")
 	}
 
-	// Closed-schema check on meta keys.
 	for k := range ref.Meta {
 		if isManagedOrderProperty(k) {
 			continue
@@ -301,12 +272,11 @@ func (h *writeHandler) collectEdgeWarnings(
 		}
 	}
 
-	// Per-property type validation for declared keys with provided values.
 	metaValidator := metamodel.NewValidator(meta)
 	for k, v := range ref.Meta {
 		propDef, known := relDef.Properties[k]
 		if !known {
-			continue // already warned above
+			continue
 		}
 		if err := metaValidator.ValidatePropertyValue(k, &propDef, v); err != nil {
 			warnings = append(warnings, Warning{
@@ -332,22 +302,11 @@ func (e *gateFaultError) Error() string { return "read gate: " + e.err.Error() }
 func (e *gateFaultError) Unwrap() error { return e.err }
 
 // applyRelationsModern performs the diff and write phase of the modern
-// reconciler. Validation should have run already via
-// validateRelationsModern; this function does NOT re-validate. It only
-// surfaces additional warnings that depend on post-merge state (e.g.
-// required-meta-unset) and store-write errors.
-//
-// Every edge is written through the EntityManager, which runs the ACL,
-// the endpoint checks and the audit.
-//
-// Returns warnings collected during the apply phase plus any error
-// that prevented further writes. On a write-loop error, the relations
-// already written stay written — the caller treats this as the
-// documented atomicity gap.
-//
-// The creates and removes of the wrappers in joined were written with the
-// entity update; only their remaining ops are written here. joined may be
-// nil.
+// reconciler; validateRelationsModern must have run already. Every edge is
+// written through the EntityManager, which runs the ACL, endpoint checks and
+// audit. It returns post-merge warnings and any error that stopped the writes;
+// relations already written stay written. Wrappers in joined (may be nil)
+// had their creates and removes written with the entity update.
 func (h *writeHandler) applyRelationsModern(
 	ctx context.Context, addr entity.Ref, desired map[string]v1.RelationsUpdate, joined *joinedRelations,
 ) ([]Warning, error) {
@@ -377,7 +336,6 @@ func applyRelationWrapper(
 	meta := h.schema().Meta
 	canonical, incoming, ok := resolveDirection(meta, bodyKey)
 	if !ok {
-		// validateRelationsModern already screened this; defensive.
 		return nil, &structuralError{
 			Code:   "unknown_relation_type",
 			Path:   "/relations/" + v1.JSONPointerEscape(bodyKey),
@@ -393,13 +351,7 @@ func applyRelationWrapper(
 		return nil, planErr
 	}
 	var warnings []Warning
-	// A relation a write-enforced rule reads is written the same way, so the
-	// rule judges the wrapper's edges together (TKT-EBARYBI).
 	if w.relDef.MaxOutgoing != nil || w.relDef.MaxIncoming != nil || h.manager.ChecksRelation(canonical) {
-		// A bounded relation writes its creates and removes as one atomic
-		// replace, so re-pointing it (with `data`, or `add` and `remove`, on
-		// either side) never trips the bound on the edge it is leaving
-		// (TKT-65LVAK). Meta updates of kept edges stay on applyEdgeOps.
 		var boundErr error
 		ops, warnings, boundErr = w.applyBounded(ctx, ops)
 		if boundErr != nil {
@@ -553,7 +505,7 @@ func (w *wrapperWrite) applyEdgeOps(
 		if op.remove {
 			err := w.h.manager.DeleteRelation(ctx, k)
 			if errors.Is(err, store.ErrNotFound) {
-				continue // a concurrent request deleted it first
+				continue
 			}
 			if err != nil {
 				return warnings, &relationError{
@@ -568,11 +520,8 @@ func (w *wrapperWrite) applyEdgeOps(
 			w.path+upsertKey(w.upd), direction)...)
 		exists := op.existing != nil
 		if exists && isEdgeNoOp(op.existing, finalProps, finalContent, contentSet, op.ref) {
-			continue // value-based no-op suppression
+			continue
 		}
-		// An existing edge is addressed by the tail it carries, never one
-		// recomputed from the request: the store treats the tail as
-		// identity, so a recomputed one would modify a different edge.
 		if err := w.h.upsertEdge(ctx, edgeWrite{
 			from: k.From, to: k.To, relType: w.relType, bodyKey: w.bodyKey, ref: op.ref,
 			exists: exists, existingTail: op.slot.tail, newTail: op.slot.tail,
@@ -653,31 +602,12 @@ func (h *writeHandler) upsertEdge(ctx context.Context, w edgeWrite) error {
 // create while concurrent requests keep flipping the edge.
 const upsertEdgeAttempts = 8
 
-// writeCreateRelation creates a new relation via the EntityManager
-// (preserving the ACL, audit, validation and automation paths).
-//
-// Error handling splits three ways:
-//
-//   - ACL denial (*acl.ForbiddenError): propagated so the handler maps it
-//     to 403. The EntityManager authorizes BEFORE any peer-existence check
-//     (BUG-K6FEVB), so a denied write is a ForbiddenError even when the
-//     peer is missing.
-//   - Missing peer (source/target entity not found): returned as a hard
-//     structuralError so the handler maps it to 422. This is a DELIBERATE
-//     reversal of DEC-HWZHA's soft-condition treatment for THIS case: the
-//     old fallback wrote the edge directly to the store, skipping the ACL
-//     and audit (that is the --read-only bypass BUG-K6FEVB). The user needs
-//     feedback that the reference did not resolve, so we reject rather than
-//     silently warn.
-//   - Endpoint type the relation does not allow: a 422 with the code the
-//     validation phase gives (DEC-0D8UZX3). That phase refuses it first;
-//     the manager refuses it again when a peer's type changed in between.
-//     Wrappers written before that refusal stay written.
-//
-// `from` and `to` are pre-resolved by the caller via edgeEndpoints —
-// this function does not consult direction. `ref.ID` is the peer ID
-// (which is `to` for outgoing edges and `from` for incoming). bodyKey is
-// the relation's name as the request sent it (canonical or inverse), for the
+// writeCreateRelation creates a new relation via the EntityManager.
+// An ACL denial propagates as *acl.ForbiddenError (403), even when the peer is
+// missing (BUG-K6FEVB). A missing peer is a hard structuralError (422), never a
+// direct store write. A disallowed endpoint type is a 422 with the validation
+// phase's code (DEC-0D8UZX3). `from` and `to` are pre-resolved by the caller;
+// `ref.ID` is the peer ID; bodyKey is the relation name as sent, for the
 // path of a cardinality error.
 func (h *writeHandler) writeCreateRelation(
 	ctx context.Context, from string, tail entity.Face, to, relType, bodyKey string, ref v1.ResourceIdentifier,
@@ -728,8 +658,6 @@ func (h *writeHandler) writeUpdateRelation(
 		return nil
 	}
 	if isMissingPeerCondition(err) {
-		// See writeCreateRelation: a dangling peer is a hard 422, never a
-		// silent ungated store write (BUG-K6FEVB).
 		return danglingPeerError(relType, ref.ID)
 	}
 	return &relationError{
@@ -739,20 +667,11 @@ func (h *writeHandler) writeUpdateRelation(
 }
 
 // incomingEdgeTail reports the tail of the stored edge from→to, for the
-// INCOMING path of the single-relation PATCH and DELETE routes. There the
-// edge's source is the peer, so its tail is not this request's to choose:
-// recomputing it from the request would address a DIFFERENT edge and report
-// success (RR-5MLZCR). An edge the path entity owns takes its tail from
-// [writeHandler.ownedTail] instead.
-//
-// The peer may hold one edge per face, so the target may name the face
-// (`POL-1@draft`). Only edges the principal can read are candidates
-// ([visibleReader.readableRelations]). A bare target names the one such
-// edge, and is face_required when there are several. No match returns the
-// zero face, which leaves the manager's own not-found answer to stand; a
-// named face the principal cannot read is [errEdgeNotFound], the same answer
-// as an absent edge. A read fault is returned: it is not evidence of a
-// default-tail edge, and the affordance gate reads the source at this tail.
+// incoming path of the single-relation PATCH and DELETE routes, where the
+// tail belongs to the peer (RR-5MLZCR). Only edges the principal can read are
+// candidates. A bare target names the one such edge and is face_required when
+// there are several. No match returns the zero face; a named face the
+// principal cannot read is [errEdgeNotFound]. A read fault is returned.
 func (h *writeHandler) incomingEdgeTail(
 	ctx context.Context, peer entity.Address, relType, to string,
 ) (entity.Face, error) {
@@ -863,9 +782,6 @@ func isEdgeNoOp(
 	existing *entity.Relation, finalProps map[string]any,
 	finalContent string, contentSet bool, ref v1.ResourceIdentifier,
 ) bool {
-	// If the request has no per-edge upsert fields at all and the
-	// edge already exists, it's trivially a no-op. (Strict subset of
-	// the value-based check below; kept as a fast path.)
 	if ref.Meta == nil && ref.MetaUnset == nil && ref.Content == nil {
 		return true
 	}

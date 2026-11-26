@@ -15,20 +15,10 @@ import (
 //   - Protocol-relative URLs  like  //evil.com/pwn
 //   - Backslash-prefixed URLs like  /\evil.com (browsers normalise \ to /)
 //   - Fully-qualified URLs    like  http://evil.com  or  mailto:…
-//
-// Returns the normalised path on success (same-origin, path+query only) and
-// the empty string on rejection. Callers should treat an empty return value
-// as "no redirect target; fall back to default."
 func isSafeReturnPath(s string) string {
 	if s == "" {
 		return ""
 	}
-	// Reject protocol-relative and backslash-tricks up front. url.Parse
-	// happily accepts "//evil.com" and reports an empty scheme but sets
-	// Host — but we want to reject before the parser normalises anything.
-	// Percent-encoded separators are matched case-insensitively (both
-	// /%5C and /%5c; both /%2F and /%2f) so the guard mirrors the
-	// browser's normalisation and the client-side isSafeReturnPath.
 	if strings.HasPrefix(s, "//") || strings.HasPrefix(s, `/\`) {
 		return ""
 	}
@@ -45,9 +35,6 @@ func isSafeReturnPath(s string) string {
 	if !strings.HasPrefix(u.Path, "/") {
 		return ""
 	}
-	// Re-assemble to drop any fragment/scheme the parser reconstructed.
-	// We want path + raw query + raw fragment (fragment is fine; client-
-	// side scroll anchors are expected).
 	out := u.Path
 	if u.RawQuery != "" {
 		out += "?" + u.RawQuery

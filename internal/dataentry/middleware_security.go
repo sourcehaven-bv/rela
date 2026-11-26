@@ -67,11 +67,6 @@ func newSecurity(cfg SecurityConfig) (*security, error) {
 
 	switch {
 	case isUnspecified(host):
-		// Operator opted into LAN access. We cannot enumerate the
-		// legitimate Host headers ahead of time (each interface, each
-		// DNS name, each /etc/hosts entry would need to be allowed),
-		// so we leave allowedHosts nil to accept any Host. The Origin
-		// allowlist is the operator's responsibility via --allowed-origin.
 		allowedHosts = nil
 
 	case isLoopback(host):
@@ -83,8 +78,6 @@ func newSecurity(cfg SecurityConfig) (*security, error) {
 		addOrigin("http://" + net.JoinHostPort("::1", port))
 
 	default:
-		// Bound to a specific non-loopback interface. Allow that exact
-		// host:port for both Host and Origin.
 		addHost(net.JoinHostPort(host, port))
 		addOrigin("http://" + net.JoinHostPort(host, port))
 	}
@@ -149,9 +142,6 @@ func (s *security) requireSameOrigin(next http.Handler) http.Handler {
 			return
 		}
 
-		// A provably non-browser request (no cookie, no origin) on a
-		// non-browser-exempt path skips the same-origin check —
-		// it cannot be a CSRF, which always carries a cookie. See isCSRFExempt.
 		if isCSRFExempt(r) {
 			next.ServeHTTP(w, r)
 			return
@@ -176,8 +166,6 @@ func (s *security) requireSameOrigin(next http.Handler) http.Handler {
 // Origin/Referer/Host with embedded newlines cannot inject fake log lines
 // into structured log destinations.
 func (s *security) reject(w http.ResponseWriter, r *http.Request, reason string) {
-	// Cap each attacker-controlled log field so a huge header can't bloat the
-	// log line.
 	const maxLogFieldLen = 200
 	origin := r.Header.Get("Origin")
 	if origin == "" {
@@ -332,24 +320,12 @@ var insensitivePathPrefixes = []string{
 	"/api/v1/_apps/",
 }
 
-// isNonBrowserExemptV1Path reports whether an /api/v1 path is one a
-// non-browser API client (curl, a script) uses, so the same
-// provably-non-browser CSRF relaxation as nonBrowserExemptPrefixes applies.
-// It was introduced for the sync CLI (TKT-8P1TM7, since removed) and is kept
-// because documented curl usage of the data API relies on it. It matches:
-//
-//   - /api/v1/_schema — the schema handshake
-//   - /api/v1/_openapi.json — the OpenAPI spec a generic API client (restish)
-//     loads before it can call the data routes (TKT-3DLP0K); read-only config
-//   - /api/v1/{plural}[/...] — the entity/relation data routes, where {plural}
-//     is a real entity-type plural: a first segment that does NOT start with '_'
-//
-// It deliberately does NOT match the underscore-prefixed v1 sub-surfaces
-// (/api/v1/_apps, /api/v1/_search, /api/v1/_config, /api/v1/_sidebar, …): those
-// are SPA/browser surfaces and keep the full same-origin gate. So this cannot
-// widen the exemption to anything a browser reaches — and even for the data
-// routes the exemption still requires the no-cookie/no-origin/no-Sec-Fetch shape
-// that only a non-browser client produces.
+// isNonBrowserExemptV1Path reports whether an /api/v1 path is one a non-browser
+// API client uses, so the non-browser CSRF relaxation applies. It matches
+// /api/v1/_schema, /api/v1/_openapi.json and the data routes /api/v1/{plural},
+// whose first segment does not start with '_'. Other underscore-prefixed
+// surfaces are browser surfaces and keep the full same-origin gate. The
+// exemption still requires the no-cookie, no-origin, no-Sec-Fetch shape.
 func isNonBrowserExemptV1Path(path string) bool {
 	const base = "/api/v1/"
 	if !strings.HasPrefix(path, base) {
@@ -366,9 +342,6 @@ func isNonBrowserExemptV1Path(path string) bool {
 	if first == "_schema" {
 		return true
 	}
-	// A data route: {plural} is a type-name slug, never underscore-prefixed
-	// (underscore-prefixed first segments are the reserved _apps/_search/_config
-	// /… surfaces, which must stay browser-gated).
 	return first != "" && first[0] != '_'
 }
 
@@ -387,25 +360,11 @@ func isSensitivePath(path string) bool {
 }
 
 // isCSRFExempt reports whether a sensitive-path request may skip the same-origin
-// check because it is provably NOT a browser-driven request — only then is CSRF
-// (which is a browser-only threat) inapplicable.
-//
-// The primary signal is the Fetch Metadata header Sec-Fetch-Site, the standard,
-// browser-controlled CSRF defense (https://web.dev/articles/fetch-metadata).
-// Every modern browser sends it on every request and JavaScript CANNOT set or
-// override it — so its PRESENCE means a real browser made this request, and the
-// exemption must not apply (the request falls through to the normal same-origin
-// check, which correctly allows same-origin and rejects cross-site). A
-// non-browser client (the rela CLI, curl, server-side HTTP) never sends it.
-//
-// Cookie and Origin/Referer are kept as defense-in-depth for the (rare,
-// pre-2020) browser that predates Fetch Metadata: such a browser still sends a
-// Cookie when credentialed and an Origin on cross-origin requests, so a request
-// carrying either is treated as browser-driven and is NOT exempt.
-//
-// Net: a request is exempt only on a non-browser-exempt path AND with no
-// Sec-Fetch-Site AND no Cookie AND no Origin/Referer — a shape no browser
-// produces but the header-authenticated CLI always does.
+// check because it is provably not browser-driven. A browser always sends
+// Sec-Fetch-Site, which JavaScript cannot set, so its presence means not exempt.
+// A Cookie or Origin/Referer also means not exempt, for browsers older than
+// Fetch Metadata. A request is exempt only on a non-browser-exempt path with
+// none of those headers, a shape only a non-browser client produces.
 func isCSRFExempt(r *http.Request) bool {
 	exemptPath := false
 	for _, p := range nonBrowserExemptPrefixes {
@@ -414,14 +373,6 @@ func isCSRFExempt(r *http.Request) bool {
 			break
 		}
 	}
-	// Non-browser clients read and write through the authorized /api/v1 data
-	// routes and /api/v1/_schema. Those paths can't be a static prefix
-	// ({plural} varies per entity type), so match them explicitly. The
-	// exemption is STILL conditioned on the provably-non-browser signals below
-	// (no Sec-Fetch-Site, no Cookie, no Origin), which a browser cannot forge,
-	// so a browser fetch() of a v1 data route stays same-origin gated. This
-	// does NOT blanket-exempt /api/v1: only the specific data + schema shapes
-	// match.
 	if !exemptPath && isNonBrowserExemptV1Path(r.URL.Path) {
 		exemptPath = true
 	}
@@ -429,19 +380,13 @@ func isCSRFExempt(r *http.Request) bool {
 		return false
 	}
 	if r.Header.Get("Sec-Fetch-Site") != "" {
-		return false // a real browser (the header is browser-set, JS cannot forge it)
+		return false
 	}
 	if len(r.Cookies()) > 0 {
-		return false // credentialed request — pre-Fetch-Metadata browser fallback
+		return false
 	}
-	// A bare CLI sends NO Origin header at all. A browser sends one on
-	// cross-origin requests — INCLUDING the literal "null" a sandboxed iframe or
-	// cross-origin form POST sends. So reject on the PRESENCE of an Origin header,
-	// not just a parseable one: `requestOrigin` maps "null" to (,false), which
-	// would otherwise let a sandboxed-iframe cross-origin POST ride the exemption.
-	// Referer is also a browser signal, so a present Referer disqualifies too.
 	if r.Header.Get("Origin") != "" || r.Header.Get("Referer") != "" {
-		return false // a browser sent an Origin/Referer — not a bare CLI request
+		return false
 	}
 	return true
 }
@@ -462,7 +407,6 @@ func requestOrigin(r *http.Request) (string, bool) {
 		return o, true
 	}
 	if referer := r.Header.Get("Referer"); referer != "" {
-		// Referer is a full URL with a path; extract just the origin.
 		o, err := originFromURL(referer)
 		if err != nil {
 			return "", false
@@ -523,8 +467,6 @@ func normaliseOrigin(raw string) (string, error) {
 			return "", errMalformedOrigin
 		}
 	}
-	// RFC 6454: an origin has scheme, host, port — no path, query, fragment.
-	// We tolerate a single empty path (Origin headers from some clients).
 	if u.Path != "" && u.Path != "/" {
 		return "", errMalformedOrigin
 	}
@@ -607,7 +549,6 @@ func isSafePathSegment(s string) bool {
 		return false
 	}
 	if strings.HasPrefix(s, ".") {
-		// Reject hidden-style segments to avoid surprises like ".git".
 		return false
 	}
 	for _, r := range s {

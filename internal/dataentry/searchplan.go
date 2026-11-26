@@ -63,13 +63,10 @@ func planSearch(meta *metamodel.Metamodel, sq *searchparser.SearchQuery, exactTy
 	types := uniqueTypes(sq.EntityTypes)
 	if exactType != "" {
 		if len(types) > 0 && !slices.Contains(types, exactType) {
-			// The caller drops every row the query could return.
 			return searchPlan{}, true
 		}
 		types = []string{exactType}
 	}
-	// No type named means every granted type, and a filter would have to be
-	// declared on all of them.
 	if len(types) == 0 {
 		return searchPlan{}, false
 	}
@@ -97,10 +94,6 @@ func planSearch(meta *metamodel.Metamodel, sq *searchparser.SearchQuery, exactTy
 	rollups := meta.RollupNames(types[0])
 	for _, spec := range sq.SortClauses {
 		pd, declared := def.Properties[spec.Property]
-		// A virtual key (id, modified) is not a stored property, and a
-		// roll-up is computed per reader, so the store cannot order by
-		// either. filter.QuerySort orders a string-shaped property exactly
-		// as the store does (TKT-9OFGH4).
 		if filter.IsVirtualSortProperty(spec.Property) || !declared || pd.List ||
 			!queryplan.StringShaped(meta, pd) || slices.Contains(rollups, spec.Property) {
 
@@ -135,22 +128,8 @@ func uniqueTypes(types []string) []string {
 // declared as a string or an enum (inline `values:` or a custom type) on
 // every type. On those, filter.MatchAll compares the stored string to the
 // value byte for byte, and emptiness is decided by internal/propmatch on
-// both sides. Everything else declines:
-//
-//   - a date compares instants in Go ("2026-01-01" equals
-//     "2026-01-01T00:00:00Z"), bytes in the store;
-//   - an integer, a decimal or a boolean compares numbers or truth values;
-//   - an enum value the schema does not declare is an error in Go, which
-//     matches no row, while the store would compare it;
-//   - `!=` with no value is the "has a value" test, which is left to the Go
-//     path rather than reasoned about here;
-//   - a roll-up is not in the store at all.
-//
-// A stored value whose shape contradicts its declaration (a number in a
-// string property, as `owner: 2026` in YAML) is judged differently: Go
-// matches no such row, the store compares its text form. The plan can then
-// return a row the Go path would not, as the list pushdown (listpushdown.go)
-// can.
+// both sides. Everything else declines, because Go and the store would
+// compare it differently.
 func exactSearchPredicate(meta *metamodel.Metamodel, types []string, f *filter.Filter) (store.PropPredicate, bool) {
 	if f.IsGlob {
 		return store.PropPredicate{}, false
@@ -186,8 +165,6 @@ func exactSearchPredicate(meta *metamodel.Metamodel, types []string, f *filter.F
 	}
 	p := store.PropPredicate{Property: f.Property, Op: op, Value: f.Value}
 	if op == store.PropEqual {
-		// Scalar asks for exactly this value; an empty value is the "is
-		// empty" test, as in queryplan.PushdownPrefilters.
 		p.Scalar = f.Value != ""
 	}
 	return p, true
@@ -203,10 +180,8 @@ func (p searchPlan) searchQueries(
 	for _, typ := range p.types {
 		ts, ok := search.ResolveTypeScope(scope, typ)
 		if !ok {
-			continue // denied type
+			continue
 		}
-		// The same verdict restatement as visibleEntitiesOfType, so the
-		// plan and the Go path read through one verdict switch.
 		rqr := acl.ReadQueryResult{AllowAll: ts.AllowAll, Query: ts.Query, Faces: ts.Faces}
 		q, errClass, withheld, err := scopedQuery(ctx, rqr, scopeRequest{Type: typ, Props: p.props, Faces: ts.Faces})
 		if err != nil {
@@ -284,9 +259,6 @@ func (p searchPlan) page(
 	for _, n := range counts {
 		total += n
 	}
-	// The page and the count are separate reads; a delete between them
-	// must not report fewer matches than rows served. An empty page past
-	// the end serves none, so the count stands.
 	if len(rows) > 0 {
 		total = max(total, offset+len(rows))
 	}
@@ -313,11 +285,10 @@ func (p searchPlan) position(
 	ctx context.Context, svc Services, scope map[string]search.TypeScope, id string,
 ) (pos store.Position, found, ok bool, err error) {
 	if len(p.types) > 1 {
-		return store.Position{}, false, false, nil // searchPosition checks first; kept as a guard
+		return store.Position{}, false, false, nil
 	}
 	queries, err := p.searchQueries(ctx, scope)
 	if err != nil || len(queries) == 0 {
-		// No readable type: the result is empty, so id is not in it.
 		return store.Position{}, false, true, err
 	}
 	tq := queries[0]

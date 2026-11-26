@@ -104,13 +104,10 @@ func scanApps(ctx context.Context, files projectAssets) ([]appInfo, error) {
 		}
 		index, err := openAppEntry(ctx, files, id, appIndexFile)
 		if err != nil {
-			// No index.html → not an app.
 			continue
 		}
 		info := parseAppMeta(index)
 		info.ID = id
-		// An app with a missing/incompatible bridge version isn't listed (it
-		// also 422s on serve); it's not usable, so keep it out of the sidebar.
 		if reason := validateBridgeVersion(info.BridgeVersion); reason != "" {
 			slog.Warn("skipping app with invalid bridge version", "app", id, "version", info.BridgeVersion, "reason", reason)
 			continue
@@ -161,7 +158,6 @@ func openAppEntry(ctx context.Context, files projectAssets, id, entry string) ([
 	if info.Size() > maxAppFileBytes {
 		return nil, fmt.Errorf("app entry too large: %s/%s (max %d bytes)", id, rel, maxAppFileBytes)
 	}
-	// Bounded: the file may have grown since the size check.
 	b, err := io.ReadAll(io.LimitReader(f, maxAppFileBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("cannot read app entry: %s/%s", id, rel)
@@ -251,8 +247,6 @@ func parseAppMeta(htmlBytes []byte) appInfo {
 		case "description":
 			info.Description = content
 		case "bridge-version":
-			// Non-integer leaves BridgeVersion 0, which validateBridgeVersion
-			// rejects (same as absent).
 			if n, err := strconv.Atoi(strings.TrimSpace(content)); err == nil {
 				info.BridgeVersion = n
 			}

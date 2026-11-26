@@ -48,8 +48,6 @@ func (c *caldavRoutes) withPropPatch(next http.Handler) http.Handler {
 
 		names := propPatchNames(body)
 		if len(names) == 0 {
-			// Nothing recognizable to refuse per-property. Let go-webdav answer,
-			// so a malformed body keeps its existing (correct) error.
 			r.Body = io.NopCloser(strings.NewReader(string(body)))
 			next.ServeHTTP(w, r)
 			return
@@ -125,8 +123,6 @@ func writePropPatchRefusal(w http.ResponseWriter, href string, names []propPatch
 		}
 		b.WriteString(`/>`)
 	}
-	// 403: understood, and refused. NOT 200 — claiming success for a value we
-	// discard makes the client display something that reverts on the next poll.
 	b.WriteString(`</prop><status>HTTP/1.1 403 Forbidden</status></propstat></response></multistatus>`)
 
 	out := b.String()

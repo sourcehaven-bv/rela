@@ -85,44 +85,25 @@ func viewQueryScope(
 	entityType, name string,
 ) (resolved resolvedQueryScope, err error) {
 	if fn == nil {
-		// No resolver was ever wired, so no scope can be declared: config
-		// validation refuses any view naming one, and a type's scopes cannot
-		// compile without a compiler. Unscoped is the truthful answer.
 		return resolvedQueryScope{}, nil
 	}
 	if cfg == nil || meta == nil {
-		// NOT the same case. A nil metamodel does not mean "no scopes are
-		// declared", it means "I cannot tell whether any are" — and the
-		// unscoped read this used to return is the one answer that is wrong
-		// either way. Refuse instead; every caller maps this to a 500, which
-		// is what a half-built App deserves.
 		return resolvedQueryScope{}, errors.New(
 			"dataentry: cannot resolve query scope without config and metamodel")
 	}
 	resolver, problems := fn(cfg, meta)
 	if resolver == nil {
 		if len(problems) > 0 {
-			// Compilation failed at startup and was reported there; refusing
-			// here too keeps a broken scope from degrading to unfiltered.
 			return resolvedQueryScope{}, errors.New("dataentry: query scopes failed to compile")
 		}
 		return resolvedQueryScope{}, nil
 	}
 	scope, props, ok := resolver.Resolve(entityType, name)
 	if !ok {
-		// Config validation refuses an undeclared name at load, so reaching
-		// here means the config and the compiled scopes disagree — a
-		// hot-reload race, say. Refuse rather than serve the unscoped set.
 		return resolvedQueryScope{}, fmt.Errorf(
 			"%w: %q is not declared on %q", errBadQueryScope, name, entityType)
 	}
 	if scope == nil {
-		// No scope applies, but still carry the binder: the identity it
-		// stamps is request-scoped, not scope-scoped, and a view's
-		// `condition:` needs it whether or not a scope resolved. Dropping it
-		// here is what made `is_current_user(...)` in a condition fail with
-		// ErrNoCurrentUser on an unscoped list. Scope stays nil, so every
-		// "is there a scope" check still reads this as unscoped.
 		return resolvedQueryScope{Bind: resolver.StampQueryIdentity}, nil
 	}
 	resolved = resolvedQueryScope{
@@ -286,10 +267,6 @@ func AdaptQueryScopes[R interface {
 		if len(problems) > 0 {
 			return nil, problems
 		}
-		// A typed-nil R wrapped in a non-nil interface is the classic trap
-		// NextActionMatchers documents; compare against the zero value so a
-		// builder that returned nothing yields a nil seam, not a live one
-		// that panics on first use.
 		var zero R
 		if any(r) == any(zero) {
 			return nil, nil

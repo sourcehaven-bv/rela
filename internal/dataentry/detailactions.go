@@ -117,10 +117,6 @@ func (c *detailActionCheck) whenHolds(ctx context.Context, id string) bool {
 	if m == nil {
 		return false
 	}
-	// A when that reads a hidden property fails closed. On the redacted
-	// entity the property binds as unset, so `entity.x ~= 'y'` would pass on
-	// an entity the operator meant to exclude. Field names are not secret, so
-	// refusing reveals nothing about the value.
 	attrs, ok := m.(entityAttributeReader)
 	if !ok {
 		slog.Warn("dataentry: detail action when does not report its fields; not offering it", "action", id)

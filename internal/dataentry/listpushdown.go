@@ -57,18 +57,12 @@ type listPlan struct {
 // modifiedSortKey is the virtual sort key that orders by modification time.
 const modifiedSortKey = "modified"
 
-// planListPushdown decides whether the request is eligible and, if so,
-// builds the paged query. ok=false means "take the Go path"; it is never
-// an error, because ineligibility is the ordinary case for a request the
-// planner does not understand.
-//
+// planListPushdown decides whether the request is eligible and, if so, builds
+// the paged query. ok=false means "take the Go path" and is never an error.
 // The query is a [gatedListQuery], so the store never filters or orders by a
-// property hidden from the principal on some row (BUG-WJSYQT). A sort on
-// `modified` declines when the type declares a property of that name: the Go
-// path orders by the modification time (filter.IsVirtualSortProperty), and
-// the store would order by the property value instead. The other virtual
-// key, `id`, needs no check: it is a reserved property name, so no type
-// declares it, and an undeclared sort key already declines.
+// property hidden from the principal on some row. A sort on `modified`
+// declines when the type declares a property of that name, since the Go path
+// orders by modification time.
 func planListPushdown(
 	meta *metamodel.Metamodel, typeName string, gated gatedListQuery,
 	rqr acl.ReadQueryResult, world store.WorldScope, page, perPage int,
@@ -107,7 +101,7 @@ func planListPushdown(
 			})
 		case "ne":
 			if strings.Contains(value, ",") {
-				return listPlan{}, false // a NOT IN list; the Go path handles it
+				return listPlan{}, false
 			}
 			props = append(props, store.PropPredicate{Property: property, Op: store.PropNotEqual, Value: value})
 		default:
@@ -120,9 +114,6 @@ func planListPushdown(
 		if spec.Property == modifiedSortKey || !stringShaped(spec.Property) {
 			return listPlan{}, false
 		}
-		// Values carries the enum's declared order so the store ranks by
-		// position rather than alphabetically, matching filter.QuerySort on
-		// the Go path. Empty for a plain string, which stays byte-wise.
 		order = append(order, store.OrderSpec{
 			Property:   spec.Property,
 			Descending: spec.IsDescending(),
@@ -137,7 +128,8 @@ func planListPushdown(
 		gq = store.GraphQuery{EntityType: typeName}
 		errClass = errListLoad
 	case rqr.Query != nil:
-		gq = *rqr.Query // COPY: the ACL layer reuses its result per principal
+		// why: the ACL layer reuses its query per principal, so this must be a copy.
+		gq = *rqr.Query
 	default:
 		return listPlan{}, false
 	}
@@ -201,31 +193,16 @@ func resolveListNarrowing(
 }
 
 // pushdownPlan is the ONE eligibility decision for serving a list request
-// from the store. ok is false when the store may not serve it, and the caller
-// keeps the Go path. empty reports a narrowing whose traversal the gate
-// denied: no row matches, and the Go path would read the whole type to learn
-// that.
-//
-// Every narrowing must be one the store applies. A scope and a condition are
-// only when they lower exactly (queryplan.LowerCondition: TKT-XKCNCL,
-// TKT-I39Y7N4, TKT-8HY05WB); one that does not, such as a comparison of
-// two attributes, has a Go-side remainder, and a store-side page computed
-// without it would paginate over rows it excludes: wrong counts and wrong
-// page boundaries, not merely extra rows. A condition also needs every field it reads visible on
-// every row ([lowerViewCondition]). Declining is always correct, only slower.
-// The plan's own checks run before the narrowings are lowered, because
-// lowering gates every traversal and that work is wasted on a request the
-// plan would decline anyway.
-//
-// The scope is lowered before the condition, as the Go path applies it
-// first: a denied scope is an empty page even when the condition would not
-// lower, because the Go path never evaluates a condition over no rows.
+// from the store. ok is false when the caller keeps the Go path; empty
+// reports a narrowing whose traversal the gate denied, so no row matches.
+// Every narrowing must be one the store applies exactly
+// (queryplan.LowerCondition), or a store-side page would have wrong counts and
+// boundaries. A page scope or a roll-up filter or sort declines. Declining is
+// always correct, only slower. The scope is lowered before the condition, as
+// the Go path applies it first.
 func (n listNarrowing) pushdownPlan(
 	ctx context.Context, typeName string, query gatedListQuery, page, perPage int,
 ) (plan listPlan, empty, ok bool) {
-	// A page scope (pagescope.go) narrows membership the store cannot apply,
-	// so it declines.
-	// So does a filter or sort on a roll-up: the value is not in the store.
 	if hasPageScope(query.params) || worldFromContext(ctx).blocksAllReads() ||
 		queriedRollups(n.state.Meta, typeName, query) != nil {
 
@@ -279,18 +256,12 @@ type viewConditionLowerer interface {
 }
 
 // lowerViewCondition rewrites a view condition as a store query fragment for
-// rows of typeName, or reports ok=false to keep the Go path.
-//
-// The Go path judges the condition on the REDACTED row (applyViewCondition),
-// and the store judges the stored one. They agree only when redaction removes
-// nothing the condition reads, so every attribute it reads must be visible to
-// the principal on every row: the rule gatedListQuery applies to a caller's
-// filter. A condition over a field some row hides from the principal keeps
-// the Go path, where the hidden value binds nil. A roll-up is never stored,
-// so a condition reading one keeps the Go path too.
-//
-// Each `related(...)` is gated with the request's traversal gate, as a
-// lowered scope's is.
+// rows of typeName, or reports ok=false to keep the Go path. The Go path
+// judges the REDACTED row, so every attribute the condition reads must be
+// visible on every row; otherwise a hidden field could decide which rows
+// match. A roll-up keeps the Go path. Each `related(...)` is gated with the
+// request's traversal gate. A lowering that admits another whole-record call
+// besides related(...) must extend this check.
 func lowerViewCondition(
 	ctx context.Context, meta *metamodel.Metamodel, m ViewConditionMatcher, fields fieldVisibility, typeName string,
 ) (frag store.GraphQuery, empty, ok bool) {
@@ -298,10 +269,6 @@ func lowerViewCondition(
 	if !isLowerer || fields == nil || l.EntityType() != typeName {
 		return store.GraphQuery{}, false, false
 	}
-	// EntityAttributes is complete here only because the lowering admits no
-	// call that takes the record whole except related(...), which reads no
-	// near-side field. A lowering that admits another such call must check
-	// it here too, or a hidden field could decide which rows match.
 	rollups := meta.RollupNames(typeName)
 	for _, attr := range l.EntityAttributes() {
 		if slices.Contains(rollups, attr) || !fields.FieldVisibleOnEveryRow(ctx, typeName, attr) {

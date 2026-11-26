@@ -20,22 +20,12 @@ func findViewByEntityType(views map[string]ViewConfig, entityType string) (ViewC
 	return ViewConfig{}, false
 }
 
-// buildDefaultViewConfig synthesizes a ViewConfig for entityType when no
-// explicit one is registered, so the unified detail screen always has
-// something to render.
-//
-// Sections in order:
-//  1. properties — every property in EntityDef.PropertyOrder, editable in
-//     place, with no heading: it is the only section the generator makes
-//     for the entity itself, so a label would only repeat the type. The operator wrote no view, so there is no display choice to
-//     honor; the ACL verdict still decides which fields are writable. The
-//     title property is left out: the page heading shows and edits it.
-//  2. content   — the entity's markdown body
-//  3. one section per outgoing relation whose From[] includes entityType
-//  4. one section per incoming relation whose To[] includes entityType
-//
-// Relation sections iterate metamodel.Relations in alphabetical order so
-// the output is deterministic across runs.
+// buildDefaultViewConfig synthesizes a ViewConfig for entityType when none is
+// registered. Sections in order: the properties in PropertyOrder (editable,
+// no heading, title left out; the ACL still decides writability), the
+// markdown content, one section per outgoing relation from entityType, and one
+// per incoming relation to it. Relations iterate alphabetically so the output
+// is deterministic.
 func buildDefaultViewConfig(meta *metamodel.Metamodel, entityType string) (ViewConfig, bool) {
 	entDef, ok := meta.GetEntityDef(entityType)
 	if !ok {
@@ -47,7 +37,6 @@ func buildDefaultViewConfig(meta *metamodel.Metamodel, entityType string) (ViewC
 		Entry: ViewEntry{Type: entityType},
 	}
 
-	// Properties section — only emitted when a property is left to show.
 	primary := entDef.GetPrimaryProperty()
 	fields := make([]ViewSectionField, 0, len(entDef.PropertyOrder))
 	for _, prop := range entDef.PropertyOrder {
@@ -65,21 +54,17 @@ func buildDefaultViewConfig(meta *metamodel.Metamodel, entityType string) (ViewC
 		})
 	}
 
-	// Content section — always emitted; the executor sets HasContent=false
-	// when the body is empty, and the frontend hides empty content sections.
 	view.Sections = append(view.Sections, ViewSection{
 		Source:  "entry",
 		Display: "content",
 	})
 
-	// Relation sections — sort relation names so the output is stable.
 	relationNames := make([]string, 0, len(meta.Relations))
 	for name := range meta.Relations {
 		relationNames = append(relationNames, name)
 	}
 	sort.Strings(relationNames)
 
-	// Outgoing first, then incoming.
 	for _, name := range relationNames {
 		def := meta.Relations[name]
 		if !slices.Contains(def.From, entityType) {
@@ -99,16 +84,9 @@ func buildDefaultViewConfig(meta *metamodel.Metamodel, entityType string) (ViewC
 	}
 	for _, name := range relationNames {
 		def := meta.Relations[name]
-		// Symmetric relations are already covered by the outgoing pass —
-		// emitting an incoming section would duplicate the same edges.
 		if def.Symmetric {
 			continue
 		}
-		// Self-referential relation: To[] also contains entityType. The
-		// outgoing pass already emitted a section; emitting another one
-		// for the inverse direction is the right behavior here, since the
-		// edges visible to the inverse are different from the outgoing
-		// ones. Allow through.
 		if !slices.Contains(def.To, entityType) {
 			continue
 		}

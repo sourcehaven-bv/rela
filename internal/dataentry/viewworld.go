@@ -86,65 +86,21 @@ func viewWorldFromRequest(ctx context.Context) viewWorld {
 // see worldHandle.ranksNothing.
 func (w viewWorld) ranksNothing() bool { return !w.denied && w.scope.IsTrivial() }
 
-// viewEntry resolves the view's ENTRY entity to its face in world w.
-//
-// It reads through the same visibility.Resolver the entity GET uses, with
-// the view's world passed explicitly: an explicit address, or any address in
-// the default world, is read literally; a bare id in another world is
-// resolved by the backend, ACL trimming the candidate faces before the world
-// ranks what is left. One resolution site, not two, so a view cannot serve a
-// face the entity view would not. The entry is read as the view's type, so a
-// row of another type is the same miss as an absent one.
-//
-// The resolver repeats the row gate the handler already ran
-// (`views_handler.go`, TKT-BNX2PN). The two are the same gate, so the repeat
-// cannot 404 an entry the handler cleared; it is what applies the face gate.
-//
-// # Two absences, not one
-//
-// A world that excludes the entry is NOT the same answer as "no such entity",
-// and conflating them was a defect (BUG-1): with `app.default_world` set to a
-// filtering world, every newly created entity became unreachable from creation
-// until publication — and publishing requires opening it. The LIST path already
-// drew this distinction correctly by excluding the row rather than erroring.
-//
-// So the two are now separate returns:
-//
-//   - the DEFAULT world cannot find the id -> [errViewEntryNotFound], unchanged.
-//   - a non-default world resolves nothing -> [errViewEntryNoFaceHere], which
-//     the handler resolves into one of two answers: a 200 carrying
-//     `_world_absent` plus the entity's `_faces` when the entity exists (so the
-//     page can offer the face that DOES exist), or the unchanged not-found when
-//     it does not. See [viewsHandler.writeWorldAbsentView] for why that single
-//     decision lives there rather than here.
-//
-// # Why this discloses nothing
-//
-// The distinction is drawn strictly AFTER the ACL row gate. `handleV1Views`
-// calls `gateRead` (acl.Request.PermitsRead) before executeView ever runs, and
-// that gate is world-INDEPENDENT by guard rule 1 (see the [worldreader] package
-// doc). So a principal who reaches this function has already been cleared to
-// read this entity id, and a caller who has not been cleared receives the
-// uniform 404 from the gate and never gets here. The new answer therefore
-// separates two states that are both already visible to this caller — it
-// cannot become an existence oracle, because existence was settled one layer up
-// by a check that does not consult the world.
+// viewEntry resolves the view's ENTRY entity to its face in world w through
+// the same visibility.Resolver the entity GET uses, read as the view's type.
+// The default world missing the id returns [errViewEntryNotFound]; a
+// non-default world resolving nothing returns [errViewEntryNoFaceHere], which
+// [viewsHandler.writeWorldAbsentView] turns into an answer. This discloses
+// nothing: handleV1Views has already run the world-independent row gate, so
+// existence is settled before this runs.
 func (h *viewsHandler) viewEntry(
 	ctx context.Context, entityType string, entry entityPkg.Ref, w viewWorld,
 ) (*entityPkg.Entity, error) {
 	if w.denied {
-		// Byte-identical to a permitted world in which the entity has no
-		// face: `_world_absent` over the default face. That is the only
-		// answer that does not disclose the denial.
-		//
-		// An EXPLICIT address gets the same answer: the world grant must not
-		// be bypassable by spelling the face.
 		return nil, errNoFaceInWorld
 	}
 	world := worldHandle(w).visibility()
 	if w.ranksNothing() || !entry.Face.IsImplicit() {
-		// A denied face is reported as the ordinary not-found, so it stays
-		// indistinguishable from an absent one (TKT-O7R2A1).
 		e, ok, err := h.visible.refIn(ctx, world, entityType, entry)
 		if err != nil {
 			return nil, &gateFaultError{err: err}
@@ -159,13 +115,6 @@ func (h *viewsHandler) viewEntry(
 		return nil, &gateFaultError{err: err}
 	}
 	if !ok {
-		// The world resolved nothing the caller may read. Whether that is a
-		// draft awaiting publication or a typo depends on whether the ENTITY
-		// exists at all, a question this function deliberately does not
-		// answer: [viewsHandler.writeWorldAbsentView] must read a readable
-		// face to build its response anyway, so it makes the single
-		// existence decision. Two probes could disagree (a delete landing
-		// between them), and the second is the one that decides.
 		return nil, errViewEntryNoFaceHere(entry.ID)
 	}
 	return e, nil
@@ -197,37 +146,11 @@ func errViewEntryNotFound(entryID string) error {
 // can tell a missing entry from other view failures by identity.
 var errEntryMissing = errors.New("entry entity not found")
 
-// loadViewEntities resolves neighbor ids to their faces in world w, preserving
-// the caller's id order and dropping ids that resolve to nothing.
-//
-// # One batch per rule application
-//
-// The traversal collects ids across every source and every recursion depth
-// before calling this, so a rule that walks a hundred edges costs ONE
-// resolution rather than a hundred. That ordering is deliberate and is why
-// traverseViewOnce returns ids: the per-hop shape would multiply an N+1 by the
-// 10-pass fixpoint AND by the recursive depth.
-//
-// # Order and duplicates
-//
-// Input order is preserved because the caller's dedup-into-collection step
-// runs afterwards and callers observe collection order. Duplicate ids collapse
-// to one entity, which is what the dedup step would have done anyway.
-//
-// # Absence is normal
-//
-// An id that resolves to no face is DROPPED, exactly as the previous
-// `GetEntity`-error-skip did. Under a world that is the `otherwise: exclude`
-// verdict — the neighbor has no face here — and under the default world it is
-// a dangling edge. Both were silent before and stay silent, because a view is
-// a presentation surface and a missing neighbor is not an error a page can act
-// on.
-//
-// A store FAULT is different and is logged: it would otherwise read as "this
-// world excludes everything", the RR-4TFZNL shape. The first fault, of the
-// load or of the gate, is also returned beside the partial result. Relation
-// steps keep the partial collection; a backlinks step fails the view, since it
-// hides the built-in panel that would otherwise have shown the sources.
+// loadViewEntities resolves neighbor ids to their faces in world w in one
+// batch, preserving the caller's id order and collapsing duplicates. An id
+// that resolves to no face is dropped silently. A store fault is logged, and
+// the first fault of the load or the gate is returned beside the partial
+// result.
 func (h *viewsHandler) loadViewEntities(
 	ctx context.Context, ids []string, w viewWorld,
 ) ([]*entityPkg.Entity, error) {
@@ -237,11 +160,6 @@ func (h *viewsHandler) loadViewEntities(
 	var fault error
 	byID := make(map[string]*entityPkg.Entity, len(ids))
 
-	// ONE batched read for every world, the default one included
-	// (TKT-1U8XYN): the default world's query carries the trivial scope, so
-	// the store serves default rows exactly as the former per-id GetEntity
-	// loop did, without a round-trip per collected id. An id the store no
-	// longer has is simply absent, as the per-id not-found was.
 	unique := make([]string, 0, len(ids))
 	seen := make(map[string]struct{}, len(ids))
 	for _, id := range ids {
@@ -251,9 +169,6 @@ func (h *viewsHandler) loadViewEntities(
 		seen[id] = struct{}{}
 		unique = append(unique, id)
 	}
-	// Headers, not entities: traversal needs ids, types and properties. The
-	// bodies a section renders are loaded once, after the gate
-	// ([viewsHandler.loadViewBodies]).
 	for hdr, err := range store.ListEntityHeaders(ctx, h.store, store.EntityQuery{
 		IDs:   unique,
 		Faces: store.InWorld(w.scope),
@@ -268,7 +183,6 @@ func (h *viewsHandler) loadViewEntities(
 		byID[hdr.ID] = headerEntity(hdr)
 	}
 
-	// SOURCE-GATE the traversal (BUG-9Z20WH). See [viewsHandler.gateLoadedEntities].
 	if err := h.gateLoadedEntities(ctx, ids, byID); err != nil && fault == nil {
 		fault = err
 	}
@@ -278,7 +192,7 @@ func (h *viewsHandler) loadViewEntities(
 	for _, id := range ids {
 		e, ok := byID[id]
 		if !ok {
-			continue // no face in this world, or a dangling edge
+			continue
 		}
 		if _, dup := emitted[id]; dup {
 			continue
@@ -289,35 +203,12 @@ func (h *viewsHandler) loadViewEntities(
 	return out, fault
 }
 
-// gateLoadedEntities is the collection-load half of the traversal source gate
-// (BUG-9Z20WH). It deletes from byID every entity the principal may not read.
-//
-// # Not the load-bearing gate
-//
-// The one that closes the reachability hole is the frontier gate,
-// [viewsHandler.readableViewIDs]: the recursive walk is id-only, so only a gate
-// on the frontier can stop a hidden node from acting as a stepping-stone to a
-// descendant reachable only through it. This gate cannot do that — the
-// descendant is readable in its own right and would pass it.
-//
-// What this adds is the NON-RECURSIVE path, which never enters the BFS and so
-// never meets the frontier gate: it keeps a hidden entity out of a collection,
-// and out of applyViewTraverse's where: filter, so a predicate cannot infer a
-// hidden entity's property values.
-//
-// # Both halves of the verdict
-//
-// The row gate answers per face, and these entities carry their resolved
-// Face, so each is kept only when the verdict holds on that face's row. The
-// type-level face grant ([faceReadable]) is checked too: a principal granted
-// only `policy@published` must not be handed a draft row (TKT-O7R2A1).
-//
-// Grouping walks `ids` rather than ranging the map, so the per-type id slices
-// are deterministic across requests.
-//
-// FAIL CLOSED: on a probe error the whole type is dropped, logged so an
-// operator sees a cause rather than a silently-short collection. Under NopACL
-// every probe permits, so this is byte-identical to the ungated load.
+// gateLoadedEntities deletes from byID every entity the principal may not
+// read. The frontier gate, [viewsHandler.readableViewIDs], is the one that
+// closes reachability; this one covers the non-recursive path and keeps
+// hidden entities out of collections and where: filters. Each entity is kept
+// only when the row verdict holds on its face and [faceReadable] allows it.
+// It fails closed: a probe error drops the whole type, with a log.
 func (h *viewsHandler) gateLoadedEntities(
 	ctx context.Context, ids []string, byID map[string]*entityPkg.Entity,
 ) error {
@@ -359,41 +250,11 @@ func (h *viewsHandler) gateLoadedEntities(
 }
 
 // provenanceFor labels how this world resolved e's face, or nil under the
-// default world (TKT-WRLDAPI item 4b).
+// default world. It reads back the face the store served and names the rule
+// through [resolutionRuleAt], the mapping the entity GET shares, including
+// the chain position. It never re-resolves.
 //
-// # Labeling, not re-resolving
-//
-// Resolution happened once, in the store: the world scope rode the query and
-// the backend picked the face. This reads the answer back — the coordinate the
-// returned row was stored at — and names the rule that must have produced it.
-// It never fetches and never walks the chain, so it cannot disagree with the
-// store about WHICH face was served, because it is handed that face.
-//
-// It shares [resolutionRuleAt] with the entity GET's `_world` block rather than
-// deriving the rule again, so a view row and a GET of the same entity under
-// the same world report identical provenance. Two implementations of that
-// mapping would be free to drift, and the drift would be invisible — both
-// would look plausible.
-//
-// # Nil under the default world, deliberately
-//
-// Every entity resolves to its default state there by definition, so a block
-// on every row of every existing view would be noise — and, worse, would imply
-// a world was applied when none was. The entity GET makes the opposite choice
-// (it always labels, including `via: unscoped`) because a single-entity
-// response has room for one block and a client asking for provenance asked
-// about that entity. A collection is a different shape with a different cost.
-//
-// # It reports the CHAIN POSITION too
-//
-// `via` alone cannot say whether a row got the world's FIRST choice: under
-// `select: [published, draft]` a genuine published face and a draft standing
-// in for a missing one both report "chain". A view row is exactly where that
-// matters — a section can mix a first-choice hit and a stand-in, and the two
-// are byte-identical. That is why the shared mapping returns the position
-// beside the rule.
-//
-// e must be non-nil; callers hold a resolved entity by construction.
+// Nil: e is rejected by contract; callers hold a resolved entity.
 func (w viewWorld) provenanceFor(e *entityPkg.Entity) *v1.EntityWorld {
 	if w.ranksNothing() || e == nil {
 		return nil
@@ -408,64 +269,22 @@ func (w viewWorld) provenanceFor(e *entityPkg.Entity) *v1.EntityWorld {
 }
 
 // writeWorldAbsentView answers a view request for an entity that exists but
-// has no face in the requested world (BUG-1).
-//
-// # Why 200 and not a 4xx
-//
-// The caller was already cleared to read this entity: `handleV1Views` runs the
-// ACL row gate before view execution, and that gate is world-independent
-// (guard rule 1). What is missing is not permission and not the entity — only
-// this world's face of it. The useful answer is therefore "not here, and here
-// is where it is", which a 4xx cannot carry: the SPA's error path discards the
-// body, so a 422 leaves the user who just created something being told it does
-// not exist. That was the reported failure, and it produced duplicate entities
-// because the natural response to "not found" is to create it again.
-//
-// # What it serves
-//
-// The entity's DEFAULT face, which is the face that exists and the face writes
-// land on — so the page has a title, a body, and (via the affordance maps) the
-// `_faces` list and the copy offers that let the user promote it into the world
-// they asked for. `_world_absent` marks the response so the SPA renders that
-// state deliberately rather than as an ordinary page that silently lost its
-// world.
-//
-// Sections are deliberately EMPTY. A section is a traversal through the
-// requested world, and that world resolves nothing here; running the traversal
-// against the default face would present default-world neighbors under a
-// published-world request, which is the mixed-face serve this arc refuses
-// (Ruling 3). The page has enough to offer a way through without them.
-//
-// A read failure here is reported as the ordinary not-found this surface has
-// always returned for a missing entry, not as an absence: the entity was
-// present a moment ago, so a failure now is a fault, and claiming "no face in
-// this world" would launder it into a routine answer.
+// has no face in the requested world. It answers 200, since the caller was
+// already cleared by the world-independent row gate, and a 4xx body is
+// discarded by the SPA. It serves the entity's default face marked
+// `_world_absent`, with empty sections: traversing the default face would
+// mix faces under a world request. A read failure here returns the ordinary
+// not-found, not an absence.
 func (h *viewsHandler) writeWorldAbsentView(
 	w http.ResponseWriter, r *http.Request, entityType, entityID string,
 ) {
 	ctx := r.Context()
-	// ANY face the reader may see, not the zero coordinate: a type declaring
-	// faces stores no row there (BUG-HC6I2T), so asking for it turned every
-	// world-absent page for a faced entity into a 422. The point of this page
-	// is to say "this entity exists, just not in the world you asked for",
-	// which needs a row the reader is allowed to be shown.
 	e, err := h.readableFaceOf(ctx, entityType, entityID)
-	// The face check rides the same condition as the miss, deliberately: a
-	// principal who may not read the face must not receive its edges or its
-	// `_faces` list — which would disclose exactly the content states the
-	// grant withholds (TKT-O7R2A1). readableFaceOf applies it while choosing,
-	// so an unreadable face is indistinguishable from an absent one here.
-	//
-	// A world that ranks faces reaches this page for an id it found no face
-	// of, so an id a rename or conversion retired lands here too.
 	if err != nil || e == nil || e.Type != entityType {
 		viewMiss(w, r, h.viewReader, entityID, func() { writeViewEntryMissing(w, r) })
 		return
 	}
 
-	// That face's own edges, via the same face-scoped seam every other surface
-	// uses — never the bare-id reader, which returns the union of every face's
-	// edges (the face-merging bug fixed in 8b476cd1).
 	rels, ferr := h.faceEdges.edges(ctx, e)
 	if ferr != nil {
 		writeGateError(w, r, ferr)
@@ -476,11 +295,9 @@ func (h *viewsHandler) writeWorldAbsentView(
 	m := sch.Meta
 	def := m.Entities[e.Type]
 	resp := v1.ViewResponse{
-		Entry:       h.serializer.forWire(ctx, e, rels, m, def.GetPlural(e.Type)),
-		Sections:    []v1.ViewSection{},
-		WorldAbsent: true,
-		// No view sections render here, so a backlinks step cannot stand in
-		// for the panel; only the operator's entity_views switch hides it.
+		Entry:                h.serializer.forWire(ctx, e, rels, m, def.GetPlural(e.Type)),
+		Sections:             []v1.ViewSection{},
+		WorldAbsent:          true,
 		HideMentionedByPanel: hideMentionedByPanel(sch.Cfg, ViewConfig{Entry: ViewEntry{Type: e.Type}}),
 	}
 	h.rollups.add(ctx, e.Type, []rollupRow{{ref: e.Ref(), props: resp.Entry.Properties}}, worldScopeFrom(ctx), nil)
@@ -488,23 +305,10 @@ func (h *viewsHandler) writeWorldAbsentView(
 }
 
 // readableFaceOf returns one stored row of an entity that this principal may
-// read, for the surfaces that need to describe an entity rather than a
-// particular content state.
-//
-// It exists because "the entity's default row" stopped being a thing a faced
-// type has (BUG-HC6I2T). The zero coordinate is now only where a type
-// declaring NO faces keeps its single state, so a caller wanting "some row of
-// this entity" must look for one.
-//
-// The read gate is applied while CHOOSING, not after: returning an unreadable
-// row for the caller to reject would make "you may not see this face" and
-// "this entity has no such face" distinguishable by timing and by which error
-// came back, which is the disclosure the face grant withholds (TKT-O7R2A1).
-//
-// Faces are chosen in a stable order so two requests describe the same row:
-// the implicit face first, then the declared faces in declaration order. The readable
-// set comes from visibility.Resolver.Family, which never lists a face the
-// principal may not read.
+// read, for surfaces that describe the entity rather than a content state.
+// The read gate applies while choosing, so an unreadable face and a missing
+// one are indistinguishable. Faces are tried in a stable order: the implicit
+// face, then the declared faces.
 //
 // Nil: returns (nil, store.ErrNotFound) when no row is readable.
 func (h *viewsHandler) readableFaceOf(
@@ -518,9 +322,6 @@ func (h *viewsHandler) readableFaceOf(
 		return nil, store.ErrNotFound
 	}
 	declared := h.schema().Meta.Entities[entityType].Faces
-	// Ref reads the named face whatever the world, except that a denied world
-	// blocks it. This page must answer the same under a denied world as under
-	// an empty one, so it reads in the default world, never the request's.
 	world := defaultWorldHandle().visibility()
 	for _, face := range fam.Faces {
 		if _, isDeclared := declared[string(face)]; !face.IsImplicit() && !isDeclared {

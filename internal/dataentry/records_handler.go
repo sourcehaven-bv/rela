@@ -69,17 +69,9 @@ func (h *recordsHandler) scriptAppender() lua.RecordAppender {
 	return h.appender
 }
 
-// handleV1Records serves every route under /api/v1/_records:
-//
-//	GET  /_records                          the declared record types
-//	GET  /_records/{type}?owner=            one page of an owner's rows
-//	POST /_records/{type}                   append rows: {"rows": [...]}
-//	GET  /_records/{type}/_aggregate        fold rows into points
-//	GET  /_records/{type}/_transaction?group=  one ledger transaction
-//	POST /_records/{type}/_reverse          reverse one: {"group": "..."}
-//	PATCH /_records/{type}/{id}             change a row of a mutable type
-//	DELETE /_records/{type}/{id}?revision=  delete a row of a mutable type
-//
+// handleV1Records serves every route under /api/v1/_records: list types,
+// page an owner's rows, append rows, `_aggregate`, `_transaction?group=`,
+// `_reverse`, and PATCH or DELETE of a mutable row by id.
 // A row is readable when its owner is. A hidden owner is the same 404 as a
 // missing one, and an aggregate folds readable owners only.
 //
@@ -299,7 +291,6 @@ func parseRange(from, to string) (start, end time.Time, err error) {
 }
 
 func writeRecordsError(w http.ResponseWriter, r *http.Request, err error) {
-	// detail drops the sentinel prefixes, which the title already says.
 	detail := func() string {
 		msg := err.Error()
 		for _, s := range []error{records.ErrInvalid, records.ErrUnbalanced, records.ErrClosed} {

@@ -41,40 +41,21 @@ const (
 // rules.
 var ErrProfileOverridesFieldRules = errors.New("acl.yaml declares field rules")
 
-// ResolverFromProfile returns the [FieldVerdictResolver] for the given
-// profile, policy, and metamodel. Selection order (DR-M3, amended by
-// BUG-UO72G2):
+// ResolverFromProfile returns the [FieldVerdictResolver] for profile, policy
+// and metamodel:
 //
-//  1. profile == "demo" or "none" and the policy declares any affordance
-//     grants ([acl.Policy.HasAffordanceGrants]: role fields:, visible:,
-//     options: or relations:, or a client_baselines field ceiling) →
-//     an error wrapping [ErrProfileOverridesFieldRules]. The profile only
-//     replaces the REST resolver; MCP and CLI reads still apply the
-//     policy, so applying it would drop the field rules on REST alone.
-//  2. profile == "demo" → [DemoFieldVerdictResolver] (dev / e2e fixture).
-//  3. profile == "none" → [NopFieldVerdictResolver] (opt-out).
-//  4. profile == "" and the policy declares any affordance grants →
-//     the policy-backed resolver.
-//  5. otherwise → [NopFieldVerdictResolver].
+//  1. "demo" or "none" with affordance grants or a ceiling → an error wrapping
+//     [ErrProfileOverridesFieldRules], since MCP and CLI would still apply them.
+//  2. "demo" → [DemoFieldVerdictResolver]; "none" → [NopFieldVerdictResolver].
+//  3. "" with grants or a ceiling → the policy-backed resolver.
+//  4. otherwise → [NopFieldVerdictResolver].
 //
-// An unknown profile logs a warning and falls back to step 4/5. A
-// policy-backed resolver whose predicates fail to compile returns an
-// error. In both error cases the caller fails startup loudly (DR-M4),
-// matching the acl.yaml hard-fail posture for genuinely broken config.
-//
-// ceiling is the flow edit ceiling ([affordances.FlowEditCeiling], a flow's
-// `outside_edits:`), or nil when no flow declares one. It counts as a field
-// rule in every step above: it selects the policy-backed resolver, and the
-// profile may not replace it (TKT-XI7IDBS). It needs the acl.yaml policy;
-// a ceiling without a declarative is an error.
+// An unknown profile warns and falls back to 3/4. ceiling is the flow edit
+// ceiling or nil; it needs a declarative. Compile errors fail startup.
 func ResolverFromProfile(
 	profile string, meta *metamodel.Metamodel, st store.Store,
 	declarative *acl.Declarative, ceiling affordances.FlowEditCeiling,
 ) (FieldVerdictResolver, error) {
-	// No declarative wired → NopACL or constant-decider ACL → no
-	// affordance grants to compute. Declarative is the single source
-	// for the policy (RR-WTLD); reading it through any other channel
-	// invites mismatched-pair bugs.
 	hasGrants := false
 	if declarative != nil {
 		if policy := declarative.Policy(); policy != nil {
@@ -102,7 +83,6 @@ func ResolverFromProfile(
 		}
 		return NopFieldVerdictResolver{}, nil
 	case "":
-		// fall through to policy-based selection
 	default:
 		slog.Warn("dataentry: unknown RELA_AFFORDANCE_PROFILE; using policy or 'none'",
 			"value", profile,
@@ -112,9 +92,6 @@ func ResolverFromProfile(
 	if !hasGrants {
 		return NopFieldVerdictResolver{}, nil
 	}
-	// One raw binder answers related() in both ACL `when:` grants and
-	// transition `when:` (TKT-205V2N): both are authorization decisions over
-	// the graph as it is.
 	traversals, err := relresolve.NewStoreBinder(meta, relresolve.Ungated, st)
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: acl traversals: %w", err)
@@ -127,17 +104,6 @@ func ResolverFromProfile(
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: compiling acl.yaml affordance predicates: %w", err)
 	}
-	// Wire the enum state machines so the resolver can answer
-	// TransitionVerdicts (TKT-FT8J9). Compiled from the same (load-once,
-	// read-only) metamodel the entitymanager compiled its enforcer from:
-	// CompileTransitions is a deterministic pure transform AND meta is
-	// immutable between the two calls, so the two Transitions values are
-	// semantically identical. Correctness does not actually depend on that
-	// identity, though — the read/write drift guard is the shared evalEdge,
-	// so two Transitions values from the same source cannot disagree
-	// regardless. (Threading the entitymanager's single Transitions through
-	// appbuild.Services is the follow-up when the SPA status control wires
-	// the whole surface.)
 	machines, err := transitions.CompileTransitions(meta, transitions.WithTransitionTraversals(traversals))
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: compiling state machines: %w", err)

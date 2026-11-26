@@ -286,16 +286,10 @@ type writeHandler struct {
 // must use downstream: re-stamped to a freshly-provisioned entity when
 // unmatched_principal: provision fired, else r unchanged.
 //
-// It returns the re-stamped *http.Request (not just a context) on purpose: the
-// downstream read gate is consulted via helpers that take r and read
-// r.Context() internally (h.visible, the serializer/reader), so the rebuilt
-// ACL request + read gate must ride ON r — a bare context threaded only to the
-// manager call would leave those reads on the stale, unmatched principal and
-// redact the just-provisioned entity out of the response (RR-VI9XMY gap 2).
-//
-// contextcheck flags the resulting r.Context() reads as "non-inherited" because
-// it cannot trace the derivation through the request reassignment; that whole
-// class is excluded by path in .golangci.yml with the seam pinned by
+// It returns the *http.Request, not a context, because the read gate and the
+// serializer read r.Context(); a bare context would leave them on the stale
+// principal and redact the new entity (RR-VI9XMY). The contextcheck findings
+// this causes are excluded in .golangci.yml and pinned by
 // TestProvisionSeam_EveryWriteHandlerUsesWithProvision.
 func (h *writeHandler) withProvision(r *http.Request) *http.Request {
 	if h.provision != nil {
@@ -304,27 +298,11 @@ func (h *writeHandler) withProvision(r *http.Request) *http.Request {
 	return r
 }
 
-// parseCreateOpts validates a create body's ADDRESS fields — `id`, `prefix`
-// and `face` — into the options the manager writes at. It writes the 422
-// itself and reports ok=false when it has, so the handler branches once.
-//
-// entity.ParseFace is the ONLY constructor from external input (see the
-// entity.Face doc), so a body-supplied face goes through it rather than a
-// string conversion. Whether the type DECLARES this face is the manager's
-// question, not the codec's; this only rejects what is not a face at all.
-//
-// An empty (or all-whitespace) face is the zero coordinate, not an error: a
-// create that names no face is a different request from one that does, and the
-// manager decides whether the type allows it.
 // createFace picks the face a create body names, from `face` or `world`.
 //
 // A world names the face a create from it lands in (`worlds.<name>.create`).
-// It rides the BODY, not `?world=`: the query parameter is a read-side routing
-// rule that attachWorld refuses on every write, because a chain can answer
-// with a FALLBACK. `create:` names one declared face directly, so resolving it
-// here targets a row rather than a chain.
-//
-// The two spellings are exclusive rather than ranked. They can disagree, and
+// It rides the body, not `?world=`, which attachWorld refuses on every write.
+// The two spellings are exclusive rather than ranked: they can disagree, and
 // silently honoring either would write a row the caller did not ask for.
 func (h *writeHandler) createFace(
 	w http.ResponseWriter, r *http.Request, face, world, typeName string,
@@ -345,29 +323,16 @@ func (h *writeHandler) createFace(
 // createFaceForWorld resolves a world named in a create body to the face that
 // world creates into (`worlds.<name>.create`).
 //
-// Two refusals, both 422 and both naming the schema key the operator must fix:
-// a world that is not declared, and a declared world with no `create:`. The
-// second is deliberately not silent — falling back to a faceless create would
-// hand the request to the manager, which refuses a faced type with
-// `face_required` and names no world, leaving the operator to guess which of
-// the two settings was missing.
-//
-// The default world is not special here: it declares no `create:` either, so a
-// create from it names no face, which is exactly right for a faceless type and
-// refused for a faced one.
+// It answers 422 naming the schema key to fix for an undeclared world and for
+// a declared world with no `create:`. The second is not silent, because the
+// manager's `face_required` would not name the world. The default world
+// declares no `create:`, so a create from it names no face.
 func (h *writeHandler) createFaceForWorld(
 	w http.ResponseWriter, r *http.Request, world, typeName string, def *metamodel.EntityDef,
 ) (string, bool) {
-	// A type declaring no faces has exactly one state and no name for it, so
-	// the world contributes nothing: the create is faceless whichever world it
-	// came from. Returning early keeps a world-bound list working for the
-	// faceless types on it, which is most of them.
 	if len(def.Faces) == 0 {
 		return "", true
 	}
-	// `default` is implicit and total, so it is never in the Worlds map
-	// ([metamodel.DefaultWorldName]). It declares no `create:` and cannot: it
-	// is the absence of a world, and a faced type has no default row.
 	if world == metamodel.DefaultWorldName {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
 			fmt.Sprintf("the default world names no face, so %s must be created "+
@@ -418,20 +383,10 @@ func parseCreateOpts(
 // edges riding a create body. Reports whether the request may proceed; writes
 // the denial itself when not.
 //
-// The PATCH path has gated this since the affordance layer landed; the create
-// path did not, so an edge a `RelationVerdict{Creatable: false}` refuses on
-// `POST /{plural}/{id}/relations/{rel}` was written anyway by riding the create
-// body's `relations:` field. The create response even reported
-// `_relations: {"<rel>": {"creatable": false}}` for the edge it had just
-// written — the affordance map contradicting itself in the payload that
-// produced it. Found reviewing TKT-R4BMJM, which made the path reachable from a
-// button: a section create on an OUTGOING relation resolves to `link_as: to`,
-// and that is exactly the direction that rides the create body.
-//
-// Called BEFORE CreateEntity, not beside the Phase A relation validation, which
-// runs after: refusing there would leave the new entity written and unlinked,
-// turning an authorization denial into an orphan. No id is needed — verdicts
-// resolve against the entity's TYPE and properties, which the candidate carries.
+// Without it an edge the affordance layer refuses on the relation route could
+// be written through the create body's `relations:` field. It runs before
+// CreateEntity, so a denial never leaves the new entity written and unlinked.
+// Verdicts resolve against the candidate's type and properties, so no id is needed.
 func (h *writeHandler) gateCreateRelationAffordances(
 	w http.ResponseWriter, r *http.Request,
 	candidate *entityPkg.Entity, desired map[string]v1.RelationsUpdate,
@@ -443,13 +398,6 @@ func (h *writeHandler) gateCreateRelationAffordances(
 	if !h.relationGateOK(w, r, candidate, err) {
 		return false
 	}
-	// The body's refusing checks, the endpoint types among them
-	// (DEC-0D8UZX3), also run before the entity exists, so a refused edge
-	// leaves no unlinked entity behind. They need only the candidate's type.
-	// They run only for a caller the create ACL admits: CreateEntity makes
-	// that decision and answers a denied caller 403, which a 422 about the
-	// body must not pre-empt. The answer is advisory; CreateEntity still
-	// authorizes and audits the create itself.
 	createReq := translateVerb("create", candidate.Type, "", candidate.Face)
 	if !h.acl().AuthorizeWrite(r.Context(), createReq).Allow {
 		return true
@@ -519,8 +467,6 @@ func (h *writeHandler) writeCreateRelations(
 	if desired == nil {
 		return nil, true
 	}
-	// Phase A: validation only. Soft conditions surface as warnings; hard
-	// wire/structural failures return immediately without applying.
 	ws, err := h.validateRelationsModern(r.Context(), created.ID, created.Type, desired)
 	if err != nil {
 		h.writeRelationsValidationError(w, r, err)
@@ -528,10 +474,6 @@ func (h *writeHandler) writeCreateRelations(
 	}
 	warnings = ws
 
-	// Phase B: the writes, addressed to the face just created — it owns its
-	// content-scoped edges (BUG-64MU2Q). The address comes from the row the
-	// manager returned, not from the request: a create mints its id during
-	// the write, so the row it produced is what names the face.
 	ws, err = h.applyRelationsModern(r.Context(), created.Ref(), desired, nil)
 	warnings = append(warnings, ws...)
 	if err != nil {
@@ -541,6 +483,11 @@ func (h *writeHandler) writeCreateRelations(
 	return warnings, true
 }
 
+// handleV1CreateEntity creates an entity. The body is decoded strictly, so an
+// unknown or misspelled key such as `face` fails instead of being ignored. The
+// face reaches the manager only through CreateOptions, so the face it authorizes
+// is the face it writes, and field write gates apply on create as on PATCH.
+//
 //archplan:auth=authz
 func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	r = h.withProvision(r)
@@ -555,11 +502,6 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		Relations  v1.RelationsField `json:"relations"`
 	}
 
-	// Strict decode (BUG-HC6I2T): `face` used to be absent from this struct,
-	// and encoding/json drops an unknown key silently — so a client naming a
-	// face got 201 and a row at a face it never asked for. A misspelled key
-	// must fail loudly rather than be ignored, since the request that names a
-	// face and the one that names nothing now mean different things.
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
@@ -572,8 +514,6 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// One schema snapshot for the whole request, so a reload cannot change
-	// the metamodel between the type check and the response.
 	s := h.schema()
 	entityDef, defOK := s.Meta.Entities[typeName]
 	if !defOK {
@@ -591,16 +531,6 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Affordance parity (BUG-Q60V): a `fields:` policy that hides or
-	// freezes a field must gate it on create too, not just PATCH —
-	// otherwise the value can be smuggled in at create time. Validate
-	// against the candidate entity (type + proposed properties, no ID
-	// yet). Relation-dependent predicates fail closed for an
-	// unpersisted entity, which is the safe direction; only global-role
-	// grants apply at create. Collection-level create authorization is
-	// enforced separately inside CreateEntity (acl.OpCreate).
-	// The candidate carries the face being created: a role's create grant
-	// may name one face only (`type@face`), and field verdicts follow it.
 	candidate := &entityPkg.Entity{Type: typeName, Face: createOpts.Face, Properties: req.Properties}
 	if denial := h.affordances.validateCreateFieldWrite(r.Context(), candidate, req.Properties); denial != nil {
 		h.denyAfford(r.Context(), w, candidate, *denial)
@@ -617,32 +547,19 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 			Properties: req.Properties,
 			Content:    req.Content,
 		},
-		// The face rides in CreateOptions, never on the carrier entity: the
-		// manager authorizes and writes the value it finds there, so the two
-		// cannot diverge (BUG-HC6I2T). It comes from the request body, never
-		// from `?world=` — a world resolves through a chain with a fallback,
-		// and a write must name the row it changes.
 		createOpts,
 	)
 	if err != nil {
-		// The class comes from the classifier the channel promote uses too,
-		// so a new kind of refusal is classified once for both.
 		switch entitymanager.ClassifyCreateError(err) {
 		case entitymanager.CreateErrForbidden:
 			if writeForbiddenIfACLDenied(w, r, err) {
 				return
 			}
 		case entitymanager.CreateErrFace:
-			// A face error is about the ADDRESS, not the payload, so it gets
-			// its own code: a client that omitted the face must add one,
-			// which is a different fix from a property that failed
-			// validation.
 			writeV1Error(w, r, http.StatusUnprocessableEntity, "face_required", err.Error(), "/face")
 			return
 		case entitymanager.CreateErrUnknown, entitymanager.CreateErrConflict, entitymanager.CreateErrInvalid:
 		}
-		// Every other class, including a field-grant or guard refusal and
-		// an unknown error, answers 422 as this route always has.
 		writeWriteRefused(w, r, err)
 		return
 	}
@@ -653,10 +570,6 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// The created face's own edges, read through the same face-scoped,
-	// neighbor-gated seam the GET uses (BUG-ISJHML). A raw read here would
-	// name a neighbor the caller cannot see, such as one an on-create
-	// automation linked.
 	rels, visibleNeighbors, rerr := h.faceEdges.read(r.Context(), created)
 	if rerr != nil {
 		writeGateError(w, r, rerr)
@@ -668,52 +581,28 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 	if len(relWarnings) > 0 {
 		result.Warnings = append(result.Warnings, relWarnings...)
 	}
-	// DEC-HWZHA: surface entity-level soft validation findings (e.g.
-	// required-field-missing) as warnings on the 201 response.
 	if len(createResult.Warnings) > 0 {
 		result.Warnings = append(result.Warnings, createResult.Warnings...)
 	}
 
-	// Set Location header
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, created.ID))
-
-	// SSE broadcast is driven by the store-event bridge (see
-	// sseHandler.startStoreEventBridge), not inline here — so a create by ANY process
-	// reaches all connected browsers and a local create isn't double-broadcast.
 
 	writeV1JSON(w, http.StatusCreated, result)
 }
 
 // handleV1DryRunCreate evaluates field/option/relation affordances and
-// soft validation against a candidate entity WITHOUT persisting it, so
-// the SPA create form can disable read-only fields, hide hidden fields,
-// filter enum options, and show as-you-type validation feedback before
-// commit (TKT-3I5U).
+// soft validation against a candidate entity without persisting it, so the
+// SPA create form can show them before commit (TKT-3I5U).
 //
-// It is READ-shaped (RR-R8OR): it skips the provision seam and snapshots
-// state once like a GET. It is verdict-only (RR-4O6E): it computes
-// affordances and warnings but emits NO `denied-write` audit row and
-// performs NO write — so live re-derivation per keystroke can't flood
-// the audit log.
-//
-// The verdicts are ADVISORY (RR-Y85M): the real create (POST without
-// ?dry_run) re-runs the BUG-Q60V affordance gate and is the sole
-// authorization point. A client that ignores these hints and POSTs a
-// denied field still 403s.
-//
-// Scope: fields + options + relations + soft warnings. Relation edges
-// are not staged (a candidate has no real ID); relation affordances
-// reflect the per-type verdict only.
+// It is read-shaped: no provision seam, one snapshot, no `denied-write` audit
+// row and no write. The verdicts are advisory; the real create re-runs the
+// affordance gate and is the sole authorization point. Relation edges are not
+// staged, so relation affordances reflect the per-type verdict only.
 //
 //archplan:auth=authz
 func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	s := h.schema()
 
-	// Mirror of handleV1CreateEntity's request body MINUS `relations`
-	// — staged relations are deferred (a candidate has no real source
-	// ID to hang edges on). When a new field is added to the real
-	// create body, decide explicitly whether dry-run should accept it
-	// and update both structs together (RR-GOR8 drift guard).
 	var req struct {
 		ID         string         `json:"id,omitempty"`
 		Prefix     string         `json:"prefix,omitempty"`
@@ -736,10 +625,6 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 	reqID := strings.TrimSpace(req.ID)
 	reqPrefix := strings.TrimSpace(req.Prefix)
 
-	// `world` resolves to a face exactly as it does on the real create, so a
-	// keystroke verdict is computed against the row the submit would write.
-	// A refusal here is advisory like the rest of this endpoint: it leaves
-	// dryFace empty rather than answering 422, and the real POST reports it.
 	rawDryFace := req.Face
 	if world := strings.TrimSpace(req.World); world != "" && req.Face == "" &&
 		len(entityDef.Faces) > 0 {
@@ -749,9 +634,6 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// A face that is not a face at all is advisory here, like the ID warning
-	// below: the create form should say so while typing rather than only at
-	// submit. Whether the type declares it is ValidateCreate's question.
 	var dryFace entityPkg.Face
 	var faceWarning *Warning
 	if raw := strings.TrimSpace(rawDryFace); raw != "" {
@@ -763,18 +645,11 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// RR-9JOH: surface ID/prefix problems as a soft warning rather than
-	// 422 so the create form learns at typing time instead of at submit.
-	// The real commit's validateCreateIDOpts still hard-rejects — this
-	// is advisory parity with the rest of the dry-run.
 	var idWarning *Warning
 	if msg := validateCreateIDOpts(&entityDef, reqID, reqPrefix); msg != "" {
 		idWarning = &Warning{Code: "id_opts_invalid", Path: "/id", Detail: msg}
 	}
 
-	// Resolve the would-be entity (post template / status defaults) and
-	// soft warnings via the shared create-path validation — no persist,
-	// no audit, no automation. Hard structural errors surface as 422.
 	candidate, warnings, err := h.manager.ValidateCreate(r.Context(),
 		&entityPkg.Entity{Type: typeName, Properties: req.Properties, Content: req.Content},
 		entityPkg.CreateOptions{ID: reqID, Prefix: reqPrefix, Face: dryFace},
@@ -784,14 +659,6 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Seed missing-but-declared property keys with nil values BEFORE
-	// serialization. The SPA's create-mode field filter uses the
-	// response's `properties` keys to know which declared fields are
-	// visible (hidden fields get stripped by serializeEntityForWire's
-	// hidden-property filter). Without this, a visible-by-default field
-	// whose value the user hasn't set yet (e.g. a required `title`)
-	// would be absent from both `_fields` (sparse: no deviation) and
-	// `properties` (no value yet), so the filter would drop it.
 	if def, ok := s.Meta.Entities[typeName]; ok {
 		if candidate.Properties == nil {
 			candidate.Properties = make(map[string]any)
@@ -803,24 +670,10 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Affordances are computed against the candidate's CURRENT values, so
-	// value-dependent predicates (e.g. field B read-only when A == x)
-	// re-derive as the form changes. includeRelations=false: no edges
-	// exist for an unsaved entity.
 	result := h.serializer.forWire(r.Context(), candidate, nil, h.schema().Meta, plural)
-	// An unsaved candidate has nothing an action could run against, so it
-	// carries no detail-action keys (TKT-VVS16W).
 	maps.DeleteFunc(result.Actions, func(k string, _ bool) bool {
 		return strings.HasPrefix(k, detailActionKeyPrefix)
 	})
-	// A create ENTERS the machine at its initial state; it is not a transition.
-	// Lock every state-machine field to its entry value so the create form
-	// renders it read-only at the initial state (BUG-X1C7S / TKT-3G93B8).
-	// The form describes a create, so its `_fields` come from the create
-	// verdicts: forWire computed them for an update of an existing row, and a
-	// role that may create the type but not update it writes on create every
-	// field it would be refused on a later PATCH (BUG-Y5UF3K). Visibility is
-	// the same for both, so the redaction forWire applied stands.
 	createFields := computeFieldAffordancesFrom(createFieldVerdicts(
 		r.Context(), h.serializer.affordances.resolver(), h.serializer.affordances.meta(), candidate))
 	result.FieldAffordances = &createFields
@@ -835,28 +688,16 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 		result.Warnings = append(result.Warnings, warnings...)
 	}
 
-	// writeV1JSON already sets `Cache-Control: no-cache, no-store,
-	// must-revalidate` and no ETag, which is what a per-request,
-	// value-dependent, never-persisted response needs (RR-7PL4).
 	writeV1JSON(w, http.StatusOK, result)
 }
 
 // writePatchError maps a failed PatchEntity to its HTTP status.
 //
-// A lost compare-and-swap race becomes a 412 — the same status the If-Match
-// compare produces, because the client's remedy is identical: re-read,
-// re-apply, retry. The two are genuinely the same condition detected at
-// different depths (TKT-34XS2R), so giving them one status keeps the client
-// contract unchanged.
-//
-// Without If-Match the manager retries conflicts itself, so a conflict that
-// still surfaces means it ran out of retries under sustained contention.
-// That is a 409: the client set no precondition, so 412 would be wrong.
-//
-// Matching is by errors.As, never on the message: the manager wraps the store
-// error on its way up, and RR-HI9QIU is what happens when a translation
-// breaks that chain — a retry loop silently becomes unreachable and every
-// loser gets a 500.
+// A lost compare-and-swap race becomes a 412, the same status the If-Match
+// compare gives, because the remedy is the same. Without If-Match the manager
+// retries itself, so a surviving conflict is a 409. Matching is by errors.As,
+// never on the message, because the manager wraps the store error
+// (RR-HI9QIU).
 func writePatchError(w http.ResponseWriter, r *http.Request, err error) {
 	if writeForbiddenIfACLDenied(w, r, err) || writeFieldWriteRefused(w, err) {
 		return
@@ -1028,15 +869,10 @@ func (h *writeHandler) checkPreconditions(
 
 // writeLostRace answers a PATCH with preconditions whose store
 // compare-and-swap lost to a concurrent write. It re-reads the row and
-// reports which preconditions now fail, which may be none: the other write
-// can have touched only fields this request does not name. The handler does
-// not retry. The client holds the edit and its base, so it decides whether to
-// resend with the fresh tokens or to merge. Returns false when err is not a
-// lost race. When the row is gone or now hidden from this caller it answers a
-// bare 412 without tokens: the winning write may have changed what the row
-// gate depends on, and a hidden row's tokens would disclose its new values.
-// It is still a 412, not writePatchError's 409, because the client did set a
-// precondition.
+// reports which preconditions now fail, which may be none. It does not retry.
+// Returns false when err is not a lost race. When the row is gone or now
+// hidden it answers a bare 412 without tokens, because a hidden row's tokens
+// would disclose its new values.
 func (h *writeHandler) writeLostRace(
 	w http.ResponseWriter, r *http.Request, err error, pre *v1.Preconditions,
 	typeName string, ref entityPkg.Ref, plural string,
@@ -1081,6 +917,11 @@ func writeFieldConflict(
 	})
 }
 
+// handleV1UpdateEntity patches one entity. The resolver read runs before body
+// parsing, authorization, If-Match and the lock check, so a hidden entity or a
+// denied face gets the same 404 as a missing one; an earlier 400, 403, 412 or
+// 422 would be an existence oracle. The write is then authorized once.
+//
 //nolint:gocognit,funlen // update handler threads the validation-policy classes (400/422/200-with-warnings) through each field; the branches are the documented write-policy cases, not extractable shared logic.
 //archplan:auth=authz
 func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
@@ -1088,25 +929,12 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 
 	s := h.schema()
 
-	// The path segment is an ADDRESS, `ID` or `ID@face`. A write names the
-	// row it edits by address and never by a requested world, which is why
-	// attachWorld refuses `?world=` on this method: the face rides here. A
-	// bare id edits the one face the default world admits and the caller
-	// may read, else 422 `face_required` (TKT-7IZHP0 §6).
-	//
-	// The resolver read runs BEFORE body parse, authorization, If-Match and
-	// IsLocked (RR-FGUZ, RR-NGMI), so "exists but hidden" and "denied face"
-	// answer the same 404 as "absent". A 400, 403, 412 or 422 here would be an
-	// existence oracle.
 	entity, found := writeTargetOr404(w, r, h.visible, typeName, entityID)
 	if !found {
 		return
 	}
 	ref := entity.Ref()
 
-	// Refuse to write through an inaccessible entity. The on-disk file
-	// is unreadable (e.g. git-crypt encrypted, no key locally) — writing
-	// would replace the ciphertext with whatever the SPA had on hand.
 	if entity.IsLocked() {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "encrypted_inaccessible",
 			"Cannot edit an inaccessible entity", "File is git-crypt encrypted; run `git-crypt unlock` first.")
@@ -1122,8 +950,6 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		// v1.RelationsField's UnmarshalJSON returns *v1.WireError for
-		// shape errors; surface them as 400 with the structured code.
 		var werr *v1.WireError
 		if errors.As(err, &werr) {
 			writeV1Error(w, r, http.StatusBadRequest, werr.Code,
@@ -1134,13 +960,6 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Authorize the entity write before any further work, so a denied
-	// caller does not cost an ETag, affordance verdicts and relation
-	// validation first. The patch below writes through the grant this
-	// returns, so the update is authorized once, here. It runs after the
-	// resolver read, so a hidden entity is still the uniform 404, never a
-	// 403. A relations-only PATCH is not an entity update: its edges are
-	// authorized one by one by the manager.
 	entityChanged := req.Properties != nil || len(req.PropertiesUnset) > 0 || req.Content != nil
 	var grant entitymanager.UpdateGrant
 	if entityChanged {
@@ -1152,7 +971,6 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		grant = g
 	}
 
-	// Check If-Match for optimistic locking
 	if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
 		if ifMatch != h.computeETag(r.Context(), entity) {
 			writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
@@ -1161,10 +979,6 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Affordance parity (TKT-G7N5): reject writes that conflict with
-	// what the resolver would have surfaced on GET. Runs before any
-	// other validation so the failure mode is identical regardless of
-	// what else the PATCH body would have triggered.
 	if denial := h.affordances.validateFieldWrite(
 		r.Context(), entity, req.Properties, req.PropertiesUnset,
 	); denial != nil {
@@ -1172,25 +986,12 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if req.Relations.Modern != nil {
-		// A content-scoped edge is written to the face the request
-		// addresses; applyRelationsModern carries `ref` for exactly that
-		// (BUG-64MU2Q). This used to refuse the write outright, because
-		// entity.RelationOptions could not name a tail face and the edge
-		// would have silently landed on the default one — and it advised
-		// "edit it on the bare face", an address a faced type does not
-		// have, so the refusal was a dead end from any client.
 		err := h.affordances.validateRelationsModernAffordances(r.Context(), ref.ID, entity, req.Relations.Modern)
 		if !h.relationGateOK(w, r, entity, err) {
 			return
 		}
 	}
 
-	// Per-field preconditions (TKT-2VDVHF). Checked after the affordance
-	// gates, which refuse a hidden field, so a precondition can only name a
-	// field the caller may read. The tokens are computed from this handler's
-	// read, and the patch below carries that read's store version, so a write
-	// landing between this check and the patch is caught by the store.
-	// Relations have no store version: their check holds only under writeMu.
 	scope := preconditionScope{
 		props: req.Properties, unset: req.PropertiesUnset,
 		content: req.Content != nil, relations: req.Relations.Modern != nil,
@@ -1199,10 +1000,6 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Phase A: validate relations (no writes). Returns warnings (will
-	// be merged into the success response) and err (hard 400/422).
-	// Validation runs BEFORE entity update so a structural relation
-	// error doesn't leave the entity half-written. (DEC-HWZHA atomicity.)
 	var warnings []Warning
 	if req.Relations.Modern != nil {
 		ws, err := h.validateRelationsModern(r.Context(), ref.ID, entity.Type, req.Relations.Modern)
@@ -1213,15 +1010,6 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		warnings = ws
 	}
 
-	// Phase B: entity update. Skipped when only relations changed,
-	// to avoid bumping the file mtime and broadcasting a misleading
-	// "entity updated" SSE event with no byte-level change.
-	//
-	// Warn about undeclared unset keys before dispatching. The unset itself
-	// is carried by the patch (MetaUnset), applied AFTER the property
-	// upserts, so a body that both sets and unsets the same key ends with it
-	// removed. (TKT-E6094 / autosave: maps the "user cleared this field"
-	// intent to a wire-level delete distinct from "field was untouched".)
 	if len(req.PropertiesUnset) > 0 {
 		entityTypeDef, hasType := s.Meta.Entities[entity.Type]
 		for i, k := range req.PropertiesUnset {
@@ -1236,61 +1024,32 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}
-	// The edges a relation rule reads are written with the update, which is
-	// judged on the edges they leave (TKT-EBARYBI).
 	joined, planErr := planJoinedRelations(r.Context(), h, ref, entityChanged, req.Relations.Modern)
 	if planErr != nil {
 		h.writeRelationsApplyError(w, r, planErr)
 		return
 	}
 	if entityChanged {
-		// PatchEntity + ExpectedVersion, NOT a read-modify-write into
-		// UpdateEntity (TKT-34XS2R). Two things change:
-		//
-		//  1. Properties this request does not name are preserved by the
-		//     manager's own merge against the raw stored entity, so a
-		//     redacted read can no longer erase what it could not see.
-		//  2. The If-Match check is not a check-then-write. Comparing the
-		//     header to a freshly-read ETag and then writing would race any
-		//     concurrent writer; the store re-verifies the precondition
-		//     ATOMICALLY with the write, so a racing writer that lands between
-		//     our read and our write is caught rather than silently
-		//     overwritten.
-		//
-		// The ETag compare above stays: it is the client-facing contract and
-		// is relation-aware, which the store token deliberately is not.
 		patch := entityPkg.Patch{
 			Properties:      req.Properties,
 			MetaUnset:       req.PropertiesUnset,
 			Content:         req.Content,
 			ExpectedVersion: string(store.VersionOf(entity)),
 		}
-		// Fused ref, not the bare id: PatchEntity resolves the face from the
-		// STORED row it loads, and loading by bare id would land on the
-		// default face — so a write to POL-1@published would be authorized
-		// (and applied) against POL-1's default state instead.
 		stateRef := entityPkg.FormatStateRef(entity.ID, entity.Face)
 		updateResult, err := patchJoined(r.Context(), h, grant, stateRef, patch, joined)
 		if err != nil {
 			writeUpdateError(w, r, h, err, joined, req.Preconditions, typeName, ref, plural)
 			return
 		}
-		// PatchEntity merged against the raw stored entity; refresh the
-		// local copy so the response body and ETag reflect what was actually
-		// persisted rather than the pre-merge read.
 		if updateResult != nil && updateResult.Entity != nil {
 			entity = updateResult.Entity
 		}
-		// DEC-HWZHA: soft validation findings ride on the result as
-		// warnings. Merge them into the response alongside any
-		// relation warnings already collected.
 		if updateResult != nil {
 			warnings = append(warnings, updateResult.Warnings...)
 		}
 	}
 
-	// Phase C: relation writes. Produces warnings on soft conditions
-	// and structured errors on hard failures.
 	if req.Relations.Modern != nil {
 		ws, err := h.applyRelationsModern(r.Context(), ref, req.Relations.Modern, joined)
 		warnings = append(warnings, ws...)
@@ -1300,24 +1059,11 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// The edges OF THE FACE JUST WRITTEN, through the same face-scoped seam
-	// the read surfaces use. The bare-id reader returns the UNION of every
-	// face's content-scoped edges, so a PATCH to the published face would
-	// answer with the draft's links beside it — the mixed-face response the
-	// seam exists to prevent, on a body the SPA feeds straight back into its
-	// relation editor.
 	rels, visibleNeighbors, rerr := h.faceEdges.read(r.Context(), entity)
 	if rerr != nil {
 		writeGateError(w, r, rerr)
 		return
 	}
-	// The response describes the STORED row, not the entity the manager
-	// handed back: fsstore reformats the body on write, so tokens of the
-	// in-memory body would never match the next GET and every later save
-	// would 412. Body and tokens come from this one read, so they describe one
-	// state even when another node wrote in between. The read is gated like a
-	// GET: a row the write (or a concurrent one) hid from this caller answers
-	// with the written entity and no tokens.
 	served, versioned := h.visibleStored(r.Context(), typeName, ref)
 	if !versioned {
 		served = entity
@@ -1331,47 +1077,25 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	}
 	h.rollups.add(r.Context(), served.Type, []rollupRow{{ref: served.Ref(), props: result.Properties}},
 		worldScopeFrom(r.Context()), nil)
-	// The validator hashes the edges the body carries, read once above. A
-	// second read here would rebuild the edge set and its gate pass, and
-	// could describe a different edge set than the body it validates.
-	// servedETag leaves out the fields this caller cannot see, so the ETag
-	// equals the one a GET returns and the caller's next If-Match matches.
 	w.Header().Set("ETag", servedETag(r.Context(), h.affordances, served, rels))
-
-	// SSE broadcast is driven by the store-event bridge: an entity update only
-	// fires EventEntityUpdated when the store's entity row actually changed,
-	// which matches the prior "if entityChanged" gate (relation-only edits emit
-	// no entity event). So a remote update reaches all browsers and a local one
-	// isn't double-broadcast.
 
 	writeV1JSON(w, http.StatusOK, result)
 }
 
+// handleV1DeleteEntity deletes the addressed entity. The resolver read runs
+// before AuthorizeWrite, so a hidden target or a denied face gets a 404, never
+// a 403 that names a rule.
+//
 //archplan:auth=authz
 func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeName, _, entityID string) {
 	r = h.withProvision(r)
 
-	// The path segment is an ADDRESS, resolved as every content write is
-	// ([writeTargetOr404]). On a type that declares faces, a delete names one
-	// face (`ID@face`) and removes that face; the last face takes the entity
-	// with it. A bare id there is `face_required`: deleting every face would
-	// need delete on faces the caller may not see. A faceless type's bare id
-	// names its one face, the implicit one, and deletes the entity.
-	//
-	// The resolver read runs BEFORE AuthorizeWrite (RR-3532), so a hidden
-	// target or a denied face 404s rather than answering 403-with-rule_id.
 	entity, found := writeTargetOr404(w, r, h.visible, typeName, entityID)
 	if !found {
 		return
 	}
 	ref := entity.Ref()
 
-	// If-Match makes the delete conditional on the row the caller last
-	// saw, as on PATCH: a remote sync sends it so a row changed since the
-	// last sync is not deleted (TKT-CVT9W1K). It runs after the read gate,
-	// so a hidden row is still a 404. The delete compares the stored
-	// version inside its own transaction, so a write landing between the
-	// compare here and the delete is a 412 too.
 	var err error
 	switch {
 	case r.Header.Get("If-Match") != "":
@@ -1393,9 +1117,6 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 		if writeForbiddenIfACLDenied(w, r, err) {
 			return
 		}
-		// A channel type with `on_entity_delete: block` refused it. The type
-		// is config, and the caller may delete the entity, so naming it is
-		// the accepted one-bit signal (docs/acl-security.md).
 		var blocked *entitymanager.AnchorBlockedError
 		if errors.As(err, &blocked) {
 			writeV1Error(w, r, http.StatusConflict, "channel_blocks_delete",
@@ -1403,10 +1124,6 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 				"channel type "+blocked.ChannelType+" has on_entity_delete: block")
 			return
 		}
-		// The entity's faces or owned entities changed while the channel
-		// guard ran. Nothing was deleted, and the same request can succeed.
-		// The manager authorizes before it reports this, so a caller who
-		// would be refused never sees it.
 		if errors.Is(err, entitymanager.ErrConcurrentChange) {
 			writeV1Error(w, r, http.StatusConflict, "conflict", "Entity is being modified concurrently",
 				"retry the delete")
@@ -1417,7 +1134,6 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 				"Entity has been modified", "concurrent write detected")
 			return
 		}
-		// Another request deleted it between the read above and this write.
 		if errors.Is(err, entitymanager.ErrEntityNotFound) {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 			return
@@ -1425,10 +1141,6 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 		writeInternalError(w, r, "delete_failed", "Failed to delete entity", err)
 		return
 	}
-
-	// SSE broadcast is driven by the store-event bridge (see
-	// sseHandler.startStoreEventBridge); a delete by any process reaches all browsers,
-	// and a local delete isn't double-broadcast.
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1595,8 +1307,6 @@ func (h *writeHandler) writeRelationsApplyError(w http.ResponseWriter, r *http.R
 		detail += "; "
 	}
 	if errors.Is(err, store.ErrConflictBlock) {
-		// The store refused the edge's content and stored nothing for it,
-		// but an earlier phase may have saved the entity (BUG-FJ1ITQT).
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "conflict_block",
 			conflictBlockTitle+"; the entity may have been saved", detail+store.ErrConflictBlock.Error())
 		return
@@ -1606,16 +1316,17 @@ func (h *writeHandler) writeRelationsApplyError(w http.ResponseWriter, r *http.R
 		detail+internalErrorDetail, err)
 }
 
+// handleV1CreateRelation adds an edge to the path entity. The path entity is
+// read-gated before the body is parsed and before the affordance check, and the
+// body's target is read-gated too, so a hidden entity at either end gets the
+// same 404 as a missing one.
+//
 //archplan:auth=authz
 func (h *writeHandler) handleV1CreateRelation(
 	w http.ResponseWriter, r *http.Request, typeName, addr, relType string,
 ) {
 	r = h.withProvision(r)
 
-	// ACL gate (TKT-VQGN CRIT-2): runs BEFORE body parse (RR-FGUZ applied to
-	// relation writes) and BEFORE the affordance check, otherwise a 400/403
-	// confirms the entity exists. The resolver applies the face gate too, so
-	// a face the caller may not read is the same 404 (BUG-BZQQDP).
 	entity, found := readAddressedOr404(w, r, h.visible, typeName, addr)
 	if !found {
 		return
@@ -1637,34 +1348,11 @@ func (h *writeHandler) handleV1CreateRelation(
 		return
 	}
 
-	// Read-gate the BODY target as well as the path entity.
-	//
-	// The path gate above is not sufficient, and on this route it can be
-	// vacuous: a client that just created the path entity is guaranteed to pass
-	// it. Without this, naming an unreadable entity as the target returned 201
-	// while a nonexistent one returned 422 "target entity not found" — an
-	// existence oracle for any id the caller cannot read, and a link to a row
-	// they were never shown.
-	//
-	// Pre-existing (the body target was never gated), but TKT-R4BMJM put weight
-	// on it: the `link_as: from` create is now addressed FROM the new entity
-	// with the peer in the body, precisely so a prefix-less peer id can be
-	// linked. That moved the peer out from under the path gate.
-	//
-	// The target's type comes from the STORE, not from its id prefix: a
-	// prefix-derived type is exactly the fragile lookup that made a
-	// legitimately prefix-less id unlinkable. The check is the entity-level
-	// one: some face of the peer the caller may read. A target that does not
-	// exist and one the caller may not read collapse to the same 404 carrying
-	// the shared entityNotFoundTitle, so the two stay indistinguishable.
-	// Whether an entity exists is a genuine secret (docs/acl-security.md).
 	peer, ok := h.bodyPeer(w, r, relType, req.ID, req.Direction)
 	if !ok {
 		return
 	}
 
-	// The new edge's SOURCE and TAIL: the path entity by ownedSource's rule
-	// on an outgoing edge, the peer the body names on an incoming one.
 	newTail := peer.Face
 	if req.Direction != string(DirectionIncoming) {
 		if entity, newTail, ok = h.ownedSource(w, r, typeName, addr, relType, entity); !ok {
@@ -1672,14 +1360,10 @@ func (h *writeHandler) handleV1CreateRelation(
 		}
 	}
 
-	// Affordance gates: creatable + meta-writable, evaluated against
-	// the SOURCE of the new edge (not necessarily the path entity —
-	// for incoming-direction creates the path entity is the target).
 	sources, ok := h.relationSourcesOr500(w, r, entity, peer, req.Direction, relType)
 	if !ok {
 		return
 	}
-	// Audit subject is the source row whose policy denied the write.
 	source, denial := h.affordances.relationOpDenial(r.Context(), sources, relType, RelationOpCreate)
 	if denial != nil {
 		h.denyAfford(r.Context(), w, source, *denial)
@@ -1727,15 +1411,16 @@ func writeCardinalityIfExceeded(w http.ResponseWriter, r *http.Request, err erro
 	return true
 }
 
+// handleV1UpdateRelation changes an edge's meta. The path entity and the peer
+// are both read-gated before the edge or its affordances are touched, so a
+// hidden peer gets the same 404 as an absent one.
+//
 //archplan:auth=authz
 func (h *writeHandler) handleV1UpdateRelation(
 	w http.ResponseWriter, r *http.Request, typeName, addr, relType, targetID string,
 ) {
 	r = h.withProvision(r)
 
-	// ACL gate (TKT-VQGN CRIT-2): see handleV1CreateRelation. The peer is
-	// gated too, before the edge or its affordances are touched, so a hidden
-	// peer is the same 404 as an absent one (design 8.2).
 	entity, found := readAddressedOr404(w, r, h.visible, typeName, addr)
 	if !found {
 		return
@@ -1754,16 +1439,9 @@ func (h *writeHandler) handleV1UpdateRelation(
 		return
 	}
 
-	// Affordance gate: meta-writable, evaluated against the SOURCE of
-	// the edge (the path entity for outgoing; the peer for incoming).
-	// The edge already exists (PATCH is meta-only), so the create /
-	// remove gates don't apply.
 	peer := peerAddress(targetID, req.Direction == string(DirectionIncoming))
 	from, to := resolveRelationEndpoints(entity.ID, peer.ID(), req.Direction)
 
-	// The edge's source row and tail: by ownedSource's rule when the path
-	// entity is the source, else the stored edge's own tail. The affordance
-	// gate reads the source at this tail.
 	entity, tail, ok := h.edgeSource(w, r, typeName, addr, entity, peer, from, relType, to)
 	if !ok {
 		return
@@ -1813,8 +1491,6 @@ func (h *writeHandler) handleV1UpdateRelation(
 		return
 	}
 
-	// The response carries the caller's view of the meta and its ETag, the
-	// same pair a GET returns, so the caller's next If-Match matches.
 	view, etag := relationView(r.Context(), h.affordances, entity, rel)
 	w.Header().Set("ETag", etag)
 	result := map[string]any{
@@ -1899,15 +1575,16 @@ func relationIfMatch(
 	return string(store.RelationVersionOf(raw)), true
 }
 
+// handleV1DeleteRelation removes an edge. The path entity and the peer are both
+// read-gated before the edge or its affordances are touched, so a hidden peer
+// gets the same 404 as an absent one.
+//
 //archplan:auth=authz
 func (h *writeHandler) handleV1DeleteRelation(
 	w http.ResponseWriter, r *http.Request, typeName, addr, relType, targetID string,
 ) {
 	r = h.withProvision(r)
 
-	// ACL gate (TKT-VQGN CRIT-2): see handleV1CreateRelation. The peer is
-	// gated too, before the edge or its affordances are touched, so a hidden
-	// peer is the same 404 as an absent one (design 8.2).
 	entity, found := readAddressedOr404(w, r, h.visible, typeName, addr)
 	if !found {
 		return
@@ -1916,19 +1593,10 @@ func (h *writeHandler) handleV1DeleteRelation(
 		return
 	}
 
-	// Affordance gate: removable check, evaluated against the SOURCE
-	// of the edge (the path entity for outgoing; the peer for
-	// incoming). Per-relation-type uniform — a removable=false
-	// verdict applies to every link of this type.
 	direction := r.URL.Query().Get("direction")
 	peer := peerAddress(targetID, direction == string(DirectionIncoming))
 	from, to := resolveRelationEndpoints(entity.ID, peer.ID(), direction)
 
-	// Addressed by its OWN tail — see incomingEdgeTail. Dropping the tail
-	// deletes a DIFFERENT edge (the default face's) and reports success.
-	// DeleteRelationState with the zero face IS DeleteRelation, so the
-	// faceless and identity-scoped cases are unchanged. The affordance gate
-	// reads the source at this tail too.
 	entity, tail, ok := h.edgeSource(w, r, typeName, addr, entity, peer, from, relType, to)
 	if !ok {
 		return
@@ -1944,10 +1612,6 @@ func (h *writeHandler) handleV1DeleteRelation(
 		return
 	}
 
-	// If-Match makes the delete conditional, as on PATCH (TKT-CVT9W1K).
-	// relationIfMatch returns the stored version it compared, and the
-	// delete compares it again inside its own transaction, so a write
-	// landing between the two is a 412 too.
 	key := entityPkg.RelationKey{From: from, FromFace: tail, Type: relType, To: to}
 	version, ok := relationIfMatch(w, r, h.store, h.affordances, entity, key)
 	if !ok {
@@ -1976,6 +1640,9 @@ func (h *writeHandler) handleV1DeleteRelation(
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleV1CloneEntity copies an entity. A hidden source, or a face the caller
+// may not read, gets the same 404 as a missing source.
+//
 //archplan:auth=authz
 func (h *writeHandler) handleV1CloneEntity(
 	w http.ResponseWriter, r *http.Request, typeName, addr string,
@@ -1984,26 +1651,17 @@ func (h *writeHandler) handleV1CloneEntity(
 
 	s := h.schema()
 
-	// ACL gate (TKT-VQGN): a clone from a hidden source, or from a face the
-	// caller may not read, 404s like a clone from a nonexistent source.
 	entity, found := readAddressedOr404(w, r, h.visible, typeName, addr)
 	if !found {
 		return
 	}
 
-	// Clone properties. File values stay behind: they name the source's
-	// bytes, which the clone does not have, and only the attachments API
-	// may set a file value (BUG-CTUW2N).
 	props := make(map[string]any)
 	maps.Copy(props, entity.Properties)
 	for _, prop := range metamodel.FileProperties(s.Meta, typeName) {
 		delete(props, prop)
 	}
 
-	// The clone lands on the SOURCE's face, not the bare coordinate
-	// (BUG-HC6I2T): a clone of a draft is a draft. The source face is read
-	// off the row that was actually loaded rather than re-derived, so the
-	// copy and its original cannot end up at different coordinates.
 	cloneResult, err := h.manager.CreateEntity(r.Context(),
 		&entityPkg.Entity{
 			Type:       typeName,
@@ -2016,8 +1674,6 @@ func (h *writeHandler) handleV1CloneEntity(
 		if writeForbiddenIfACLDenied(w, r, err) {
 			return
 		}
-		// The clone is a create, so it fails validation like one: a
-		// `unique:` property always collides with its source.
 		var verr *entitymanager.ValidationError
 		if errors.As(err, &verr) {
 			writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", verr.Error())
@@ -2039,13 +1695,12 @@ func (h *writeHandler) handleV1CloneEntity(
 // handleV1ConflictResolve applies a conflict resolution. It needs git:sync,
 // then the write check of [writeHandler.authorizeConflictResolve], then the
 // field check of [conflictFieldDenial].
+// The read gate runs before anything else reads the file, so a file that names
+// a hidden row gets the same 404 as a missing one. Errors name the rule, never
+// a field value.
 //
 //archplan:auth=authz reason="requires git:sync, then re-authorizes the write"
 func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Request) {
-	// Resolving a conflict is part of a sync, so it needs git:sync like the
-	// list and the detail, before the body is read. The gate deliberately
-	// runs on the unprovisioned request, as handleGitSync does; keep the two
-	// in step. The write check in authorizeConflictResolve still runs on top.
 	if !permitsGitSync(h.acl(), r) {
 		writeGitSyncForbidden(w, r, "Resolving a merge conflict")
 		return
@@ -2061,8 +1716,6 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// The path is caller-supplied — contain it to the project root
-	// before any filesystem access.
 	absPath, ok := resolveConflictPath(h.paths, w, r, req.Path)
 	if !ok {
 		return
@@ -2076,9 +1729,6 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	// The read gate runs before anything else looks at the file, so a file
-	// naming a row the caller may not read is the same 404 as a missing one
-	// and never a 403 or 422 that confirms it exists (BUG-0E6S7Q).
 	id := identifyConflict(h.paths, st.Meta, cf)
 	if !conflictReadableOr404(w, r, h.visible, id) {
 		return
@@ -2088,7 +1738,6 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 		PropertyChoices: make(map[string]conflict.Side),
 	}
 
-	// Map property choices
 	for prop, choice := range req.PropertyChoices {
 		if choice == "theirs" {
 			resolution.PropertyChoices[prop] = conflict.SideTheirs
@@ -2097,7 +1746,6 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	// Map content choice
 	switch req.ContentChoice {
 	case "theirs":
 		resolution.ContentChoice = conflict.SideTheirs
@@ -2107,18 +1755,8 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 		resolution.ContentChoice = conflict.SideOurs
 	}
 
-	// Resolve first so the ACL gate evaluates the actual write target
-	// (entity vs relation, post-choice identity), then authorize, then
-	// write. The write is file-level marker removal and cannot route
-	// through entitymanager — the store can't parse a file that still
-	// contains conflict markers — so an entity is authorized by the
-	// manager's own update check and this handler audits the write. The
-	// store's file watcher picks the change up as an external edit,
-	// keeping index/SSE consumers in sync.
 	resolvedEntity, resolvedRelation, err := conflict.Resolve(cf, resolution)
 	if err != nil {
-		// Resolve fails only when the two sides are not both parseable
-		// entities or both relations: a fact about the file, not the server.
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "conflict_unresolvable",
 			"The conflict cannot be resolved automatically", "Resolve it by editing the file")
 		return
@@ -2143,8 +1781,6 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 		h.denyAfford(r.Context(), w, subject, *denial)
 		return
 	}
-	// The error names the rule and never the value, so it cannot carry a
-	// hidden field's value (BUG-197XPAU).
 	if err := conflict.ValidateResolved(resolvedEntity, st.Meta); err != nil {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
 		return
@@ -2181,14 +1817,9 @@ func resolvedMatchesFile(id conflictIdentity, e *entityPkg.Entity, rel *entityPk
 // performs, after the caller's read gate has passed and
 // [resolvedMatchesFile] holds. An entity file is an update of the row at the
 // file's id and face, asked of [entityMutator.AuthorizeUpdate], so the
-// manager runs its own read gate, write check and denied-write audit
-// (BUG-0E6S7Q). That repeats the conflict read gate on purpose: the
-// manager's check is the one every update path shares.
-//
-// A relation file gates like a relation update (source-entity type,
-// mirroring entitymanager.UpdateRelation — type left empty when the source
-// entity can't be loaded, the same fallback the manager uses). A deny
-// records a `denied-write` audit row and writes the standard 403 body.
+// manager runs its read gate, write check and denied-write audit (BUG-0E6S7Q).
+// A relation file gates like a relation update on the source-entity type. A
+// deny records a `denied-write` audit row and writes the standard 403 body.
 // Returns true when the write may proceed.
 //
 //archplan:guard=authz reason="conflict resolution writes the file itself, so it authorizes the write here"
@@ -2199,11 +1830,6 @@ func (h *writeHandler) authorizeConflictResolve(
 		return authorizeConflictEntity(w, r, h.manager, id)
 	}
 	ctx := r.Context()
-	// Write authorization needs the real type whether or not the caller
-	// may read the row, and a faced source has no zero-face row. The
-	// conflict parser reads no tail, so an edge from a faced source is
-	// judged on every face its type declares: at least what the manager
-	// asks for the edge at any tail.
 	fromType := storedTypeOf(ctx, h.store, rel.From)
 	aclReq := translateRelationWrite(h.schema().Meta, rel.Type, fromType, rel.From, rel.FromFace)
 	decision := h.acl().AuthorizeWrite(ctx, aclReq)

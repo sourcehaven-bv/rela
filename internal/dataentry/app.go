@@ -633,16 +633,11 @@ type App struct {
 }
 
 // StopWatching releases the data-entry.yaml subscription started by
-// [App.StartWatching] and stops the change feed; open SSE streams keep
-// running without entity changes until the broker closes. The store-level watcher (when present) has its
-// own lifecycle managed by the store and is stopped during store
-// close, not here — asymmetric on purpose: dataentry doesn't own the
-// store, only its config subscription.
-// StopWatching closes the change feed for good: an App cannot start watching
-// again afterwards (rela-server builds a new App per configuration).
-// StopWatching is lifecycle-only and must be called from a single goroutine
-// (it is the StartWatching counterpart). The stop fields are not synchronized;
-// concurrent Start/Stop is not supported.
+// [App.StartWatching] and stops the change feed for good; open SSE streams
+// keep running without entity changes until the broker closes. The store
+// watcher is not stopped here: the store owns it. An App cannot watch again
+// afterwards. Call it from a single goroutine; concurrent Start/Stop is not
+// supported.
 func (a *App) StopWatching() {
 	if a.stopConfigWatch != nil {
 		a.stopConfigWatch()
@@ -673,17 +668,11 @@ func (a *App) Cfg() *Config { return a.State().Cfg }
 // Meta returns the current metamodel (convenience accessor).
 func (a *App) Meta() *metamodel.Metamodel { return a.State().Meta }
 
-// luaWriteDeps builds a lua.WriteDeps bundle using the current Schema
-// metamodel. Called per action-script invocation so that metamodel reloads
-// propagate to scripts without requiring app reconstruction. All other
-// fields are immutable for the App's lifetime.
-// Reads are ACL-BOUND to the request principal (DEC-O59WM4): an action
-// script, an export_render override, or an MCP-invoked script sees exactly
-// the caller's view — hidden entities absent, hidden properties redacted.
-// Identity resolves per call from the ctx, so one bundle serves every
-// request. Note there is no raw read handle here at all: update_entity
-// patches through the manager, which does its own write-prep read
-// (TKT-80EWGM), so a redacted read can no longer feed a write.
+// luaWriteDeps builds a lua.WriteDeps bundle from the current metamodel, per
+// action-script invocation, so metamodel reloads reach scripts.
+// Reads are ACL-bound to the request principal: a script sees exactly the
+// caller's view. There is no raw read handle: update_entity patches through
+// the manager, so a redacted read can never feed a write.
 func (a *App) luaWriteDeps() lua.WriteDeps {
 	redactor := appRedactor(a)
 	return a.piles.scriptPiles(lua.WriteDeps{
@@ -715,36 +704,12 @@ func appRedactor(a *App) visibility.FieldRedactor {
 }
 
 // scriptReader returns the ACL-bound read-out handle for script runtimes,
-// or the raw store when no Declarative policy is configured (the NopACL
-// path — byte-identical to pre-ACL behavior, not a bypass).
-//
-// When a policy IS configured but the gate cannot be built, this REFUSES
-// (returns [visibility.DenyReader]) rather than degrading to the raw store
-// — matching appbuild's unattended-path wiring (RR-GKCZO5, rela#1198).
-//
-// This wiring was fail-open on the theory that its callers are interactive,
-// so a broken gate would surface as an immediate, human-visible outage.
-// That does not hold: of the three consumers of App.luaWriteDeps —
-// actions.go (interactive), document.go/export_render, and webhook.go — the
-// IdP webhook is unattended machine-to-machine, running as `webhook:<event>`
-// with nobody watching the log. An unattended job quietly reverting to
-// full-graph reads is an unbounded silent disclosure into whatever it sends
-// onward — the exact failure DenyReader exists to stop.
-//
-// Failing closed costs the interactive callers nothing they were promised:
-// [visibility.ErrReaderUnavailable] is a loud, immediate, diagnosable error,
-// which is what the fail-open argument actually wanted — just without the
-// ungated read. A genuine DENY remains a deny, distinct from this error.
-//
-// DELIBERATE DIVERGENCE from appbuild: that seam substitutes
-// [visibility.NopRedactor] for a nil redactor, because its callers
-// (scheduler, cascades) legitimately have no affordance resolver and row
-// gating alone is the best available there (RR-7408F5). Data-entry always
-// has one, so a nil redactor here is a WIRING BUG, not a capability gap —
-// silently swapping in NopRedactor would drop field-level redaction on a
-// path that is supposed to enforce it. Do not "align" these by copying
-// appbuild's guard: it would convert a caught bug into a silent downgrade,
-// and delete the fault path failclosed_test.go exercises.
+// or the raw store when no Declarative policy is configured (NopACL).
+// When a policy is configured but the gate cannot be built, it fails closed
+// with [visibility.DenyReader]: the unattended IdP webhook also uses this
+// path, and a silent fallback to full-graph reads would be a disclosure.
+// Unlike appbuild, a nil redactor is not replaced by NopRedactor: here it is a
+// wiring bug, and swapping it would silently drop field-level redaction.
 func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
 	return gatedScriptReader(a.acl, a.store, scriptHistory{versions: a.versions, tags: a.versionTags.reader},
 		redactor, familiesOption(a), defaultWorldScope(a.worlds))
@@ -969,19 +934,9 @@ func (t lateGatedTracer) HasCycle(ctx context.Context, startID string) bool {
 }
 
 // elevationRecorder adapts the audit sink onto lua.ElevationRecorder for an
-// elevated document render (TKT-Y3JVFK).
-//
-// It exists for ONE reason: the nil conversion. audit.NewElevationRecorder
-// returns *audit.ElevationRecorder, and assigning a nil one straight into
-// lua's interface-typed field yields a TYPED nil, which is != nil — lua's
-// `ElevationRecorder == nil` guard would pass and the first elevated read
-// would nil-deref. Returning the INTERFACE type makes the nil a real nil.
-// Same trap, same fix as appbuild.NewElevationAuditor (RR-5QQL1Z); duplicated
-// rather than imported because dataentry must not depend on the wiring layer.
-//
-// auditSink is required and non-nil on a constructed App (callers pass
-// audit.Nop), so the nil branch is defense against a future construction path,
-// not a live case.
+// elevated document render. It returns the interface type so a nil sink
+// yields a real nil rather than a typed nil that passes lua's nil guard and
+// panics on first use.
 func elevationRecorder(sink audit.Audit) lua.ElevationRecorder {
 	if sink == nil {
 		return nil
@@ -1004,8 +959,6 @@ func gatedScriptReader(
 ) lua.EntityReader {
 	d, ok := aclImpl.(*acl.Declarative)
 	if !ok || d == nil {
-		// Named so the NopACL path is greppable alongside every other
-		// ungated read site (TKT-1WV50C).
 		return visibility.Unrestricted(store, order).WithWorld(visibility.WorldOf(world)).
 			WithHistory(history.reader(), history.tags)
 	}
@@ -1151,20 +1104,16 @@ func (a *App) SetSecurityConfig(cfg SecurityConfig) error {
 	return nil
 }
 
-// SetPrincipalResolver installs a custom [PrincipalResolver] used by
-// the router's audit-stamp middleware. Must be called before
-// [App.NewRouter]; subsequent changes have no effect on already-built
-// routers.
-//
-// The typical wiring (in cmd/rela-server) chains
-// [EnvPrincipalResolver] and [HeaderPrincipalResolver] so a
-// `$RELA_DATAENTRY_USER` env var overrides any incoming header and
-// the header itself overrides the default. Passing nil restores
-// [defaultPrincipalResolver] behavior.
 // SetCalDAVAliases installs the CalDAV alias service. Without it the CalDAV
 // routes are not registered.
 func (a *App) SetCalDAVAliases(s *caldavalias.Service) { a.caldavAliases = s }
 
+// SetPrincipalResolver installs a custom [PrincipalResolver] used by
+// the router's audit-stamp middleware. Must be called before
+// [App.NewRouter]; later changes do not affect built routers.
+// cmd/rela-server chains [EnvPrincipalResolver] and [HeaderPrincipalResolver]
+// so `$RELA_DATAENTRY_USER` overrides the header, which overrides the
+// default. Passing nil restores [defaultPrincipalResolver] behavior.
 func (a *App) SetPrincipalResolver(r PrincipalResolver) {
 	a.principalResolver = r
 }
@@ -1176,34 +1125,16 @@ func (a *App) SetPrincipalResolver(r PrincipalResolver) {
 func (a *App) SetPrincipalHeader(name string) {
 	a.principalHeader = name
 
-	// A webhook config may not expose the header THIS deployment trusts for
-	// identity. dataentryconfig's static refusal list cannot name it — the flag
-	// is an arbitrary string chosen at startup — yet it is the header most
-	// certain to carry an authenticated identity, so a hook echoing it into
-	// entity content would persist "who called the proxy" as if it were payload
-	// data, readable by anyone who can read the entity.
 	dataentryconfig.ForbidWebhookHeader(name)
 }
 
 // SetJWTGate enables fail-closed verified-JWT identity. Must be called before
-// [App.NewRouter]; subsequent changes have no effect on already-built routers.
-//
-// When set, every [isAPIPath] request must carry an assertion that verifies, or
-// it is denied 401 — see [requireVerifiedJWT]. This REPLACES the principal
-// resolver for API requests rather than layering over it: JWT identity is
-// exclusive, so there is no header or env source to fall back to. Callers must
-// not also install a header/env chain via [App.SetPrincipalResolver];
-// cmd/rela-server enforces that at startup.
-//
-// Returns an error when a required field is missing rather than accepting a
-// config that cannot work. An empty HeaderName is fatal in a quiet way — every
-// assertion would read as absent, so the server would boot clean and then 401
-// every API request.
-//
-// Note the interface-nil caveat: a TYPED nil (e.g. a (*jwtauth.Verifier)(nil)
-// stored in the interface) is not == nil and cannot be caught here without
-// reflection. Callers must not construct one; cmd/rela-server checks the
-// concrete pointer before it ever reaches this interface.
+// [App.NewRouter]. Every [isAPIPath] request must then carry an assertion that
+// verifies, or it is denied 401 (see [requireVerifiedJWT]). It replaces the
+// principal resolver for API requests, so callers must not also install a
+// header/env chain via [App.SetPrincipalResolver].
+// It returns an error when a required field such as HeaderName is missing.
+// A typed-nil verifier cannot be detected here; callers must not pass one.
 func (a *App) SetJWTGate(cfg JWTGateConfig) error {
 	if cfg.Verifier == nil {
 		return errors.New("dataentry: jwt gate requires a non-nil Verifier")
@@ -1246,11 +1177,6 @@ func NewApp(
 	commandAuthz commandAuthorizer,
 	worlds WorldLookup,
 ) (*App, error) {
-	// Reject nil required collaborators up front rather than letting a
-	// downstream handler panic on the first request that exercises them.
-	// fs and paths can also be nil in tests that take a different code path
-	// (newAppFromParts wires them post-construction), so they're checked
-	// only when they participate in the construction below.
 	if files == nil {
 		return nil, errors.New("dataentry.NewApp: files is required (wire appbuild's Services.ProjectFiles())")
 	}
@@ -1275,10 +1201,6 @@ func NewApp(
 		{fieldResolver == nil, "fieldResolver is required (pass NopFieldVerdictResolver{} for permissive default)"},
 		{auditSink == nil, "auditSink is required (pass audit.Nop{} to opt out)"},
 		{stateKV == nil, "stateKV is required (wire appbuild's Services.State())"},
-		// Fail closed on a wiring omission: a missing command authorizer must
-		// not default to "allow shell exec". Callers pass an explicit impl:
-		// SelectCommandAuthorizer(...) in cmd/rela-server, or
-		// UngatedCommandAuthorizer() for the in-process desktop/docscapture servers.
 		{commandAuthz == nil, "commandAuthz is required " +
 			"(use SelectCommandAuthorizer, or UngatedCommandAuthorizer() for a loopback/in-process server)"},
 	} {
@@ -1286,38 +1208,18 @@ func NewApp(
 			return nil, errors.New("dataentry.NewApp: " + req.msg)
 		}
 	}
-	// The manager owns the attachment lock, so every writer shares one
-	// instance. A manager built for a metamodel without file properties
-	// has none; the zero value then fails any attachment write.
 	attachmentOwner, ownerErr := entitymanager.AttachmentsOf(em)
 	if ownerErr != nil && metamodel.HasFileProperties(meta) {
 		return nil, fmt.Errorf("dataentry.NewApp: %w", ownerErr)
 	}
-	// The handler checks the file property's write before the upload, so
-	// the stamp asks the flow edit part of that check again at the write.
 	attachmentOwner = attachmentOwner.WithWriteRecheck()
-	// Operator-authored files — data-entry.yaml, scripts, custom/, apps/ —
-	// come from the caller's loader rather than a filesystem loader built
-	// here: on a backend that keeps the project in a database they may live
-	// there (FEAT-UP14BT), layered behind the files on disk.
 	cfgLoader := files
-	// The state store comes from the caller (appbuild's Services.State()) rather
-	// than being rebuilt here: on the postgres build it is database-backed, so
-	// the render cache, user settings and the operator logo are shared by every
-	// process serving the schema. Rebuilding an FSKV here would silently pin
-	// those back to this node's .rela/ — the bug where an uploaded logo is
-	// visible only on whichever node served the POST (TKT-VC27L3).
 	kv := stateKV
-	// The default world until setWorlds supplies the lookup and rebuilds it.
 	trc, err := tracer.New(st, defaultWorldScope(nil))
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: tracer: %w", err)
 	}
-	// The validator (val) is built AFTER app.affordances below — its reader is
-	// now GATED (TKT-3FL2S6, superseding DEC-O59WM4), which needs the redactor
-	// that closes over app.affordances.
 
-	// Load data-entry config from project root
 	cfgData, err := cfgLoader.Load(context.Background(), ConfigFile)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", ConfigFile, err)
@@ -1335,7 +1237,6 @@ func NewApp(
 	relCount, _ := st.CountRelations(context.Background(), store.RelationQuery{})
 	slog.Info("loaded project", "entities", entCount, "relations", relCount)
 
-	// Build style map from config styles
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
 
 	families := &appFamilies{}
@@ -1351,53 +1252,39 @@ func NewApp(
 
 	scriptEngine := script.NewEngine()
 	app := &App{
-		fs:              fs,
-		paths:           paths,
-		store:           st,
-		versions:        versions,
-		entityManager:   em,
-		recreator:       entitymanager.Recreator{M: em},
-		searcher:        searcher,
-		visibleSearcher: visibleSearcher,
-		visibleReader:   visible,
-		reader:          entityReader{store: st},
-		tracer:          trc,
-		cfgLoader:       cfgLoader,
-		assets:          assets,
-		kv:              kv,
-		acl:             aclImpl,
-		broker:          newEventBroker(),
-		feed:            feed,
-		scriptEngine:    scriptEngine,
-		fieldResolver:   fieldResolver,
-		auditSink:       auditSink,
-		// attachmentOwner must be set before the attachment handler copies
-		// it below.
+		fs:                fs,
+		paths:             paths,
+		store:             st,
+		versions:          versions,
+		entityManager:     em,
+		recreator:         entitymanager.Recreator{M: em},
+		searcher:          searcher,
+		visibleSearcher:   visibleSearcher,
+		visibleReader:     visible,
+		reader:            entityReader{store: st},
+		tracer:            trc,
+		cfgLoader:         cfgLoader,
+		assets:            assets,
+		kv:                kv,
+		acl:               aclImpl,
+		broker:            newEventBroker(),
+		feed:              feed,
+		scriptEngine:      scriptEngine,
+		fieldResolver:     fieldResolver,
+		auditSink:         auditSink,
 		attachmentOwner:   attachmentOwner,
 		attachmentUploads: attachment.NewLimiter(attachment.DefaultMaxUploads),
 	}
 	families.app = app
 	app.live = newLiveHub(func() *metamodel.Metamodel { return app.State().Meta })
-	// sseHandler and gitHandler own the event stream and the git routes,
-	// extracted on the same terms as nextActionHandler below.
 	app.sse = newSSEHandler(app)
 	app.gitAPI = newGitHandler(app)
 	app.schemaAPI = newSchemaHandler(app, templater)
 	app.conflictsAPI = newConflictsHandler(app)
 	app.analyzeAPI = newAnalyzeHandler(app)
-	// Built before export, gantt and next-action, which take the pipeline's
-	// method values.
 	app.lists = newListPipeline(app)
 	app.entities = newEntityReadHandler(app)
 	app.faceEdges = faceEdgesOf(app)
-	// documentService needs scriptEngine (for Lua renders) and a closure
-	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).
-	// Constructed after app because luaWriteDeps is a method on App.
-	// The elevation bundle is resolved per render and applied ONLY to a
-	// document that declares allow_acl_bypass. visibility.Unrestricted names
-	// the ungated path so it appears in the grep that enumerates them
-	// (TKT-1WV50C), and the recorder makes elevated document reads land in
-	// the audit log exactly as cascade ones do.
 	app.documents = newDocumentService(st, kv, paths.Root, scriptEngine, app.luaWriteDeps,
 		func() documentElevation {
 			return documentElevation{
@@ -1407,8 +1294,6 @@ func NewApp(
 			}
 		})
 
-	// The copy surface (RULING 9) is built ONCE, here, for both of its
-	// consumers: the `_copies` affordance below and the invoke handler.
 	ts, tsErr := wireTypeChanges(em, copyEdgeGate{
 		affordances: func() affordanceService { return app.affordances },
 		visible:     app.visibleReader,
@@ -1418,10 +1303,6 @@ func NewApp(
 	}
 	app.copies, app.conversions, app.taskItems = ts.copies, ts.conversions, ts.taskItems
 
-	// affordanceService shares the App's acl/fieldResolver/store and takes the
-	// metamodel per-request via app.State(). The two relation-graph reads are
-	// App methods, so it's wired after the struct literal. It MUST share the
-	// same acl instance as the write path (contract-test invariant).
 	app.affordances = affordanceService{
 		acl:          func() acl.ACL { return app.acl },
 		resolver:     func() FieldVerdictResolver { return app.fieldResolver },
@@ -1445,25 +1326,10 @@ func NewApp(
 
 	app.serializer = entitySerializer{affordances: app.affordances}
 
-	// The validator and analyze reads are GATED per requesting principal
-	// (TKT-3FL2S6, superseding DEC-O59WM4): a rule cannot read data the requester
-	// cannot see, so a hidden value never reaches a validation message or an
-	// issue title — the leak closes by construction. gatedReader resolves the
-	// principal from ctx per call (one instance serves every request); under
-	// NopACL it is the raw store. The trigger entity the validator loads
-	// (validator.New's first arg) and its rule bodies' cross-entity lookups
-	// (ReadDeps.VisibleReader) both go through it.
-	//
-	// setWorlds runs after NewApp, so this wires the default world of a nil
-	// lookup, and setWorlds rewires it to the schema's default world.
 	if valErr := wireValidation(app, meta, defaultWorldScope(nil)); valErr != nil {
 		return nil, valErr
 	}
 
-	// viewReader row-gates + field-redacts entities on their way out of the
-	// view pipeline (DEC-ZBI39P). Wired here — after app.affordances — because
-	// the redactor closes over it. Same construction as the export handler's
-	// visReader: ctx-resolved gate, affordance-backed redactor, raw store.
 	viewReader, viewReaderErr := visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), app.store,
 		visibility.WithFamilies(families.scope))
 	if viewReaderErr != nil {
@@ -1473,71 +1339,39 @@ func NewApp(
 
 	app.settings = newSettingsService(kv)
 
-	// palette owns the user override + resolved palette. Surface a broken
-	// palette rather than silently falling back to defaults (which the next
-	// save would then persist, destroying the user's data).
 	palette, paletteErr := newPaletteService(kv, cfg.Palette)
 	if paletteErr != nil {
 		return nil, fmt.Errorf("load user palette: %w", paletteErr)
 	}
 	app.palette = palette
 
-	// logo owns its own persistence + served cache. Same read-error policy as
-	// palette: surface a corrupt .rela/theme/ rather than silently overwriting
-	// it on the next save.
 	logo, logoErr := newLogoStore(kv)
 	if logoErr != nil {
 		return nil, fmt.Errorf("load user logo: %w", logoErr)
 	}
 	app.logo = logo
 
-	// viewsHandler owns the read-only view-assembly surface (view traversal,
-	// section building, /_views, /_sidepanel, /_sidebar). Fixed service
-	// handles by value — none of these are swapped by tests — plus the schema
-	// snapshot / Services bundle as closures and App's shared read gate so
-	// the uniform-404 behavior can't drift from the entity read path.
 	app.views = newViewsHandler(app, st, logo)
 
-	// appearanceHandler owns the theme/settings/palette routes; wired after
-	// the logo/palette/settings services and viewReader it captures.
 	app.appearance = newAppearanceHandler(app)
 
-	// queryService owns the search-query pipeline. Its searcher and
-	// affordance handles are closures because tests reassign both after
-	// construction — see the type's doc comment.
 	app.queries = newQueryService(app)
 
-	// ganttHandler: the ACL-scoped lister and the field redactor are the two
-	// seams its security pipeline hangs on — both closures over App so test
-	// builders that rebind collaborators stay live.
 	app.gantt = newGanttHandler(app, st)
 	app.sankey = newSankeyHandler(app, st, app.gantt)
 
-	// commandHandler owns the user-configured command surface. Its
-	// collaborators are narrow closures over App: the schema snapshot (command/
-	// list/view config), the Services read bundle, the project root (exec cwd +
-	// env), and the view executor for view-context commands.
 	app.commands = &commandHandler{
 		schema:      app.State,
 		services:    app.Services,
 		projectRoot: app.ProjectRoot,
-		// Inline rather than an App method: its only consumer is this
-		// closure, and App is at its plimsoll method load line.
 		schemaFile:  func() string { return filepath.Base(app.paths.SchemaPath) },
 		executeView: app.views.executeViewWhole,
-		// Chosen once at the wiring site from (ACL, bind, override) — see
-		// SelectCommandAuthorizer. Fixed for the process lifetime. Tests that
-		// need a different verdict assign app.commands.authz directly rather
-		// than reassigning app.acl (RR-CWBZVT).
-		authz:    commandAuthz,
-		files:    newCommandFileStore(),
-		redactor: appRedactor(app),
-		visible:  app.visibleReader,
+		authz:       commandAuthz,
+		files:       newCommandFileStore(),
+		redactor:    appRedactor(app),
+		visible:     app.visibleReader,
 	}
 
-	// Build and publish the initial Schema snapshot. All reloadable
-	// state lives here; there are no convenience aliases on App to keep
-	// in sync.
 	app.schema.Publish(&Schema{
 		Cfg:         cfg,
 		Meta:        meta,
@@ -1550,19 +1384,10 @@ func NewApp(
 		}),
 	})
 
-	// Initialize git ops if enabled and repo is a git repository
 	if cfg.Git != nil && cfg.Git.Enabled && git.IsRepo(paths.Root) {
-		// Logged by NewRouter: tenant mode turns it off before then.
 		app.gitOps = git.NewOps(paths.Root, *cfg.Git)
 	}
 
-	// Wire the external-command runner for attachment scan/transform. It is
-	// always available; the PolicyProcessor only invokes it when a property's
-	// scan/transform config references a command. A nil runner (constructor
-	// failure) leaves uploads with native MIME validation only.
-	// Refuse to serve when the operator's sandbox read paths would hand the
-	// project (every user's entities, .rela secrets) to the converters that
-	// render untrusted content: that is what the sandbox exists to prevent.
 	if paths != nil {
 		if err := cmdexec.CheckProjectNotExposed(paths.Root); err != nil {
 			return nil, fmt.Errorf("dataentry.NewApp: %w", err)
@@ -1571,9 +1396,6 @@ func NewApp(
 	runner, rerr := attachment.NewCmdRunner(attachmentCmdTimeout, store.MaxAttachmentBytes)
 	if rerr == nil {
 		app.attachmentRunner = runner
-		// Tell the operator the confinement posture at boot, so an unsandboxable
-		// host is discovered now rather than on the first upload that needs a
-		// scan/transform (which will fail closed).
 		slog.Info("external command confinement", "detail", runner.Describe())
 		probeAttachmentCommands(meta, runner)
 		warnIfNoSandboxReadPaths(meta, cfg.Documents, runtime.GOOS, map[cmdexec.Purpose][]string{
@@ -1583,23 +1405,12 @@ func NewApp(
 	} else {
 		slog.Warn("attachments: command runner unavailable; scan/transform disabled", "err", rerr)
 	}
-	// Deliberately outside the branch above: a failed constructor is one of the
-	// two states this warns about, so it must run on that path too.
-	//
-	// The nil is passed as an explicit untyped nil rather than the (*CmdRunner)
-	// value, because a typed nil in an interface is NOT == nil — handing over a
-	// failed runner directly would skip the constructor-failure branch and then
-	// call SandboxErr on a nil pointer.
 	var reporter sandboxReporter
 	if rerr == nil {
 		reporter = runner
 	}
 	warnIfScanCannotRun(meta, reporter, rerr)
 
-	// exportHandler owns the view-export routes (transform list, entity/list
-	// export). Extracted from App to keep App under its method cap. Probe the
-	// transforms at startup so a missing converter (e.g. pandoc not installed)
-	// surfaces as a boot warning rather than a 500 on the first export.
 	export, exportErr := newExportHandler(app)
 	if exportErr != nil {
 		return nil, exportErr
@@ -1607,28 +1418,16 @@ func NewApp(
 	app.export = export
 	app.export.probeTransforms()
 
-	// commentsHandler owns the commentary routes, likewise extracted to keep
-	// App under its method cap. Built unconditionally: the SERVICE it wraps is
-	// installed later by SetComments and stays nil when commenting is off.
 	app.comments = newCommentsHandler(app, em)
 
-	// pilesHandler owns the piles routes, extracted on the same terms. Its
-	// service is installed later by SetPiles.
 	pilesH, pilesErr := newPilesHandler(app)
 	if pilesErr != nil {
 		return nil, pilesErr
 	}
 	app.piles = pilesH
 
-	// nextActionHandler owns /_next_action, extracted on the same terms. Its
-	// state backend and condition compiler are installed by SetNextActions.
 	app.nextActions = newNextActionHandler(app)
 
-	// attachmentHandler owns the entity-attachment routes. Constructed after
-	// the runner wiring above so it captures the resolved runner. The acl/
-	// audit/field-resolver deps are closures because tests swap those fields
-	// on App after construction (same rationale as affordanceService); the
-	// store/manager handles are fixed for App's lifetime.
 	app.attachments = &attachmentHandler{
 		schema:      app.State,
 		store:       st,
@@ -1646,16 +1445,11 @@ func NewApp(
 		provision:   newProvisionSeam(app),
 	}
 
-	// writeHandler owns the entity/relation CRUD + clone + conflict-resolve
-	// nucleus. Same collaborator rationale as attachmentHandler above: fixed
-	// services by value, test-swappable deps as closures over App, and the
-	// shared read/write helpers (visible/denyAfford/computeETag) as closures
-	// so both paths stay behaviorally identical.
 	app.write = &writeHandler{
 		schema:         app.State,
 		rollups:        newRollupSource(app),
 		store:          st,
-		manager:        grantedManager{em}, // writeHandler narrows to entityMutator
+		manager:        grantedManager{em},
 		softDeletes:    softDeletesFor(em),
 		ifMatchDeletes: entitymanager.IfMatchDeletes{M: em},
 
@@ -1690,10 +1484,6 @@ func NewApp(
 	}
 	app.batch = newBatchHandler(app, st, em)
 
-	// Nudge the operator to make a conscious virus-scan choice: if the
-	// metamodel has file properties with no scan command configured (and no
-	// explicit `scan: off`), warn once. Configuring a scan_cmd or setting
-	// `scan: off` silences this. The warning never blocks startup or uploads.
 	if metamodel.NewAttachmentPolicy(meta).HasUnconfiguredScan() {
 		slog.Warn("attachments: no virus scanner configured for file properties; "+
 			"set attachments.scan_cmd to enable scanning, or `scan: off` on the property to silence this",
@@ -1725,21 +1515,15 @@ func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string, files lu
 		return nil, migrated.Explain(fmt.Errorf("parsing %s: %w", ConfigFile, unmarshalErr))
 	}
 
-	// Validate config against metamodel
 	if validationErr := ValidateConfig(cfgData, &cfg, meta); validationErr != nil {
 		return nil, migrated.Explain(fmt.Errorf("invalid %s: %w", ConfigFile, validationErr))
 	}
 
-	// Fill in calendar defaults. AFTER validation, deliberately: normalizing
-	// first would replace an author's invalid default_view with "month" and
-	// report nothing, turning a typo into silently different behavior.
 	dataentryconfig.NormalizeCalendars(&cfg)
 	dataentryconfig.NormalizeGantts(&cfg)
 	dataentryconfig.NormalizeSankeys(&cfg)
 	dataentryconfig.NormalizeListGroupBy(&cfg)
 
-	// Verify action scripts exist on disk (catches typos at startup).
-	// Skip set-only actions which have no script.
 	for id, action := range cfg.Actions {
 		if action.Script == "" {
 			continue
@@ -1757,20 +1541,10 @@ func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string, files lu
 		return nil, err
 	}
 
-	// Warnings come after every fatal check, so a rejected config does not
-	// leave warnings in the log for a file that never took effect.
-	//
-	// Non-fatal configuration warnings (e.g. a relation filter control whose
-	// incoming direction targets a type the relation never points to). Logged,
-	// not fatal — the app still serves, the filter just returns no rows.
 	for _, w := range CollectConfigWarnings(&cfg, meta) {
 		slog.Warn("data-entry config warning", "detail", w)
 	}
 
-	// Warn about scripts that mail without the grant (TKT-JVHSOZ). AFTER the
-	// existence checks, so a project with a missing script fails on that
-	// rather than on a lint that could not read it. See mailgate.go for why
-	// this is a hint rather than a check.
 	warnUngatedMailActionsFromFiles(cfg.Actions, files)
 	return &cfg, nil
 }
@@ -1850,13 +1624,10 @@ func buildStyleMap(
 	sm := make(map[string]map[string]string)
 	st := make(map[string]bool)
 
-	// Populate from explicit config styles
 	for typeName, valueColors := range cfg.Styles {
 		sm[typeName] = make(map[string]string)
 		st[typeName] = true
 		for val, color := range valueColors {
-			// Config validation rejects an unknown color, so the grey
-			// fallback only covers a config that skipped validation.
 			c, err := dataentryconfig.ParseColor(color, cfg.OperatorColors())
 			if err != nil {
 				sm[typeName][val] = "badge-gray"
@@ -1866,7 +1637,6 @@ func buildStyleMap(
 		}
 	}
 
-	// Auto-assign styles for custom types not already styled
 	for typeName, ct := range meta.Types {
 		if _, alreadyStyled := sm[typeName]; alreadyStyled {
 			continue
@@ -1881,29 +1651,18 @@ func buildStyleMap(
 	return sm, st
 }
 
-// newViewsHandler builds the view surface's collaborator set.
-//
-// A CONSTRUCTOR rather than a struct literal at the call site because there
-// were two call sites — NewApp and the handler-test helper — and the helper's
-// literal, which called itself a mirror of production wiring, drifted: a
-// field added to production was simply absent from the copy, leaving a nil
-// closure that panicked on the first request through it. One constructor
-// makes the mirror unnecessary rather than merely correct today.
-//
-// The late-bound closures are the reason this cannot be a plain value copy.
-// aclImpl exists because tests reassign app.acl after construction.
-// faceEdges is late-bound inside [faceEdgeReader], because
+// newViewsHandler builds the view surface's collaborator set. NewApp and the
+// handler tests both use it, so the test wiring cannot drift from production.
+// The closures are late-bound: tests reassign app.acl after construction, and
 // [SetWorldNeighbors] runs after this point in NewApp.
 func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 	return &viewsHandler{
-		schema:      app.State,
-		store:       st,
-		reader:      app.reader,
-		serializer:  app.serializer,
-		affordances: app.affordances,
-		// Late-bound: SetPiles runs after this point in NewApp.
+		schema:         app.State,
+		store:          st,
+		reader:         app.reader,
+		serializer:     app.serializer,
+		affordances:    app.affordances,
 		pilesAvailable: func(ctx context.Context) bool { return app.piles.available(ctx) },
-		// Late-bound: SetAuditLog runs after this point in NewApp.
 		audit:          func(ctx context.Context) (bool, bool) { return sidebarAudit(ctx, app.auditRead, app.acl) },
 		viewReader:     app.viewReader,
 		visible:        app.visibleReader,
@@ -1942,8 +1701,6 @@ func wireValidation(app *App, meta *metamodel.Metamodel, world store.WorldScope)
 		return err
 	}
 	app.validator = val
-	// analyzeService reads, relation counts included, route through the same
-	// gated reader.
 	app.analyzeAPI.svc = analyzeService{
 		reads:     gatedReader,
 		tracer:    lateGatedTracer{app: app},

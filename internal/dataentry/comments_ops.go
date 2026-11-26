@@ -103,9 +103,6 @@ func failGate(err error) *opFailure {
 	if f, ok := failNoIdentity(err); ok {
 		return f
 	}
-	// Built in two steps, here and in failInternal: TestNoInternalErrorDetail
-	// requires every field of a literal naming a 500 to be a constant, and
-	// the detail, the only field a caller sees, is.
 	f := &opFailure{status: http.StatusInternalServerError, detail: internalErrorDetail}
 	f.code, f.title, f.cause, f.warn = "acl_query_failed", "ACL read-permission check failed", err, true
 	f.write = func(w http.ResponseWriter, r *http.Request) { writeGateError(w, r, err) }
@@ -151,7 +148,6 @@ func failInternal(title string, err error) *opFailure {
 
 // failACLDenied is the failure writeForbiddenIfACLDenied answers.
 func failACLDenied(fe *acl.ForbiddenError) *opFailure {
-	// Judged on Decision.Cause, as writeIdentityFaultDeny does.
 	cause := fe.Decision.Cause
 	if f, ok := failNoIdentity(cause); ok {
 		return f
@@ -238,29 +234,18 @@ func (h *commentsHandler) readOnlyFailure() *opFailure {
 	return failForbidden("this rela instance is configured read-only")
 }
 
-// readTarget resolves the target entity for a read of the thread. A bare id
-// resolves to the face the request's world selects, as other reads do.
-// Operations that write use [commentsHandler.writeTarget].
+// readTarget resolves the target entity for a thread read; a bare id takes the
+// face the world selects. Writes use [commentsHandler.writeTarget].
 //
-// Both "you may not read this" and "this does not exist" fail with the same
-// 404. Checking EXISTENCE as well as the read verdict matters: the read gate
-// answers "may this principal read this type", which a nonexistent id passes —
-// so gating on the verdict alone would let a comment route confirm that an
-// arbitrary id is absent, and (worse) accept comments filed against entities
-// that were never there.
-//
-// The resolved entity is returned so the anchor code reads the SAME row the
-// gate admitted. Re-reading it by id would lose the face: the thread is keyed
-// by (id, face), and a bare-id read returns whichever face the world selects,
-// which is how a draft comment came to be anchored in the published body.
+// Unreadable and nonexistent targets fail with the same 404; existence is
+// checked too, since the type verdict alone passes an absent id. The resolved
+// row is returned so the anchor reads the same face the gate admitted.
 //
 //archplan:guard=authz reason="row gate: an unreadable or absent target is the same 404"
 func (h *commentsHandler) readTarget(
 	ctx context.Context, addr commentAddress,
 ) (comments.Target, *entity.Entity, *opFailure) {
 	target := comments.Target{Type: addr.typeName, ID: addr.ref.ID, Face: addr.ref.Face}
-	// The resolver also checks the stored type against the route's, so a
-	// type mismatch is the same miss as an absent id (ruling 9.2).
 	ent, found, err := h.visibleReader.addressRef(ctx, addr.typeName, addr.ref)
 	if err != nil {
 		return target, nil, failGate(err)
@@ -268,10 +253,6 @@ func (h *commentsHandler) readTarget(
 	if !found {
 		return target, nil, failEntityNotFound()
 	}
-	// Scope the thread to the face this request actually resolved to
-	// (FEAT-9CD2MX). Taken from the RESOLVED entity rather than the address:
-	// a bare id under a world resolves to whichever face that world selects,
-	// and the thread must match the content on screen.
 	target.ID = ent.ID
 	target.Face = ent.Face
 	return target, ent, nil
@@ -510,8 +491,6 @@ func (h *commentsHandler) authorizeBodyWrite(ctx context.Context, e *entity.Enti
 func (h *commentsHandler) openSuggestion(
 	ctx context.Context, target comments.Target, commentID string,
 ) (comments.Comment, *opFailure) {
-	// Before the lookup, so a principal without comment:read cannot tell an
-	// existing comment id (403) from an unknown one (404).
 	if !h.commentAuthorizer().CanRead(ctx, target) {
 		return comments.Comment{}, failForbidden("Accepting a suggestion requires the comment:read permission")
 	}
@@ -531,38 +510,15 @@ func (h *commentsHandler) openSuggestion(
 }
 
 // acceptOp applies a comment's suggested replacement to the entity body and
-// resolves the comment (TKT-S5C0K3). ctx must already be provisioned and the
-// read-only refusal checked; the route and [MCPComments] both do so first.
+// resolves the comment. ctx must be provisioned and the read-only refusal
+// checked. It needs `comment:read` plus the entity write, which PatchEntity
+// authorizes (and which is pre-checked); `comment:update-*` is not required.
+// The accepter is the author of record for the body change.
 //
-// # Authorization
-//
-// Two independent grants, both required. `comment:read` (with the target read
-// floor) covers seeing the suggestion. The entity write is authorized by
-// PatchEntity itself, exactly as any other body edit, so a principal who could
-// not have typed this change cannot accept it either. That write is also
-// pre-checked, so a certain denial never touches the comment. `comment:update-*` is
-// NOT required to resolve the comment here: the accepter is usually not its
-// author, and closing a suggestion by applying it is part of the edit.
-//
-// The person accepting is the author of record for the body change (audit log,
-// version history), in the way whoever merges a pull request is responsible
-// for it.
-//
-// # Order: claim, then write
-//
-// The comment and the entity live in different stores, so this cannot be
-// atomic. Resolving FIRST makes the partial failure "resolved but not applied",
-// which the user can see and undo by reopening. The other order fails as
-// "applied but still open", and a replacement that keeps the quoted text
-// ("brown fox" → "brown fox jumps") still matches, so a retry would apply it
-// twice.
-//
-// The resolve is a conditional [comments.Service.SetResolved], not a write of
-// the whole comment. The flip is what stops two requests, on one server
-// process or several sharing a database, from both applying the suggestion,
-// and it leaves a concurrent edit to the comment's body intact. The patch
-// carries the raw row's version, so a body write landing after the reads
-// fails the patch instead of being overwritten.
+// The comment is resolved FIRST, through a conditional SetResolved, so two
+// requests cannot both apply it and a partial failure is "resolved but not
+// applied", which the user can undo. The patch carries the raw row's version,
+// so a concurrent body write fails it instead of being overwritten.
 func (h *commentsHandler) acceptOp(
 	ctx context.Context, addr commentAddress, commentID string,
 ) (comments.Accepted, *opFailure) {
@@ -575,9 +531,6 @@ func (h *commentsHandler) acceptOp(
 		return comments.Accepted{}, fail
 	}
 
-	// The splice base and version token come from the RAW row at the face the
-	// gate resolved. The visible entity may have redacted properties, and a
-	// version token hashed over redacted properties never matches the store.
 	raw, found := h.reader.writePrepRow(ctx, entity.Ref{ID: target.ID, Face: target.Face})
 	if !found {
 		return comments.Accepted{}, failEntityNotFound()
@@ -587,17 +540,9 @@ func (h *commentsHandler) acceptOp(
 		f.detail = "File is git-crypt encrypted; run `git-crypt unlock` first."
 		return comments.Accepted{}, f
 	}
-	// The manager stays the authority on the write, but a caller it is certain
-	// to refuse must not get to resolve and reopen someone else's comment on
-	// the way to that refusal.
 	if fail := h.authorizeBodyWrite(ctx, raw); fail != nil {
 		return comments.Accepted{}, fail
 	}
-	// The accepter reviewed the suggestion against the body they can see. If
-	// that differs from the stored body, writing would splice into text they
-	// never saw, so refuse. Body redaction does not exist today, so in practice
-	// this is a concurrent write landing between the two reads; the message
-	// says so.
 	if raw.Content != visible.Content {
 		return comments.Accepted{}, failV1(http.StatusConflict, "suggestion_stale",
 			"The entity body changed while accepting; reload and try again")
@@ -609,8 +554,6 @@ func (h *commentsHandler) acceptOp(
 			"The suggested text no longer matches the entity body")
 	}
 
-	// Claim the comment. The flip is conditional in the store, so of two
-	// accepts racing (even on two server processes) exactly one proceeds.
 	claimed, err := h.svc.SetResolved(ctx, target, commentID, true)
 	if err != nil {
 		return comments.Accepted{}, failComment(err)

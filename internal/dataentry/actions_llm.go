@@ -47,7 +47,6 @@ func (o actionOps) llm(
 	}
 	applied, err := o.applyProposal(ctx, resp.Proposal)
 	if err != nil {
-		// Not retryable: another attempt would ask the model again.
 		f := failV1(http.StatusUnprocessableEntity, "apply_failed", "The proposed changes could not be applied")
 		f.detail = err.Error()
 		return nil, f
@@ -98,8 +97,6 @@ func (o actionOps) runLLM(
 		return nil, failLLMInternal(err)
 	}
 
-	// Every output the caller may change is a relation with no readable
-	// target: the model could only answer "nothing", so it is not asked.
 	hasCandidate := slices.ContainsFunc(in.Candidates, func(c llmtask.Candidates) bool { return len(c.Items) > 0 })
 	if len(in.Writable) == 0 && len(in.Creatable) == 0 && !hasCandidate {
 		return &script.ActionResponse{Proposal: actionproposal.Empty(subject.Ref().String())}, nil
@@ -126,8 +123,6 @@ func (o actionOps) runLLM(
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, failLLMInternal(ctxErr)
 		}
-		// The kind and status only: the provider's message may echo the
-		// request, which holds entity data.
 		kind, status := ai.ErrKind(""), 0
 		if aiErr := (*ai.Error)(nil); errors.As(err, &aiErr) {
 			kind, status = aiErr.Kind, aiErr.Status
@@ -139,8 +134,6 @@ func (o actionOps) runLLM(
 	if err != nil {
 		var re *llmtask.ReplyError
 		if errors.As(err, &re) {
-			// Not the error text: it quotes values the model chose, which
-			// may come from entity data.
 			slog.Warn("llm action: unusable AI reply", "action", id)
 			return nil, failV1(http.StatusBadGateway, "ai_reply_invalid", re.Error())
 		}
@@ -181,8 +174,6 @@ func (o actionOps) llmWritable(ctx context.Context, raw *entityPkg.Entity, set [
 	if len(set) == 0 {
 		return nil
 	}
-	// Only the update verdict: computeActions would also authorize delete
-	// and rename, once per row of a batch run.
 	if !o.h.affordances.acl().AuthorizeWrite(ctx, translateVerb("update", raw.Type, raw.ID, raw.Face)).Allow {
 		return nil
 	}
@@ -280,8 +271,6 @@ func llmRelated(
 		if len(ids) == 0 {
 			continue
 		}
-		// One gated read per peer, in the reader's world. The edge list is
-		// capped at the input's limit above, so this is bounded.
 		for _, id := range ids {
 			e, err := deps.VisibleReader.GetAddress(ctx, id)
 			if errors.Is(err, store.ErrNotFound) {
@@ -323,7 +312,7 @@ func (o actionOps) llmCandidates(
 		cands := &out[i]
 		cands.Existing = len(existing)
 		if rd := s.Meta.Relations[r.Relation]; rd.MaxOutgoing != nil && len(existing) >= *rd.MaxOutgoing {
-			continue // no room for another; the model is not offered any
+			continue
 		}
 		for _, target := range s.Meta.Relations[r.Relation].To {
 			var m ViewConditionMatcher
@@ -374,9 +363,6 @@ func (o actionOps) collectCandidates(
 	}
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, target)
 	if m == nil {
-		// No condition: every readable row is a candidate, so one bounded
-		// page serves it, as for a condition the store applies. The empty
-		// fragment adds nothing to the gated query.
 		var noCondition store.GraphQuery
 		return o.collectLoweredCandidates(ctx, s, subjectID, target, rqr, noCondition, r, existing, cands)
 	}
@@ -387,11 +373,6 @@ func (o actionOps) collectCandidates(
 	case lowered:
 		return o.collectLoweredCandidates(ctx, s, subjectID, target, rqr, frag, r, existing, cands)
 	}
-	// A condition that does not lower runs in Go, so the read is every
-	// readable header of the type: row-gated in the store query, in the
-	// request's world, with no bodies. Each page is redacted once before
-	// the condition sees it. TKT-08JN7C3 lowers ordered comparisons, the
-	// commonest shape that still comes here.
 	req := scopeRequest{Type: target, Faces: rqr.Faces}
 	q, errClass, withheld, err := scopedQuery(ctx, rqr, req)
 	if withheld || err != nil {

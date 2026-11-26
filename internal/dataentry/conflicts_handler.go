@@ -85,9 +85,6 @@ func (h *conflictsHandler) handleV1Conflicts(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Parse each file for the identities it names, then gate them all in
-	// one batch. A file that no longer parses as conflicted is left out:
-	// resolved since the scan, or unreadable, which the log records.
 	meta := h.schema().Meta
 	files := make([]conflict.ConflictedFile, 0, len(result.Files))
 	ids := make([]conflictIdentity, 0, len(result.Files))
@@ -153,8 +150,6 @@ func (h *conflictsHandler) handleV1ConflictRoutes(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Get conflict details. The path is caller-supplied — contain it to
-	// the project root before any filesystem access.
 	paths := h.paths()
 	absPath, ok := resolveConflictPath(paths, w, r, path)
 	if !ok {

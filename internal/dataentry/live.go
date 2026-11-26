@@ -332,7 +332,6 @@ func (h *liveHub) handlePut(w http.ResponseWriter, r *http.Request) {
 	c := h.conns[connID]
 	h.mu.Unlock()
 	if !ok || c == nil || !c.owner.SameIdentity(caller) {
-		// An unknown id and another caller's id get the same answer.
 		writeV1Error(w, r, http.StatusNotFound, "stream_not_found", "No such event stream", "")
 		return
 	}
@@ -384,9 +383,6 @@ func (h *liveHub) handlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The replays must not inherit the PUT's context: it carries the PUT's
-	// resolved ACL request and world, which a replay builds for itself. Only
-	// its cancellation carries over.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	defer context.AfterFunc(r.Context(), cancel)()
@@ -406,9 +402,6 @@ func (h *liveHub) handlePut(w http.ResponseWriter, r *http.Request) {
 // identity, so the cap does not apply to them. A dropped or changed
 // subscription leaves its presence with grace.
 func (h *liveHub) replace(c *liveConn, next map[string]liveTarget) (added []keyedSub, ok bool) {
-	// h.mu is held from the count to the commit, so concurrent PUTs on one
-	// identity's streams cannot each pass the cap against the others' old
-	// sets.
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if c.owner.User != principal.Unknown && h.identityTotalLocked(c, len(next)) > liveMaxPerIdentity {
@@ -419,7 +412,7 @@ func (h *liveHub) replace(c *liveConn, next map[string]liveTarget) (added []keye
 	subs := make(map[string]*liveSub, len(next))
 	for key, target := range next {
 		if old := c.subs[key]; old != nil && old.url == target.url {
-			subs[key] = old // unchanged: keep its baseline
+			subs[key] = old
 		} else {
 			s := &liveSub{
 				url: target.url, presenceID: target.presenceID, channel: target.channel, inbox: target.inbox,
@@ -460,7 +453,7 @@ func (h *liveHub) baseline(ctx context.Context, c *liveConn, added []keyedSub) b
 			select {
 			case h.slots <- struct{}{}:
 			case <-ctx.Done():
-				break acquire // the rest stay unfinished, for a round
+				break acquire
 			}
 			wg.Go(func() {
 				defer func() { <-h.slots }()
@@ -498,16 +491,11 @@ func (h *liveHub) baseline(ctx context.Context, c *liveConn, added []keyedSub) b
 // applyPresenceLocked joins or leaves presence for the subscription s of c
 // after a replay that ran, with result res. Callers hold h.mu and c.mu, and
 // have checked that c is registered and s is still its subscription under
-// key, so a replay that outlived its subscription or stream joins nothing.
-// A replay a round skipped ([liveHub.fallback]) does not come here: it
-// leaves the join as it was.
-//
-// A replay that did not finish leaves without grace: the hub cannot tell
-// whether the subscriber still may read the entity (M2). The next 200
-// rejoins. Any other status, or a probe that names another entity than the
-// path, leaves for good. The anonymous principal never joins: it is one
-// identity shared by every unauthenticated caller. It still watches the
-// face, as a subscription the caps refused does.
+// key. A replay that did not finish leaves without grace (the hub cannot tell
+// whether the subscriber still may read the entity); the next 200 rejoins.
+// Any other status, or a probe naming another entity, leaves for good. The
+// anonymous principal never joins: it is shared by every unauthenticated
+// caller.
 func (h *liveHub) applyPresenceLocked(c *liveConn, key string, s *liveSub, res replayResult) {
 	if s.presenceID == "" {
 		return
@@ -597,7 +585,7 @@ func (h *liveHub) start(feed *changefeed.Bus, leases leaseWaker, chans func() ch
 	ctx, cancel := context.WithCancel(context.Background())
 	h.cancel, h.done = cancel, make(chan struct{})
 	sub := feed.Subscribe("")
-	var leaseWake <-chan struct{} // nil: never ready
+	var leaseWake <-chan struct{}
 	unsubscribe := func() {}
 	if leases != nil {
 		leaseWake, unsubscribe = leases.Subscribe()
@@ -645,29 +633,17 @@ type liveFeed interface {
 }
 
 // run runs one round at a time: a changed round on each tick of a fixed
-// clock when anything changed since the last one, and a baseline round when
-// a PUT asks for one. A lease wake marks the round dirty like a write does.
-//
+// clock when anything changed, and a baseline round when a PUT asks for one.
 // The clock is fixed so that a round's start never depends on when a change
-// arrived. If the first change started the window instead, a write to a
-// type the subscriber cannot read would move when its next frame arrives,
-// which polling would not reveal. The same holds for a lease on an entity
-// the subscriber cannot read, and for a message on a channel the
-// subscriber cannot read.
-//
-// A channel change (chans, nil when channels are off) does not dirty the
-// round: on the tick it runs a topic round over the heads and channel lists
-// of the channels that changed, together with the presence faces that
-// changed. A channel subscription that lost count (resync) replays every
-// channel subscription that has a topic; one without a topic is not readable
-// and waits for a full round. The channels a stored write may have moved
-// also select the busy lists that show them (see live_busy.go). A reload
-// of realtime.yaml (reconfigured) dirties the round, so a reader it
-// revokes is re-checked at once.
+// arrived; otherwise a write, lease or message the subscriber cannot read
+// would move its next frame. A channel change runs a topic round on the tick
+// instead of dirtying the round. A realtime.yaml reload dirties the round so
+// a revoked reader is re-checked at once. Presence expiry also runs on the
+// tick.
 func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struct{}, chans channelChanges) {
 	tick, stopTick := h.clock()
 	defer stopTick()
-	var chanWake <-chan struct{} // nil: never ready
+	var chanWake <-chan struct{}
 	if chans != nil {
 		chanWake = chans.Wake()
 	}
@@ -685,12 +661,10 @@ func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struc
 		case <-chanWake:
 			channelsDirty = true
 		case <-h.kick:
-			h.round(ctx, false) // baselines only; nothing changed
+			h.round(ctx, false)
 		case at := <-tick:
 			now := h.inboxClock.tickAt(at, h.window, h.inboxGrid, h.safetySlices())
 			h.inboxNow.Store(now.pack())
-			// A wake that is ready now belongs to this tick, whichever
-			// case the select picked first.
 			select {
 			case <-chanWake:
 				channelsDirty = true
@@ -701,8 +675,6 @@ func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struc
 				dirty = true
 			default:
 			}
-			// Presence expiry takes effect here, on the fixed clock, so
-			// when a viewer drops out never depends on when a replay ran.
 			faces := h.presence.TakeChanged(h.now())
 			var ch realtime.LiveChanges
 			if channelsDirty {
@@ -713,7 +685,7 @@ func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struc
 			switch {
 			case dirty:
 				dirty = false
-				feed.Take() // any change re-reads every subscription
+				feed.Take()
 				h.round(ctx, true)
 			case len(faces) > 0 || !ch.Empty() || safety || h.hasPending():
 				f := newRoundFilter(faces, ch.Keys, ch.Resync)
@@ -795,10 +767,6 @@ func (h *liveHub) replayRound(ctx context.Context, changed bool, only *roundFilt
 	if len(pairs) == 0 {
 		return
 	}
-	// The round starts where the last overflowed round stopped, so the
-	// cap and the budget pass over every pair in turn. An inbox pair, or a
-	// busy list pair in a topic round, that never fit would never frame,
-	// since it gets no fallback frame.
 	cursor := &h.rotate
 	if only != nil {
 		cursor = &h.presenceRotate
@@ -843,18 +811,13 @@ func (h *liveHub) replayRound(ctx context.Context, changed bool, only *roundFilt
 		"queries", stats.Queries(), "db_ms", stats.Duration().Milliseconds())
 }
 
-// commitRound stores the results of the replays that ran, of the round of
-// generation gen, and frames the subscriptions whose response moved: from
-// the baseline, or from a response served before the round collected
-// ([liveSub.servedMoved]).
+// commitRound stores the results of the replays of round gen that ran, and
+// frames the subscriptions whose response moved from the baseline or from a
+// response served before the round collected ([liveSub.servedMoved]).
 //
-// It holds h.mu across the whole loop, not per subscription (S1). The check
-// that a stream is still registered and the presence join that follows must
-// be one step against unregister, which leaves the stream's presence under
-// h.mu: a join that landed after that leave would hold an entry no stream
-// owns, and no grace would ever end it. The cost is that PUTs, stream
-// opens and closes, and the next collect wait for the commit. It does no
-// I/O, only map updates, one per subscription of at most liveRoundCap
+// It holds h.mu across the whole loop so the registration check and the
+// presence join are one step against unregister; a join after the leave would
+// never expire. It does no I/O, only map updates for at most liveRoundCap
 // pairs.
 func (h *liveHub) commitRound(pairs []*replayPair, gen uint64) {
 	h.mu.Lock()
@@ -867,8 +830,6 @@ func (h *liveHub) commitRound(pairs []*replayPair, gen uint64) {
 				if p.res.ok {
 					served := s.servedMoved(p.res.hash, gen)
 					if s.hash != p.res.hash || served {
-						// A late baseline frames too: the client may hold
-						// a newer response than the one it replaces.
 						ref.conn.markChanged(ref.key)
 					}
 					s.hash = p.res.hash
@@ -882,24 +843,12 @@ func (h *liveHub) commitRound(pairs []*replayPair, gen uint64) {
 }
 
 // collect groups the current subscriptions into distinct replays, in a
-// stable order; round rotates where the cap cuts it. A non-nil only keeps
-// the subscriptions it selects ([roundFilter.selects]) and the pending
-// ones. A changed round takes the pending set: a full round selects those
-// subscriptions anyway, and a baseline round (changed false) does not, so
-// it leaves the set alone. A changed round also marks the syncing
-// subscriptions it skips for a recheck; a topic round marks only the
-// presence, channel and inbox ones, since a change of viewers or of a
-// channel moves no other response, except a busy list's `_busy`: it
-// marks a busy list when the round carries a moved key of its type, or a
-// resync ([roundFilter.movesBusy]).
-//
-// A topic round marks each subscription it took only from the pending set
-// dueOnly, so an overflow does not frame it (see [liveHub.fallback]).
-//
-// A changed round off the inbox grid defers each inbox subscription it
-// would replay to pending, with no fallback frame: the next grid tick
-// replays it (see live_inbox.go). A baseline round is not deferred; its
-// timing depends only on the client's own PUT.
+// stable order; round rotates where the cap cuts it, so every pair gets its
+// turn. A non-nil only keeps the subscriptions it selects
+// ([roundFilter.selects]) and the pending ones. A changed round takes the
+// pending set and marks skipped syncing subscriptions for a recheck. A topic
+// round marks pending-only pairs dueOnly. A changed round off the inbox grid
+// defers inbox subscriptions to pending (see live_inbox.go).
 func (h *liveHub) collect(changed bool, only *roundFilter) (pairs []*replayPair, gen uint64) {
 	byKey := make(map[string]*replayPair)
 	now := h.inboxTickNow()
@@ -914,7 +863,7 @@ func (h *liveHub) collect(changed bool, only *roundFilter) (pairs []*replayPair,
 		c.mu.Lock()
 		for key, s := range c.subs {
 			if s.syncing {
-				_, wasDue := due[s] // a served response left it pending
+				_, wasDue := due[s]
 				s.recheck = s.recheck || wasDue || changed && (only == nil || s.presenceID != "" || s.channel ||
 					s.inbox || s.busy != "" && only.movesBusy(s.busy))
 				continue
@@ -967,36 +916,13 @@ func (h *liveHub) collects(
 }
 
 // fallback handles replays a round of kind had no room or time for: each
-// subscription is told it changed, so the client refetches. Three are not
-// told, because a change they cannot see may have chosen the round, or
-// sized it so that the cut fell on them, and the frame would reveal that
-// change:
-//   - an inbox subscription, in any round (see live_inbox.go);
-//   - a busy list subscription in a topic round (see live_busy.go);
-//   - any subscription a topic round took only because it was pending
-//     (dueOnly). The round that cut it told it then, unless a rule here
-//     kept it quiet; one a PUT left pending for a recheck frames when its
-//     replay moves its hash.
-//
-// In a full round a busy list is told like every list: a full round takes
-// every subscription, so its fallback frame tells of no change. A
-// subscription that is not told frames when a later replay moves its hash.
-// Every subscription keeps its baseline and goes into pending, so the next
-// tick replays it and frames again if the response moved past that
-// baseline. Without that replay a later change back to the baseline would
-// send no frame. The cursor (see replayRound) moves past the pairs a round
-// replayed, so a pending pair is replayed within a bounded number of ticks
-// and is not starved.
-//
-// A presence subscription keeps its join as it was: no refresh, no leave
-// and no changed face. Leaving here would mark the face changed, and on a
-// face with more subscriptions than liveRoundCap every presence round would
-// skip some and so start the next. Revocation is checked when the skipped
-// replay next runs, from pending. Pending shrinks by up to liveRoundCap
-// replays a tick, so with no other change a skipped check runs within
-// ceil(n/liveRoundCap) ticks of n skipped pairs. A replay whose result is
-// unchanged joins nothing new and frames nothing, so the set empties and the
-// rounds stop.
+// subscription is told it changed, so the client refetches. An inbox
+// subscription, a busy list in a topic round, and a dueOnly pair are not
+// told, because the frame could reveal a change they cannot see. Every
+// subscription keeps its baseline and goes into pending, so a later replay
+// frames if its response moved. A presence subscription keeps its join as it
+// was; revocation is checked when the skipped replay runs, within
+// ceil(n/liveRoundCap) ticks.
 func (h *liveHub) fallback(pairs []*replayPair, kind roundKind) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -1062,9 +988,9 @@ func (r replayResult) presenceJoin(wantID string) (face string, who presence.Ide
 func replayHash(
 	ctx context.Context, handler http.Handler, p principal.Principal, url string,
 ) (res replayResult) {
-	// net/http recovers a panicking handler per request; a replay runs on
-	// the worker, where a panic would end the process.
 	defer func() {
+		// why: net/http recovers a handler panic, but a replay runs on a worker
+		// where a panic would end the process.
 		if r := recover(); r != nil {
 			slog.Error("live: replay panicked", "url", url, "panic", r)
 			res = replayResult{}

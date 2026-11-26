@@ -74,7 +74,7 @@ func (f *traverseFilter) narrow(
 	if rule.Where != "" {
 		filtered, err := filterEntities(f.schema, found, rule.Where, requestReadTime(ctx))
 		if err != nil {
-			return nil, err // refused at load (BUG-WHEREWIDE); reaching here is a config bug
+			return nil, err
 		}
 		found = filtered
 	}
@@ -82,19 +82,10 @@ func (f *traverseFilter) narrow(
 }
 
 // applyCondition keeps the entities of found that satisfy the step's
-// `condition:`, in order.
-//
-// Each entity type has its own program, so found is judged one type at a
-// time. An entity whose type the step cannot collect by the schema (an edge
-// stored before a relation's types changed) has no program and is dropped:
-// narrowing is the safe direction. A type the step CAN collect without a
-// program is an error, never a silent drop: the config changed between the
-// view's snapshot and this one, or the two sides disagree on the key.
-//
-// The condition reads the REDACTED entity, as a list condition does (see
-// [applyViewCondition]), so it cannot decide membership on a field value the
-// reader may not see. `where:` keeps reading raw values, as documented on
-// [viewsHandler.executeViewBodies].
+// `condition:`, in order. An entity whose type the step cannot collect by
+// schema has no program and is dropped; a collectable type without a program
+// is an error. The condition reads the redacted entity, as a list condition
+// does ([applyViewCondition]); `where:` reads raw values.
 func (f *traverseFilter) applyCondition(
 	ctx context.Context, rule ViewTraverse, found []*entity.Entity,
 ) ([]*entity.Entity, error) {

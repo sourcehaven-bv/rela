@@ -72,16 +72,10 @@ func mayConfigure(a *App, r *http.Request) bool {
 		return false
 	}
 	ctx := r.Context()
-	// From never returns a zero principal: an unstamped ctx reads as
-	// unknown/unknown, so the user is what tells an identity apart.
 	p := principal.From(ctx)
 	if p.User == "" || p.User == principal.Unknown {
 		return false
 	}
-	// A client acting for a user never configures. The ceiling refuses
-	// config:edit only where a baseline matches the client's principal
-	// type, and an unmatched type is unrestricted, so the gate does not
-	// rely on that: only an interactive caller (no type, or "user") passes.
 	if t := p.PrincipalType(); t != "" && t != interactivePrincipalType {
 		return false
 	}

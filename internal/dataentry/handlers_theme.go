@@ -54,23 +54,14 @@ func (h *appearanceHandler) handleAPIGetThemeLogo(w http.ResponseWriter, _ *http
 	}
 	ct := logoContentType(logoExt)
 	if ct == "" {
-		// Should never happen — logoStore.Save validates the extension
-		// before persisting, and its load treats unknown values as
-		// "not set". Treat as a server-side bug rather than serving
-		// bytes with no Content-Type.
 		writeJSONError(w, http.StatusInternalServerError, "logo has unknown extension")
 		return
 	}
 	hdr := w.Header()
 	hdr.Set("Content-Type", ct)
 	hdr.Set("X-Content-Type-Options", "nosniff")
-	// CSP sandbox neutralizes scripts on direct navigation; frame-ancestors
-	// 'none' (and X-Frame-Options as a belt) prevents the response from
-	// being framed by an attacker page even if origin checks are loosened.
 	hdr.Set("Content-Security-Policy", "sandbox; frame-ancestors 'none'")
 	hdr.Set("X-Frame-Options", "DENY")
-	// The URL contains a content hash — any update produces a different
-	// URL, so the cached response can never go stale.
 	hdr.Set("Cache-Control", "public, max-age=86400, immutable")
 	_, _ = w.Write(logoBytes)
 }
@@ -82,8 +73,6 @@ func (h *appearanceHandler) handleAPIPutThemeLogo(w http.ResponseWriter, r *http
 	r.Body = http.MaxBytesReader(w, r.Body, maxLogoUploadBytes)
 
 	if err := r.ParseMultipartForm(maxLogoUploadBytes); err != nil {
-		// http.MaxBytesReader writes a *http.MaxBytesError when the
-		// limit is exceeded; surface that as 413 rather than 400.
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			writeLogoTooLarge(w)
@@ -183,7 +172,6 @@ func looksLikeSVG(b []byte) bool {
 		b = b[:window]
 	}
 	s := string(b)
-	// Strip a UTF-8 BOM (U+FEFF) if present.
 	s = strings.TrimPrefix(s, "\uFEFF")
 	for {
 		s = strings.TrimLeft(s, " \t\r\n")
@@ -196,8 +184,6 @@ func looksLikeSVG(b []byte) bool {
 		lower := strings.ToLower(s)
 		switch {
 		case strings.HasPrefix(lower, "<svg"):
-			// First real element is <svg — trailing chars must be
-			// whitespace, '/', or '>' so we don't mistake "<svgfoo".
 			rest := s[4:]
 			if rest == "" {
 				return true
@@ -207,8 +193,6 @@ func looksLikeSVG(b []byte) bool {
 		case strings.HasPrefix(lower, "<?xml"),
 			strings.HasPrefix(lower, "<!doctype"),
 			strings.HasPrefix(lower, "<!--"):
-			// Skip prologue / doctype / comment by finding its
-			// terminator and continuing.
 			term := ">"
 			if strings.HasPrefix(lower, "<!--") {
 				term = "-->"

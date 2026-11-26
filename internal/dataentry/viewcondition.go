@@ -158,8 +158,6 @@ func AdaptViewConditions[M ViewConditionMatcher](
 		return func(kind, id string) (ViewConditionMatcher, bool) {
 			m, ok := lookup(kind, id)
 			if !ok {
-				// Do not return m: a nil M in a non-nil interface is the
-				// typed-nil trap, and callers test the result for nil.
 				return nil, false
 			}
 			return m, true
@@ -175,11 +173,6 @@ func AdaptViewConditions[M ViewConditionMatcher](
 // Rejects nil for the same reason too — a silently absent compiler would
 // leave every condition unevaluated, showing rows the operator's view
 // excludes.
-//
-// A deployment that never calls this keeps pre-condition behavior: views
-// show their ACL-scoped superset. That is the safe direction, because a
-// condition only ever NARROWS; it is not safe in reverse, which is why a
-// condition that fails to COMPILE is a startup error instead.
 func (a *App) SetViewConditions(fn ViewConditionFunc) error {
 	if fn == nil {
 		return errors.New("dataentry.SetViewConditions: func must be non-nil")
@@ -197,11 +190,6 @@ func (a *App) SetViewConditions(fn ViewConditionFunc) error {
 // documents.
 // Compilation is a parse of one short expression and the Evaluator memoizes
 // programs, so this is cheap next to the store read it gates.
-//
-// Problems are dropped: validation refused a config whose conditions do not
-// compile, so a problem here can only arise in a deployment that skipped
-// validation, where the safe answer is the unconstrained (ACL-scoped) view
-// rather than a request that fails.
 func viewCondition(fn ViewConditionFunc, s *Schema, kind, id string) ViewConditionMatcher {
 	if fn == nil || id == "" || s == nil {
 		return nil
@@ -218,30 +206,9 @@ func viewCondition(fn ViewConditionFunc, s *Schema, kind, id string) ViewConditi
 // Returns rows unchanged when there is no matcher, so a view without a
 // condition costs nothing. An evaluation error aborts the page rather than
 // yielding a partial one — see [ViewConditionMatcher].
-//
-// The condition is evaluated against the REDACTED entity, never the raw
-// stored one. Field redaction otherwise happens at serialization, long after
-// this filter has already decided membership — and since a condition may name
-// is_current_user(entity.<field>), a condition over a field the reader cannot
-// see would decide whether the row appears. That leaks the hidden value one
-// bit at a time through row presence/absence, without it ever being
-// serialized (the IB-review finding on #1593).
-//
-// Evaluating post-redaction is sound in the direction that matters: redaction
-// REMOVES a hidden property, so it binds Nil, and the verdict is then the
-// same on every row whatever the hidden value is. For most forms Nil gives
-// false, the same asymmetry [ConditionPrefilterer] documents for next
-// actions; a `~=` gives true. Either way row presence carries no bit of the
-// hidden value. The store pushdown cannot reproduce that Nil, which is why
-// lowerViewCondition sends a condition over a hidden field here.
-//
-// The KEPT rows are the originals, not the redacted copies: redaction for the
-// response happens at serialization, and substituting stripped entities here
-// would drop properties the reader may legitimately see.
-//
-// redact is the per-principal field filter. Nil means no redaction, which is
-// correct only for a caller that has already redacted or has no field policy;
-// a caller holding one must pass it.
+// The condition reads the redacted entity, so a hidden value cannot decide
+// whether a row appears. The kept rows are the originals. A caller that has a
+// field policy must pass redact; nil means no redaction.
 func applyViewCondition(
 	ctx context.Context, rows []*entityPkg.Entity, m ViewConditionMatcher,
 	redact func(context.Context, *entityPkg.Entity) *entityPkg.Entity, st store.GraphQueryer,

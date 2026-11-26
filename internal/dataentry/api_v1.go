@@ -31,21 +31,10 @@ import (
 
 // --- API v1 Types ---
 
-// toV1EntityType renders one entity type for the wire.
-//
-// Shared by BOTH schema surfaces — the `entities` map of `/api/v1/_schema`
-// and the single-type `/api/v1/_schema/types/{name}` — which previously each
-// built the shape inline. Two copies of a serializer is two places to add a
-// field and one place to forget it: the `faces` key (TKT-WRLDAPI item 3)
-// would have been exactly such a field, since a client that discovers a
-// type's content states from one endpoint and not the other has no way to
-// tell which answer is authoritative. Extracted so they cannot drift.
-//
-// A free function, like its sibling toV1CustomType: it is a pure transform
-// over its arguments and touches no App state. toV1PropertyDef was converted
-// alongside it for the same reason — it never used its receiver either, and
-// App sits at its plimsoll method cap precisely because methods accrete there
-// by habit rather than by need.
+// toV1EntityType renders one entity type for the wire. Both schema surfaces,
+// the `entities` map of `/api/v1/_schema` and `/api/v1/_schema/types/{name}`,
+// use it so their shapes cannot drift. It is a pure transform over its
+// arguments.
 func toV1EntityType(
 	meta *metamodel.Metamodel, name string, def metamodel.EntityDef,
 ) v1.EntityType {
@@ -58,9 +47,6 @@ func toV1EntityType(
 		IDType:      def.GetIDType(),
 		Properties:  make(map[string]v1.PropertyDef, len(def.Properties)),
 		Faces:       schemaFaceDefs(def),
-		// Whether this type accepts comments (TKT-FIO205). Policy, not
-		// permission: it tells the SPA whether to offer a comment affordance
-		// at all, never that the caller may use it.
 		Commentable: metamodel.NewCommentPolicy(meta).Commentable(name),
 		Namespace:   metamodel.NamespaceOf(name),
 		Extends:     def.Extends,
@@ -117,9 +103,6 @@ func toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) v
 			LinkDisplay: v1.LinkDisplay{Link: d.Link, LinkText: d.LinkText},
 		}
 	}
-	// Labels mirror Values: a property naming a custom type inherits that
-	// type's values and labels; an inline `labels` map on a custom-typed
-	// property is ignored, exactly as inline `values` is.
 	if ct, ok := meta.Types[propDef.Type]; ok {
 		pd.Values = ct.Values
 		pd.Labels = ct.Labels
@@ -165,7 +148,6 @@ func toV1CustomType(ct metamodel.CustomType) v1.CustomType {
 // When adding a route, add a probe to the route table in
 // router_walk_test.go so registration stays covered.
 func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
-	// System endpoints (underscore prefix)
 	mux.HandleFunc("/api/v1/_schema", a.schemaAPI.handleV1Schema)
 	mux.HandleFunc("/api/v1/_schema/", a.schemaAPI.handleV1SchemaRoutes)
 	mux.HandleFunc("/api/v1/_config", a.schemaAPI.handleV1Config)
@@ -236,7 +218,6 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	registerWriteActionRoutes(mux, a)
 	mux.HandleFunc("/api/v1/_apps/", a.handleV1App)
 
-	// Dynamic entity routes are handled by a catch-all
 	mux.HandleFunc("/api/v1/", a.handleV1DynamicRoutes)
 }
 
@@ -276,14 +257,12 @@ const (
 // based on URL. Read operations work against the snapshot returned by
 // a.State() with no locking.
 func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
-	// Skip system routes (already handled)
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/")
 	if strings.HasPrefix(path, "_") {
 		http.NotFound(w, r)
 		return
 	}
 
-	// Parse path: {plural}[/{id}[/relations[/{relType}[/{targetId}]]]]
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
@@ -298,8 +277,6 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// /{plural}/{ref}/_channels[/...] (TKT-ZU7P13) has routes of several
-	// depths, so it is matched before the switch on depth.
 	if rest, ok := splitChannelRoute(parts); ok {
 		a.channels.serve(w, r, typeName, parts[1], rest)
 		return
@@ -307,20 +284,14 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 
 	switch len(parts) {
 	case 1:
-		// /{plural} - collection
 		a.entities.handleV1EntityCollection(w, r, typeName, plural)
 	case 2:
-		// /{plural}/_export (collection export) or /{plural}/{id} (single entity).
-		// _export is a reserved segment; no entity id may collide (ids never
-		// start with the reserved underscore).
 		if parts[1] == "_export" {
 			a.export.handleV1ExportList(w, r, typeName)
 		} else {
 			a.entities.handleV1SingleEntity(w, r, typeName, plural, parts[1])
 		}
 	case 3:
-		// /{plural}/{id}/relations, /{plural}/{id}/_export, /{plural}/{id}/restore,
-		// /{plural}/{id}/mentioned-by, /{plural}/{id}/_lease or /{plural}/{id}/_presence
 		switch parts[2] {
 		case "relations":
 			a.entities.handleV1EntityRelations(w, r, typeName, parts[1])
@@ -338,23 +309,17 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
 	case segmentsSubResource:
-		// /{plural}/{id}/relations/{relType}, /{plural}/{id}/_actions/{action},
-		// or /{plural}/{id}/_attachments/{property}
 		switch parts[2] {
 		case "relations":
 			a.entities.handleV1EntityRelationType(w, r, typeName, parts[1], parts[3])
 		case "_actions":
 			a.entities.handleV1EntityAction(w, r, typeName, parts[1], parts[3])
 		case "_attachments":
-			// The segment is an ADDRESS: bytes are per entity, but the files
-			// a face lists and serves are its own (BUG-CTUW2N).
 			a.attachments.handleV1AttachmentRoute(w, r, typeName, plural, parts[1], parts[3])
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
 	case segmentsSubResourceID:
-		// /{plural}/{id}/relations/{relType}/{targetId} or
-		// /{plural}/{id}/_attachments/{property}/{fileName}
 		switch parts[2] {
 		case "relations":
 			a.entities.handleV1RelationTarget(w, r, typeName, parts[1], parts[3], parts[4])
@@ -394,46 +359,26 @@ var errBadFilter = errors.New("invalid filter parameter")
 // is worse than an error either way.
 var errListLoad = errors.New("list load failed")
 
-// relationFilterClassifier returns a predicate that decides, for a bare filter
-// param name (the property/relation segment, no operator), whether it should be
-// handled by the direction-aware relation pass rather than applyV1Filters.
-//
-// Relation filtering is restricted to configured filter_controls (RR-B0JPPL):
-// a `filter[<rel>]` param routes to the relation pass ONLY when a relation
-// FilterControl on a list or kanban of this entity type configures it. An arbitrary
-// metamodel relation with no control is NOT filterable and falls through to
-// applyV1Filters (where, absent a matching property, it fails closed rather
-// than silently widening the set).
-//
-// The config discriminator also resolves the property/relation NAME COLLISION
-// (RR-0HWAS0): properties (per-type) and relations (global) are disjoint
-// namespaces, so a property can share a name with a relation. An explicit
-// property FilterControl for the name forces the property pass; a name that is
-// only ever a relation control routes to the relation pass. When a name is both
-// a property of this type and a relation control with no disambiguating
-// property control, the property wins (safe, backward-compatible) and
+// relationFilterClassifier returns a predicate that decides whether a bare
+// filter param name goes to the direction-aware relation pass rather than
+// applyV1Filters. A name routes there only when a relation FilterControl on a
+// list or kanban of this type configures it; any other name falls through to
+// applyV1Filters, which fails closed. An explicit property FilterControl
+// forces the property pass. When a name is both a property of this type and
+// a relation control with no property control, the property wins and
 // CollectConfigWarnings flags the ambiguity at load.
-//
-// A free function (not an App method) taking the already-loaded meta/cfg
-// snapshot: it needs no other App state, and keeping it off the receiver keeps
-// App under its plimsoll method cap.
 func relationFilterClassifier(
 	meta *metamodel.Metamodel,
 	cfg *dataentryconfig.Config,
 	typeName string,
 ) func(string) bool {
 	return func(key string) bool {
-		// Explicit property control → property pass.
 		if cfg.HasPropertyFilterControl(typeName, key) {
 			return false
 		}
-		// A relation control is required for relation filtering.
 		if _, ok := cfg.RelationFilterDirection(typeName, key); !ok {
 			return false
 		}
-		// Relation control exists, but the collision rule: if the name is
-		// also a property of this type (and no property control disambiguated
-		// above), the property wins.
 		if entDef, ok := meta.GetEntityDef(typeName); ok {
 			if _, isProp := entDef.Properties[key]; isProp {
 				return false
@@ -443,26 +388,15 @@ func relationFilterClassifier(
 	}
 }
 
-// matchRelationFilterMany evaluates a relation filter for every row at once
-// (TKT-1U8XYN): one relation query for all rows, one content-free header
-// read for every distinct neighbor, one gate probe per neighbor type. It
-// replaced a per-row helper that ran one relation query plus one entity load
-// per neighbor for each row. The verdict per row is unchanged — the row
-// matches when at least one READABLE neighbor over the relation carries the
-// wanted display title (RR-HK1XNO) — but the cost no longer grows with the
-// type's row count times its fan-out. A free function taking its read seam,
-// not an App method — App sits at its load line (see worldneighbors.go).
+// matchRelationFilterMany evaluates a relation filter for every row at once:
+// one relation query, one header read per distinct neighbor, one gate probe
+// per neighbor type. A row matches when at least one READABLE neighbor over
+// the relation carries the wanted display title.
 //
-// A store failure is returned, never folded into an empty verdict map: an
-// empty map reads as "no row matches", which for a `ne` filter admits EVERY
-// row — a backend fault would silently widen a filter whose job is to narrow.
-//
-// The title compared is the one the principal is shown: each served neighbor
-// is redacted once with red before its display title is taken. The served
-// headers are gated but not redacted, so comparing their raw title would let
-// `filter[<relation>]=<guess>` confirm a display property that `visible:`
-// hides on the neighbor (BUG-WJSYQT review). The field gate does not cover
-// this key, because it names a relation, not a property of the listed type.
+// A store failure is returned, never folded into an empty map, which would
+// admit every row for a `ne` filter. The title compared is the redacted one
+// the principal is shown, so the filter cannot confirm a display property
+// that `visible:` hides on the neighbor.
 func matchRelationFilterMany(
 	ctx context.Context, svc Services, visible visibleReader, red visibility.FieldRedactor,
 	rows []*entityPkg.Entity, relation string, direction dataentryconfig.Direction, want string,
@@ -476,14 +410,6 @@ func matchRelationFilterMany(
 		return matched, err
 	}
 
-	// Each neighbor is read at the face the principal is served: the ACL
-	// trims its faces, then the world ranks what is left (servedIDsErr).
-	// Only that face's title is compared. Comparing another face's title,
-	// or a face the reader may not read, turns the filter into an oracle on
-	// that face (BUG-ISJHML), and a per-id "some face is readable" verdict
-	// is not enough to rule that out once grants differ per face. The
-	// served face is also the one an incoming content-scoped edge must be
-	// owned by.
 	served, err := visible.servedIDsErr(ctx, neighborIDs)
 	if err != nil {
 		return nil, err
@@ -590,7 +516,7 @@ type filterKey struct {
 // relation key before refusing.
 func parseFilterKey(key string) (filterKey, error) {
 	inner := strings.TrimSuffix(strings.TrimPrefix(key, "filter["), "]")
-	trimmed := strings.TrimSuffix(inner, "][") // was "...[]"
+	trimmed := strings.TrimSuffix(inner, "][")
 	fk := filterKey{operator: "eq", arrayForm: trimmed != inner}
 	parts := strings.Split(trimmed, "][")
 	if len(parts) > 2 {
@@ -685,26 +611,13 @@ func gateReadOr(w http.ResponseWriter, r *http.Request, typeName, entityID strin
 func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case requestCanceled(r, err):
-		// The client went away: nobody reads the answer, and a cancel is not
-		// a fault (TKT-T2I7P2). The access log records it as 499.
 		return
 	case errors.Is(err, errBadFilter):
-		// Server-side log stays alongside the 400 (RR-6RF60V's logging
-		// intent, CONTROL-8-15): the response informs the caller, the log
-		// informs operators — a broken config or a caller probing filter
-		// params is an anomalous event worth a trace even when no one
-		// watches the client.
 		slog.Warn("dataentry: rejected invalid filter parameter",
 			"err", err, "path", r.URL.Path, "method", r.Method)
-		// Client-caused: echo the detail — it only restates the caller's own
-		// filter key/operator, never store internals.
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_filter",
 			"Invalid filter parameter", err.Error())
 	case errors.Is(err, errPropertyNotVisible):
-		// Client-caused: the caller filtered or sorted on a property its
-		// roles do not show on every row (BUG-WJSYQT). The detail names the
-		// property and the type, which are config, not secrets, and depends
-		// on no row (see listfieldgate.go).
 		problem := v1.Error{
 			Type:     "https://rela.dev/errors/property_not_visible",
 			Title:    "Cannot filter or sort on this property",
@@ -724,25 +637,15 @@ func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_view",
 			"Invalid view parameter", err.Error())
 	case errors.Is(err, errBadQueryScope):
-		// Client-caused, like errBadFilter above: the caller named a scope
-		// that does not resolve, or repeated the parameter. Echo the detail
-		// — it names only the caller's own scope name and the entity type,
-		// both of which are operator-authored config rather than secrets.
 		slog.Warn("dataentry: rejected invalid query_scope",
 			"err", err, "path", r.URL.Path, "method", r.Method)
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_query_scope",
 			"Invalid query_scope parameter", err.Error())
 	case errors.Is(err, errPageAnchorNotFound):
-		// The same response an entity GET gives for a hidden or missing id.
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 	case errors.Is(err, errACLListQuery):
 		writeGateError(w, r, err)
 	case errors.Is(err, acl.ErrTraversalUnsupported):
-		// The scope's related() cannot be evaluated under this principal's
-		// grants (a named-face or inherited read, a field the client ceiling
-		// hides, a chain the gate cannot place). The cause is the policy and
-		// the schema, never a row, so the detail names config only, which is
-		// not confidential (see CLAUDE.md), and helps the operator fix it.
 		slog.Warn("dataentry: query scope traversal unsupported for principal",
 			"err", err, "path", r.URL.Path, "method", r.Method)
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "query_scope_unsupported",
@@ -789,27 +692,12 @@ func writeGateError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 // writeNoIdentity answers 401 when err reports that the request reached code
-// below the edge with no bound identity ([acl.ErrNoIdentity]). It reports
-// whether it wrote a response.
-//
-// Every shared error mapper in this package calls it first (writeGateError,
-// writeInternalProblem, writeInternalJSONError, and writeIdentityFaultDeny for
-// a denied write), so the mapping lives in one place rather than in each
-// handler. The body is the one the JWT gate sends for a missing assertion.
-// It carries no WWW-Authenticate challenge: that names the JWT gate's
-// credential header, and a deployment without the gate has no scheme to name.
-//
-// In production attachACLRequest binds a Request on every /api request or
-// fails it, so reaching this means a route or a ctx lost the binding. That is
-// a wiring fault, hence the Error log, but the client is told what is true for
-// it: the request is not authenticated.
-//
-// A mismatched or foreign identity ([acl.ErrIdentityMismatch],
-// [acl.ErrForeignIdentity]) is not handled here. The caller did authenticate;
-// the server attached the wrong Request, which is a server fault and stays 500.
-//
-// Nothing here resolves the principal as a fallback. The edge binds it or the
-// request fails.
+// below the edge with no bound identity ([acl.ErrNoIdentity]), and reports
+// whether it wrote a response. Every shared error mapper calls it first. The
+// body matches the JWT gate's missing-assertion answer, without a
+// WWW-Authenticate challenge. Reaching it is a wiring fault, so it logs an
+// Error. A mismatched or foreign identity is a server fault and stays 500.
+// Nothing here resolves the principal as a fallback.
 func writeNoIdentity(w http.ResponseWriter, r *http.Request, err error) bool {
 	if !errors.Is(err, acl.ErrNoIdentity) {
 		return false
@@ -1002,20 +890,13 @@ func parseSearchPage(raw string) (int, bool) {
 
 // --- Helper Functions ---
 
-// applyV1Filters applies `filter[...]` query params to the entity slice. Pure
-// data transform — a free function, not App behavior (TKT-N26KLB M5.5). It
+// applyV1Filters applies `filter[...]` query params to the entity slice. It
 // takes a [gatedListQuery], so it never compares a property the principal
-// cannot see on every row (BUG-WJSYQT).
-// A malformed key or unsupported operator returns errBadFilter (HTTP 400)
-// instead of silently dropping the clause, which returned the unfiltered
-// superset and hid config/caller typos.
-//
-// The query's isRelationKey identifies filter keys that target a metamodel
-// relation rather than an entity property; those are skipped here and handled
-// by the relation pass in scopedSortedEntities (which has ctx + config for
-// direction-aware traversal). A relation key would otherwise match no property
-// and nuke the whole result set (TKT-5U7QBR). A nil predicate treats every key
-// as a property filter (the pre-TKT-5U7QBR behavior).
+// cannot see on every row. A malformed key or unsupported operator returns
+// errBadFilter (HTTP 400) rather than the unfiltered superset. Keys the
+// query's isRelationKey marks as relations are skipped; the relation pass in
+// scopedSortedEntities handles them. A nil predicate treats every key as a
+// property filter.
 //
 //nolint:gocognit // dispatches over every supported filter operator and value type; each branch is one operator's semantics, not extractable shared logic.
 func applyV1Filters(entities []*entityPkg.Entity, query gatedListQuery) ([]*entityPkg.Entity, error) {
@@ -1027,46 +908,21 @@ func applyV1Filters(entities []*entityPkg.Entity, query gatedListQuery) ([]*enti
 		}
 
 		fk, err := parseFilterKey(key)
-		// Relation filter keys are handled by the direction-aware relation
-		// pass in scopedSortedEntities. Skip them here so a relation key
-		// (which matches no property) doesn't nuke the result set. A key with
-		// too many segments has no property and is refused below.
 		if fk.property != "" && query.isRelationKey != nil && query.isRelationKey(fk.property) {
 			continue
 		}
-		// Reject a malformed key: the old skip-with-a-log "fail closed" still
-		// returned the unfiltered superset, which is fail-open at the result
-		// level.
 		if err != nil {
 			return nil, err
 		}
 		property, operator, isArrayForm := fk.property, fk.operator, fk.arrayForm
 
-		// Reject unknown operators BEFORE the per-entity loop. A typo like
-		// `filter[status][equals]=done` used to be skipped with only a log —
-		// which returned every entity, the very silent inclusion the skip
-		// claimed to prevent. A 400 makes the typo visible to the caller
-		// (and to a config author whose list filter reached the wire).
 		switch operator {
 		case "eq", "ne", "contains", "in", "lt", "lte", "gt", "gte":
-			// known
 		default:
 			return nil, fmt.Errorf("%w: unknown operator %q in key %q (supported: eq, ne, contains, in, lt, lte, gt, gte)",
 				errBadFilter, operator, key)
 		}
 
-		// Multi-value support: `in`/`ne` collect ALL repeated values from the
-		// query (e.g. `filter[tags][in][]=a&filter[tags][in][]=b`). Other
-		// operators stay last-write-wins on values[len-1] for predictability.
-		//
-		// setValues keeps the repeated params as DISTINCT members rather than
-		// joining them into one comma string: a value may legitimately contain
-		// a comma ("Legal, Risk & Compliance"), and join-then-split would tear
-		// it into two members that match the wrong rows — and make `ne` fail to
-		// exclude the row it names, the same wrong-answer class as BUG-AMK38R.
-		// A single param still splits on commas, which is the documented
-		// `filter[x][in]=a,b` form; that form simply cannot express a value
-		// containing a comma, so the repeated form is the one to use for those.
 		var value string
 		var setValues []string
 		if operator == "in" || operator == "ne" {
@@ -1086,17 +942,12 @@ func applyV1Filters(entities []*entityPkg.Entity, query gatedListQuery) ([]*enti
 				continue
 			}
 
-			// A list-typed property is compared element-wise: ANY element
-			// matching satisfies eq/in/contains, and ne is the exact
-			// complement (NO element matches). A scalar is a one-element
-			// list, so scalar behavior is unchanged. See propertyElements.
 			switch operator {
 			case "eq":
 				if anyElement(propVal, func(el string) bool { return el == value }) {
 					newFiltered = append(newFiltered, e)
 				}
 			case "ne":
-				// Support comma-separated values as NOT IN
 				excluded := anyElement(propVal, func(el string) bool {
 					return slices.Contains(setValues, el)
 				})
@@ -1119,14 +970,6 @@ func applyV1Filters(entities []*entityPkg.Entity, query gatedListQuery) ([]*enti
 					newFiltered = append(newFiltered, e)
 				}
 			case "lt", "lte", "gt", "gte":
-				// Ordered comparison is scalar-only. What it means to order a
-				// LIST against a bound is a genuine design question, so this
-				// declines to answer rather than guessing: the old code
-				// compared the Go slice literal, which made `tags < "zzz"`
-				// true for every row (including empty and null ones) — a
-				// confident wrong answer, the same class as BUG-AMK38R.
-				// Excluding the row is the fail-closed direction and leaves
-				// the semantics free to be defined later.
 				if isListValue(propVal) {
 					slog.Warn("ordered filter operator on a list property; no rows match",
 						"property", property, "operator", operator)
@@ -1134,9 +977,6 @@ func applyV1Filters(entities []*entityPkg.Entity, query gatedListQuery) ([]*enti
 				}
 				match, err := compareValues(fmt.Sprintf("%v", propVal), value, operator)
 				if err != nil {
-					// Type mismatch (e.g. property is a date, filter value isn't).
-					// Exclude the entity rather than silently lying via lexicographic
-					// fallback. Log so users notice.
 					slog.Warn("filter compare error", "property", property, "error", err)
 					continue
 				}
@@ -1180,20 +1020,12 @@ func parseSortParam(query map[string][]string) []filter.SortSpec {
 	return specs
 }
 
-// applyV1Sorting applies `sort=` query params to the entity slice. Pure data
-// transform — a free function, not App behavior (TKT-N26KLB M5.5).
-//
-// The ordering rule lives in [filter.QuerySort] so this path, the search and
-// dashboard path, and every store backend share one definition
-// (TKT-9OFGH4). It is store.GraphQuery.OrderBy's contract: byte-wise on the
-// text form, enum values by declared position, absent rows as the largest
-// value, id ascending as the final tiebreak — so a request reads the same
-// whether or not it was pushed into the database.
-//
-// meta may be nil; that yields byte-wise comparison for every property, which
-// is the right answer when no schema is available. The query is a
-// [gatedListQuery], so a sort key is never a property hidden from the
-// principal on some row (BUG-WJSYQT).
+// applyV1Sorting applies `sort=` query params to the entity slice. The
+// ordering rule is [filter.QuerySort], store.GraphQuery.OrderBy's contract,
+// so a request reads the same whether or not it was pushed into the database.
+// meta may be nil, which yields byte-wise comparison for every property. The
+// query is a [gatedListQuery], so a sort key is never a property hidden from
+// the principal on some row.
 func applyV1Sorting(
 	entities []*entityPkg.Entity, query gatedListQuery, meta *metamodel.Metamodel,
 ) []*entityPkg.Entity {
@@ -1259,20 +1091,16 @@ func addPaginationLinks(w http.ResponseWriter, _ *http.Request, page, perPage, t
 	baseURL := "/api/v1/" + plural
 	var links []string
 
-	// First
 	links = append(links, fmt.Sprintf("<%s?page=1&per_page=%d>; rel=\"first\"", baseURL, perPage))
 
-	// Prev
 	if page > 1 {
 		links = append(links, fmt.Sprintf("<%s?page=%d&per_page=%d>; rel=\"prev\"", baseURL, page-1, perPage))
 	}
 
-	// Next
 	if page < totalPages {
 		links = append(links, fmt.Sprintf("<%s?page=%d&per_page=%d>; rel=\"next\"", baseURL, page+1, perPage))
 	}
 
-	// Last
 	links = append(links, fmt.Sprintf("<%s?page=%d&per_page=%d>; rel=\"last\"", baseURL, totalPages, perPage))
 
 	w.Header().Set("Link", strings.Join(links, ", "))
@@ -1290,18 +1118,10 @@ func etagUnresolved(ctx context.Context, aff affordanceService, e *entityPkg.Ent
 }
 
 // servedETag is the validator for e as the caller sees it: e's properties
-// minus those the caller's `visible:` grants hide, together with the edges
-// the response carried. Every entity ETag goes through it, so a GET, an
-// If-Match check and a PATCH response agree for one caller.
-//
-// Hashing a hidden value would make the ETag an offline guessing oracle for
-// it: a caller could hash candidate values and compare. It would also change
-// the ETag when only a hidden value changed, so the caller's next If-Match
-// would fail for a change it cannot see.
-//
-// It runs the markdown formatter over the body (through the canonical view
-// hash), which is fine for one entity per request. Do not use it on a list
-// path.
+// minus those the caller's `visible:` grants hide, plus the edges the response
+// carried. Every entity ETag goes through it, so GET, If-Match and PATCH agree
+// for one caller. Hashing a hidden value would make the ETag a guessing
+// oracle for it. It formats the body, so do not use it on a list path.
 func servedETag(
 	ctx context.Context, aff affordanceService, e *entityPkg.Entity, edges []*entityPkg.Relation,
 ) string {
@@ -1321,16 +1141,6 @@ func servedETag(
 func entityETagWithEdges(
 	e *entityPkg.Entity, hidden map[string]struct{}, edges []*entityPkg.Relation,
 ) string {
-	// The view hash covers the served FACE, not the world NAME. Two worlds
-	// that resolve the same id to different faces get different validators,
-	// so a published-world GET cannot answer 304 against a draft-derived one
-	// (the cross-world cache poisoning this fold exists for). Two worlds
-	// serving the SAME face share one, which is correct: the bytes are the
-	// same. And a write, which addresses the stored face directly and refuses
-	// `?world=`, computes the same fold — so an If-Match taken from a GET that
-	// showed the bare face matches the PATCH of it, while one taken from a GET
-	// that showed `published` refuses a write aimed at the draft. Folding the
-	// world name instead made every world-bound If-Match a permanent 412.
 	return viewETag(canonical.SumEntity(entityView(e, hidden)), e.Content, edges)
 }
 
@@ -1347,18 +1157,6 @@ func viewETag(view canonical.Digest, rawBody string, edges []*entityPkg.Relation
 	_, _ = h.Write(view[:])
 	etagField(h, rawBody)
 
-	// Fold outgoing relations into the hash so PATCHes that only change
-	// edges also change the ETag — otherwise If-Match / If-None-Match
-	// round-trips poison client caches.
-	//
-	// The edges are the caller's, and must be the ones the response BODY
-	// carried. Until TKT-WRLDAPI item 4 a world-bound response carried no
-	// relations at all, so nothing was folded under a world; now it carries
-	// world-resolved ones, and folding nothing would mean an edge change under
-	// a world never moved the ETag — a stale 304 on a response whose links had
-	// changed. Folding DEFAULT-world edges instead is the mirror bug: a draft
-	// edit would invalidate a published validator, and publishing a face would
-	// not.
 	edgeKeys := make([][2]string, 0, len(edges))
 	for _, edge := range edges {
 		edgeKeys = append(edgeKeys, [2]string{edge.Type, edge.To})
@@ -1425,10 +1223,6 @@ func validateCreateIDOpts(def *metamodel.EntityDef, id, prefix string) string {
 		if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 {
 			matched := false
 			for _, p := range prefixes {
-				// Reject the bare prefix (id == p) — the entity needs a
-				// distinguishing suffix or it conflicts with the prefix
-				// concept itself. (RR-…) The prefix compares with case
-				// folded, like metamodel.EntityDef.MatchesID (BUG-4OPP525).
 				if len(id) > len(p) && strings.EqualFold(id[:len(p)], p) {
 					matched = true
 					break
@@ -1528,46 +1322,13 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse path: /api/v1/_documents/{docName}[/{entityId}][/_export], then
-	// dispatch on the shape. The branches live in separate functions so none
-	// grows another's guards by accident — they differ in their ACL story, not
-	// just in which segments are present.
-	//
-	// The trailing `_export` segment is matched EXACTLY and only in final
-	// position, so the four shapes are disjoint:
-	//
-	//	{doc}                     render, standalone
-	//	{doc}/_export             export, standalone
-	//	{doc}/{entityId}          render, anchored
-	//	{doc}/{entityId}/_export  export, anchored
-	//
-	// The two-segment forms cannot collide: an entity id can never be
-	// "_export" because entity.ValidateID rejects a leading underscore. The
-	// other side of that premise — a document literally named "_export" — is
-	// closed at config load by validateDocuments. See exportSegment.
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_documents/")
 	parts := strings.Split(path, "/")
 
-	// Trailing empty segment from a trailing slash ("/_documents/foo/") is not
-	// a missing entity id; drop it so the shape matches the one-segment form.
 	if len(parts) > 1 && parts[len(parts)-1] == "" {
 		parts = parts[:len(parts)-1]
 	}
 
-	// Any REMAINING empty segment is rejected outright. This is not defensive
-	// tidying — without it "/_documents/sales//_export" splits to
-	// ["sales", "", "_export"], matches the 3-segment export case, and calls
-	// the export handler with an empty entity id, which dispatches to the
-	// STANDALONE resolver. That serves a standalone document at the anchored
-	// URL shape, precisely what this package's CLAUDE.md forbids ("Never let
-	// one URL shape serve the other kind... do not fall back to rendering with
-	// an empty or guessed entry id").
-	//
-	// net/http's ServeMux happens to redirect "//" before a request reaches
-	// here, but that is a property of the mux, not of this function: tests and
-	// any future direct mount call it without that normalization, and a
-	// percent-encoded %2F survives ServeMux cleaning entirely. Reject here so
-	// the guarantee belongs to the router itself.
 	if slices.Contains(parts, "") {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_path",
 			"Path must be /_documents/{docName}/{entityId}", "")
@@ -1602,35 +1363,17 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 func handleV1AnchoredDocument(a *App, w http.ResponseWriter, r *http.Request, docName, entityID string) {
 	resolved, ok := resolveAnchoredDocument(a, w, r, docName, entityID)
 	if !ok {
-		return // the resolver already wrote the response
+		return
 	}
 	renderCfg := resolved.cfg
 
-	// Check for refresh param - skip cache if present
 	forceRefresh := r.URL.Query().Get("refresh") == "true"
-	// A read at an instant never touches the disk cache: the cache holds
-	// renders of today's state (TKT-6KLUT3U).
 	if _, past := asOfFromContext(r.Context()); past {
 		forceRefresh = true
 	}
 
-	// return_to is the URL the caller is currently on. The rewriter uses
-	// it to inject a `return_to` query param into form links so the form
-	// redirects back here after submit. isSafeReturnPath enforces the
-	// open-redirect guard — it rejects protocol-relative (//evil.com),
-	// backslash-tricks (/\evil.com), and any absolute/schemed URLs, and
-	// returns the normalised same-origin path on success.
 	returnPath := isSafeReturnPath(r.URL.Query().Get("return_to"))
 
-	// Try to get cached content (unless refresh requested). Disk cache
-	// is only populated for command: renders (see doRender); skip the
-	// read for script: docs so we don't serve a stale command:-era file
-	// after a doc is switched to a Lua script.
-	//
-	// That condition is also what keeps GetCached safe: its key carries
-	// neither the ConfigID nor the principal, so it may only ever serve a
-	// principal-independent command: render. Never widen this to script:
-	// docs, and never call GetCached from a per-principal path (RR-2QSGLU).
 	if !forceRefresh && renderCfg.Script == "" {
 		result := a.documents.GetCached(r.Context(), resolved.entryID)
 		if result != nil {
@@ -1644,7 +1387,6 @@ func handleV1AnchoredDocument(a *App, w http.ResponseWriter, r *http.Request, do
 		}
 	}
 
-	// Render the document
 	result, err := a.documents.Render(r.Context(), resolved.entryID, renderCfg)
 	if err != nil {
 		var se *lua.ScriptError
