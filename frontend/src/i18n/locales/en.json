@@ -1018,6 +1018,8 @@
       "today": "Today",
       "tomorrow": "Tomorrow",
       "next7Days": "Next 7 days",
+      "thisWeek": "This week",
+      "nextWeek": "Next week",
       "later": "Later",
       "noDate": "No date",
       "weekOf": "Week of {date}"

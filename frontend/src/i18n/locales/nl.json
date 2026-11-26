@@ -1018,6 +1018,8 @@
       "today": "Vandaag",
       "tomorrow": "Morgen",
       "next7Days": "Komende 7 dagen",
+      "thisWeek": "Deze week",
+      "nextWeek": "Volgende week",
       "later": "Later",
       "noDate": "Geen datum",
       "weekOf": "Week van {date}"
