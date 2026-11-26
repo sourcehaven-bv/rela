@@ -22,19 +22,12 @@ const (
 	maxDashboardTableLimit     = 100
 )
 
-// dashboardCardValue computes one `list:` card. Config load has checked the
-// list, the properties and the scope, so a miss here is a config that skipped
-// validation and answers an error.
-//
-// anchor is the entity an entity dashboard counts for, already read through
-// the gate (readPageAnchor), and nil on any other dashboard. With an anchor,
-// the card keeps only the list rows the anchor reaches over the card's scope
-// relation. The order is the one an aggregate needs: the rows pass the read
-// gate first, then the narrowing, and only then does anything count or fold
-// them. The value is computed per request and never cached, since it differs
-// per principal.
-//
-// Nil anchor: accepted, means an unscoped card.
+// dashboardCardValue computes one `list:` card; a config miss here answers an
+// error. anchor is the gated entity an entity dashboard counts for, or nil for
+// an unscoped card. With an anchor the card keeps only the rows the anchor
+// reaches over the card's scope relation. Rows pass the read gate, then the
+// narrowing, and only then are counted or folded. The value is per principal
+// and never cached.
 func dashboardCardValue(
 	ctx context.Context, a *App, s *Schema, card dataentryconfig.DashboardCard, anchor *entityPkg.Entity,
 ) (v1.DashboardCardValue, error) {
@@ -56,8 +49,6 @@ func dashboardCardValue(
 		return dashboardTable(ctx, a, s, card, listCfg, reach, out)
 	}
 
-	// The reach narrows the gated read itself, so the rows are the ones the
-	// reader may read AND the anchor reaches, before anything folds.
 	ctx, raw, err := listRowsFor(ctx, a, s, card.List, listCfg, "", reach)
 	if err != nil {
 		return out, err
@@ -96,7 +87,6 @@ func dashboardCardValue(
 			}
 		}
 		if card.GroupBy != "" {
-			// Only a grouping reads property values, so only it redacts.
 			rows := cardRows(ctx, a, typeName, raw, card.GroupBy)
 			out.Groups, out.Partial = groupCounts(rows, newAxisProperty(s.Meta, def, card.GroupBy), matched)
 		}
@@ -138,8 +128,6 @@ func dashboardMatches(
 	ctx context.Context, a *App, s *Schema, typeName, scopeName string, raw []*entityPkg.Entity,
 ) (map[string]bool, error) {
 	if a.queryScopes == nil && scopeName != metamodel.AllQueryScopeName {
-		// viewQueryScope answers "unscoped" without a resolver, which for a
-		// ratio would claim every row matches.
 		return nil, fmt.Errorf("%w: match %q: no query scope resolver is wired", errListLoad, scopeName)
 	}
 	scope, err := viewQueryScope(a.queryScopes, s.Cfg, s.Meta, typeName, scopeName)
@@ -153,8 +141,6 @@ func dashboardMatches(
 	for i, e := range raw {
 		headers[i] = store.EntityHeader{ID: e.ID, Type: e.Type, Face: e.Face, Properties: e.Properties}
 	}
-	// The same faces as the read that produced the rows, so a related()
-	// scope cannot match on a face this reader may not read.
 	faces := readGateFromContext(ctx).ReadQuery(ctx, typeName).Faces
 	kept, err := applyScope(ctx, a.Services(), headers, scopeRequest{
 		Type: typeName, Faces: faces, Scope: scope.Scope, ScopeProps: scope.Props, ScopeFilter: scope.Filter,
@@ -184,8 +170,6 @@ func dashboardTable(
 	if limit <= 0 {
 		limit = defaultDashboardTableLimit
 	}
-	// Config load rejects a larger limit; the clamp covers a config that
-	// skipped validation.
 	limit = min(limit, maxDashboardTableLimit)
 	sort := tableSort(card, listCfg)
 	read := func(sorted bool) ([]*entityPkg.Entity, int, error) {
@@ -210,10 +194,6 @@ func dashboardTable(
 	}
 	raw, total, err := read(true)
 	if refusal, ok := errors.AsType[*propertyNotVisibleError](err); ok && refusal.use == "sort" {
-		// The sort property is hidden from this reader on some row. The rows
-		// are still the list's, so drop the order and read again, as
-		// navItemsFor does. A refused filter stands: dropping it would widen
-		// the card.
 		raw, total, err = read(false)
 	}
 	if err != nil {

@@ -54,9 +54,6 @@ func logoExtForMime(mime string) string {
 	case "image/jpeg":
 		return "jpeg"
 	case "image/svg+xml":
-		// http.DetectContentType reports SVG as "image/svg+xml" or
-		// "text/xml; charset=utf-8" depending on the prologue. The PUT
-		// handler normalizes the latter before calling us.
 		return "svg"
 	case "image/webp":
 		return "webp"

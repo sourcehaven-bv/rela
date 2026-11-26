@@ -53,20 +53,13 @@ func parseWhereAt(where []string, now time.Time) ([]*filter.Filter, error) {
 	return filter.BindDateVariables(filters, now), nil
 }
 
-// resolveFilterVariable substitutes special variable references in filter
-// values:
+// resolveFilterVariable substitutes variables in filter values: $user (the
+// caller's principal id), $today with an optional offset ($today+7d,
+// $today-2w; see [filter.ResolveDateVariable]), $now, $tomorrow and
+// $yesterday.
 //
-//	$user           the caller's principal id, passed as user
-//	$today          the read day, with an optional day or week offset
-//	                ($today+7d, $today-2w); see [filter.ResolveDateVariable]
-//	$now            the read time
-//	$tomorrow       $today+1d
-//	$yesterday      $today-1d
-//
-// Dates are in UTC, so the day boundary does not depend on the server's
-// zone. Other values are returned unchanged, and so is $user when user is
-// empty: with no identified caller it stays literal rather than matching
-// rows with an empty property.
+// Dates are in UTC. Other values are returned unchanged, and so is $user when
+// user is empty, so an anonymous caller does not match empty properties.
 func resolveFilterVariable(value, user string, now time.Time) string {
 	if value == "$user" {
 		if user != "" {
@@ -128,51 +121,34 @@ func parseTemporal(value string) (t time.Time, ok bool) {
 	return time.Time{}, false
 }
 
-// compareValues compares two values using the given comparison operator
-// (lt, lte, gt, gte). It uses strict same-type comparison: if both sides
-// parse as temporal values (date or datetime), they are compared as instants;
-// if both parse as numbers, numbers are compared; otherwise strings are
-// compared lexicographically.
+// compareValues compares two values with lt, lte, gt or gte. Two temporal
+// values (date or datetime) compare as instants, so a bare date bounds an
+// RFC3339 value at midnight; two numbers compare numerically; otherwise
+// strings compare lexicographically.
 //
-// Date and datetime interoperate deliberately: a bare-date bound against an
-// RFC3339 property value is a legitimate comparison (midnight on that day), and
-// treating it as a type mismatch is what made date-windowed queries over
-// datetime properties return nothing. Mixed offsets compare correctly because
-// both sides are normalized to an instant rather than compared as strings.
-//
-// On a type mismatch (e.g. left is a temporal string, right is not), the
-// comparison returns false and a non-nil error so callers can decide
-// whether to log/reject. This prevents the silent lexicographic-fallback
-// trap where "2026-04-07" < "tomorrow" returned true.
+// On a type mismatch it returns false and an error, so "2026-04-07" <
+// "tomorrow" never matches by string order.
 func compareValues(left, right, operator string) (match bool, err error) {
-	// Both sides parse as dates/datetimes → compare as instants
 	lt, lIsTime := parseTemporal(left)
 	rt, rIsTime := parseTemporal(right)
 	switch {
 	case lIsTime && rIsTime:
-		// time.Compare, not UnixNano: nanoseconds since the epoch overflow an
-		// int64 outside roughly 1678-2262, and a far-future date would wrap
-		// negative and sort before everything.
 		return compareOrdered(lt.Compare(rt), 0, operator), nil
 	case lIsTime || rIsTime:
-		// One side is temporal, the other isn't — refuse to guess.
 		return false, fmt.Errorf("cannot compare date %q with non-date %q",
 			pickDate(left, right, lIsTime), pickNonDate(left, right, lIsTime))
 	}
 
-	// Both sides parse as numbers → compare as numbers
 	lf, lNumErr := strconv.ParseFloat(left, 64)
 	rf, rNumErr := strconv.ParseFloat(right, 64)
 	switch {
 	case lNumErr == nil && rNumErr == nil:
 		return compareOrdered(lf, rf, operator), nil
 	case lNumErr == nil || rNumErr == nil:
-		// One side is numeric, the other isn't — refuse to guess.
 		return false, fmt.Errorf("cannot compare number %q with non-number %q",
 			pickNumber(left, right, lNumErr == nil), pickNonNumber(left, right, lNumErr == nil))
 	}
 
-	// Neither parses as date or number → string comparison
 	return compareOrdered(left, right, operator), nil
 }
 
@@ -268,7 +244,7 @@ func applyFilters(entities []*entity.Entity, filters []FilterConfig, user string
 				f.Value = user
 			}
 			if strings.HasPrefix(f.Value, "$") {
-				continue // skip variable substitution
+				continue
 			}
 			prop := e.Properties[f.Property]
 			switch f.Operator {
@@ -310,14 +286,11 @@ func resolvePropertyValues(prop metamodel.PropertyDef, meta *metamodel.Metamodel
 
 // resolveWidget returns the appropriate widget type for a property.
 func resolveWidget(prop metamodel.PropertyDef, meta *metamodel.Metamodel) string {
-	// Check if property is a list (multi-select) - only applies to enum types
 	_, isCustomType := meta.Types[prop.Type]
 	isEnum := prop.Type == metamodel.PropertyTypeEnum || isCustomType
 	if prop.List && isEnum {
 		return WidgetMultiSelect
 	}
-	// The loader admits a link format only on a single-valued string
-	// without values, so no higher-precedence rule can apply here.
 	if prop.Display != nil && prop.Display.Link {
 		return WidgetURL
 	}
@@ -387,13 +360,10 @@ func simpleMarkdownToHTML(md string) template.HTML {
 
 	result := buf.String()
 
-	// Post-process: add md-table class to tables
 	result = strings.ReplaceAll(result, "<table>", `<table class="md-table">`)
 
-	// Post-process: convert diagram code blocks (mermaid, plantuml)
 	result = htmlutil.ConvertDiagramBlocks(result)
 
-	// Post-process: add checkbox indices for interactive toggling
 	result = addCheckboxIndices(result)
 
 	//nolint:gosec // HTML is generated by goldmark from user markdown
@@ -405,7 +375,6 @@ var checkboxRe = regexp.MustCompile(`<input[^>]*type="checkbox"[^>]*>`)
 func addCheckboxIndices(s string) string {
 	idx := 0
 	return checkboxRe.ReplaceAllStringFunc(s, func(match string) string {
-		// Add data-cb-idx attribute
 		result := strings.Replace(match, "<input", fmt.Sprintf(`<input data-cb-idx="%d"`, idx), 1)
 		idx++
 		return result
@@ -413,21 +382,12 @@ func addCheckboxIndices(s string) string {
 }
 
 // visibleListByTypes is executeQuery's no-free-text branch: it loads the
-// visible entities of the given types under the per-type scope verdict,
-// applying `props` in the STORE rather than after the fact. It fails loud on
-// every verdict path.
+// visible entities of types under the per-type scope verdict, applying props
+// in the store. It fails loud on every verdict path.
 //
-// The predicates compose with the ACL scope rather than replacing it: an
-// AllowAll type gets a plain type+props query, and a scope-restricted type
-// gets its verdict query with the props appended. Both are ANDed by the
-// store, so narrowing by property can never widen what the gate allows.
-//
-// No type named means every type the scope grants. With no ACL the scope is
-// the wildcard, which grants every declared type, so the read is one
-// content-free header read per type through the same verdict switch
-// (TKT-F2EJQY8) rather than a drain of every entity with its body. A stored
-// row of a type the metamodel no longer declares is not read; every other
-// read path already treats such a row as unknown.
+// The props are ANDed onto the verdict query, so they can never widen what the
+// gate allows. No type means every type the scope grants, read as content-free
+// headers per type. A stored type the metamodel no longer declares is skipped.
 func visibleListByTypes(
 	ctx context.Context, svc Services, types []string, scope map[string]search.TypeScope,
 	props []store.PropPredicate,
@@ -436,26 +396,22 @@ func visibleListByTypes(
 		if _, wildcard := scope[search.WildcardType]; wildcard {
 			types = svc.Meta.EntityTypes()
 		} else {
-			// Under ACL, "all types" means "all granted types".
 			types = make([]string, 0, len(scope))
 			for typ := range scope {
 				types = append(types, typ)
 			}
 		}
-		// Deterministic order over the types.
 		types = slices.Sorted(slices.Values(types))
 	}
 
 	var out []*entity.Entity
 	for i, typ := range types {
 		if slices.Contains(types[:i], typ) {
-			// A repeated type (`type:task` from /_search's `type`
-			// parameter plus the same clause in q) is read once.
 			continue
 		}
 		ts, ok := search.ResolveTypeScope(scope, typ)
 		if !ok {
-			continue // denied type
+			continue
 		}
 		got, err := visibleEntitiesOfType(ctx, svc, typ, ts, props, 0)
 		if err != nil {
@@ -482,20 +438,6 @@ func visibleEntitiesOfType(
 	ctx context.Context, svc Services, typ string,
 	ts search.TypeScope, props []store.PropPredicate, offset int,
 ) ([]*entity.Entity, error) {
-	// A search TypeScope is an ACL read verdict in a different shape: same
-	// AllowAll/Query pair and face allowlist, minus DenyAll
-	// (ResolveTypeScope has already denied by omission). Restating it lets
-	// this path share the one verdict switch (scopedread.go) rather than
-	// reimplementing it — which is how the RR-GQWRLD world bug reached two
-	// sites. Without the face allowlist a `type@face` grant is ignored here
-	// and the world ranks withheld faces too, serving their titles
-	// (BUG-SMPOZB review). It narrows the candidates before the world ranks
-	// them, as on the list path.
-	//
-	// The read is every visible row of the type after offset, in id order:
-	// the structured search Go path for the shapes planSearch declines, and
-	// the tail of firstNByTypes. TKT-PSBGQLY pushes those shapes into the
-	// store.
 	rqr := acl.ReadQueryResult{AllowAll: ts.AllowAll, Query: ts.Query, Faces: ts.Faces}
 	req := scopeRequest{Type: typ, Props: props, Faces: ts.Faces}
 	q, errClass, withheld, err := scopedQuery(ctx, rqr, req)
@@ -538,34 +480,15 @@ type freeTextIDsForTypeResult struct {
 // limit, free text or structured (TKT-T0DK37).
 const maxSearchResults = 1000
 
-// freeTextIDs issues an ACL-scoped search from a parsed SearchQuery under
-// world scope w, and returns the matching entity IDs. Phrases are re-quoted so
-// the searcher's text layer can rebuild the same fuzzy-words + exact-phrases
-// compound query the dataentry UI used to build upstream. Backend failures
-// surface to the caller.
+// freeTextIDs runs an ACL-scoped search for a parsed SearchQuery under world
+// scope w and returns the matching ids. Backend failures surface.
 //
-// # Field redaction
+// It searches through [visibility.SearchScoped], so a hit that matched only a
+// hidden property is dropped; otherwise `?q=<guess>` would confirm a hidden
+// value. An uncompilable field scope yields errACLListQuery.
 //
-// It searches through [visibility.SearchScoped], the path `/_search` uses, so
-// a hit that matched only a property hidden from the principal is dropped.
-// With the unredacted searcher, a list row kept by `?q=<guess>` confirmed the
-// guess against the hidden value: the same oracle a filter on that property
-// was (BUG-WJSYQT, RR-H3GP12). A field scope that cannot be compiled yields
-// errACLListQuery, the fail-closed answer.
-//
-// # IDs, not entities
-//
-// The one caller intersects these ids with a list it has ALREADY loaded
-// (world-scoped and ACL-gated). Loading the entities here would be both wasted
-// I/O and a live correctness hazard: the obvious load is `GetEntity(hit.ID)`,
-// which addresses the entity's DEFAULT face and so hands back default-face
-// bytes for a hit scored against the world's prime — the wrong-face serve this
-// whole arc exists to prevent. Returning ids removes the opportunity rather
-// than documenting it. (search.Service already loads the right face internally
-// by its Ref; a consumer re-read here would only undo that.)
-//
-// Free function rather than an App method: App sits at its plimsoll method
-// cap.
+// It returns ids, not entities: the caller intersects them with a list it
+// already loaded, and a bare-id reload would serve the wrong face.
 func freeTextIDs(
 	ctx context.Context, vs search.VisibleSearcher, fields visibility.FieldScoper,
 	sq *searchparser.SearchQuery, scope map[string]search.TypeScope, w store.WorldScope, limit int,
@@ -604,63 +527,26 @@ func relationDirection(d dataentryconfig.Direction) store.Direction {
 }
 
 // pushdownPrefilters returns the store-evaluable subset of the property
-// filters, as a PRE-FILTER only — the caller must still run every filter
-// through the metamodel-aware Go pass.
+// filters as a PRE-FILTER only; the caller still runs every filter through the
+// Go pass. A pre-filter must never remove a row the Go pass would keep.
 //
-// Only plain equality pushes down. Everything else is either unsupported by
-// store.PropPredicate (ordered comparison, regex, fuzzy) or means something
-// different there: a glob rides on OpEqual but would become a literal string
-// comparison.
-//
-// NOT-equal is excluded even though PropPredicate supports it: on a typed
-// property a string-form disagreement WIDENS (`flag!=yes` on a boolean errors
-// in Go, excluding the row, and matches in the store), so it would admit rows
-// the Go pass must then reject — no saving, and a bug in the pairing leaks them.
-//
-// TYPED properties are excluded entirely, in either direction. A pre-filter is
-// only sound if it can never remove a row the authoritative pass would keep,
-// and equality on a typed property breaks exactly that: `count=03` against an
-// integer 3 matches numerically but not as strings, so pushing it would drop a
-// row that belongs in the result. Only `string` and untyped-unknown properties
-// compare identically both ways.
-//
-// Multi-type queries are handled by requiring EVERY named type to declare the
-// property as string-comparable: one property name can be `string` on one type
-// and `integer` on another, and the pushdown is applied per query, not per type.
-// An unnamed-type query (no `type:`) pushes nothing, since any type could match.
-//
-// Emptiness agrees across both paths because internal/propmatch is the single
-// definition backing store.PropPredicate AND internal/filter's empty handling;
-// storetest's Props_value_shapes pins that agreement per backend.
+// So only plain equality on a `string` or untyped property pushes down, and
+// only when every named type declares it string-comparable. Not-equal, globs,
+// ordered and typed comparisons stay in Go, and a query without a type pushes
+// nothing. internal/propmatch keeps emptiness consistent across both paths.
 func pushdownPrefilters(
 	filters []*filter.Filter, meta *metamodel.Metamodel, types []string,
 ) []store.PropPredicate {
 	return queryplan.PushdownPrefilters(filters, meta, types)
 }
 
-// propertyElements returns the property value as the list of elements a filter
-// operator compares against: a single-element slice for a scalar, one entry per
-// item for a list-typed property.
+// propertyElements returns a property value as the elements a filter operator
+// compares against: one element for a scalar, one per item for a list. A list
+// has no single string form, so comparing per element is what lets `eq` and
+// `ne` work on list properties, as [propertyContains] does for static filters.
 //
-// This exists because a list property has no meaningful single string form. The
-// v1 list filter used to compare `fmt.Sprintf("%v", prop)` against the filter
-// value, which renders []any{"a","b"} as the Go slice literal "[a b]" — so a
-// list property could never equal any selected value, and `ne` returned rows it
-// was asked to exclude (BUG-AMK38R). Comparing per element is the same rule
-// [propertyContains] already applies to static config-authored `filters:`, so
-// the dynamic `filter[...]` path now agrees with the static one.
-//
-// Non-string elements render with `%v`, matching what internal/propmatch's
-// Stringify does for a scalar, so a []any{1,2} behaves like the scalars 1 and 2
-// rather than being dropped. (This does not CALL propmatch: arch-lint forbids
-// dataentry depending on it. Keeping the rendering identical is what matters,
-// and TKT-UTJ24Z is where the two converge for real.)
-//
-// Nil: a nil property yields a single empty-string element, so it compares
-// equal to an empty filter value and unequal to any other. Falling through to
-// `%v` instead would produce the Go literal "<nil>", which is a MATCHABLE
-// string: `filter[x][contains]=nil` would then select every entity whose
-// property is explicitly null.
+// Non-string elements render with `%v`, like propmatch's Stringify. A nil
+// property yields one empty string, never the matchable literal "<nil>".
 func propertyElements(prop any) []string {
 	if prop == nil {
 		return []string{""}
@@ -693,29 +579,12 @@ func anyElement(prop any, match func(string) bool) bool {
 	return slices.ContainsFunc(propertyElements(prop), match)
 }
 
-// filterSetValues expands the query params of an `in`/`ne` filter into the set
-// of values it tests membership against.
+// filterSetValues expands the params of an `in`/`ne` filter into its value
+// set. Without the `[]` suffix each param splits on commas
+// (`filter[x][in]=a,b`); with it each param is one verbatim member, so a value
+// may contain a comma. The suffix decides, never the param count.
 //
-// The two wire forms are read differently, on purpose:
-//
-//   - Without the `[]` suffix, each param splits on commas — the documented
-//     `filter[x][in]=a,b` form.
-//   - WITH the `[]` suffix (`filter[x][in][]=a&filter[x][in][]=b`), each param
-//     is one member, taken verbatim.
-//
-// The suffix is the signal, not the number of params: a one-element array is
-// indistinguishable from a comma list by count alone, and guessing from the
-// count re-tears exactly the single-value case the array form exists to carry.
-//
-// That split is what lets the repeated form carry a value containing a comma
-// ("Legal, Risk & Compliance"). Splitting it too would tear that value into two
-// members matching rows that hold neither — and leave `ne` unable to exclude
-// the row it names, the same wrong-answer class as BUG-AMK38R. The single-param
-// comma form inherently cannot express such a value; callers with commas in
-// their data must use the repeated form.
-//
-// Each member is trimmed and variable-resolved ($today and friends) exactly as
-// the joined form is, so both representations of a filter agree.
+// Each member is trimmed and variable-resolved, so both forms agree.
 func filterSetValues(values []string, isArrayForm bool, user string, now time.Time) []string {
 	out := make([]string, 0, len(values))
 	for _, v := range values {

@@ -76,7 +76,7 @@ func findings(fset *token.FileSet, file *ast.File) []finding {
 	var found []finding
 	bodies := funcBodies(file)
 	for _, group := range file.Comments {
-		if inAnyBody(bodies, group) && hasProse(group) && !isWhyWithReason(group) {
+		if inAnyBody(bodies, group) && hasProse(group) && !isWhyWithReason(group) && !isSuppression(group) {
 			found = append(found, finding{pos: fset.Position(group.Pos()), kind: kindBody})
 		}
 	}
@@ -143,8 +143,22 @@ func hasProse(group *ast.CommentGroup) bool {
 	return false
 }
 
+var suppressionPrefixes = []string{"coverage-ignore", "nolint", "#nosec", "nosemgrep", "lint:ignore"}
+
 func isToolDirective(text string) bool {
-	return strings.HasPrefix(text, "coverage-ignore:") || strings.HasPrefix(text, "nolint")
+	for _, prefix := range suppressionPrefixes {
+		if strings.HasPrefix(text, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// isSuppression reports whether the group opens with a linter or coverage
+// directive. Its continuation lines are that directive's justification.
+func isSuppression(group *ast.CommentGroup) bool {
+	first, _, _ := strings.Cut(strings.TrimSpace(group.Text()), "\n")
+	return isToolDirective(first)
 }
 
 func isWhyWithReason(group *ast.CommentGroup) bool {

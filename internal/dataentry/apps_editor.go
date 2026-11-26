@@ -17,26 +17,10 @@ import (
 // with inline SVG and ships no webfont. The EasyMDE build it replaced served a
 // Font Awesome woff2 at _rela-editor.woff2, which needed a CORS header because
 // a sandboxed iframe has an opaque origin. That path is gone.
-//
-// Like the SPA bundle (static/v2), these are BUILD ARTIFACTS — gitignored and
-// produced by `npm run build` (frontend/package.json runs the editor build too).
-// The embed uses a glob with a committed .gitkeep placeholder so the package
-// still COMPILES on a clean checkout where the build hasn't run (the same reason
-// static.go embeds `static/*`, matched by a committed favicon, rather than a
-// specific file). On such a checkout appEditorSource() returns nil and
-// TestAppEditorBundleEmbedded fails loudly — the production build always runs
-// the frontend build first, so the real bytes are present in shipped binaries.
-//
-// Rebuild with:
-//
-//	cd frontend && npx vite build --config vite.editor.config.ts
-//
-// appEditorAsset returns one file of that bundle, or nil when it is not
-// embedded: a clean checkout, or a headless build (see static.go).
 func appEditorAsset(name string) []byte {
 	b, err := fs.ReadFile(appEditorDist, "app_editor_dist/"+name)
 	if err != nil {
-		return nil // not built yet (clean checkout); guarded by a test
+		return nil
 	}
 	return b
 }

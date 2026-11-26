@@ -230,48 +230,18 @@ func familiesScope(w WorldLookup, meta *metamodel.Metamodel) store.WorldScope {
 // resolveWorld resolves the request's `?world=` parameter into a handle,
 // applying the per-world read grant BEFORE any resolver is constructed.
 //
-// A free function taking the lookup rather than an App method: it needs
-// exactly one collaborator, and App is at its plimsoll method cap because it
-// has accreted for years — adding to it is the habit that got it there.
-//
-// Returns (handle, nil) on success. The two failure modes are DELIBERATELY
-// DIFFERENT, and the difference is not an inconsistency to tidy away:
-//
-//   - UNKNOWN world -> a named 400. A world name is operator-authored
-//     CONFIG (schema.yaml), and CLAUDE.md is explicit that config names are
-//     not secret: naming the missing world is more useful to whoever is
-//     debugging it than a uniform silence, and conceals nothing that the
-//     operator's own repo does not already state.
-//
-//     `/api/v1/_schema` now enumerates the declared worlds (TKT-WRLDAPI), so
-//     this 400 names something the same caller can already list. Note the
-//     ORDER of that argument: the conclusion does not rest on the
-//     enumeration. Config names are not secret whether or not this API
-//     happens to serve them, and the enumeration exists because a client
-//     cannot build a world selector by guessing — not to make the 400 safe.
-//     An earlier revision of this comment asserted the enumeration before it
-//     was built; it is recorded here as fact only now that it is one.
-//
-//   - Known world the principal may NOT read -> (zero handle, errWorldDenied),
-//     which callers render as an EMPTY RESULT, never a 403. What a world
-//     CONTAINS — and whether any given entity exists in it — is exactly the
-//     secret this feature exists to keep (§4.4). A 403 here would tell the
-//     caller that a world exists holding things they may not see, which is
-//     the existence oracle the row-level rule forbids. Indistinguishable
-//     from a world with nothing in it, by design.
-//
-// Do NOT "unify" these two into one response shape. They protect different
-// things: one is config, the other is content.
+// The two failure modes differ on purpose. An unknown world is a named 400:
+// world names are config, which is not secret. A known world the principal
+// may not read returns errWorldDenied, which callers render as an EMPTY
+// result, never a 403: a 403 would be an existence oracle for the world's
+// content. Do not unify the two.
 func resolveWorld(r *http.Request, lookup WorldLookup, defaultName string) (worldHandle, error) {
 	values := r.URL.Query()[WorldParam]
 	if len(values) > 1 {
-		// Get() would silently take the FIRST, so a client-side param-append
-		// bug would become a silent wrong-face serve.
 		return worldHandle{}, errWorldDuplicated
 	}
 	name := r.URL.Query().Get(WorldParam)
 	if name == "" {
-		// An absent or empty parameter names the default world.
 		name = defaultName
 	}
 	return resolveNamedWorld(r.Context(), lookup, name, defaultName)
@@ -281,10 +251,10 @@ func resolveWorld(r *http.Request, lookup WorldLookup, defaultName string) (worl
 // the per-world read grant. The remote MCP endpoint shares it, so an MCP read
 // and a data-entry read of the same world are resolved and authorized by one
 // function.
+// A gate failure is returned as an error, never as a denial, so an outage does
+// not look like an empty world.
 func resolveNamedWorld(ctx context.Context, lookup WorldLookup, name, defaultName string) (worldHandle, error) {
 	if lookup == nil {
-		// No worlds wired: only the generated default world exists, and it
-		// ranks nothing.
 		if name == defaultName {
 			return worldHandle{name: name, scope: defaultWorldHandle().scope}, nil
 		}
@@ -295,16 +265,10 @@ func resolveNamedWorld(ctx context.Context, lookup WorldLookup, name, defaultNam
 		return worldHandle{}, errWorldUnknown
 	}
 	if name == defaultName {
-		// D2: the default world is readable with any read grant. The
-		// per-entity and per-face gates decide what it shows, and a client
-		// ceiling cannot deny it (acl.Policy.DefaultWorld).
 		return worldHandle{name: name, scope: scope}, nil
 	}
 	permitted, err := readGateFromContext(ctx).PermitsWorld(ctx, name)
 	if err != nil {
-		// An infrastructure failure is NOT a denial. Rendering it as an
-		// empty result would hide an outage behind a page that looks like a
-		// correctly-empty world (RR-4TFZNL).
 		return worldHandle{}, err
 	}
 	if !permitted {
@@ -313,161 +277,55 @@ func resolveNamedWorld(ctx context.Context, lookup WorldLookup, name, defaultNam
 	return worldHandle{name: name, scope: scope}, nil
 }
 
-// # Why an allowlist rather than teaching every read path
-//
-// A world-bound request must never be served default-world data (Ruling 3).
-// internal/dataentry reaches entity content through roughly forty store call
-// sites across a dozen files — the list pipeline, the ungated entityReader
-// used for relations and serialization, view traversal, document render,
-// feeds, CalDAV, commands. Teaching all of them in one change would be
-// a large diff in which a single missed site is a silent leak, and "silence
-// in the direction of serving the wrong face" is the failure this arc keeps
-// hitting.
-//
-// So the default is DENY, and a route joins this predicate only when its
-// whole read path is world-scoped and tested. That is the DEC-ZBI39P stance —
-// structurally incapable rather than "defaults to safe" — applied at the
-// route table: a leak requires someone to WIDEN this predicate, a visible and
-// reviewable act, rather than to forget a call site.
-//
 // worldCapablePath reports whether path may serve a non-default world.
 //
-// Deliberately conservative, and the list has grown deliberately: the
-// collection list (`/{plural}`), the single-entity GET (`/{plural}/{id}`) and
-// the underscore routes named one at a time below — `_views`, `_history`,
-// `_next_action`, `_search`, `_position`, `_page_status`, the `_piles` reads
-// and `_dashboard/card`. Every other underscore endpoint (analyze, documents,
-// feeds) is refused. Of an entity's sub-resources only its export and its
-// `mentioned-by` backlinks are admitted; the rest (relations, attachments) and
-// the list export are refused, because each reaches content through a path
-// that is still world-blind.
-//
-// Each admission carries its own justification at the call site rather than a
-// prefix rule, so widening this stays one reviewable edit per route.
-//
-// Refusing is not a permanent verdict on those routes; it is the honest one
-// until each is scoped and tested.
+// A world-bound request must never be served default-world data, and most
+// store call sites in this package are not world-aware. So the default is
+// deny: a route joins this allowlist only when its whole read path is
+// world-scoped and tested, so a leak needs someone to widen this predicate
+// rather than forget a call site.
 func worldCapablePath(path string) bool {
 	trimmed := strings.TrimPrefix(path, "/api/v1/")
 	if trimmed == path {
-		// Not under the versioned API (e.g. /api/git/...). Refuse.
 		return false
 	}
 	trimmed = strings.Trim(trimmed, "/")
 	if trimmed == "" {
 		return false
 	}
-	// The FIRST underscore route that is world-capable: the entity view
-	// (TKT-WRLDAPI item 4b). It is named exactly rather than admitted by a
-	// prefix rule, so widening the underscore family stays a deliberate act —
-	// every `_`-prefixed endpoint not named here is refused by the clause below.
 	if isWorldCapableViewPath(trimmed) {
 		return true
 	}
-	// The SECOND underscore route, admitted for the same reason and named just
-	// as exactly: entity history (TKT-WRLDGAPS / BUG-2).
-	//
-	// Versioning is PER-FACE — `entity_versions` is keyed by the content state
-	// and TKT-C1XUA8 added per-face capture — so a draft and its published face
-	// have genuinely different histories. Refusing `?world=` here did not keep
-	// the surface safe: it made the History button on a world-bound page show
-	// the DEFAULT face's history, which is the wrong record presented as the
-	// right one. That is worse than a refusal, because nothing on screen says
-	// which face it belongs to.
 	if isWorldCapableHistoryPath(trimmed) {
 		return true
 	}
-	// The THIRD underscore route, named exactly like the two above: the
-	// advisory next-action surface.
-	//
-	// It is admitted on a NARROWER claim than the others. `?world=` here does
-	// not scope a read at all — it supplies the DISPLAY world for each
-	// source's `visible_worlds` allow list. Which world a source READS is
-	// declared per source in config (`source_world:`) and is deliberately not
-	// taken from the request, so admitting this parameter cannot point an
-	// operator's query at a world they did not name.
-	//
-	// Refusing it was actively wrong rather than merely conservative. A
-	// next-action answers "what should I do now?", and the answer is almost
-	// always unfinished work — exactly what a publication world excludes. So
-	// a reader browsing `published` could never be told that the suggestion
-	// they were being shown was computed for somewhere else, and an operator
-	// had no way to say "only nag about this while in editorial".
 	if trimmed == "_next_action" {
 		return true
 	}
-	// The FOURTH and FIFTH, named exactly: cross-type search and scope
-	// position (BUG-SMPOZB). Refusing search left `app.default_world`
-	// unapplied there, so the command palette and entity picker could not
-	// find a faced entity that has no default face.
-	//
-	// Every branch of executeQuery takes the world from ctx, behind a
-	// denied-world guard: the free-text search, and the type listing, which
-	// also applies the grant's face allowlist before the world ranks. Hits
-	// load the face the searcher matched. Free-text hits are face-gated
-	// AFTER the world ranks, which can drop an entity whose prime is a
-	// withheld face; that narrows only, and is BUG-OJPVPG.
-	//
-	// `_position` is admitted with search because it recomputes the set a
-	// search or list page showed; in a different world it answered
-	// not_in_scope for the rows the page had just listed. Both of its paths
-	// take the world: the store pushdown (pushdownPlan) and the Go path
-	// through resolveScope.
 	if trimmed == "_search" || trimmed == "_position" {
 		return true
 	}
-	// The SIXTH, named exactly: `_page_status` (TKT-MWZF0UO). It judges each
-	// step of a steps page over the rows the step's list shows. A world-bound page lists the world's faces,
-	// so the check must judge those faces too, or a step would be marked by
-	// rows the page does not show. Its reads are the list pipeline's
-	// (configuredListRows), which take the world on ctx.
 	if trimmed == "_page_status" {
 		return true
 	}
-	// The SEVENTH, named by its read shapes: piles (TKT-K3RJLH). A pile's
-	// items are references, and every read of them (the list counts, one
-	// pile, the export, and the pile scope through `_position`) resolves
-	// them in ONE batch through the visibility resolver in the request's
-	// world. A named face is served as named and a bare item takes the face
-	// the world serves; nothing reaches the default-world entityReader.
-	// Refusing the world would count and show the default world's faces on a
-	// page bound to another one. Writes never get here with a world:
-	// attachWorld refuses `?world=` on every non-GET.
 	if isWorldCapablePilesPath(trimmed) {
 		return true
 	}
-	// The EIGHTH, named exactly: one dashboard card's value (TKT-2SGPJZ).
-	// A `list:` card is the list's rows, read through the list pipeline,
-	// which takes the world from ctx like the list endpoint itself. Refusing
-	// the world would count a card in the default world while its click-
-	// through list opens in the page's world.
 	if trimmed == "_dashboard/card" {
 		return true
 	}
-	// The EIGHTH: one gantt chart (TKT-6KLUT3U). Every node read takes the
-	// world from ctx: the full build through the list pipeline's scoped
-	// headers, the outside parents through store.InWorld, and the drill
-	// closure through its GraphQuery. Refusing the world showed the default
-	// world's spans on a page bound to another one.
 	if isGanttPath(trimmed) || isSankeyPath(trimmed) {
 		return true
 	}
 	if strings.HasPrefix(trimmed, "_") {
 		return false
 	}
-	// The one entity sub-resource admitted, named exactly: the entity
-	// export (BUG-PLZDPR). See [isWorldCapableEntityExportPath].
 	if isWorldCapableEntityExportPath(trimmed) {
 		return true
 	}
-	// And the backlinks of one entity (TKT-Q6AKUN), for the same reason: the
-	// detail page lists them, so they must be read in the page's world. See
-	// [isWorldCapableMentionedByPath].
 	if isWorldCapableMentionedByPath(trimmed) {
 		return true
 	}
-	// `{plural}` or `{plural}/{id}` only. A third segment is a
-	// sub-resource (relations, attachments) and is refused.
 	return strings.Count(trimmed, "/") <= 1 &&
 		!strings.Contains(trimmed, "/_")
 }
@@ -482,9 +340,6 @@ func worldCapablePath(path string) bool {
 // better served by `no world named "pubished" is declared` than by a refusal
 // telling them the route cannot serve worlds at all, especially since a typo
 // is likeliest on the routes they are experimenting with.
-//
-// Nil: `err` is accepted — a nil or unrelated error reports false, which is
-// what makes this usable as a guard rather than an arm of a switch.
 func refuseWorldConfigError(w http.ResponseWriter, r *http.Request, requested string, err error) bool {
 	switch {
 	case errors.Is(err, errWorldDuplicated):
@@ -492,7 +347,6 @@ func refuseWorldConfigError(w http.ResponseWriter, r *http.Request, requested st
 			"more than one ?world= parameter", "pass it exactly once")
 		return true
 	case errors.Is(err, errWorldUnknown):
-		// A config name, not a secret: name it. See resolveWorld.
 		writeV1Error(w, r, http.StatusBadRequest, "unknown_world",
 			fmt.Sprintf("no world named %q is declared", requested),
 			"check the `worlds:` block in schema.yaml")
@@ -507,28 +361,6 @@ func refuseWorldConfigError(w http.ResponseWriter, r *http.Request, requested st
 // or a capable route.
 //
 // # Why this is decided BEFORE the grant check's outcome
-//
-// Whether a route can serve a non-default world is a property of the ROUTE. It
-// does not depend on the principal, and it must not be allowed to: this check
-// used to live inside `if !handle.ranksNothing()`, downstream of [resolveWorld],
-// where a DENIED world never reached it. `errWorldDenied` short-circuits
-// straight to the handler so the ordinary empty result renders — so a
-// principal WITHOUT the world grant sailed past a refusal that a principal
-// WITH it received, and landed on a world-blind route that answered with full
-// DEFAULT-world content (BUG-CV8L3B, confirmed on `_analyze`).
-//
-// That disclosed content the world exists to withhold, and made the two grant
-// outcomes distinguishable — the oracle [resolveWorld] rules out. Deciding on
-// the requested name closes both: permitted and denied reach this refusal
-// identically, so it cannot itself become an oracle, and a denied handle flows
-// only into routes that are world-scoped and tested.
-//
-// Keyed on the NAME rather than a resolved handle deliberately. A denied
-// handle carries the ZERO scope, and a zero scope IS the default world, so
-// `handle.ranksNothing()` cannot distinguish "no world asked for" from "a world
-// asked for and refused" — the same trap [queryService.freeTextIDsForType]
-// documents at its own seam. That is also why the empty name passes through:
-// `?world=` is explicit but means the default world.
 func refuseWorldIncapablePath(w http.ResponseWriter, r *http.Request, requested, defaultName string) bool {
 	if requested == "" || requested == defaultName {
 		return false
@@ -615,10 +447,6 @@ func isWorldCapableMentionedByPath(trimmed string) bool {
 // wrong state. So this predicate does not need to exclude it, and deliberately
 // does not try — duplicating a rule that is enforced structurally elsewhere
 // invites the two copies to drift.
-//
-// `_relation_history` is NOT admitted. Relation history is gated on BOTH
-// endpoints and has its own lineage rules; it is a separate surface that has
-// not been world-scoped or tested, and this arc's default is deny.
 func isWorldCapableHistoryPath(trimmed string) bool {
 	parts := strings.Split(trimmed, "/")
 	if len(parts) < 3 || len(parts) > 4 || parts[0] != "_history" {
@@ -695,10 +523,6 @@ func attachWorld(next http.Handler, a *App) http.Handler {
 		}
 		switch {
 		case errors.Is(err, errWorldDenied):
-			// Only a non-default world can be denied, and only a
-			// world-capable route reaches here with one: the refusal above
-			// answers every other route. The handle blocks every read, so a
-			// denial renders as an empty world.
 			next.ServeHTTP(w, r.WithContext(withWorld(r.Context(),
 				worldHandle{name: requested, scope: defaultWorldHandle().scope, denied: true})))
 			return
@@ -721,56 +545,6 @@ func attachWorld(next http.Handler, a *App) http.Handler {
 // at — and names the rule that must have produced it. It never fetches, never
 // walks the chain, and cannot disagree with the store about WHICH face was
 // served, because it is handed that face.
-//
-// That distinction matters: a second chain walk here would be a second
-// implementation of the semantics deciding which face a reader sees, free to
-// drift from the store's. The mapping below is total over the states the
-// store can return, so there is nothing left to decide:
-//
-//   - type absent from the scope -> rule 1, "unscoped".
-//   - face present in the chain -> rule 2, "chain", plus its chain INDEX.
-//   - otherwise -> rule 3 under `otherwise: default`, "fallback-default".
-//
-// The index is what distinguishes the world's first choice from a later
-// candidate standing in for it — a distinction the rule name alone cannot
-// carry. See [resolutionRuleAt].
-//
-// # Why the ZERO coordinate in a chain is not a problem
-//
-// A [store.WorldScope] chain CAN carry the zero coordinate. Nothing a schema
-// compiles to does so today — a declared name IS its stored coordinate
-// (BUG-HC6I2T) and `entity.ParseFace` rejects the empty name — but the scope
-// is a plain store type any caller may construct, so the totality of the
-// mapping must not rest on the chain being zero-free. An earlier version of
-// this comment rested on the opposite claim and was wrong for a different
-// reason; the argument below holds either way.
-//
-// Totality does not need that invariant, because a zero coordinate in the
-// chain is matched BY POSITION everywhere it matters, ahead of the fallback:
-//
-//   - here, slices.Index finds it and returns rule 2 with its real index;
-//   - storeutil.WorldPrimes compares `coord != c.Face`, so a default row
-//     matches the chain entry and takes its rank;
-//   - pgstore's worldSQL emits `face = ” THEN i` for the chain entry
-//     BEFORE the `otherwise: default` arm's `face = ” THEN len(chain)`,
-//     and CASE takes the first match.
-//
-// The rank ordering is the load-bearing property, not the absence of "".
-// Pinned by TestZeroInChain_Provenance (here), the storeutil chain tests, and
-// TestWorldSQL_ZeroInChain (pgstore) — one per mechanism, because the three
-// implementations agree by construction rather than by sharing code.
-//
-// The third arm is reachable only when the fallback actually fired: under
-// `otherwise: exclude` the store returns NOTHING, so there is no response to
-// label and the handler has already rendered a 404.
-//
-// The wire's `face` is the coordinate the row is stored at, which is also the
-// name the operator wrote in `faces:` — a face has one spelling and the two
-// cannot diverge (BUG-HC6I2T). It is empty only for a type declaring no faces,
-// whose single state lives at the zero coordinate and has no name.
-//
-// Returns nil for a nil entity, so a caller may pass a not-found result
-// through without branching.
 func worldProvenance(ctx context.Context, e *entity.Entity) *v1.EntityWorld {
 	if e == nil {
 		return nil
@@ -806,32 +580,6 @@ var (
 // names only, and an alias reaching For() reads as an unknown type, which is
 // rule 1. The route resolves the type by iterating the metamodel's own keys,
 // so every caller on this path is canonical by construction.
-//
-// The position is non-nil only for rule 2; the other rules did not resolve
-// through the chain, so there is no rank to report and a zero would read as
-// "first choice".
-//
-// # Why the rule alone was not enough
-//
-// "chain" says SOME selected coordinate exists, never WHICH. Under
-// `select: [published, draft]` a real published face and a draft standing in
-// for a missing one both reported "chain", so a `published`-world reader
-// shown draft bytes could not tell — the silent substitution content states
-// exist to prevent. `fallback-default` guards only the `otherwise:` arm,
-// which fires when the chain matched NOTHING; a within-chain fallback slipped
-// between the two.
-//
-// The index closes it without redefining anything: position 0 is the world's
-// first choice, and any position > 0 is a within-chain fallback. Serving `en`
-// from `[nl, en]` remains rule 2 — the world was OBEYED, not overridden, and
-// calling it "fallback-default" would wrongly claim the `otherwise:` arm
-// fired — but it is now visibly the second choice.
-//
-// This stays a LOOKUP, not a chain walk, for the reason [worldProvenance]
-// gives: resolution already happened in the store, and re-deriving it here
-// would be a second implementation of the semantics free to drift from it.
-// slices.Index is the same read-back slices.Contains was, keeping the answer
-// it had already computed instead of discarding it.
 func resolutionRuleAt(
 	scope store.WorldScope, entityType string, p entity.Face,
 ) (rule string, position *int) {

@@ -116,8 +116,6 @@ func (h *conversionHandler) handleV1Conversions(w http.ResponseWriter, r *http.R
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "No such conversion", name)
 		return
 	}
-	// The client read the definition from this schema snapshot. If the
-	// converter holds another one, a reload landed in between.
 	if kernelDef, kernelHas := h.conv.Definition(name); !kernelHas || !reflect.DeepEqual(declared, kernelDef) {
 		writeV1Error(w, r, http.StatusConflict, "schema_changed", "Conversion definition changed; reload and try again", "")
 		return
@@ -213,9 +211,6 @@ func writeEntityMakingError(w http.ResponseWriter, r *http.Request, err error, k
 	var kept *entitymanager.KeptEntityError
 	switch {
 	case errors.As(err, &kept):
-		// The caller wrote the entity, so naming it discloses nothing; what
-		// failed after it may be a store error, which stays in the log.
-		// EntityID names it again in a field a client can read.
 		writeInternalProblem(w, r, "conversion_incomplete", v1.Error{
 			Title:    kind.label + " was not completed",
 			Detail:   kept.Entity.ID + " was created without its relation",
@@ -235,8 +230,6 @@ func writeEntityMakingError(w http.ResponseWriter, r *http.Request, err error, k
 	case errors.Is(err, entitymanager.ErrEntityAlreadyExists):
 		writeV1Error(w, r, http.StatusConflict, "conflict", kind.label+" target is already taken", "")
 	case errors.Is(err, entitymanager.ErrRenameBlocked):
-		// A flow run holds the entity's id. The text is the guard's fixed
-		// message, which names only the id the caller sent.
 		writeV1Error(w, r, http.StatusConflict, "rename_blocked", kind.label+" is blocked now", err.Error())
 	case kind.input(err):
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "conversion_failed", kind.label+" could not be applied", err.Error())

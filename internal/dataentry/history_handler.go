@@ -19,21 +19,12 @@ import (
 )
 
 // recordHistoryReveal emits the audit row for a history read that overrode
-// redaction via acl.PermHistoryReadRedacted (TKT-LVSPSB / issue #1238).
+// redaction via acl.PermHistoryReadRedacted.
 //
-// entityType MUST come from the stored snapshot rather than the caller-supplied
-// URL segment: the recorded type is forensic evidence, and taking it from the
-// request would let a caller write a type of their choosing into the audit log.
-//
-// No revealed values and no revealed field names are recorded -- see
-// audit.OpHistoryReveal for why the field list is itself sensitive.
-//
-// The reveal is not blocked on the audit write succeeding; sink errors are the
-// sink's concern, exactly as for every other op.
-//
-// A free function taking the sink, not a method on App: App is at its
-// plimsoll method cap, and this needs exactly one field of it. Passing the
-// dependency also makes the function directly testable without an App.
+// entityType MUST come from the stored snapshot, not the URL, so a caller
+// cannot write a type of their choosing into the audit log. No revealed
+// values or field names are recorded (see audit.OpHistoryReveal). Sink errors
+// do not block the reveal.
 func recordHistoryReveal(ctx context.Context, sink audit.Audit, entityType, entityID string, version int) {
 	sink.Record(audit.Record{
 		Time:        time.Now().UTC(),
@@ -46,33 +37,14 @@ func recordHistoryReveal(ctx context.Context, sink audit.Audit, entityType, enti
 	})
 }
 
-// handleV1History serves an entity face's version history (database
-// backends only).
+// handleV1History serves an entity face's version history (database backends
+// only): the timeline, one version's snapshot, or a restore of that version.
+// {addr} resolves to ONE face (see [resolveHistorySubject]).
 //
-// Routes:
-//
-//	GET  /api/v1/_history/{type}/{addr}                   → the version timeline (metadata)
-//	GET  /api/v1/_history/{type}/{addr}/{version}         → one version's full snapshot
-//	POST /api/v1/_history/{type}/{addr}/{version}/restore → restore that version
-//
-// {addr} is `ID@face` or a bare `ID`. A lineage is keyed by (id, face), so
-// the address resolves to ONE face and every read and write below is scoped
-// to it (BUG-4SYAA6). See [resolveHistorySubject] for how the face is chosen
-// and who may read it.
-//
-// Security (design-review findings):
-//   - A LIVE face's history is gated by the SAME resolver read as the entity
-//     GET, so a hidden, mistyped or nonexistent address is an
-//     indistinguishable 404 (RR-KDXGYK / RR-NGMI).
-//   - A DELETED face has no per-entity verdict to evaluate (its conferring
-//     relations are gone), so its history requires the global
-//     acl.PermHistoryRead permission. A NON-holder gets the SAME 404 as a
-//     nonexistent id, never a 403 that would confirm it ever existed.
-//   - Every snapshot is rendered through the serializer's forWire so
-//     field-level (`visible:`) redaction strips hidden properties exactly as
-//     on a live GET (RR-YDMJV7).
-//   - A restore reads the same way before it writes, then writes as an
-//     update (or, for a deleted face, a create) of `type@face`.
+// A LIVE face is gated by the same resolver read as the entity GET, so a
+// hidden or nonexistent address is an indistinguishable 404. A DELETED face
+// requires acl.PermHistoryRead, and a non-holder gets the same 404. Every
+// snapshot is redacted like a live GET. A restore reads the same way first.
 func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_history/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -89,9 +61,6 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 	}
 
 	if a.versions == nil {
-		// A backend with no version-history capability — fsstore (which gets
-		// history from git instead) or memstore. This is a capability gap,
-		// not an ACL decision, so it's safe to say so plainly.
 		writeV1Error(w, r, http.StatusNotImplemented, "history_unsupported",
 			"The active storage backend does not support version history", "")
 		return
@@ -108,8 +77,6 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 	}
 	if subject.worldAbsent {
 		if restore {
-			// Unreachable: restore refuses `?world=`, and only a world makes
-			// a subject absent. Answered as absent, never as a write.
 			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 			return
 		}
@@ -118,8 +85,6 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	// Every read below names subject.ref, so it is scoped to the one face
-	// the subject resolved to: the store's history is per face.
 	switch {
 	case restore:
 		restoreHistoryVersion(a, w, r, a.versions, typeName, subject, parts[2])
@@ -151,17 +116,10 @@ func historyMethodAllowed(w http.ResponseWriter, r *http.Request, restore bool) 
 
 // serveHistoryTimeline writes the version metadata list (oldest first).
 //
-// The lineage can reach back past a rename or conversion to versions of
-// another type or face. Those are dropped: the row gate ran for this type
-// and face only, so their metadata would be served under the wrong grant,
-// as their snapshots would (serveHistoryVersion refuses them too). The
-// conversion's own version stays, and its prev_id and prev_face say where
-// the lineage came from.
-//
-// deleted marks a face with no live row, whose history was opened on the
-// global history permission. Such a timeline is served only when it is
-// non-empty after that filter: an empty one would tell a permission holder
-// "no such lineage" apart from the 404 of a hidden live face.
+// Versions of another type or face in the lineage are dropped: the row gate
+// ran for this type and face only. Copy-origin source ids are gated against
+// the reader's own verdict. A deleted face's timeline is served only when
+// non-empty, so it cannot be told apart from a hidden live face's 404.
 func serveHistoryTimeline(
 	w http.ResponseWriter, r *http.Request, reader store.HistoryReader,
 	typeName string, subjectRef entityPkg.Ref, deleted bool,
@@ -169,8 +127,6 @@ func serveHistoryTimeline(
 	entityID, face := subjectRef.ID, subjectRef.Face
 	metas, err := reader.ListVersions(r.Context(), subjectRef)
 	if err != nil {
-		// Scrub backend detail from the wire (RR-372L): a store error must not
-		// echo table/column names.
 		writeGateError(w, r, err)
 		return
 	}
@@ -180,8 +136,6 @@ func serveHistoryTimeline(
 		return
 	}
 	ctx := r.Context()
-	// The source ids named by copy origins are ROWS, so they are gated
-	// against this reader's own verdict before any of them reaches the wire.
 	sources := gateOriginSources(ctx, readGateFromContext(ctx), metas)
 	versions := make([]map[string]any, 0, len(metas))
 	for i, m := range metas {
@@ -201,26 +155,11 @@ func serveHistoryTimeline(
 		if m.TriggeredBy != "" {
 			row["triggered_by"] = m.TriggeredBy
 		}
-		// Omitted entirely for a direct edit — the absence is the signal that
-		// a human typed this version, and `principal` above says who.
 		if o := originWire(m.Origin, sources[i]); o != nil {
 			row["origin"] = o
 		}
 		versions = append(versions, row)
 	}
-	// The response NAMES the face it belongs to, and HOW that face was
-	// chosen. A record that does not name its subject invites the reader to
-	// assume the obvious one, which is precisely how the default face's
-	// history passed for a published page's. Empty face means the default
-	// face, matching the face's own zero value.
-	//
-	// `via` matters more here than on a read surface. A world may answer with
-	// a STAND-IN face (`otherwise: default`, rule 3), which is a good answer
-	// for a reader — English beats a blank page for someone who asked for
-	// Dutch — and a misleading one for a timeline, because a history labeled
-	// only by face looks like the one the caller asked for. Labeling it the
-	// way the entity GET does (see worldProvenance) is what keeps the two
-	// surfaces from disagreeing about the same resolution.
 	rule, position := resolutionRuleAt(worldFromContext(ctx).scope, typeName, face)
 	body := map[string]any{
 		"id": entityID, "versions": versions, "face": face.String(), "via": rule,
@@ -243,7 +182,11 @@ func versionsAt(metas []store.VersionMeta, typeName string, face entityPkg.Face)
 }
 
 // serveHistoryVersion writes one version's full snapshot, redacted through the
-// serializer so hidden (`visible:`-denied) properties never reach the client.
+// serializer so `visible:`-denied properties never reach the client. A
+// snapshot of another type or face than the URL names is an
+// indistinguishable 404. Historical redaction fails closed; a holder of
+// acl.PermHistoryReadRedacted sees all frozen fields, and that reveal is
+// audited.
 func serveHistoryVersion(a *App,
 	w http.ResponseWriter, r *http.Request, reader store.HistoryReader,
 	typeName string, subjectRef entityPkg.Ref, versionStr string,
@@ -265,42 +208,16 @@ func serveHistoryVersion(a *App,
 		writeGateError(w, r, err)
 		return
 	}
-	// The snapshot's type must match the URL type — otherwise a deleted entity
-	// of type A could be read via /_history/B/<A-id> under B's read verdict
-	// (the cross-type leak). The face must match too, as restore checks: the
-	// row gate ran for subjectRef.Face, so a snapshot of another face would
-	// be served under the wrong grant. Mismatch → indistinguishable 404.
 	if snap.Type != typeName || snap.Face != subjectRef.Face {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
 
-	// Reconstruct the entity as-of this version and route it through the
-	// serializer so field-level redaction (stripHiddenProperties) applies — a
-	// raw snapshot would leak `visible:`-denied properties (RR-YDMJV7).
-	//
-	// Historical redaction FAILS CLOSED (TKT-73C6B2). Two reader tiers:
-	//
-	//   - Ordinary reader: the ctx is marked historical-subject, so a conditional
-	//     `visible:` grant whose subject-world inputs (has_relation /
-	//     count_relations) can't be affirmed for this possibly-deleted/drifted
-	//     entity evaluates false and HIDES the field. The live store no longer
-	//     holds the entity's as-of-version edges, so trusting it would let such a
-	//     grant flip OPEN and leak a field hidden at write time (the old
-	//     RR-TPATBK under-redaction). Reader-side inputs stay live (per-reader
-	//     redaction is intended).
-	//
-	//   - Holder of acl.PermHistoryReadRedacted (audit super-user): bypass the
-	//     strip entirely via forWireHistoricalReveal — sees ALL frozen fields
-	//     (OVERRIDE semantics, sibling of PermHistoryRead). Skipping only the
-	//     historical marker would NOT be enough: the ordinary live strip would
-	//     still run and hide fields the live policy redacts, which is not the
-	//     all-or-nothing reveal this permission grants.
 	ctx := r.Context()
 	snapEntity := entityPkg.New(entityID, snap.Type)
 	snapEntity.Face = snap.Face
 	snapEntity.Content = snap.Content
-	snapEntity.Properties = cloneProps(snap.Properties) // N1: don't alias the snapshot map
+	snapEntity.Properties = cloneProps(snap.Properties)
 	meta := a.Meta()
 	plural := typeName
 	if def, ok := meta.GetEntityDef(snap.Type); ok {
@@ -309,13 +226,6 @@ func serveHistoryVersion(a *App,
 	var wire v1.Entity
 	if readGateFromContext(ctx).HoldsPermission(ctx, acl.PermHistoryReadRedacted) {
 		wire = a.serializer.forWireHistoricalReveal(ctx, snapEntity, meta, plural)
-		// Record the privileged disclosure, not the read (TKT-LVSPSB / issue
-		// #1238). Only this arm, and only under a configured policy: an
-		// ordinary redacted read discloses nothing the permission governs, and
-		// under no policy this arm is reached by every reader with nothing
-		// redacted to reveal. Both would bury the real reveals this record
-		// exists to surface. See audit.OpHistoryReveal and
-		// access.Mode.RevealIsPrivileged.
 		if access.ModeOf(a.acl).RevealIsPrivileged() {
 			recordHistoryReveal(ctx, a.auditSink, snap.Type, entityID, snap.Version)
 		}
@@ -331,7 +241,6 @@ func serveHistoryVersion(a *App,
 		"principal":  map[string]string{"user": snap.PrincipalUser, "tool": snap.PrincipalTool},
 		"entity":     wire,
 	}
-	// Same gate as the timeline, over the single meta this snapshot carries.
 	sources := gateOriginSources(ctx, readGateFromContext(ctx), []store.VersionMeta{snap.VersionMeta})
 	if o := originWire(snap.Origin, sources[0]); o != nil {
 		payload["origin"] = o

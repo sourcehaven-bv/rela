@@ -135,8 +135,6 @@ func newExportHandler(app *App) (*exportHandler, error) {
 		stampQueryIdentity: func(
 			ctx context.Context, typeName string, query map[string][]string,
 		) (context.Context, error) {
-			// Resolving the scope is how this path reaches the binder; the
-			// resolved scope itself is applied by scopedEntities already.
 			name, err := queryScopeParam(query)
 			if err != nil {
 				return ctx, err
@@ -147,7 +145,6 @@ func newExportHandler(app *App) (*exportHandler, error) {
 			}
 			return bindQueryIdentity(ctx, scope)
 		},
-		// A closure so a later reassignment of app.affordances is seen.
 		redactForCondition: func(ctx context.Context, e *entityPkg.Entity) *entityPkg.Entity {
 			return redactedForSuggestion(ctx, app.affordances, e)
 		},
@@ -226,17 +223,6 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// The id segment is an ADDRESS (`ID` or `ID@face`), and the export
-	// renders the face it addresses (BUG-CTUW2N). `_export` is not a
-	// world-capable path (refuseWorldIncapablePath 422s a named world
-	// first), so the world handed to the resolver is always the default one.
-	//
-	// ACL gate BEFORE any render (same as handleV1GetEntity): a deny is an
-	// indistinguishable 404, and the render never runs for a hidden entity or
-	// a hidden face. The resolver also owns the stored-type check (RR-SRZK6X)
-	// and returns a FIELD-REDACTED copy — the renderer below can never see a
-	// property the caller's `visible:` policy hides (the #1188 IB-review
-	// finding).
 	res, found, err := h.resolver.Address(ctx, worldFromContext(ctx).visibility(), typeName, entityID)
 	if err != nil {
 		writeGateError(w, r, err)
@@ -247,19 +233,11 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	entity := res.Entity
-	// Render and name the download after the row the gate admitted, not the
-	// request's spelling of it.
 	entityID = entityPkg.FormatStateRef(entity.ID, entity.Face)
 
-	// A per-type `export_render:` view config (RR-BM0KIJ: config-selected,
-	// never request-selected — no query param chooses the script) renders via
-	// the operator's Lua document instead of the built-in entity renderer. It
-	// routes through the SAME document machinery handleV1Documents uses, so it
-	// can never become an unauthorized Lua-on-read surface (RR-8C23IL).
-	// No override configured → built-in renderer.
 	renderer, ok := h.exportRenderer(w, r, typeName, entityID, entity)
 	if !ok {
-		return // exportRenderer already wrote the error/404
+		return
 	}
 
 	h.convertAndWrite(w, r, reg, name, renderer, entityID, "entity", entityID)
@@ -308,18 +286,14 @@ func (h *exportHandler) convertAndWrite(
 	writeExportResponse(w, res, exportFilename(baseName, res.Produces))
 }
 
-// exportRenderer selects the markdown renderer for an entity export. When the
-// entity type configures an `export_render:` Lua script (in EntityViews), the
-// export routes through that script — the per-type render OVERRIDE — so
-// exporting an entity of that type automatically uses the operator's custom
-// document instead of the built-in property renderer. Otherwise the built-in
-// [transform.EntityRenderer] is used.
+// exportRenderer selects the renderer for an entity export: the type's
+// `export_render:` Lua script when configured, otherwise
+// [transform.EntityRenderer].
 //
-// The entity was already resolved through the ACL read gate (the resolver on
-// typeName) in the caller, so the override runs only for a face the caller
-// may read; the script is a fixed config value (not request input) and receives
-// the face's address (`ID` or `ID@face`), which the document machinery reads
-// by address. On any failure it writes the response and returns ok=false.
+// The caller has already passed the ACL read gate, and the script is a fixed
+// config value rather than request input, so the override runs only for a
+// face the caller may read. On failure it writes the response and returns
+// ok=false.
 func (h *exportHandler) exportRenderer(
 	w http.ResponseWriter, r *http.Request, typeName, entityID string, entity *entityPkg.Entity,
 ) (transform.Renderer, bool) {
@@ -327,26 +301,17 @@ func (h *exportHandler) exportRenderer(
 	if script == "" {
 		groups, err := h.entityRelationGroups(r.Context(), entity)
 		if err != nil {
-			// A neighbor read fault is an outage, not an entity with no
-			// links; exporting it as one would hide it (RR-4TFZNL).
 			writeGateError(w, r, err)
 			return nil, false
 		}
 		return transform.EntityRenderer{Entity: entity, Meta: h.meta(), Relations: groups}, true
 	}
 
-	// Defense-in-depth: the address reaches the document cache filename and
-	// (for a future command override) an sh -c {id}. It was built from the
-	// stored row the resolver matched, but validate it the same way
-	// handleV1Documents does before any render.
 	if !isSafeStateRefSegment(entityID) {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_entity", "Invalid entity id", "")
 		return nil, false
 	}
 
-	// A render config for the type's override script. ConfigID is a synthetic,
-	// per-type identity ("export:<type>") so it never collides with a documents:
-	// entry in the singleflight/cache key.
 	renderCfg := documentRenderConfig{ConfigID: "export:" + typeName, Script: script}
 	return transform.RendererFunc(func(ctx context.Context) ([]byte, error) {
 		md, err := h.documents.RenderMarkdown(ctx, entityID, renderCfg)
@@ -400,7 +365,6 @@ func (h *exportHandler) entityRelationGroups(
 	ctx context.Context, e *entityPkg.Entity,
 ) ([]transform.RelationGroup, error) {
 	meta := h.meta()
-	// Only the edges the exported face owns (BUG-ISJHML).
 	outgoing := edgesOwnedBy(meta, h.reader.outgoingRelations(ctx, e.ID), e.Face)
 	incoming := incomingOwnedAtZero(meta, h.reader.incomingRelations(ctx, e.ID), e)
 
@@ -410,16 +374,12 @@ func (h *exportHandler) entityRelationGroups(
 		return nil, err
 	}
 
-	// label -> ordered neighbor titles.
 	byLabel := map[string][]string{}
 	addNeighbor := func(label, neighborID string) {
 		row, ok := rows[neighborID]
 		if !ok {
 			return
 		}
-		// The resolver redacted row, so a visible neighbor whose display
-		// property is hidden renders as its ID, never the hidden value
-		// (the RR-5N4K35 title-leak class).
 		title := transform.DisplayTitle(meta, &entityPkg.Entity{ID: row.ID, Type: row.Type, Properties: row.Properties})
 		byLabel[label] = append(byLabel[label], title)
 	}

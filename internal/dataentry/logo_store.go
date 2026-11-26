@@ -55,9 +55,6 @@ func newLogoStore(kv state.KV) (*logoStore, error) {
 //
 //nolint:gocritic // unnamedResult: handler-style (bytes, ext, hash) is clearer than naming
 func (s *logoStore) Get() ([]byte, string, string) {
-	// A nil store reads as "no logo configured" so App values constructed
-	// without a logo store (chiefly narrow test fixtures) behave like the
-	// former zero-value AppState instead of panicking.
 	if s == nil {
 		return nil, "", ""
 	}
@@ -138,9 +135,6 @@ func (s *logoStore) load() ([]byte, string, error) {
 	extBytes, err := s.kv.Get(ctx, userLogoExtFile)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) || os.IsNotExist(err) {
-			// Bytes present but sidecar missing — treat as not-set. The user
-			// can re-upload to recover; we don't proactively clean up so a
-			// future fix can recover the bytes.
 			return nil, "", nil
 		}
 		return nil, "", fmt.Errorf("read %s: %w", userLogoExtFile, err)
@@ -148,8 +142,6 @@ func (s *logoStore) load() ([]byte, string, error) {
 
 	ext := string(extBytes)
 	if _, ok := allowedLogoExts[ext]; !ok {
-		// Sidecar contains an unknown extension — treat as not-set. Same
-		// reasoning as the missing-sidecar case.
 		return nil, "", nil
 	}
 

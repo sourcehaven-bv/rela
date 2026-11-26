@@ -33,22 +33,6 @@ const (
 // Served apart from /api/v1/_sidebar for the reason /api/v1/_nav_status is:
 // the sidebar is the same for every principal, and whether a step is done
 // depends on the rows, so on who asks.
-//
-// Each step is judged over the rows its list shows THIS principal: gated,
-// redacted, then judged (configuredListRows). A row the principal cannot see
-// never counts for or against a step, so the answer reveals nothing the list
-// itself does not. A hidden or missing anchor is the uniform 404 an entity
-// GET gives.
-//
-// Cost per judged step: one gated list read, one batch of `related(...)`
-// answers when done_when traverses, and on an entity page one anchor read
-// and one relation query to narrow to the anchor. Nothing is read per row.
-//
-// `?world=` is admitted (worldCapablePath): the list reads take the world
-// on ctx, so a world-bound page is judged over the faces it shows.
-//
-// A package function taking the App rather than a method: App is at its
-// plimsoll load line.
 func handleV1PageStatus(a *App, w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
@@ -61,8 +45,6 @@ func handleV1PageStatus(a *App, w http.ResponseWriter, r *http.Request) {
 	pageID, anchor := query.Get(pageStatusPageParam), query.Get(pageStatusEntityParam)
 	page, ok := s.Cfg.Pages[pageID]
 	if !ok {
-		// The page ids are config, which is not a secret (CLAUDE.md), so
-		// naming the unknown one is fine.
 		writeV1Error(w, r, http.StatusNotFound, "page_not_found", "Page not found",
 			fmt.Sprintf("no page %q is configured", pageID))
 		return
@@ -84,20 +66,15 @@ func handleV1PageStatus(a *App, w http.ResponseWriter, r *http.Request) {
 		done, err := pageStepDone(ctx, a, s, pageID, tab, anchor)
 		switch {
 		case errors.Is(err, errPageAnchorNotFound):
-			// Every scoped tab reads the same anchor, so the first refusal
-			// answers for the page.
 			writeListPipelineError(w, r, err)
 			return
 		case err != nil:
-			// One step that cannot be judged must not blank the others, and
-			// no check is the honest answer for it. The check is advisory.
 			slog.Log(ctx, sidebarSkipLevel(err), "page status: step skipped",
 				"page", pageID, "tab", tab.ID, "list", tab.List, "error", err)
 			continue
 		}
 		steps[tab.ID] = v1.PageStepStatus{Done: done}
 	}
-	// Per principal; writeV1JSON marks every v1 response no-store.
 	writeV1JSON(w, http.StatusOK, v1.PageStatusResponse{Steps: steps})
 }
 
@@ -114,14 +91,10 @@ func pageStepDone(
 	}
 	m := viewCondition(a.viewConditions, s, viewKindPageDone, dataentryconfig.PageDoneConditionID(pageID, tab.ID))
 	if m == nil {
-		// Judging without the condition would mark every non-empty step
-		// done, which is a wrong answer rather than a missing one.
 		return false, errors.New("done_when is not compiled")
 	}
 	query := navStatusListQuery(listCfg)
 	if anchor != "" {
-		// The tab's page scope, resolved from config by resolvePageScope
-		// inside the list read, exactly as the tab's own list request is.
 		query[scopePageParam] = []string{pageID}
 		query[scopeTabParam] = []string{tab.ID}
 		query[scopeAnchorParam] = []string{anchor}
@@ -130,8 +103,6 @@ func pageStepDone(
 	if err != nil || len(rows) == 0 {
 		return false, err
 	}
-	// done_when redacts each row before judging it; configuredListRows
-	// primed the rows already when the list has a condition of its own.
 	if listCfg.Condition == "" {
 		ctx = primeVerdicts(ctx, a.fieldResolver, rows)
 	}

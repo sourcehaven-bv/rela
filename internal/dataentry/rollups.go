@@ -96,8 +96,6 @@ func (s rollupSource) add(
 		})
 		r, err := visibility.NewRollups(sch.rollups, s.st, gate, s.fields())
 		if err != nil {
-			// The rows are still served, without values: the names are
-			// stripped below either way.
 			slog.WarnContext(ctx, "roll-ups not computed", "type", entityType, "error", err)
 		} else {
 			r = s.withRecords(r)
@@ -209,9 +207,6 @@ func withQueriedRollups(
 	if want == nil {
 		return narrow(entities)
 	}
-	// A body_tasks roll-up is counted from each row's body, so filtering or
-	// sorting on it would read every body of the type before paging
-	// (TKT-SQ8O0EQ). It is refused rather than served at that cost.
 	for _, col := range s.schema().rollups.For(typeName) {
 		if col.BodyTasks != "" && want[col.Property] {
 			return nil, fmt.Errorf("%w: %q counts body tasks and cannot be filtered or sorted on",

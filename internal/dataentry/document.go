@@ -188,33 +188,13 @@ func newDocumentService(st store.Store, kv state.KV, projectRoot string,
 }
 
 // elevatedDeps returns deps carrying the elevated READ capability when cfg
-// declares it, and deps unchanged otherwise (TKT-Y3JVFK).
-//
-// Only ElevatedReader and ElevationRecorder are set — never ElevatedManager —
-// so lua.newElevatedHandle omits the write methods entirely and the script
-// cannot write PAST THE ACL.
-//
-// That is NOT the same as "a render cannot mutate", and the difference matters.
-// A document renders on a WriterRuntime (script.runDocumentScript ->
-// NewWriterRuntime -> lua.NewWriter), and registerBindings has no isDocument
-// guard, so ordinary rela.create_entity / update_entity / delete_entity /
-// write_file ARE present and callable in a document script — bounded by the
-// caller's own ACL. That is pre-existing and tracked in TKT-PX5YL7; withholding
-// the elevated Mutator here narrows elevation, it does not make the render
-// read-only.
-//
-// The recorder travels with the reader so an elevated document read leaves the
-// same `acl-bypass-read` audit row a cascade one does. Granting the capability
-// without the trace is the exact gap TKT-ACSBSA closed; it must not reopen on
-// a new surface.
-//
-// The ACL decision was made by the caller (authorizeElevatedDocument). This
-// applies it; it does not re-decide.
+// declares it, and deps unchanged otherwise. It never sets ElevatedManager, so
+// the script cannot write past the ACL; ordinary writes bounded by the caller's
+// ACL remain available (TKT-PX5YL7). The recorder travels with the reader so an
+// elevated read leaves the same `acl-bypass-read` audit row a cascade one does.
+// The ACL decision was made by the caller (authorizeElevatedDocument).
 func (s *documentService) elevatedDeps(cfg documentRenderConfig) lua.WriteDeps {
 	deps := s.luaDeps()
-	// TKT-YH52OM: ambient capabilities come from THIS document's declaration.
-	// Applied before the elevation early-return below so a non-elevated
-	// document still receives the grant it declared.
 	deps.Capabilities = cfg.Capabilities
 	if !cfg.Elevated || s.elevation == nil {
 		return deps
@@ -255,6 +235,9 @@ func (s *documentService) GetCached(ctx context.Context, entryID string) *Docume
 // (entryID, ConfigID) pair — renders of the same entry under *different*
 // document configs proceed in parallel. Command renders cache to disk;
 // script renders do not.
+//
+// The singleflight key includes the config id and the principal, so two
+// configs or two callers never share one render.
 func (s *documentService) Render(
 	ctx context.Context, entryID string, cfg documentRenderConfig,
 ) (*DocumentResult, error) {
@@ -265,18 +248,8 @@ func (s *documentService) Render(
 
 	cacheFile := fmt.Sprintf("%s/%s-%s.html", docCacheSubdir, entryID, contentHash)
 
-	// Singleflight key must include ConfigID: if two documents (different
-	// configs) target the same entry, they are distinct renders and must
-	// not collapse onto one another's HTML (RR-4QSBN). It must ALSO include
-	// the principal (RR-2QSGLU): renders run under the caller's identity
-	// since TKT-L9Q669 (rela.principal, ctx cancellation), so collapsing two
-	// principals' renders would hand one caller output produced under the
-	// other's identity — and once script reads are principal-scoped
-	// (TKT-ZF2DTV) it would be a cross-principal data leak, not just an
-	// attribution bug.
 	p := principal.From(ctx)
 	sfKey := entryID + "|" + cfg.ConfigID + "|" + p.User + "|" + p.Tool
-	// Renders at different instants are distinct renders too (TKT-6KLUT3U).
 	if at, past := asOfFromContext(ctx); past {
 		sfKey += "|" + at.UTC().Format(time.RFC3339Nano)
 	}
@@ -307,29 +280,12 @@ func (s *documentService) RenderMarkdown(
 }
 
 // RenderListMarkdown renders a LIST export override (`lists.<id>.export_render`)
-// to markdown, for the same reason RenderMarkdown exists on the entity side:
-// view export feeds the markdown to a format transform rather than converting
-// it to HTML.
-//
-// Script-only: a `command:` renderer is handed the entry entity as {in}, of an
-// entry entity and a list has none. No caller sets Command today; the guard
-// below is a fail-closed assertion so a future one gets an error instead of a
-// silently entry-less substitution.
-//
-// It deliberately does NOT hash, cache, or singleflight, and none of those are
-// oversights to be "optimized" back in later:
-//   - computeDocumentHash loads ONE entity by id; a list has no entry entity,
-//     so there is nothing for it to hash.
-//   - The disk cache is keyed on that entry hash and holds HTML; list export
-//     produces per-request markdown.
-//   - A correct singleflight key would need the full resolved query AND the
-//     caller's ACL scope, because two principals' row sets legitimately differ.
-//     Getting that key wrong collapses two callers onto one render — a
-//     cross-principal leak, the RR-2QSGLU hazard with more to lose. Not
-//     deduping is the safe default.
-//
-// Callers MUST have resolved the rows through the ACL read path before calling
-// this — it makes no ACL decision of its own.
+// to markdown for a view export transform. It is script-only: a `command:`
+// renderer needs an entry entity as {in}, and a list has none, so it fails
+// closed. It does not hash, cache or singleflight: a correct dedupe key would
+// need the caller's ACL scope, and a wrong one is a cross-principal leak.
+// Callers MUST have resolved the rows through the ACL read path; this makes no
+// ACL decision of its own.
 func (s *documentService) RenderListMarkdown(
 	ctx context.Context, cfg documentRenderConfig, lrc lua.ListRenderContext,
 ) (string, error) {
@@ -340,15 +296,8 @@ func (s *documentService) RenderListMarkdown(
 		return "", errors.New("script rendering not available (engine or deps not wired)")
 	}
 	var buf bytes.Buffer
-	// Routed through elevatedDeps like the other two render paths so the
-	// capability grant is applied here too (TKT-YH52OM). A list export sets no
-	// Elevated flag, so this is the capability half only — but going through
-	// the one seam means a future grant cannot be forgotten on this path.
 	if err := s.scriptEngine.ExecuteListDocument(ctx, cfg.Script, s.elevatedDeps(cfg), &buf,
 		cfg.ConfigID, lrc, cfg.Timeout); err != nil {
-		// Same shaping as renderScript: attach the output captured before the
-		// script threw, then bubble up unchanged so the HTTP layer can branch
-		// via errors.As.
 		var se *lua.ScriptError
 		if errors.As(err, &se) {
 			return "", se.AttachCapturedOutput(buf.Bytes())
@@ -358,41 +307,13 @@ func (s *documentService) RenderListMarkdown(
 	return buf.String(), nil
 }
 
-// RenderStandalone renders a STANDALONE document — one declared without an
-// `entity_type:`, whose content is company-wide rather than about one entity
-// (TKT-M1AX6P). Returns HTML.
-//
-// It returns a plain string rather than a *DocumentResult because two of that
-// struct's three fields — ContentHash and Entities — describe an entry
-// entity's dependency footprint, and a standalone document has no entry
-// entity. Returning a struct whose fields this constructor can never populate
-// would invite a caller to wire the SSE live-reload subscription to an always-
-// empty Entities and ship a document that silently never refreshes. The
-// narrower type makes that a compile error instead of a comment nobody reads.
-// (Standalone documents do refresh on any entity change — the SPA's SSE feed
-// is type-scoped, not keyed on this return value — but on-demand Refresh is
-// the reliable path until TKT-E1FO1 lets scripts declare dependencies.)
-//
-// Script-only, for the same reason RenderListMarkdown is: a `command:`
-// renderer is handed an entry entity as {in}, and a
-// standalone document has none. Rejecting is fail-closed — the alternative is
-// substituting an empty id into a shell command, which is how a renderer
-// silently produces a document about the wrong thing (or nothing).
-//
-// Like RenderListMarkdown it deliberately does NOT hash, cache, or
-// singleflight, and none of those are oversights:
-//   - computeDocumentHash loads ONE entity by id; there is no entry entity to
-//     hash, so there is no content hash to key a cache on.
-//   - A correct singleflight key would need the caller's full ACL scope,
-//     because two principals' aggregates legitimately differ. Getting that key
-//     wrong collapses two callers onto one render — the RR-2QSGLU
-//     cross-principal hazard. Not deduping is the safe default.
-//
-// Callers MUST apply the document's `permission:` gate before invoking this —
-// RenderStandalone makes no ACL decision of its own. (Its Lua reads are still
-// ACL-bound via lua.ReadDeps.VisibleReader, so content is gated regardless;
-// the caller's gate is what keeps a denied principal from triggering the
-// render at all.)
+// RenderStandalone renders a STANDALONE document (no `entity_type:`) to HTML.
+// It returns a string, not a *DocumentResult, because a standalone document has
+// no entry entity whose dependency footprint could fill that struct. Like
+// RenderStandaloneMarkdown it is script-only and does not hash, cache or
+// singleflight, since a dedupe key would need the caller's full ACL scope.
+// Callers MUST apply the document's `permission:` gate first; Lua reads stay
+// ACL-bound regardless.
 func (s *documentService) RenderStandalone(
 	ctx context.Context, cfg documentRenderConfig,
 ) (string, error) {
@@ -408,29 +329,13 @@ func (s *documentService) RenderStandalone(
 	return htmlContent, nil
 }
 
-// RenderStandaloneMarkdown renders a standalone document to its raw markdown —
-// the pre-HTML step, and the whole of what view export needs. It relates to
-// [documentService.RenderStandalone] exactly as
-// [documentService.RenderMarkdown] relates to doRender, so the two callers
-// share one render path and cannot drift.
-//
-// Every guard RenderStandalone used to hold lives HERE, not in that wrapper:
-// this is the real entry point, and a guard that sits above one of two callers
-// is a guard the other caller does not have.
-//
-//   - The command: refusal is fail-closed. A `command:` renderer is handed the
-//     entry entity as {in}, and a standalone document has none; substituting an
-//     empty id is how a renderer silently produces a document about nothing.
-//   - The elevatedDeps(cfg) call carries BOTH the elevation grant and the
-//     document's declared capabilities (TKT-YH52OM). Dropping it would fail
-//     closed — an elevated report would quietly render as if unelevated — which
-//     is safe but very hard to diagnose.
-//
-// Like RenderStandalone it does NOT hash, cache, or singleflight; see that
-// method's doc for why none of those are oversights.
-//
-// Callers MUST apply the document's `permission:` and elevation gates before
-// invoking this — it makes no ACL decision of its own.
+// RenderStandaloneMarkdown renders a standalone document to its raw markdown;
+// [documentService.RenderStandalone] wraps it, so both share one render path.
+// Every guard lives here: a `command:` renderer is refused (fail-closed, there
+// is no entry entity for {in}), and elevatedDeps(cfg) carries both the
+// elevation grant and the declared capabilities. It does not hash, cache or
+// singleflight. Callers MUST apply the document's `permission:` and elevation
+// gates first; it makes no ACL decision of its own.
 func (s *documentService) RenderStandaloneMarkdown(
 	ctx context.Context, cfg documentRenderConfig,
 ) (string, error) {
@@ -444,9 +349,6 @@ func (s *documentService) RenderStandaloneMarkdown(
 	var buf bytes.Buffer
 	if err := s.scriptEngine.ExecuteStandaloneDocument(ctx, cfg.Script, s.elevatedDeps(cfg), &buf,
 		cfg.ConfigID, cfg.Timeout); err != nil {
-		// Same shaping as renderScript/RenderListMarkdown: attach the output
-		// captured before the script threw, then bubble up unchanged so the
-		// HTTP layer can branch via errors.As.
 		var se *lua.ScriptError
 		if errors.As(err, &se) {
 			return "", se.AttachCapturedOutput(buf.Bytes())
@@ -457,30 +359,14 @@ func (s *documentService) RenderStandaloneMarkdown(
 }
 
 // RenderDocumentMarkdown renders EITHER document kind to markdown, dispatching
-// on whether an entry entity is present. It is the single entry point view
-// export uses, so the export handler never has to know which kind it holds.
-//
-// The dispatch is on entryID rather than a re-read of the config because the
-// two kinds need genuinely different engine calls: an anchored document goes to
-// ExecuteDocument with its entry id, a standalone one to
-// ExecuteStandaloneDocument. Routing a standalone render through the anchored
-// path with an empty id would NOT be equivalent — it would set
-// rela.document.entry_id to "" instead of nil, so a script branching on
-// `if rela.document.entry_id then` takes the wrong arm and renders a different
-// document than the operator reviewed.
-//
-// Callers MUST have run the document's gate chain first; this makes no ACL
-// decision of its own.
+// on entryID: anchored to ExecuteDocument, standalone to
+// ExecuteStandaloneDocument, so rela.document.entry_id is nil rather than ""
+// for a standalone script. The anchored branch refuses a `command:` renderer as
+// a fail-closed backstop, because RenderMarkdown does not. Callers MUST have run
+// the document's gate chain first; this makes no ACL decision of its own.
 func (s *documentService) RenderDocumentMarkdown(
 	ctx context.Context, entryID string, cfg documentRenderConfig,
 ) (string, error) {
-	// Fail-closed backstop for the ANCHORED branch. RenderStandaloneMarkdown
-	// carries its own refusal, but RenderMarkdown deliberately does not — it
-	// also serves entity export, where a command: renderer is legitimate and
-	// has an entry entity to receive as {in}. Document export refuses commands
-	// on both kinds as a policy choice, so without this check the anchored
-	// branch would fall through to renderCommand the moment the handler's
-	// user-facing check was removed or bypassed by a new caller.
 	if len(cfg.Command) > 0 {
 		return "", errors.New("document export requires a script renderer, not a command")
 	}
@@ -513,12 +399,6 @@ func (s *documentService) doRender(
 		return nil, fmt.Errorf("markdown conversion: %w", err)
 	}
 
-	// Disk cache is only populated for command: renders. Lua renders
-	// have their own process-lifetime cache via rela.cache.memoize; the
-	// disk-cache filename is renderer-agnostic (FNV of the entry entity)
-	// so writing script-render output here would make a subsequent
-	// command: run read stale bytes from the wrong renderer.
-	// A render at an instant is not today's render, so it is not cached.
 	if _, past := asOfFromContext(ctx); cfg.Script == "" && !past {
 		if writeErr := s.state.Put(ctx, cacheFile, []byte(htmlContent)); writeErr != nil {
 			slog.Warn("document cache write failed", "error", writeErr)
@@ -533,18 +413,11 @@ func (s *documentService) doRender(
 }
 
 // renderCommand invokes the external render command and returns its stdout as
-// markdown.
-//
-// The entry entity is serialized to markdown and handed to the command as the
-// {in} temp file. NOTHING request-derived reaches the argument vector: the
-// command array is operator-authored config, and the only substitution is {in}
-// → a runner-owned temp path. That is the structural fix for TKT-QGHNVA —
-// previously the entry id was spliced into a string run through `sh -c`, so an
-// id such as "-rf" arrived as an option flag rather than an operand, and the
-// only thing standing between a stored id and that shell was input filtering.
-//
-// A renderer that needs the id reads it from the file: the serialized
-// frontmatter always carries `id:` (see renderEntityMarkdown).
+// markdown. The entry entity is serialized to markdown and handed to the command
+// as the {in} temp file. Nothing request-derived reaches the argument vector:
+// the command array is operator config and the only substitution is {in}, a
+// runner-owned temp path. A renderer that needs the id reads it from the file's
+// frontmatter `id:`.
 func (s *documentService) renderCommand(ctx context.Context, entryID string, cfg documentRenderConfig) (string, error) {
 	e, err := s.loadEntry(ctx, entryID)
 	if err != nil {
@@ -572,7 +445,6 @@ func (s *documentService) renderCommand(ctx context.Context, entryID string, cfg
 // what a renderer needs is the frontmatter contract, not the store's exact
 // byte-for-byte formatting.
 func renderEntityMarkdown(e *entity.Entity) (string, error) {
-	// yaml.v3 has no MapSlice, so build a mapping Node to control key order.
 	mapping := &yaml.Node{Kind: yaml.MappingNode}
 	appendPair := func(k string, v any) error {
 		key := &yaml.Node{Kind: yaml.ScalarNode, Value: k}
@@ -634,9 +506,6 @@ func (s *documentService) renderScript(
 	var buf bytes.Buffer
 	if err := s.scriptEngine.ExecuteDocument(ctx, cfg.Script, s.elevatedDeps(cfg), &buf,
 		cfg.ConfigID, entryID, cfg.Timeout); err != nil {
-		// On a Lua failure the engine returns *lua.ScriptError; attach
-		// the print() output we captured before it threw, then bubble
-		// up unchanged so the HTTP layer can branch via errors.As.
 		var se *lua.ScriptError
 		if errors.As(err, &se) {
 			return "", se.AttachCapturedOutput(buf.Bytes())
@@ -677,7 +546,6 @@ func (s *documentService) loadEntry(ctx context.Context, addr string) (*entity.E
 func hashEntities(entities []*entity.Entity) string {
 	h := fnv.New64a()
 
-	// Sort entities by ID for deterministic hashing
 	sorted := make([]*entity.Entity, len(entities))
 	copy(sorted, entities)
 	sort.Slice(sorted, func(i, j int) bool {
@@ -685,11 +553,9 @@ func hashEntities(entities []*entity.Entity) string {
 	})
 
 	for _, e := range sorted {
-		// Hash ID, type, properties, and content
 		h.Write([]byte(e.ID))
 		h.Write([]byte(e.Type))
 		h.Write([]byte(e.Content))
-		// Hash properties in sorted order
 		propKeys := make([]string, 0, len(e.Properties))
 		for k := range e.Properties {
 			propKeys = append(propKeys, k)
@@ -734,9 +600,6 @@ func (s *documentService) executeCommand(
 		timeout = commandDefaultTimeout
 	}
 
-	// Temp files land in the OS temp dir, not the project root: the {in} file
-	// is runner-owned scratch, and a project checkout may legitimately be
-	// read-only.
 	runner, err := cmdexec.New(timeout, maxCommandOutputBytes, cmdexec.WithPurpose(cmdexec.PurposeTransform))
 	if err != nil {
 		return "", fmt.Errorf("build document command runner: %w", err)
@@ -760,10 +623,10 @@ func markdownToHTML(markdown string) (string, error) {
 		),
 		goldmark.WithParserOptions(
 			parser.WithAutoHeadingID(),
-			parser.WithAttribute(), // Enable {#custom-id} syntax for headings
+			parser.WithAttribute(),
 		),
 		goldmark.WithRendererOptions(
-			html.WithUnsafe(), // Allow raw HTML in markdown
+			html.WithUnsafe(),
 		),
 	)
 
@@ -774,8 +637,6 @@ func markdownToHTML(markdown string) (string, error) {
 
 	result := buf.String()
 
-	// Post-process: convert diagram code blocks (mermaid, plantuml) to the
-	// pre elements the SPA upgrades client-side.
 	result = htmlutil.ConvertDiagramBlocks(result)
 
 	return result, nil
@@ -809,46 +670,19 @@ var attrRegex = regexp.MustCompile(`([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*(?:=\s*(?:"([
 // so we can emit a clear warning for users who haven't migrated yet.
 var legacySchemeRegex = regexp.MustCompile(`^(edit|create)://`)
 
-// RewriteDocumentLinks walks all href="..." attributes in rendered HTML and
-// rewrites internal links so the SPA can offer a back affordance.
-//
-// The rewriter runs AFTER the document-render cache (see
-// documentService.GetCached / Render in this package, and the call sites in
-// api_v1.go). It never writes to the cache. This is load-bearing: the cache
-// file is keyed on the entry entity's content hash and must NOT contain any
-// `return_to=` tokens, so that two viewers requesting the same entry under
-// different return_to values each get their own value rewritten in. Do not
-// move this step into doRender.
-//
-// Behavior, by path class × returnPath presence:
-//
-//	| Path class                 | returnPath == ""              | returnPath != ""                      |
-//	|----------------------------|-------------------------------|---------------------------------------|
-//	| Form (/form/<id>[/...])    | strip return_to; emit id      | strip return_to; emit id; inject ours |
-//	| Non-form internal (/...)   | strip return_to; pass through | strip return_to; inject ours          |
-//	| External / mailto / anchor | passthrough unchanged         | passthrough unchanged                 |
-//	| Legacy edit:// / create:// | log warning; passthrough      | log warning; passthrough              |
-//
-// Author-supplied `return_to` values on internal links are always stripped,
-// whether or not we have a replacement: the rewriter is the single source of
-// truth for the key on emitted HTML.
-//
-// Form routes additionally get a stable id="edit-<entityID>-<n>" or
-// id="create-<form>-<n>" attribute so the SPA's document click handler can
-// record a scroll-back anchor that survives title/content edits. The per-base
-// counter (<n>) disambiguates multiple links to the same target within a
-// single rendered document and is stable across re-renders that produce the
-// same link sequence.
-//
-// The rewriter is idempotent: applying it twice with the same returnPath
-// produces the same bytes as one pass. Applying it twice with different
-// returnPaths yields the last one injected (the first is stripped, then the
-// second is injected).
+// RewriteDocumentLinks rewrites internal href links in rendered HTML so the SPA
+// can offer a back affordance. It runs AFTER the document-render cache and never
+// writes to it, so cached HTML never holds a `return_to=` token. Author-supplied
+// `return_to` values on internal links are always stripped, and ours is injected
+// when returnPath is set. Form routes also get a stable id="edit-<id>-<n>" or
+// id="create-<form>-<n>" scroll anchor. External, mailto and anchor links pass
+// through; legacy edit:// and create:// links are logged and passed through.
+// The rewrite is idempotent for a given returnPath.
 func RewriteDocumentLinks(htmlContent, returnPath string, log *slog.Logger) string {
 	if log == nil {
 		log = slog.Default()
 	}
-	occ := map[string]int{} // scroll-anchor id → next available suffix
+	occ := map[string]int{}
 	return anchorStartTagRegex.ReplaceAllStringFunc(htmlContent, func(tag string) string {
 		m := anchorStartTagRegex.FindStringSubmatch(tag)
 		if len(m) != 2 {
@@ -858,19 +692,11 @@ func RewriteDocumentLinks(htmlContent, returnPath string, log *slog.Logger) stri
 	})
 }
 
-// rewriteAnchorTag consumes the inside of an `<a …>` start tag (the part
-// between `<a ` and `>`), rewrites the href per the decision table, and
-// returns a re-serialized start tag. Attribute order, spacing, and quote
-// style are normalised on output — browsers don't care about any of those.
-//
-// Behavior:
-//   - Any `href="..."`/`href='...'`/`href=...` is located in the attribute
-//     list. If absent, the tag is returned unchanged.
-//   - Any pre-existing `id` attribute is dropped unconditionally. The
-//     rewriter owns `id` on form routes (the scroll-anchor for the click
-//     handler); on non-form routes no id is emitted. Dropping pre-existing
-//     ids is what keeps the rewriter idempotent on its own output.
-//   - All other attributes are preserved, in the order they appeared.
+// rewriteAnchorTag rewrites the inside of an `<a …>` start tag per
+// RewriteDocumentLinks and returns a re-serialized tag with normalized quoting.
+// A tag without href is returned unchanged. Any existing `id` is dropped, since
+// the rewriter owns `id` on form routes; that keeps it idempotent on its own
+// output. Other attributes keep their order.
 func rewriteAnchorTag(attrs, returnPath string, log *slog.Logger, occ map[string]int) string {
 	parsed := parseAttrs(attrs)
 	var href string
@@ -879,8 +705,6 @@ func rewriteAnchorTag(attrs, returnPath string, log *slog.Logger, occ map[string
 	for _, a := range parsed {
 		name := strings.ToLower(a.name)
 		if name == "id" {
-			// Always drop pre-existing id; the rewriter owns it (see
-			// docstring).
 			continue
 		}
 		if name == "href" {
@@ -889,22 +713,15 @@ func rewriteAnchorTag(attrs, returnPath string, log *slog.Logger, occ map[string
 		}
 		out = append(out, a)
 	}
-	// No href → leave the tag alone; the enclosing regex already
-	// matched, but there's nothing to rewrite.
 	if hrefIdx < 0 {
 		return `<a ` + serialiseAttrs(parsed) + `>`
 	}
 
 	newHref, anchorID, ok := rewriteHref(href, returnPath, log, occ)
 	if !ok {
-		// External / mailto / anchor / legacy scheme — return the tag
-		// with its attributes intact (we stripped pre-existing id
-		// above, which is fine: it wasn't ours to preserve).
 		return `<a ` + serialiseAttrs(out) + `>`
 	}
 
-	// Replace href value with rewritten one; prepend a fresh id when
-	// the decision table called for one.
 	out[hrefIdx].value = newHref
 	out[hrefIdx].quoted = true
 	if anchorID != "" {
@@ -942,26 +759,18 @@ func parseAttrs(s string) []parsedAttr {
 			continue
 		}
 		a := parsedAttr{name: name, raw: s[m[0]:m[1]]}
-		// Capture-group index (within attrRegex) for the unquoted value
-		// alternative — the fourth value-bearing group.
 		const unquotedValueGroup = 4
-		// Group indices in m[]: 2*k = start, 2*k+1 = end. A missing
-		// group has start == -1. A present-but-empty group (e.g. `""`)
-		// has start == end and both >= 0 — distinguish these from
-		// boolean attributes (no = sign at all).
 		switch {
-		case m[4] >= 0: // double-quoted, possibly empty
+		case m[4] >= 0:
 			a.value = get(2)
 			a.quoted = true
-		case m[6] >= 0: // single-quoted, possibly empty
+		case m[6] >= 0:
 			a.value = get(3)
 			a.quoted = true
-		case m[8] >= 0: // unquoted, never empty by regex definition
+		case m[8] >= 0:
 			a.value = get(unquotedValueGroup)
 			a.quoted = true
 		default:
-			// boolean attribute (no = sign) — value stays "",
-			// quoted stays false.
 		}
 		out = append(out, a)
 	}
@@ -995,6 +804,8 @@ func serialiseAttrs(as []parsedAttr) string {
 //
 // occ is a per-render map tracking how many times each anchor-id base
 // has been used, so duplicate form links get -0, -1, -2 suffixes.
+//
+// Any existing return_to is always stripped from internal paths.
 func rewriteHref(
 	href, returnPath string, log *slog.Logger, occ map[string]int,
 ) (newHref, anchorID string, ok bool) {
@@ -1005,33 +816,20 @@ func rewriteHref(
 		log.Warn("document link uses removed scheme; rewrite to app-relative path", "href", href)
 		return "", "", false
 	case !strings.HasPrefix(href, "/"):
-		// External, anchor-only (#foo), mailto:, tel:, relative — not our
-		// concern.
 		return "", "", false
 	}
 
 	base, existingQuery, fragment := splitHref(href)
 
-	// Strip any pre-existing return_to on every internal path (form or
-	// non-form). The rewriter is the single source of truth for this key,
-	// so author-planted values are always discarded — this keeps vue-router
-	// from parsing duplicates as arrays and prevents hostile values from
-	// leaking into the user's URL bar.
 	cleanedQuery, dropped := stripQueryKey(existingQuery, "return_to")
 	if dropped {
 		log.Warn("document link sets reserved key return_to; overwriting", "href", href)
 	}
 
-	// Form routes get a scroll-anchor id unconditionally so the click
-	// handler has a stable target even when returnPath is empty.
 	if isFormRoute(base) {
 		anchorID = formAnchorID(base, occ)
 	}
 
-	// Inject return_to only when we have one to inject. An empty returnPath
-	// means "the rewriter ran but no caller context was supplied" — the
-	// stripped href, plus the form anchor id if applicable, is the final
-	// output.
 	finalQuery := cleanedQuery
 	if returnPath != "" {
 		if finalQuery != "" {
@@ -1068,10 +866,8 @@ func formAnchorID(base string, occ map[string]int) string {
 	_, after, ok := strings.Cut(rest, "/")
 	var key string
 	if !ok {
-		// create form: /form/<name>
 		key = "create-" + strings.ToLower(rest)
 	} else {
-		// edit form: /form/<name>/<entity-id>
 		entityID := after
 		if entityID == "" {
 			return ""
@@ -1091,12 +887,9 @@ func stripQueryKey(rawQuery, key string) (string, bool) {
 	if rawQuery == "" {
 		return "", false
 	}
-	// Split the query into logical pairs while tracking the separator
-	// (`&` or `&amp;`) that preceded each one, so we can rejoin the
-	// remaining pairs with the same encoding the author used.
 	type pair struct {
-		prevSep string // separator before this pair; "" for the first
-		raw     string // "key" or "key=value"
+		prevSep string
+		raw     string
 	}
 	var pairs []pair
 	s := rawQuery

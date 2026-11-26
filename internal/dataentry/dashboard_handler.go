@@ -11,23 +11,11 @@ import (
 )
 
 // handleV1Dashboard returns the dashboard page config with the cards this
-// principal may see (TKT-53KICM).
-//
-// `?name=<name>` selects a dashboard under `dashboards:`; without it (or with
-// `name=default`) the default `dashboard:` is served. An unknown name is a
-// 404 `dashboard_not_found`. Dashboard names are config, not data, so the
-// distinct code discloses nothing (see "The configuration is not a secret;
-// the data is" in the root CLAUDE.md).
-//
-// This is the per-principal counterpart to the `dashboard:` block that
-// `/api/v1/_config` serves verbatim to everyone. The split is deliberate:
-// `_config` is pinned principal-independent (see TestNavPermission_ConfigUnfiltered
-// and "Do NOT filter /_config" in this package's CLAUDE.md), so the filtered
-// view needs its own endpoint rather than a divergent `_config`.
-//
-// Filtering is a UX affordance and enforces nothing — see permitsGatedUIElement.
-// A hidden card's query is still runnable through `/api/v1/_search`, where it
-// returns exactly the ACL-scoped rows it always did.
+// principal may see. `?name=` selects a dashboard under `dashboards:`; an
+// unknown name is a 404 `dashboard_not_found`, since names are config. This
+// is the per-principal counterpart to the verbatim `/api/v1/_config`.
+// Filtering is a UX affordance and enforces nothing (permitsGatedUIElement):
+// a hidden card's query still returns its ACL-scoped rows via `_search`.
 //
 //archplan:auth=required
 func (h *viewsHandler) handleV1Dashboard(w http.ResponseWriter, r *http.Request) {
@@ -36,9 +24,6 @@ func (h *viewsHandler) handleV1Dashboard(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Non-nil so a project with no dashboard, an empty cards:, and an
-	// all-filtered dashboard all serialize as [] rather than null — one
-	// "render what you got" path in the SPA, and no 404 for a non-error.
 	cards := make([]v1.DashboardCardEntry, 0)
 	resp := v1.DashboardResponse{Cards: cards}
 
@@ -50,15 +35,11 @@ func (h *viewsHandler) handleV1Dashboard(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if cfg == nil {
-		// No `dashboard:` configured: the validation card shows, as it
-		// always has.
 		resp.Validation = true
 		writeV1JSON(w, http.StatusOK, resp)
 		return
 	}
 
-	// Resolved ONCE for the whole request rather than per card, matching
-	// handleV1Sidebar and resolveCommands.
 	aclImpl := h.currentACL()
 	for i, card := range cfg.Cards {
 		if !permitsGatedUIElement(r.Context(), aclImpl, card.Permission) {
@@ -70,8 +51,6 @@ func (h *viewsHandler) handleV1Dashboard(w http.ResponseWriter, r *http.Request)
 	resp.Title = cfg.Title
 	resp.Description = cfg.Description
 	resp.Cards = cards
-	// The card covers the whole project, so an entity dashboard never shows
-	// it. Like the card filter above, this is a UX affordance.
 	ctx := r.Context()
 	resp.Validation = !cfg.IsEntityDashboard() && cfg.Validation.Shown(func(perm string) bool {
 		return permitsGatedUIElement(ctx, aclImpl, perm)
@@ -80,36 +59,13 @@ func (h *viewsHandler) handleV1Dashboard(w http.ResponseWriter, r *http.Request)
 	writeV1JSON(w, http.StatusOK, resp)
 }
 
-// handleV1DashboardCard serves GET /api/v1/_dashboard/card: the value of one
-// `list:` card, computed for this principal (TKT-2SGPJZ).
-//
-// `?name=` selects the dashboard as on /api/v1/_dashboard, and `?card=` is the
-// card's config index, which /api/v1/_dashboard serves as `index`. The
-// response echoes the card's title and display, so the SPA can drop a value
-// computed for another card after a config reload moved the indexes.
-//
-// A card hidden by `permission:` answers 404 like an unknown index. That
-// filter is a UX affordance (permitsGatedUIElement), so this is not a
-// boundary either: the card's list answers the same rows on its own page.
-// A `query:` card answers 400: the SPA computes it from /api/v1/_search.
-//
-// The rows are the list's rows for this principal (navStatusRows), each
-// redacted once, and only then folded. A value hidden by `visible:` is left
-// out of every group, cell and color that would need it, and the response
-// is marked partial. Totals still count the row, since the list shows it.
-// A `match:` scope decides membership on the stored row, as a list's own
-// scope does, so a ratio discloses no more than the list with that scope.
-//
-// On an entity dashboard, `?anchor=` names the entity to count for, exactly
-// once; it is read through the gate before any row is, so a hidden anchor
-// and a missing one give the same 404 (`not_found`) whatever the list holds.
-// The card then counts only the rows the anchor reaches over its scope
-// relation. A plain dashboard refuses `anchor`, and an entity dashboard
-// refuses a request without one: either would count a set the card does not
-// describe.
-//
-// A package function taking the App, like handleV1NavStatus: App is at its
-// plimsoll load line.
+// handleV1DashboardCard serves the value of one `list:` card for this
+// principal; `?name=` selects the dashboard and `?card=` the card index. A
+// card hidden by `permission:` answers 404 like an unknown index; a `query:`
+// card answers 400. Rows are redacted once and only then folded, and a hidden
+// value leaves the response marked partial. On an entity dashboard
+// `?anchor=` is required and read through the gate first, so a hidden and a
+// missing anchor give the same 404; a plain dashboard refuses it.
 //
 //archplan:auth=required
 func handleV1DashboardCard(a *App, w http.ResponseWriter, r *http.Request) {

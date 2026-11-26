@@ -119,8 +119,6 @@ func (o ownerResolver) resolve(ctx context.Context, rows []*entityPkg.Entity) (m
 		return none, nil
 	}
 
-	// A parent that is itself shown as part of something is not an owner to
-	// navigate to: the chain is irregular, and following it could loop.
 	grand, err := o.readableParents(ctx, parentIDs)
 	if err != nil {
 		return nil, err
@@ -159,8 +157,6 @@ func (o ownerResolver) readableParents(ctx context.Context, ids []string) (map[s
 	var fromIDs []string
 	seen := map[string]bool{}
 	q := store.RelationQuery{EntityIDs: ids, Direction: store.DirectionIncoming}
-	// With one owning type, let the store filter; otherwise every incoming
-	// edge is read and the owning ones kept below.
 	if t, ok := soleOwningType(o.meta); ok {
 		q.Type = t
 	}
@@ -187,7 +183,6 @@ func (o ownerResolver) readableParents(ctx context.Context, ids []string) (map[s
 	counted := map[[2]string]bool{}
 	for _, e := range edges {
 		h, ok := headers[e.from]
-		// Two owning relation types between the same pair are one parent.
 		if !ok || counted[[2]string{e.to, e.from}] {
 			continue
 		}

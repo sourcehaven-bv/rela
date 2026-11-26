@@ -21,23 +21,14 @@ import (
 // its own type so the App does not grow a method per source kind.
 type flowTaskSource struct{ app *App }
 
-// candidates yields the reader's waiting flow tasks as the
-// candidates of a `source: flow_tasks` next-action source, oldest first.
+// candidates yields the reader's waiting flow tasks, oldest first, as the
+// candidates of a `source: flow_tasks` next-action source. They come from
+// [FlowService.Tasks], so the row gate and role rules match the Flow tasks
+// list.
 //
-// The tasks come from [FlowService.Tasks], the call behind the Flow tasks
-// page, `GET /_flows/tasks` and MCP `list_flow_tasks`. So the suggestion
-// and the list apply the same row gate and the same role rules (global
-// roles and role relations), and this adds no rule of its own.
-//
-// Each candidate's entity is the task's subject, read in one gated batch
-// per subject type and field-redacted like a query candidate. Its title
-// fills {subject}. A subject this read does not return still yields its
-// task, with the address as the title, so the hint names exactly the tasks
-// the list names.
-//
-// A request with no bound identity contributes nothing, like a per-user
-// condition (see [nextaction.ErrIdentityRequired]): the hint is advisory
-// and must not fail the page it sits on.
+// Subjects are read in one gated, field-redacted batch per type; a subject not
+// returned keeps its task with the address as title. Without a bound identity
+// it yields nothing ([nextaction.ErrIdentityRequired]).
 func (f flowTaskSource) candidates(
 	ctx context.Context, meta *metamodel.Metamodel, src dataentryconfig.NextActionSource, want nextaction.Want,
 ) ([]nextaction.Candidate, error) {

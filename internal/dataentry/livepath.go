@@ -99,8 +99,6 @@ func parseLivePath(raw string, meta *metamodel.Metamodel) (livePath, error) {
 	if u.Scheme != "" || u.Host != "" || u.User != nil || u.Opaque != "" || u.Fragment != "" {
 		return livePath{}, fmt.Errorf("%w: must be a relative path", errLivePath)
 	}
-	// RawPath is set only when the path holds an escape that matters, such
-	// as %2F. Refusing it keeps the segments below exactly what was sent.
 	if u.RawPath != "" {
 		return livePath{}, fmt.Errorf("%w: escaped characters in path", errLivePath)
 	}

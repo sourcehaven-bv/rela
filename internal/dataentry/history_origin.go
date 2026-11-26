@@ -27,40 +27,18 @@ func originWire(o store.Origin, visibleSource string) map[string]any {
 	if visibleSource != "" {
 		m["source"] = visibleSource
 	}
-	// The copy DEFINITION name is operator-authored configuration, not data
-	// (CLAUDE.md: "the configuration is not a secret; the data is"), so it is
-	// served ungated — unlike the source id, which is a row.
 	if o.Definition != "" {
 		m["definition"] = o.Definition
 	}
 	return m
 }
 
-// gateOriginSources resolves which version origins may name their source
-// entity, returning source labels keyed by the index of the meta they belong
-// to. An index absent from the result must render no source.
-//
-// # Why a gate at all
-//
-// origin_source is an ENTITY ID, and whether an entity exists is a genuine
-// secret under the row-level read rule (a denied GET is indistinguishable
-// from a 404). A CROSS-ENTITY copy names a different entity, so echoing it
-// unconditionally would turn the history endpoint into an existence oracle
-// for any id a reader can get copied into something they can read. That is
-// the reason store.Origin carries SourceType at all: the ACL probe is keyed
-// by (type, id), so the type has to be recorded at write time to be gateable
-// at read time.
-//
-// The definition name and the origin KIND are not gated — they are
-// operator-authored configuration, which is not confidential.
-//
-// # Batched, not per row
-//
-// Probes are grouped by source type and issued through ReadableFacesMany, so a
-// long timeline costs one probe per distinct type rather than one per version.
-// A probe error is treated as DENY (the label is withheld) rather than
-// surfaced: failing closed here loses a decoration, while failing open leaks
-// the existence of a row.
+// gateOriginSources resolves which version origins may name their source entity,
+// returning source labels keyed by meta index; an absent index renders no
+// source. origin_source is an entity id, and entity existence is secret, so an
+// ungated cross-entity copy would be an existence oracle. Definition name and
+// origin kind are config and are not gated. Probes are batched per source type
+// via ReadableFacesMany. A probe error is treated as deny.
 func gateOriginSources(ctx context.Context, gate readGate, metas []store.VersionMeta) map[int]string {
 	byType := map[string][]string{}
 	for _, m := range metas {
@@ -77,8 +55,6 @@ func gateOriginSources(ctx context.Context, gate readGate, metas []store.Version
 	for typ, ids := range byType {
 		verdicts, err := gate.ReadableFacesMany(ctx, typ, ids)
 		if err != nil {
-			// Fail closed: no verdicts for this type means no source labels
-			// for it. See the godoc.
 			continue
 		}
 		allowed[typ] = verdicts
@@ -90,9 +66,6 @@ func gateOriginSources(ctx context.Context, gate readGate, metas []store.Version
 		if o.Source == "" || o.SourceType == "" {
 			continue
 		}
-		// A label naming a face needs that face readable: `X@draft` would
-		// otherwise tell a published-only reader that the draft exists. A
-		// label naming the id alone needs some face readable.
 		verdicts, ok := allowed[o.SourceType]
 		if !ok {
 			continue

@@ -509,13 +509,6 @@ func (vr visibleReader) filterVisible(ctx context.Context, candidates []*entityp
 		}
 	}
 
-	// Preserve original candidate order; allocate a fresh slice. A neighbor
-	// arrives as a resolved face — under a world, possibly a within-chain
-	// fallback to a face a `type@face` grant withholds — so both the verdict
-	// on that face's row and the type-level face grant must hold
-	// (TKT-O7R2A1). Without the face half a principal granted only
-	// `feature@published` saw a draft-only neighbor's title through
-	// `?include=` while its own GET 404'd.
 	out := make([]*entitypkg.Entity, 0, len(candidates))
 	for _, c := range candidates {
 		if allowed[c.ID].Contains(c.Face) && faceReadable(ctx, c.Type, c.Face) {

@@ -147,8 +147,6 @@ func (c *inboxClock) tickAt(t time.Time, window time.Duration, grid, slices uint
 		c.started, c.epoch, c.lastGrid = true, t, 0
 		return inboxTick{grid: true, slices: 1}
 	}
-	// The nearest slot: tickers run late, not early. A clock that went
-	// back counts as slot 0.
 	slot := uint64(0)
 	if n := (t.Sub(c.epoch) + window/2) / window; n > 0 {
 		slot = uint64(n)

@@ -12,42 +12,18 @@ import (
 // commentsPathPrefix is the reserved route segment for the commentary layer.
 const commentsPathPrefix = "/api/v1/_comments/"
 
-// handleV1Comments serves the commentary layer.
+// handleV1Comments serves the commentary layer under
+// /api/v1/_comments/{type}/{id}[/{commentID}[/accept]]: list, add, edit or
+// resolve, remove, and accept a suggestion.
 //
-//	GET    /api/v1/_comments/{type}/{id}              → list a target's comments
-//	POST   /api/v1/_comments/{type}/{id}              → add one
-//	PATCH  /api/v1/_comments/{type}/{id}/{commentID}  → edit body / resolve
-//	DELETE /api/v1/_comments/{type}/{id}/{commentID}  → remove one
-//	POST   /api/v1/_comments/{type}/{id}/{commentID}/accept → apply its suggestion
-//
-// # Gating
-//
-// Every request resolves TWO things before it touches storage: the target's own
-// read verdict, and the relevant `comment:*` permission for that target. The
-// read verdict is the floor — a principal who cannot read an entity cannot
-// learn anything about its comments, however the comment grants read, because
-// otherwise a thread becomes an existence oracle for entities the principal is
-// denied.
-//
-// A denial is reported as an indistinguishable 404 when it would otherwise
-// confirm the target exists, and as a 403 naming the missing permission when
-// the caller has already proven it can read the target. That split follows the
-// repo's rule that entity existence is secret but a config-declared capability
-// is not: telling an authorized reader which permission it lacks is the answer
-// that helps the operator debug.
-//
-// # Disabled is absent, not forbidden
-//
-// With no `comments:` block the service is nil and every route 404s, so a
-// project that never enables commenting is indistinguishable from one built
-// before the feature existed.
+// Every request resolves the target's read verdict and the `comment:*`
+// permission first. A denial is a 404 when it would confirm the target exists,
+// and a 403 naming the permission once the caller can read the target. With
+// no `comments:` block every route 404s.
 //
 //archplan:auth=authz
 func (h *commentsHandler) handleV1Comments(w http.ResponseWriter, r *http.Request) {
 	if h.svc == nil {
-		// Not a capability gap worth explaining (unlike version history, which
-		// is backend-dependent): commenting is off because this project did
-		// not ask for it, so the route simply does not exist.
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Not found", "")
 		return
 	}
@@ -61,15 +37,6 @@ func (h *commentsHandler) handleV1Comments(w http.ResponseWriter, r *http.Reques
 	}
 	typeName, entityID := parts[0], parts[1]
 
-	// Validate the path segments before they reach storage. The file backend
-	// guards itself too, but refusing here keeps an unsafe id from reaching any
-	// backend at all, and gives a 400 rather than an opaque store error.
-	//
-	// The id segment is an ADDRESS (`ID` or `ID@face`) and is parsed here,
-	// once, into the bare id and the face (BUG-R1PQY9). Handing the raw
-	// segment to a bare-id reader resolves on memstore/fsstore only because
-	// their index key is the same string, and matches nothing on the database
-	// backends or under a query-shaped read grant.
 	addr, ok := parseCommentAddress(typeName, entityID)
 	if !ok {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_path",
@@ -189,8 +156,6 @@ func (h *commentsHandler) commentResolveCheck(
 
 	text, err := buildTextAnchor(ent, req.Quote, req.Prefix, req.Suffix)
 	if err != nil {
-		// A failure here is the ANSWER, not an error: the caller asked whether
-		// this selection works, and "no, because…" is a successful reply.
 		writeV1JSON(w, http.StatusOK, resolveCheckResponse{Reason: err.Error()})
 		return
 	}
@@ -453,8 +418,6 @@ func isSafeStateRefSegment(s string) bool {
 	if !found {
 		return true
 	}
-	// entity.ParseFace is the only sanctioned constructor from external input,
-	// and rejects anything outside the declared face grammar.
 	_, err := entity.ParseFace(face)
 	return err == nil
 }

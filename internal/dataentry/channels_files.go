@@ -189,7 +189,6 @@ func (h *channelsHandler) downloadFile(w http.ResponseWriter, r *http.Request, r
 	w.Header().Set("Content-Length", strconv.FormatInt(got.File.Size, 10))
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.WriteHeader(http.StatusOK)
-	// The status is sent; a client gone mid-copy has nothing to hear.
 	_, _ = io.Copy(w, got.Body)
 }
 

@@ -85,26 +85,12 @@ func watchRealtime(a *App, sub config.Subscriber) error {
 	return nil
 }
 
-// reloadRealtime re-reads realtime.yaml. An accepted file may change who
-// reads which channel, so the live worker runs a full round (see
-// [liveHub.policyChanged]), and browsers get a refresh frame, so the SPA
-// reloads the channel descriptor and labels. A rejected file keeps the
-// previous config serving; browsers get a config-error frame naming
-// realtime.yaml, and the returned error is a *configError. Configuration
-// is not a secret, so the frame carries the problem itself, stripped of
-// the host path.
-//
-// An accepted file also re-reads data-entry.yaml from disk and checks it
-// against the new realtime config, so the order in which an operator saves
-// the two files does not matter: a data-entry.yaml refused earlier because
-// it named what realtime.yaml did not declare yet goes into force now. When
-// data-entry.yaml does not load against the new realtime config, realtime.yaml
-// stays in force (it is already applied) and browsers get a config-error frame
-// naming data-entry.yaml with applied set to realtime.yaml, then refresh; the
-// SPA ignores what the descriptor no longer declares.
-//
-// It holds a.reloadMu, as App.reloadConfig does, so the two
-// check-and-publish paths never interleave.
+// reloadRealtime re-reads realtime.yaml. An accepted file runs a full live
+// round and sends browsers a refresh frame; it also re-checks data-entry.yaml
+// so save order does not matter, and a failure there keeps realtime.yaml in
+// force with a config-error frame. A rejected file keeps the old config and
+// returns a *configError, with a config-error frame stripped of the host
+// path. It holds a.reloadMu, like App.reloadConfig.
 func reloadRealtime(a *App) error {
 	if a.realtime == nil {
 		return nil

@@ -42,13 +42,6 @@ type SectionCreateInfo struct {
 //
 // create may be nil; when non-nil it supplies the per-type preselected template
 // variant.
-//
-// NOT memoized, deliberately. A type reachable by several opted-in sections is
-// authorized once per section, and `createFormForType` re-sorts the form list
-// each call. Both are metamodel/config/policy work — no store reads, which
-// `TestQueryBudget_ViewSectionCreateAddsNoStoreReads` pins — and the affordance
-// is opt-in, so the section count is small by construction. A memo would be
-// real work to keep correct across principals for a cost nothing has measured.
 func (h *viewsHandler) creatableTargets(
 	ctx context.Context, candidateTypes []string, create *dataentryconfig.SectionCreate,
 ) []SectionCreateTarget {
@@ -87,15 +80,6 @@ func (h *viewsHandler) creatableTargets(
 // block, so a view that says nothing keeps behaving exactly as it did — which
 // is what lets TestV1Views_NoAddOrLinkInfoOnSections keep asserting absence for
 // every section that did not opt in.
-//
-// Deliberately separate from [viewsHandler.resolveSectionButtonsWithTraverse]
-// rather than a generalization of it: that function also builds LinkInfo
-// unconditionally, with no form or permission check, and link-existing is out
-// of scope here. Reusing it would have shipped an ungated link affordance onto
-// the view path as a side effect.
-//
-// entry must be the view's entry entity; sections must be the built sections in
-// the same order as viewConfig.Sections.
 func (h *viewsHandler) resolveSectionCreate(
 	ctx context.Context, viewConfig ViewConfig, sections []SectionData, entry *entity.Entity,
 ) {
@@ -104,15 +88,9 @@ func (h *viewsHandler) resolveSectionCreate(
 	}
 	s := h.schema()
 	for i, cfgSec := range viewConfig.Sections {
-		// A withheld section is dropped by omitHiddenSections; skipping it
-		// only saves the create-target ACL work.
 		if i >= len(sections) || cfgSec.Create == nil || sections[i].withheld {
 			continue
 		}
-		// The relation is what the new entity gets linked by. A section with no
-		// single originating relation has no peer to link to, so it gets no
-		// affordance — config load already refuses this combination, and this
-		// is the runtime half of the same rule.
 		relName, linkAs, ok := dataentryconfig.SectionOriginRelation(viewConfig, cfgSec)
 		if !ok {
 			continue

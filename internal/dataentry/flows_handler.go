@@ -150,8 +150,6 @@ func (h *flowsHandler) tasks(w http.ResponseWriter, r *http.Request) {
 		writeFlowError(w, r, err)
 		return
 	}
-	// The Flow tasks page lists the failed runs the caller manages above
-	// the tasks (BUG-53GP5F5).
 	if out.Failed, out.FailedTruncated, err = h.svc.FailedTasks(r.Context(), q.Get("flow")); err != nil {
 		writeFlowError(w, r, err)
 		return

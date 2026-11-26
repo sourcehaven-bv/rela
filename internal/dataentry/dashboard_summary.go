@@ -149,8 +149,6 @@ func extremeFold(
 	}
 	v := pick.Properties[prop]
 	if t, ok := v.(time.Time); ok {
-		// The fs store parses an unquoted YAML date into a time value; serve
-		// it in the property's own form.
 		return t.Format(pd.GetDateFormat())
 	}
 	return v

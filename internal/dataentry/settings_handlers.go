@@ -83,19 +83,12 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
-// writeForbiddenIfACLDenied checks whether err is an ACL deny and, if
-// so, emits the structured 403 body documented in TKT-GN5LN. Returns
-// true when the response has been written and the caller should
-// return. The structured body — `{error, rule_kind, rule_id, reason}`
-// — lets the SPA surface the specific rule that fired (the AWS IAM
-// lesson: opaque denials are unsupportable).
-//
-// Every handler that calls a write entry point on the entity manager must
-// invoke this *before* falling back to the generic 500 path. The check is
-// cheap (an errors.As type assertion) and centralizing the 403 body shape
-// here keeps the wire contract identical across all handlers.
-//
-// A deny that no rule decided is not a 403; see [writeIdentityFaultDeny].
+// writeForbiddenIfACLDenied checks whether err is an ACL deny and, if so,
+// emits the structured 403 body `{error, rule_kind, rule_id, reason}`
+// (TKT-GN5LN). Returns true when the response has been written.
+// Every handler that calls a manager write must call this before its generic
+// 500 path. A deny that no rule decided is not a 403; see
+// [writeIdentityFaultDeny].
 func writeForbiddenIfACLDenied(w http.ResponseWriter, r *http.Request, err error) bool {
 	var fe *acl.ForbiddenError
 	if !errors.As(err, &fe) {
@@ -212,7 +205,6 @@ func (h *appearanceHandler) handleAPIGetSettings(w http.ResponseWriter, _ *http.
 		ud = &UserDefaults{}
 	}
 
-	// Convert user defaults to API format
 	apiDefaults := APIUserDefaults{
 		Defaults:         ud.Defaults,
 		RelationDefaults: ud.RelationDefaults,
@@ -238,7 +230,6 @@ func (h *appearanceHandler) handleAPIGetSettings(w http.ResponseWriter, _ *http.
 		apiDefaults.Overrides = append(apiDefaults.Overrides, apiOverride)
 	}
 
-	// Collect all properties across entity types
 	propMap := make(map[string]APIPropertyDef)
 	for _, entTypeName := range s.Meta.EntityTypes() {
 		entDef, ok := s.Meta.GetEntityDef(entTypeName)
@@ -253,7 +244,6 @@ func (h *appearanceHandler) handleAPIGetSettings(w http.ResponseWriter, _ *http.
 					Values: resolvePropertyValues(propDef, s.Meta),
 				}
 			} else {
-				// Merge values for properties that appear on multiple types
 				existing := propMap[propName]
 				seen := make(map[string]bool)
 				for _, v := range existing.Values {
@@ -274,7 +264,6 @@ func (h *appearanceHandler) handleAPIGetSettings(w http.ResponseWriter, _ *http.
 		allProperties = append(allProperties, p)
 	}
 
-	// Collect all relation types with their target types.
 	allRelations := make([]APIRelationDef, 0)
 	for _, relName := range s.Meta.RelationTypes() {
 		relDef, ok := s.Meta.GetRelationDef(relName)
@@ -347,7 +336,6 @@ func (h *appearanceHandler) handleAPISaveSettings(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Convert API format to internal UserDefaults
 	ud := UserDefaults{
 		Defaults:         input.Defaults,
 		RelationDefaults: input.RelationDefaults,
@@ -360,8 +348,6 @@ func (h *appearanceHandler) handleAPISaveSettings(w http.ResponseWriter, r *http
 		})
 	}
 
-	// The service persists and republishes the defaults atomically, so a
-	// concurrent reader can't observe defaults that disagree with disk.
 	if err := h.settings.Save(r.Context(), &ud); err != nil {
 		writeInternalJSONError(w, r, "failed to save settings", err)
 		return
@@ -407,9 +393,6 @@ func (h *appearanceHandler) handleAPISavePalette(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// The service validates, persists, and republishes the resolved palette
-	// (against the current project palette) atomically. A validation failure
-	// is a 400; a persistence failure is a 500.
 	if err := h.palette.Save(r.Context(), h.schema().Cfg.Palette, &input); err != nil {
 		if errors.Is(err, errInvalidPalette) {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
