@@ -35,6 +35,32 @@ ranges, which Today and Upcoming need, are not indexed.
 TKT-ZKPA1E moves them to the target id.
 - No saved-filter or smart-list state exists. `internal/userstate` holds
 per-suggestion state only.
+- The list API already accepts `filter[prop][op]` with `eq`, `ne`,
+`contains`, `in`, `lt`, `lte`, `gt` and `gte` on any property, not only on
+declared controls. `applyV1Filters` (`internal/dataentry/api_v1.go`) runs them
+in Go over loaded rows, so they use no index.
+- Date grouping already exists: `group_by.buckets: relative` and calendar
+buckets (TKT-DOGRL6C), and `relative_weeks` (TKT-9F85BEX, PR #2601). They
+section rows in the SPA; they do not filter. Their bound definitions (today,
+this week, next week) can be reused for filter ranges.
+- Natural-language date input (TKT-ICADEGW) can parse relative bounds a user
+enters.
+
+## Prerequisites
+
+Status on develop at `a0c8ce5c3` (2026-11-26):
+
+| Prerequisite | State |
+|---|---|
+| TKT-ZKPA1E: relation filters match on target id | Backlog |
+| `ops:` allowlist on `filter_controls` | Not started |
+| Index derivation from `filter_controls` | Not started |
+| Date-shaped properties in index derivation | Not started |
+| Per-user store for saved smart lists | Not started |
+| BUG-EXJ54CD: hyphenated filter names in list deep links | Open PR #2603; land first, saved lists likely reuse the URL filter state |
+
+Check manual list order (TKT-AVNEX5T) against the derived list index's sort keys
+before adding per-control indexes.
 
 ## Options
 
@@ -81,9 +107,12 @@ BitmapAnd. For a hot combination, the operator opts in to a composite, e.g.
 `index: [status, assignee]` on the list. The reconciler, dry-run and
 `unenforced` reporting stay as they are. Weigh the write cost of the extra
 indexes; `rela db` reporting should show it.
-3. **Operators per control.** Add `ops:` to a control: `eq`, `in`, and a date
-`range` with relative bounds (`today`, `+7d`). The range operator needs the
-derivation to accept date-shaped properties.
+3. **Operators per control.** The API already parses the operators. The new
+part is an `ops:` allowlist on each control (e.g. `eq`, `in`, `gte`/`lte`) that
+a saved smart list must stay within, plus relative date bounds (`today`, `+7d`)
+resolved at query time from the existing bucket definitions. Pushing these
+filters into the store query replaces the Go post-filter for declared controls.
+Ranges need the derivation to accept date-shaped properties.
 4. **Relation controls.** Depend on TKT-ZKPA1E. Matching on the target id makes
 the filter a join the store can index, and a saved value survives a rename of
 the target.
