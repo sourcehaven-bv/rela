@@ -195,6 +195,8 @@ components:
   texthazard:       { in: internal/texthazard }
   # The YAML 1.1 boolean spellings a config key refuses unquoted.
   yamlscalar:       { in: internal/yamlscalar }
+  # The http/https scheme set every URL validator tests.
+  httpscheme:       { in: internal/httpscheme }
   # The pure three-way merge behind Lua rela.sync.merge (TKT-SM20FG): no
   # I/O, reads the metamodel only to type the synced fields.
   syncmerge:        { in: internal/syncmerge }
@@ -482,6 +484,7 @@ vendors:
 # -- Common (importable by all) -------------------------------------------
 commonComponents:
   - entity
+  - httpscheme
   - errors
   - natsort
   - readtime

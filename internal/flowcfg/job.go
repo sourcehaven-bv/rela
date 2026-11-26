@@ -11,6 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/flow"
+	"github.com/Sourcehaven-BV/rela/internal/httpscheme"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
@@ -235,7 +236,7 @@ func (l jobLoader) webhook(key string, r *rawJob, j *Job) {
 		l.add(key+".url", "is required: where the webhook posts")
 	case len(r.URL) > maxWebhookURL:
 		l.add(key+".url", fmt.Sprintf("is longer than %d characters", maxWebhookURL))
-	case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil ||
+	case err != nil || !httpscheme.IsHTTP(u.Scheme) || u.Host == "" || u.User != nil ||
 		u.Fragment != "":
 		l.add(key+".url", "is an http or https URL with a host, without credentials or a fragment")
 	}

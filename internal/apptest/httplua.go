@@ -14,6 +14,7 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
+	"github.com/Sourcehaven-BV/rela/internal/httpscheme"
 	relalua "github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 )
@@ -89,7 +90,7 @@ func (h httpModule) stubTarget(ls *lua.LState, spec *lua.LTable, s *httpStub) {
 	switch {
 	case exact != "":
 		u, err := url.Parse(exact)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		if err != nil || !httpscheme.IsHTTP(u.Scheme) || u.Host == "" {
 			ls.ArgError(1, fmt.Sprintf("url %q is not an absolute http or https URL", exact))
 		}
 		s.url = u
