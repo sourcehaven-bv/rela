@@ -22,7 +22,7 @@ import {
   type RemoteEntry,
 } from '@/api/remotes'
 import { ApiError, getErrorMessage, shouldDropHeldContent } from '@/api/errors'
-import { isCancelledFetch } from '@/composables/usePageData'
+import { isCancelledFetch } from '@/api/errors'
 import { useConfirm } from '@/composables/useConfirm'
 import { useSpaceStore } from '@/stores/space'
 import { useUIStore } from '@/stores/ui'

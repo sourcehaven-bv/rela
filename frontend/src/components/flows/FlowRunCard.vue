@@ -30,7 +30,7 @@ import {
   type FlowRun,
 } from '@/api/flows'
 import { getErrorMessage, shouldDropHeldContent } from '@/api/errors'
-import { isCancelledFetch } from '@/composables/usePageData'
+import { isCancelledFetch } from '@/api/errors'
 import { useConfirm } from '@/composables/useConfirm'
 import { useUIStore } from '@/stores'
 import { useSpaceStore } from '@/stores/space'

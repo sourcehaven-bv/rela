@@ -765,7 +765,6 @@
   "internal/storage/memfs.go": 26,
   "internal/storage/rooted.go": 3,
   "internal/storage/safefs.go": 7,
-  "internal/storage/watcher.go": 4,
   "internal/store/bgloop/bgloop.go": 1,
   "internal/store/elementrange.go": 2,
   "internal/store/familyreplace.go": 1,

@@ -1,4 +1,4 @@
-package storage
+package fswatch
 
 import (
 	"os"
@@ -13,12 +13,12 @@ import (
 func TestWatcher_NewAndStop(t *testing.T) {
 	dir := t.TempDir()
 
-	w, err := NewWatcher(WatchConfig{
+	w, err := New(Config{
 		Dirs:     []string{dir},
 		Debounce: 100 * time.Millisecond,
 	})
 	if err != nil {
-		t.Fatalf("NewWatcher() error = %v", err)
+		t.Fatalf("New() error = %v", err)
 	}
 
 	// Start in goroutine
@@ -41,12 +41,12 @@ func TestWatcher_WatchesDirectoriesRecursively(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w, err := NewWatcher(WatchConfig{
+	w, err := New(Config{
 		Dirs:     []string{dir},
 		Debounce: 100 * time.Millisecond,
 	})
 	if err != nil {
-		t.Fatalf("NewWatcher() error = %v", err)
+		t.Fatalf("New() error = %v", err)
 	}
 	defer w.Stop()
 
@@ -71,12 +71,12 @@ func TestWatcher_WatchesIndividualFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w, err := NewWatcher(WatchConfig{
+	w, err := New(Config{
 		Files:    []string{filePath},
 		Debounce: 100 * time.Millisecond,
 	})
 	if err != nil {
-		t.Fatalf("NewWatcher() error = %v", err)
+		t.Fatalf("New() error = %v", err)
 	}
 	defer w.Stop()
 
@@ -98,13 +98,13 @@ func TestWatcher_SkipHidden(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w, err := NewWatcher(WatchConfig{
+	w, err := New(Config{
 		Dirs:       []string{dir},
 		SkipHidden: true,
 		Debounce:   100 * time.Millisecond,
 	})
 	if err != nil {
-		t.Fatalf("NewWatcher() error = %v", err)
+		t.Fatalf("New() error = %v", err)
 	}
 	defer w.Stop()
 
@@ -122,12 +122,12 @@ func TestWatcher_SkipHidden(t *testing.T) {
 }
 
 func TestWatcher_NonExistentDir(t *testing.T) {
-	w, err := NewWatcher(WatchConfig{
+	w, err := New(Config{
 		Dirs:     []string{"/nonexistent/path/that/does/not/exist"},
 		Debounce: 100 * time.Millisecond,
 	})
 	if err != nil {
-		t.Fatalf("NewWatcher() should not fail for nonexistent dir: %v", err)
+		t.Fatalf("New() should not fail for nonexistent dir: %v", err)
 	}
 	defer w.Stop()
 
@@ -154,7 +154,7 @@ func TestIsRelevantFile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			w := &Watcher{cfg: WatchConfig{Extensions: tt.extensions}}
+			w := &Watcher{cfg: Config{Extensions: tt.extensions}}
 			if got := w.isRelevantFile(tt.path); got != tt.want {
 				t.Errorf("isRelevantFile(%q) = %v, want %v", tt.path, got, tt.want)
 			}
@@ -165,7 +165,7 @@ func TestIsRelevantFile(t *testing.T) {
 func TestToChangeOp(t *testing.T) {
 	tests := []struct {
 		op   fsnotify.Op
-		want ChangeOp
+		want Op
 	}{
 		{fsnotify.Create, OpCreate},
 		{fsnotify.Write, OpModify},
@@ -174,28 +174,28 @@ func TestToChangeOp(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := toChangeOp(tt.op)
+		got := toOp(tt.op)
 		if got != tt.want {
-			t.Errorf("toChangeOp(%v) = %v, want %v", tt.op, got, tt.want)
+			t.Errorf("toOp(%v) = %v, want %v", tt.op, got, tt.want)
 		}
 	}
 }
 
 func TestChangeOp_String(t *testing.T) {
 	tests := []struct {
-		op   ChangeOp
+		op   Op
 		want string
 	}{
 		{OpCreate, "CREATE"},
 		{OpModify, "MODIFY"},
 		{OpDelete, "DELETE"},
 		{OpRename, "RENAME"},
-		{ChangeOp(99), "UNKNOWN"},
+		{Op(99), "UNKNOWN"},
 	}
 
 	for _, tt := range tests {
 		if got := tt.op.String(); got != tt.want {
-			t.Errorf("ChangeOp(%d).String() = %q, want %q", tt.op, got, tt.want)
+			t.Errorf("Op(%d).String() = %q, want %q", tt.op, got, tt.want)
 		}
 	}
 }
@@ -218,24 +218,24 @@ func waitWatched(t *testing.T, w *Watcher, path string) {
 func TestWatcher_FileChangeEvents(t *testing.T) {
 	dir := t.TempDir()
 
-	eventsChan := make(chan []ChangeEvent, 10)
+	eventsChan := make(chan []Event, 10)
 
-	w, err := NewWatcher(WatchConfig{
+	w, err := New(Config{
 		Dirs:       []string{dir},
 		Extensions: []string{".md"},
 		Debounce:   50 * time.Millisecond,
-		OnChange: func(events []ChangeEvent) {
+		OnChange: func(events []Event) {
 			eventsChan <- events
 		},
 	})
 	if err != nil {
-		t.Fatalf("NewWatcher() error = %v", err)
+		t.Fatalf("New() error = %v", err)
 	}
 
 	go w.Start()
 	defer w.Stop()
 
-	// No startup wait needed: NewWatcher registers the fsnotify watches
+	// No startup wait needed: New registers the fsnotify watches
 	// synchronously, and events queue until Start drains them.
 
 	// Create a file
@@ -268,18 +268,18 @@ func TestWatcher_FileChangeEvents(t *testing.T) {
 func TestWatcher_IgnoresNonMatchingExtensions(t *testing.T) {
 	dir := t.TempDir()
 
-	eventsChan := make(chan []ChangeEvent, 10)
+	eventsChan := make(chan []Event, 10)
 
-	w, err := NewWatcher(WatchConfig{
+	w, err := New(Config{
 		Dirs:       []string{dir},
 		Extensions: []string{".md"},
 		Debounce:   50 * time.Millisecond,
-		OnChange: func(events []ChangeEvent) {
+		OnChange: func(events []Event) {
 			eventsChan <- events
 		},
 	})
 	if err != nil {
-		t.Fatalf("NewWatcher() error = %v", err)
+		t.Fatalf("New() error = %v", err)
 	}
 
 	go w.Start()
@@ -320,18 +320,18 @@ func TestWatcher_IgnoresNonMatchingExtensions(t *testing.T) {
 func TestWatcher_AutoWatchesNewDirectories(t *testing.T) {
 	dir := t.TempDir()
 
-	eventsChan := make(chan []ChangeEvent, 10)
+	eventsChan := make(chan []Event, 10)
 
-	w, err := NewWatcher(WatchConfig{
+	w, err := New(Config{
 		Dirs:       []string{dir},
 		Extensions: []string{".md"},
 		Debounce:   50 * time.Millisecond,
-		OnChange: func(events []ChangeEvent) {
+		OnChange: func(events []Event) {
 			eventsChan <- events
 		},
 	})
 	if err != nil {
-		t.Fatalf("NewWatcher() error = %v", err)
+		t.Fatalf("New() error = %v", err)
 	}
 
 	go w.Start()
@@ -380,18 +380,18 @@ func TestWatcher_FileModifyAndDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	eventsChan := make(chan []ChangeEvent, 10)
+	eventsChan := make(chan []Event, 10)
 
-	w, err := NewWatcher(WatchConfig{
+	w, err := New(Config{
 		Dirs:       []string{dir},
 		Extensions: []string{".md"},
 		Debounce:   50 * time.Millisecond,
-		OnChange: func(events []ChangeEvent) {
+		OnChange: func(events []Event) {
 			eventsChan <- events
 		},
 	})
 	if err != nil {
-		t.Fatalf("NewWatcher() error = %v", err)
+		t.Fatalf("New() error = %v", err)
 	}
 
 	go w.Start()
@@ -444,12 +444,12 @@ func TestWatcher_FileModifyAndDelete(t *testing.T) {
 
 func TestWatcher_PauseResumeIsPaused(t *testing.T) {
 	dir := t.TempDir()
-	w, err := NewWatcher(WatchConfig{
+	w, err := New(Config{
 		Dirs:     []string{dir},
 		Debounce: 100 * time.Millisecond,
 	})
 	if err != nil {
-		t.Fatalf("NewWatcher: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	defer w.Stop()
 
@@ -473,12 +473,12 @@ func TestWatcher_AddFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w, err := NewWatcher(WatchConfig{
+	w, err := New(Config{
 		Dirs:     []string{dir},
 		Debounce: 100 * time.Millisecond,
 	})
 	if err != nil {
-		t.Fatalf("NewWatcher: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	defer w.Stop()
 

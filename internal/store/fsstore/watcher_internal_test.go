@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/fswatch"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -63,7 +64,7 @@ func TestExternalCreateEmitsCreated(t *testing.T) {
 	require.NoError(t, fs.MkdirAll("/entities/tickets", 0o755))
 	require.NoError(t, fs.WriteFileExternal(path, []byte(body), 0o644))
 
-	s.handleExternalEvents([]storage.ChangeEvent{{Path: path, Op: storage.OpCreate}})
+	s.handleExternalEvents([]fswatch.Event{{Path: path, Op: fswatch.OpCreate}})
 
 	events := drainEvents(ch)
 	require.Len(t, events, 1)
@@ -100,7 +101,7 @@ func TestExternalFileOutsideItsTypeDirectoryIgnored(t *testing.T) {
 			require.NoError(t, fs.MkdirAll(path.Dir(tc.path), 0o755))
 			require.NoError(t, fs.WriteFileExternal(tc.path, []byte(tc.body), 0o644))
 
-			s.handleExternalEvents([]storage.ChangeEvent{{Path: tc.path, Op: storage.OpCreate}})
+			s.handleExternalEvents([]fswatch.Event{{Path: tc.path, Op: fswatch.OpCreate}})
 
 			assert.Empty(t, drainEvents(ch))
 			id := strings.TrimSuffix(path.Base(tc.path), ".md")
@@ -122,12 +123,12 @@ func TestExternalStrayCopyLeavesIndexedEntity(t *testing.T) {
 		require.NoError(t, fs.MkdirAll("/entities/tickets", 0o755))
 		require.NoError(t, fs.WriteFileExternal(stray,
 			[]byte("---\nid: REQ-1\ntype: ticket\n---\nSee `T-9`.\n"), 0o644))
-		s.handleExternalEvents([]storage.ChangeEvent{{Path: stray, Op: storage.OpCreate}})
+		s.handleExternalEvents([]fswatch.Event{{Path: stray, Op: fswatch.OpCreate}})
 	}
 	removeStray := func(t *testing.T, s *FSStore, fs *storage.MemFS) {
 		t.Helper()
 		require.NoError(t, fs.Remove(stray))
-		s.handleExternalEvents([]storage.ChangeEvent{{Path: stray, Op: storage.OpDelete}})
+		s.handleExternalEvents([]fswatch.Event{{Path: stray, Op: fswatch.OpDelete}})
 	}
 	newReq := func(t *testing.T, s *FSStore) {
 		t.Helper()
@@ -210,7 +211,7 @@ func TestExternalUpdateEmitsUpdated(t *testing.T) {
 	body := "---\nid: T-1\ntype: ticket\nstatus: closed\n---\n\nUpdated\n"
 	require.NoError(t, fs.WriteFileExternal(path, []byte(body), 0o644))
 
-	s.handleExternalEvents([]storage.ChangeEvent{{Path: path, Op: storage.OpModify}})
+	s.handleExternalEvents([]fswatch.Event{{Path: path, Op: fswatch.OpModify}})
 
 	events := drainEvents(ch)
 	require.Len(t, events, 1)
@@ -236,7 +237,7 @@ func TestExternalDeleteEmitsDeleted(t *testing.T) {
 	path := "/entities/tickets/T-1.md"
 	require.NoError(t, fs.Remove(path))
 
-	s.handleExternalEvents([]storage.ChangeEvent{{Path: path, Op: storage.OpDelete}})
+	s.handleExternalEvents([]fswatch.Event{{Path: path, Op: fswatch.OpDelete}})
 
 	events := drainEvents(ch)
 	require.Len(t, events, 1)
@@ -261,7 +262,7 @@ func TestSelfWriteIsSuppressed(t *testing.T) {
 
 	// Simulate the file watcher's echo of the write we just did.
 	path := "/entities/tickets/T-1.md"
-	s.handleExternalEvents([]storage.ChangeEvent{{Path: path, Op: storage.OpCreate}})
+	s.handleExternalEvents([]fswatch.Event{{Path: path, Op: fswatch.OpCreate}})
 
 	events := drainEvents(ch)
 	assert.Empty(t, events, "self-write should not emit a duplicate event")
@@ -281,7 +282,7 @@ func TestExternalRelationChange(t *testing.T) {
 	require.NoError(t, fs.MkdirAll("/relations", 0o755))
 	require.NoError(t, fs.WriteFileExternal(path, []byte(body), 0o644))
 
-	s.handleExternalEvents([]storage.ChangeEvent{{Path: path, Op: storage.OpCreate}})
+	s.handleExternalEvents([]fswatch.Event{{Path: path, Op: fswatch.OpCreate}})
 
 	events := drainEvents(ch)
 	require.Len(t, events, 1)
@@ -305,7 +306,7 @@ func TestExternalRelationDelete(t *testing.T) {
 	path := "/relations/A--blocks--B.md"
 	require.NoError(t, fs.Remove(path))
 
-	s.handleExternalEvents([]storage.ChangeEvent{{Path: path, Op: storage.OpDelete}})
+	s.handleExternalEvents([]fswatch.Event{{Path: path, Op: fswatch.OpDelete}})
 
 	events := drainEvents(ch)
 	require.Len(t, events, 1)
@@ -321,8 +322,8 @@ func TestNonMarkdownPathIgnored(t *testing.T) {
 	require.NoError(t, fs.MkdirAll("/entities/tickets", 0o755))
 	require.NoError(t, fs.WriteFileExternal("/entities/tickets/note.txt", []byte("hi"), 0o644))
 
-	s.handleExternalEvents([]storage.ChangeEvent{
-		{Path: "/entities/tickets/note.txt", Op: storage.OpCreate},
+	s.handleExternalEvents([]fswatch.Event{
+		{Path: "/entities/tickets/note.txt", Op: fswatch.OpCreate},
 	})
 
 	assert.Empty(t, drainEvents(ch))
@@ -340,7 +341,7 @@ func TestTempFileEventIgnored(t *testing.T) {
 	require.NoError(t, fs.MkdirAll("/entities/tickets", 0o755))
 	require.NoError(t, fs.WriteFileExternal(tmp, []byte("---\nid: T-1\ntype: ticket\n---\n"), 0o644))
 
-	s.handleExternalEvents([]storage.ChangeEvent{{Path: tmp, Op: storage.OpCreate}})
+	s.handleExternalEvents([]fswatch.Event{{Path: tmp, Op: fswatch.OpCreate}})
 
 	assert.Empty(t, drainEvents(ch))
 	_, err := s.GetEntity(context.Background(), entity.Ref{ID: "T-1"})
@@ -356,8 +357,8 @@ func TestOutsideWatchedDirsIgnored(t *testing.T) {
 	require.NoError(t, fs.MkdirAll("/other", 0o755))
 	require.NoError(t, fs.WriteFileExternal("/other/stray.md", []byte("---\nid: X\ntype: y\n---\n"), 0o644))
 
-	s.handleExternalEvents([]storage.ChangeEvent{
-		{Path: "/other/stray.md", Op: storage.OpCreate},
+	s.handleExternalEvents([]fswatch.Event{
+		{Path: "/other/stray.md", Op: fswatch.OpCreate},
 	})
 
 	assert.Empty(t, drainEvents(ch))
@@ -400,7 +401,7 @@ func TestNewInstallsSelfEchoRecorder(t *testing.T) {
 	_, err := fs.ReadFile(path)
 	require.NoError(t, err, "the write must have landed on the FS")
 
-	s.handleExternalEvents([]storage.ChangeEvent{{Path: path, Op: storage.OpModify}})
+	s.handleExternalEvents([]fswatch.Event{{Path: path, Op: fswatch.OpModify}})
 	assert.Empty(t, drainEvents(ch), "a self-write replayed by the watcher must be suppressed")
 	require.NoError(t, s.echoWiringErr)
 }
@@ -439,7 +440,7 @@ func TestTwoStoresOnOneFSKeepTheirOwnEchoes(t *testing.T) {
 	assert.True(t, s1.echoes.IsEcho(p1, data), "s1 must still be recording after s2 opened")
 	assert.False(t, s2.echoes.IsEcho(p1, data), "s2 must not record a write under s1's root")
 
-	s1.handleExternalEvents([]storage.ChangeEvent{{Path: p1, Op: storage.OpModify}})
+	s1.handleExternalEvents([]fswatch.Event{{Path: p1, Op: fswatch.OpModify}})
 	assert.Empty(t, drainEvents(ch1), "s1's own write replayed must be suppressed even with s2 alive")
 
 	// Close uninstalls: a later write at s1's path is no longer recorded.

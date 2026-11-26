@@ -1,11 +1,13 @@
-package storage
+// Package fswatch watches files and directories for changes and reports them
+// as debounced batches of [Event] values.
+package fswatch
 
-// ChangeOp represents the type of change to stored data.
-type ChangeOp int
+// Op represents the type of change to stored data.
+type Op int
 
 const (
 	// OpCreate indicates an item was created.
-	OpCreate ChangeOp = iota
+	OpCreate Op = iota
 	// OpModify indicates an item was modified.
 	OpModify
 	// OpDelete indicates an item was deleted.
@@ -15,7 +17,7 @@ const (
 )
 
 // String returns a human-readable representation of the change operation.
-func (op ChangeOp) String() string {
+func (op Op) String() string {
 	switch op {
 	case OpCreate:
 		return "CREATE"
@@ -30,8 +32,8 @@ func (op ChangeOp) String() string {
 	}
 }
 
-// ChangeEvent represents a single change to stored data.
-type ChangeEvent struct {
+// Event represents a single change to stored data.
+type Event struct {
 	Path string
-	Op   ChangeOp
+	Op   Op
 }

@@ -6,7 +6,7 @@ import {
   NavigationFailureType,
   type RouteRecordRaw,
 } from 'vue-router'
-import { isCancelledFetch } from '@/composables/usePageData'
+import { isCancelledFetch } from '@/api/errors'
 import { useNavigationPending } from '@/composables/useNavigationPending'
 import { relaBase } from '@/api/base'
 import { currentAsOf } from '@/api/asOf'

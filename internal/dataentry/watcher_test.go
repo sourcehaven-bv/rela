@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
+	"github.com/Sourcehaven-BV/rela/internal/fswatch"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -265,7 +266,7 @@ func TestEventBrokerConcurrency(t *testing.T) {
 // event paths are ignored — entity/relation changes are reconciled by
 // the store's own observer chain (see [App.StartWatching]), not via a
 // dataentry-level callback.
-func (a *App) simulateReload(events []storage.ChangeEvent) {
+func (a *App) simulateReload(events []fswatch.Event) {
 	configPath := a.paths.Root + "/" + ConfigFile
 	for _, e := range events {
 		if e.Path == configPath {
@@ -293,8 +294,8 @@ navigation: []
 	configPath := app.paths.Root + "/" + ConfigFile
 	_ = fs.WriteFile(configPath, []byte(updatedConfig), 0o644)
 
-	app.simulateReload([]storage.ChangeEvent{
-		{Path: configPath, Op: storage.OpModify},
+	app.simulateReload([]fswatch.Event{
+		{Path: configPath, Op: fswatch.OpModify},
 	})
 
 	if app.Cfg().App.Name == originalName {
