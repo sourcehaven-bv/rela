@@ -1,6 +1,4 @@
-// Package desktop provides desktop-specific functionality for the Wails desktop app,
-// including user preferences persistence.
-package desktop
+package main
 
 import (
 	"encoding/json"
@@ -61,7 +59,7 @@ type Preferences struct {
 
 // Load reads preferences from the user's config directory.
 // It returns empty preferences (not an error) if the file does not exist.
-func Load() (*Preferences, error) {
+func loadPreferences() (*Preferences, error) {
 	path, err := preferencesPath()
 	if err != nil {
 		return &Preferences{}, nil //nolint:nilerr // no config dir is not an error

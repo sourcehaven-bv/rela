@@ -32,7 +32,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/dataentrywire"
-	"github.com/Sourcehaven-BV/rela/internal/desktop"
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -108,7 +107,7 @@ type Desktop struct {
 	svc              *appbuild.Services // per-project services; closed on next LoadProject
 	handler          http.Handler
 	loadErr          string
-	prefs            *desktop.Preferences
+	prefs            *Preferences
 	cloneAuth        *cloneAuthState
 	lastCloneDir     string               // tracks the most recent clone for project selection
 	pendingSetupDir  string               // project dir awaiting data-entry.yaml setup
@@ -518,7 +517,7 @@ func openedAs(paths *project.Context, root, name string) (opened, shown string) 
 
 // rememberRecent puts a successfully opened project at the top of Open
 // Recent.
-func rememberRecent(prefs *desktop.Preferences, path, name string) {
+func rememberRecent(prefs *Preferences, path, name string) {
 	prefs.AddRecentProject(path, name)
 	if err := prefs.Save(); err != nil {
 		slog.Warn("could not save preferences", "error", err)
@@ -1082,10 +1081,10 @@ func main() {
 	}
 
 	// Load desktop preferences.
-	prefs, err := desktop.Load()
+	prefs, err := loadPreferences()
 	if err != nil {
 		slog.Warn("could not load preferences", "error", err)
-		prefs = &desktop.Preferences{}
+		prefs = &Preferences{}
 	}
 
 	d := &Desktop{prefs: prefs, registry: newProjectRegistry(), notify: newNotifyHub()}
@@ -1202,7 +1201,7 @@ func configureLogging(verbose, quiet bool) {
 
 // resolveProjectDir determines which project directory to load at startup.
 // Priority: explicit -project flag > current dir if rela project > last project from preferences.
-func resolveProjectDir(flagValue string, prefs *desktop.Preferences) string {
+func resolveProjectDir(flagValue string, prefs *Preferences) string {
 	// Explicit flag or current directory is a rela project.
 	if flagValue != "." || isRelaProject(flagValue) {
 		return flagValue

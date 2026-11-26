@@ -8,26 +8,25 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
-	"github.com/Sourcehaven-BV/rela/internal/desktop"
 )
 
 func TestMainWindowOptions(t *testing.T) {
 	tests := []struct {
 		name      string
-		ws        desktop.WindowState
+		ws        WindowState
 		wantW     int
 		wantH     int
 		wantPos   application.WindowStartPosition
 		wantState application.WindowState
 	}{
-		{"no saved state", desktop.WindowState{}, defaultWindowWidth, defaultWindowHeight, 0, 0},
-		{"degenerate state", desktop.WindowState{Width: 10, Height: 10, X: 5}, defaultWindowWidth, defaultWindowHeight, 0, 0},
+		{"no saved state", WindowState{}, defaultWindowWidth, defaultWindowHeight, 0, 0},
+		{"degenerate state", WindowState{Width: 10, Height: 10, X: 5}, defaultWindowWidth, defaultWindowHeight, 0, 0},
 		{
-			"saved state", desktop.WindowState{Width: 900, Height: 700, X: 40, Y: 50},
+			"saved state", WindowState{Width: 900, Height: 700, X: 40, Y: 50},
 			900 + restoreInset(), 700 + restoreInset(), application.WindowXY, 0,
 		},
 		{
-			"maximized", desktop.WindowState{Width: 900, Height: 700, Maximized: true},
+			"maximized", WindowState{Width: 900, Height: 700, Maximized: true},
 			900 + restoreInset(), 700 + restoreInset(), application.WindowXY, application.WindowStateMaximised,
 		},
 	}
@@ -114,7 +113,7 @@ func TestRevealInFinder_RefusesNoPath(t *testing.T) {
 }
 
 func TestFocusedPath(t *testing.T) {
-	d := &Desktop{prefs: &desktop.Preferences{}, registry: newProjectRegistry()}
+	d := &Desktop{prefs: &Preferences{}, registry: newProjectRegistry()}
 	m := &menuBar{d: d}
 
 	if got := m.focusedPath(); got != "" {

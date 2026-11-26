@@ -901,10 +901,8 @@ type CustomType struct {
 
 // Config is the JSON representation of the UI config.
 //
-// It mirrors the top-level keys of data-entry.yaml, so a new key raises the
-// pin by one; `sankeys` and `builtins` (TKT-JEAR2UA) are the most recent.
-//
-//plimsoll:max-fields=24
+// It mirrors the top-level keys of data-entry.yaml. The per-kind view
+// registries sit in the embedded [ConfigViews], which keeps the JSON flat.
 type Config struct {
 	App AppConfig `json:"app"`
 	// AboutDescription is the deployment description shown by the SPA's global
@@ -919,24 +917,18 @@ type Config struct {
 	// Channels is the data-entry.yaml `channels:` block: the field order,
 	// labels and widgets of each channel message type, keyed by channel
 	// type. The structure comes from `GET /api/v1/_schema/channels`.
-	Channels    map[string]dataentryconfig.ChannelPresentation `json:"channels,omitempty"`
-	Lists       map[string]dataentryconfig.List                `json:"lists"`
-	Views       map[string]dataentryconfig.ViewConfig          `json:"views"`
-	EntityViews map[string]dataentryconfig.EntityViewConfig    `json:"entity_views,omitempty"`
-	Kanbans     map[string]dataentryconfig.Kanban              `json:"kanbans"`
-	Calendars   map[string]dataentryconfig.Calendar            `json:"calendars,omitempty"`
-	Gantts      map[string]dataentryconfig.Gantt               `json:"gantts,omitempty"`
-	Sankeys     map[string]dataentryconfig.Sankey              `json:"sankeys,omitempty"`
-	Dashboard   *dataentryconfig.DashboardConfig               `json:"dashboard,omitempty"`
-	Dashboards  map[string]dataentryconfig.DashboardConfig     `json:"dashboards,omitempty"`
-	Actions     map[string]dataentryconfig.Action              `json:"actions,omitempty"`
-	Navigation  []dataentryconfig.NavigationEntry              `json:"navigation"`
-	Spaces      []dataentryconfig.Space                        `json:"spaces,omitempty"`
-	Builtins    dataentryconfig.Builtins                       `json:"builtins,omitempty"`
-	Pages       map[string]dataentryconfig.Page                `json:"pages,omitempty"`
-	Documents   map[string]dataentryconfig.DocumentConfig      `json:"documents,omitempty"`
-	Apps        map[string]App                                 `json:"apps,omitempty"`
-	Palette     *dataentryconfig.ResolvedPalette               `json:"palette,omitempty"`
+	Channels map[string]dataentryconfig.ChannelPresentation `json:"channels,omitempty"`
+	ConfigViews
+	Dashboard  *dataentryconfig.DashboardConfig           `json:"dashboard,omitempty"`
+	Dashboards map[string]dataentryconfig.DashboardConfig `json:"dashboards,omitempty"`
+	Actions    map[string]dataentryconfig.Action          `json:"actions,omitempty"`
+	Navigation []dataentryconfig.NavigationEntry          `json:"navigation"`
+	Spaces     []dataentryconfig.Space                    `json:"spaces,omitempty"`
+	Builtins   dataentryconfig.Builtins                   `json:"builtins,omitempty"`
+	Pages      map[string]dataentryconfig.Page            `json:"pages,omitempty"`
+	Documents  map[string]dataentryconfig.DocumentConfig  `json:"documents,omitempty"`
+	Apps       map[string]App                             `json:"apps,omitempty"`
+	Palette    *dataentryconfig.ResolvedPalette           `json:"palette,omitempty"`
 
 	// NextActionBands is the operator's ordered priority vocabulary, so the
 	// SPA can label a suggestion's band ("Someone is waiting") rather than
@@ -954,6 +946,17 @@ type Config struct {
 	// Whether THIS principal may use piles is on `_sidebar`
 	// ([SidebarResponse.PilesAvailable]).
 	Piles *dataentryconfig.PilesConfig `json:"piles"`
+}
+
+// ConfigViews holds the view registries of [Config], keyed by id.
+type ConfigViews struct {
+	Lists       map[string]dataentryconfig.List             `json:"lists"`
+	Views       map[string]dataentryconfig.ViewConfig       `json:"views"`
+	EntityViews map[string]dataentryconfig.EntityViewConfig `json:"entity_views,omitempty"`
+	Kanbans     map[string]dataentryconfig.Kanban           `json:"kanbans"`
+	Calendars   map[string]dataentryconfig.Calendar         `json:"calendars,omitempty"`
+	Gantts      map[string]dataentryconfig.Gantt            `json:"gantts,omitempty"`
+	Sankeys     map[string]dataentryconfig.Sankey           `json:"sankeys,omitempty"`
 }
 
 // App is the client-facing view of a custom app. It deliberately omits the
