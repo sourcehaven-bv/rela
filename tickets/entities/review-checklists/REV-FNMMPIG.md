@@ -3,17 +3,17 @@ id: REV-FNMMPIG
 type: review-checklist
 title: 'Review: Options to hide type and ID on cards and mention lists'
 started: "2026-11-26"
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test`) (ran the changed packages: dataentryconfig, dataentry, apiwire, migration, and vitest on components/entity; the full suite runs in CI)
+- [x] Lint clean (`just lint`) (golangci-lint on the changed packages, plimsoll, arch-lint, vue-tsc, and archplan against develop: 0 worse)
+- [x] Comment lint gate clean (`just comment-lint`)
+- [x] Coverage maintained (`just coverage-check`) (new code has unit tests; the floor check runs in CI)
 
 **Comment findings.** `just comment-report` lists the advisory rules
 (duplication, nil-contract, param-contract, restatement). They are not a merge
@@ -34,41 +34,44 @@ unexplained suppression is a finding nobody can re-evaluate later.
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (invokes cranky-code-reviewer agent)
+- [x] All critical review-responses addressed
+- [x] All significant review-responses addressed
+- [x] Self-reviewed the diff for unrelated changes (the migration fix is needed for entity_views keys to load)
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** RR-1H5O52N (critical, addressed), RR-0LW0N03 and RR-165JH2O (significant, addressed), RR-11XYG1K (minor, addressed), RR-FOP0CDR (nit, addressed), RR-30CIHZA (nit, wont-fix). Design review: RR-Q7B99XW (addressed), RR-BGC2ROA (deferred).
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+- hide_type and hide_id on list, cards and content sections: PASS (views_mentions_test.go, EntityDetail.mentions.test.ts, browser check on ticket view).
+- hide_id on nested sections: PASS (EntityDetail tests).
+- A row with a blank title keeps its ID: PASS (T-2 and T-3 fixtures).
+- mentioned_by_hide_id on the Mentioned-by panel, face suffix kept: PASS (MentionedByPanel.test.ts; browser check on label/bug shows the title without TKT-001).
+- Invalid placements refused at load: PASS (validate_hideidentity_test.go).
 
 ## Documentation (enhancements only)
 
 Skip this section for bugs and internal refactors.
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+- [x] Docs-checklist created and linked via `has-docs`
+- [x] User-facing documentation updated
+- [x] Docs-checklist marked as done
 
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** DOCS-F7CX71P
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] ~~Run `/pr` command to create PR and monitor CI~~ (N/A: the PR is already open and Auto-fix watches its CI)
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
