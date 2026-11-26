@@ -2935,7 +2935,7 @@
       "largest_tangle": 14,
       "cycle_edges": 67,
       "upward_edges": 0,
-      "propagation_cost": 9.2
+      "propagation_cost": 9.3
     },
     "min_weight": 0,
     "at": "2026-11-17T03:00:00Z",
@@ -3351,6 +3351,17 @@
           "weight.types": [
             3975,
             4020
+          ]
+        }
+      },
+      {
+        "at": "2026-11-26T21:00:00Z",
+        "change": "loosen",
+        "reason": "PR #2618: components/sidebar becomes its own SPA component; the views that already used those files now reach a separate node (+0.1)",
+        "metrics": {
+          "propagation_cost": [
+            9.2,
+            9.3
           ]
         }
       }
