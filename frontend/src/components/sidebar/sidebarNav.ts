@@ -20,6 +20,8 @@ import type { SidebarGroup, SidebarItem } from '@/types'
 import type { NavItemEntry, NavItemList } from '@/api/navItems'
 import { entityDetailHref } from '@/utils/entityRoute'
 import type { NavEntitiesLookup } from '@/composables/useNavEntities'
+import type { NavDropAttrs } from '@/composables/useAssign'
+import { pileNavId } from '@/composables/pileNav'
 import type { PileSummary } from '@/api/piles'
 import { pileIcon } from '@/components/piles/pileIcon'
 import { t } from '@/i18n'
@@ -107,11 +109,6 @@ export type FlyoutClickHandler = (item: SidebarItem, id: string, event: MouseEve
 /** Resolves an entry's `status_key` to its current marker, if it has one. */
 export type NavStatusLookup = (key: string | undefined) => NavItemStatus | undefined
 
-/**
- * Drag-and-drop handlers for a link entry, by its href: the entries whose list
- * or page has an `assign:` accept dropped rows (TKT-FGE5G3I).
- */
-export type NavDropAttrs = (href: string) => Record<string, unknown> | undefined
 
 function toNavItem(
   item: SidebarItem,
@@ -329,9 +326,6 @@ export function activeNavId(groups: NavGroup[], path: string): string | undefine
 /** The id of the sidebar's Piles group. */
 export const PILES_GROUP_ID = 'group:piles'
 
-/** The id prefix of a pile's sidebar row; the rest is the pile id. */
-export const PILE_NAV_PREFIX = 'pile:'
-
 /** The id prefix of a `pile:` entry's row; the rest is the pile's name. */
 export const PILE_NAME_NAV_PREFIX = 'pile-name:'
 
@@ -369,11 +363,6 @@ export function pileStatus(count: number): NavItemStatus | undefined {
   return count > 0
     ? { tone: 'info', label: t('piles.itemCount', { n: count }, count), count }
     : undefined
-}
-
-/** The sidebar row id of a pile, shared by the sidebar and the flyout. */
-export function pileNavId(id: string): string {
-  return `${PILE_NAV_PREFIX}${id}`
 }
 
 /**

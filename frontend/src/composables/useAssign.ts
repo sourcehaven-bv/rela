@@ -4,7 +4,6 @@ import { postAssign, type AssignSource } from '@/api/assign'
 import { getErrorMessage } from '@/api/errors'
 import { t } from '@/i18n'
 import { assignTargetForHref, hasAssignDrag, readAssignDrag } from '@/utils/assignDrag'
-import type { NavDropAttrs } from '@/components/common/sidebarNav'
 
 /**
  * Applies an `assign:` block to entities and reports the outcome in one
@@ -32,6 +31,12 @@ export function useAssign() {
   }
   return { assign }
 }
+
+/**
+ * Drag-and-drop handlers for a link entry, by its href: the entries whose list
+ * or page has an `assign:` accept dropped rows (TKT-FGE5G3I).
+ */
+export type NavDropAttrs = (href: string) => Record<string, unknown> | undefined
 
 /**
  * Drop handlers for sidebar entries whose list or page has an `assign:`. The

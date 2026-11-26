@@ -10,8 +10,8 @@ import { createPinia, setActivePinia } from 'pinia'
 import { provideMessages, useMessages } from 'rela-components/composables/useMessages'
 import { localeMessages } from 'rela-components/composables/localeMessages'
 import RlThemeToggle from 'rela-components/components/layout/RlThemeToggle.vue'
-import { pilesNavGroup, toNavGroups } from '@/components/common/sidebarNav'
-import SidebarFooter from '@/components/common/SidebarFooter.vue'
+import { pilesNavGroup, toNavGroups } from '@/components/sidebar/sidebarNav'
+import SidebarFooter from '@/components/sidebar/SidebarFooter.vue'
 import LanguageSetting from '@/components/settings/LanguageSetting.vue'
 import {
   LANGUAGE_STORAGE_KEY,

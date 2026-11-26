@@ -22,12 +22,12 @@ import AccountMenu from './AccountMenu.vue'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { spaceOf, stripSpace, useSpaceStore, withSpace } from '@/stores/space'
 import { usePageStore } from '@/stores/pages'
+import { PILE_NAV_PREFIX } from '@/composables/pileNav'
 import {
   activeNavId,
   expandEntityEntries,
   expandGeneratedItems,
   PILE_NAME_NAV_PREFIX,
-  PILE_NAV_PREFIX,
   PILES_GROUP_ID,
   declaredPilesNavGroup,
   pileNamed,
