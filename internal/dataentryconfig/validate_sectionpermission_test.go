@@ -29,7 +29,7 @@ func TestSectionPermission_Config(t *testing.T) {
 			name: "view section loads",
 			cfg: &Config{Views: map[string]ViewConfig{"v": {
 				Entry:    ViewEntry{Type: "ticket"},
-				Sections: []ViewSection{{Heading: "Staff", Source: "entry", Display: "content", SectionVisibility: SectionVisibility{Permission: "staff.manage"}}},
+				Sections: []ViewSection{{Heading: "Staff", Source: "entry", Display: "content", SectionPresentation: SectionPresentation{SectionVisibility: SectionVisibility{Permission: "staff.manage"}}}},
 			}}},
 		},
 		{
@@ -39,7 +39,7 @@ func TestSectionPermission_Config(t *testing.T) {
 				Fields:     []FormField{{Property: "title"}},
 				SidePanel: &SidePanelConfig{
 					Traverse: []ViewTraverse{{From: "entry", Follow: "belongs-to", CollectAs: "cats"}},
-					Sections: []ViewSection{{Heading: "Cats", Source: "cats", Display: "cards", SectionVisibility: SectionVisibility{Permission: "staff.manage"}}},
+					Sections: []ViewSection{{Heading: "Cats", Source: "cats", Display: "cards", SectionPresentation: SectionPresentation{SectionVisibility: SectionVisibility{Permission: "staff.manage"}}}},
 				},
 			}}},
 			want: "side_panel section[0] sets permission",

@@ -124,6 +124,15 @@ var validSectionDisplayModes = map[string]bool{
 	DisplayRelated: true,
 }
 
+// rowDisplayModes are the section displays whose rows show an entity's type
+// label or ID, the only ones where `hide_type` and `hide_id` mean something.
+var rowDisplayModes = map[string]bool{
+	"list":        true,
+	"cards":       true,
+	"content":     true,
+	DisplayNested: true,
+}
+
 // Valid render modes for a view section and its fields (TKT-HOIX1). Empty is
 // also accepted everywhere and means "inherit", resolving to RenderDisplay.
 var validSectionRenderModes = map[string]bool{
@@ -419,8 +428,7 @@ func validateSectionHideIdentity(viewID string, i int, s ViewSection) []string {
 	if !s.HideType && !s.HideID {
 		return nil
 	}
-	rowDisplay := s.Display == "list" || s.Display == "cards" || s.Display == "content" || s.Display == DisplayNested
-	if s.Source == "entry" || !rowDisplay {
+	if s.Source == "entry" || !rowDisplayModes[s.Display] {
 		return []string{fmt.Sprintf(
 			"view %q: section[%d] sets hide_type or hide_id, which only apply to a "+
 				"list, cards, content or nested section over a collection", viewID, i)}

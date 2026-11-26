@@ -66,11 +66,12 @@ describe('MentionedByPanel', () => {
     expect(wrapper.text()).toContain('POL-1@draft')
   })
 
-  it('leaves the address off the rows with hideId, unless the row has no title', async () => {
+  it('leaves the address off the rows with hideId, but keeps the face and untitled IDs', async () => {
     getMentionedByMock.mockResolvedValue({
       items: [
         { id: 'TKT-1', type: 'ticket', title: 'A ticket' },
         { id: 'TKT-2', type: 'ticket', title: '' },
+        { id: 'POL-1', type: 'policy', title: 'Policy', face: 'draft' },
       ],
     })
     const wrapper = mount(MentionedByPanel, {
@@ -78,8 +79,8 @@ describe('MentionedByPanel', () => {
       global: { stubs: { RouterLink: RouterLinkStub } },
     })
     await flushPromises()
-    const ids = wrapper.findAll('li').map((li) => li.find('.entity-id').exists())
-    expect(ids).toEqual([false, true])
+    const ids = wrapper.findAll('li').map((li) => li.findAll('.entity-id').map((e) => e.text()))
+    expect(ids).toEqual([[], ['TKT-2'], ['@draft']])
   })
 
   it('appends the next page on Show more', async () => {

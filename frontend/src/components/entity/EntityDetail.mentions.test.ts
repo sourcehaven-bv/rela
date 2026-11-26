@@ -7,6 +7,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import EntityDetail from './EntityDetail.vue'
+import MentionedByPanel from './MentionedByPanel.vue'
 import { useSchemaStore } from '@/stores/schema'
 import type { Entity } from '@/types'
 import type { ViewResponse, ViewSection } from '@/api'
@@ -143,5 +144,10 @@ describe('EntityDetail backlinks through a view', () => {
     expect(shown.find('mentioned-by-panel-stub').exists()).toBe(true)
     const hidden = await render({ hideMentionedByPanel: true })
     expect(hidden.find('mentioned-by-panel-stub').exists()).toBe(false)
+  })
+
+  it('passes hideMentionedByID to the panel', async () => {
+    const wrapper = await render({ hideMentionedByID: true })
+    expect(wrapper.findComponent(MentionedByPanel).props('hideId')).toBe(true)
   })
 })

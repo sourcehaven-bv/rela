@@ -2498,14 +2498,8 @@ const (
 
 // ViewSection defines a section within a view.
 //
-// The plimsoll directive is the format-mirror exception documented on
-// [Config]: each exported field is one documented YAML key of a section.
-// `hide_type` and `hide_id` raised it from 20 to 22.
-//
 // Render sets the default render mode for this section's fields; an
 // individual field's own Render overrides it. Empty means RenderDisplay.
-//
-//plimsoll:max-fields=22
 type ViewSection struct {
 	Heading      string             `yaml:"heading,omitempty" json:"heading,omitempty"`
 	Source       string             `yaml:"source" json:"source"`
@@ -2517,18 +2511,9 @@ type ViewSection struct {
 	EmptyMessage string             `yaml:"empty_message,omitempty" json:"empty_message,omitempty"`
 	Link         string             `yaml:"link,omitempty" json:"link,omitempty"`
 
-	// HideType and HideID leave the entity type label and the entity ID off
-	// the rows of a `list`, `cards` or `content` section; `nested` rows show
-	// no type, so only HideID applies there. False keeps the label and ID,
-	// so no existing project changes. Presentation only, not access control:
-	// the type and ID stay in the link and in the API. A row with no title
-	// still shows its ID, so the row stays identifiable.
-	HideType bool `yaml:"hide_type,omitempty" json:"hide_type,omitempty"`
-	HideID   bool `yaml:"hide_id,omitempty" json:"hide_id,omitempty"`
-
-	// SectionVisibility holds the keys that leave the section out of the page
-	// for some readers: hide_empty and permission.
-	SectionVisibility `yaml:",inline"`
+	// SectionPresentation holds the keys that leave the section, or parts of
+	// its rows, out of the page: hide_empty, permission, hide_type and hide_id.
+	SectionPresentation `yaml:",inline"`
 
 	// Children names a SECOND collection to nest under each row of Source,
 	// making this section two levels deep. Required by `display: nested` and
@@ -2618,6 +2603,33 @@ type ViewSection struct {
 	Sort       []SortSpec `yaml:"sort,omitempty" json:"sort,omitempty"`
 	ParentSort []SortSpec `yaml:"parent_sort,omitempty" json:"parent_sort,omitempty"`
 	ChildSort  []SortSpec `yaml:"child_sort,omitempty" json:"child_sort,omitempty"`
+}
+
+// SectionPresentation groups the inline parts of a [ViewSection] that leave
+// things out of the page. Both parts are embedded inline, so their keys sit
+// directly on the section in YAML and JSON.
+type SectionPresentation struct {
+	// SectionVisibility holds the keys that leave the section out of the page
+	// for some readers: hide_empty and permission.
+	SectionVisibility `yaml:",inline"`
+
+	// SectionRowParts holds the keys that leave parts off each row:
+	// hide_type and hide_id.
+	SectionRowParts `yaml:",inline"`
+}
+
+// SectionRowParts is the part of a [ViewSection] that leaves the entity type
+// label and the entity ID off its rows. It is embedded inline, so its keys sit
+// directly on the section in YAML and JSON.
+//
+// HideType applies to `list`, `cards` and `content` rows; HideID also to
+// `nested` rows, which show no type. False keeps the label and ID, so no
+// existing project changes. Presentation only, not access control: the type
+// and ID stay in the link and in the API. A row with no title still shows its
+// ID, so the row stays identifiable.
+type SectionRowParts struct {
+	HideType bool `yaml:"hide_type,omitempty" json:"hide_type,omitempty"`
+	HideID   bool `yaml:"hide_id,omitempty" json:"hide_id,omitempty"`
 }
 
 // SectionVisibility is the part of a [ViewSection] that decides whether the

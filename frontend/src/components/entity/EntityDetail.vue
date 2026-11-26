@@ -3577,7 +3577,6 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           :entity-type="entityType"
           :entity-id="entityRef(entry)"
           :revision="panelRevision"
-          :hide-id="viewData.hideMentionedByID"
         />
 
         <!-- Flow runs on this entity (TKT-ZAXRXND). Self-gating: renders
@@ -3597,6 +3596,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           :entity-type="entityType"
           :entity-id="entityRef(entry)"
           :revision="panelRevision"
+          :hide-id="viewData.hideMentionedByID"
         />
 
         <!-- Audit changes (TKT-X1ZFO04). Self-gating: renders nothing unless

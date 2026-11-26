@@ -189,7 +189,7 @@ func TestViewMentions_PanelSwitch(t *testing.T) {
 
 func TestViewMentions_HideIdentityPassthrough(t *testing.T) {
 	app, d := mentionedByApp(t, "ticket", "feature")
-	app.Cfg().Views["fv"] = backlinksView("", ViewSection{Display: "list", HideType: true, HideID: true})
+	app.Cfg().Views["fv"] = backlinksView("", ViewSection{Display: "list", SectionPresentation: dataentryconfig.SectionPresentation{SectionRowParts: dataentryconfig.SectionRowParts{HideType: true, HideID: true}}})
 	got := featureView(t, app, d)
 	if got.HideMentionedByID {
 		t.Error("hideMentionedByID set without entity_views.feature.mentioned_by_hide_id")

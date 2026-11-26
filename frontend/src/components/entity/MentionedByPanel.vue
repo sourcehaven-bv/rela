@@ -80,6 +80,13 @@ function sourceAddress(s: MentionSource): string {
   return s.face ? `${s.id}@${s.face}` : s.id
 }
 
+// What the row shows after its title: the full address, or with `hideId` only
+// the face, so two faces of one entity stay apart. Empty shows nothing.
+function shownAddress(s: MentionSource): string {
+  if (!props.hideId || !s.title?.trim()) return sourceAddress(s)
+  return s.face ? `@${s.face}` : ''
+}
+
 function sourceTarget(s: MentionSource): RouteLocationRaw {
   const path = entityDetailHref({ type: s.type, id: sourceAddress(s) })
   return worldParam.value ? { path, query: { world: worldParam.value } } : path
@@ -117,7 +124,7 @@ onBeforeUnmount(() => controller?.abort())
       <li v-for="s in items" :key="sourceAddress(s)" :data-entity-id="s.id">
         <RouterLink :to="sourceTarget(s)" class="mention-link">
           <span class="entity-title">{{ s.title }}</span>
-          <span v-if="!hideId || !s.title?.trim()" class="entity-id">{{ sourceAddress(s) }}</span>
+          <span v-if="shownAddress(s)" class="entity-id">{{ shownAddress(s) }}</span>
         </RouterLink>
       </li>
     </ul>
