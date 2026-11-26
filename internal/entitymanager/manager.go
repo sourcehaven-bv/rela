@@ -2385,7 +2385,7 @@ func (m *Manager) authorizeRename(
 	ctx context.Context, id string, family []*entity.Entity, authorized familyAuthorization,
 ) error {
 	for _, e := range family {
-		if len(declaredFaces(m.deps.Meta, e.Type)) == 0 {
+		if len(metamodel.FacesOf(m.deps.Meta, e.Type)) == 0 {
 			if err := m.authorizeFamily(ctx, acl.OpRename, id, []*entity.Entity{e}, authorized); err != nil {
 				return err
 			}

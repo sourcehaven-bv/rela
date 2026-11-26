@@ -8,6 +8,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/feed"
 	"github.com/Sourcehaven-BV/rela/internal/htmlmd"
+	"github.com/Sourcehaven-BV/rela/internal/httpscheme"
 	"github.com/Sourcehaven-BV/rela/internal/ingest"
 )
 
@@ -110,7 +111,7 @@ func (s *itemSource) link(raw string) string {
 	if s.base != nil {
 		u = s.base.ResolveReference(u)
 	}
-	if (u.Scheme != "http" && u.Scheme != "https") || !plainHost(u) {
+	if !httpscheme.IsHTTP(u.Scheme) || !plainHost(u) {
 		return ""
 	}
 	// The path, query and fragment keep the publisher's bytes where they

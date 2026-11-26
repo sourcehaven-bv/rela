@@ -2,7 +2,7 @@
 import { ref, watch, computed, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
-import { isCancelledFetch } from '@/composables/usePageData'
+import { isCancelledFetch } from '@/api/errors'
 import EntityTargetSelect from '@/components/common/EntityTargetSelect.vue'
 import Badge from '@/components/ui/Badge.vue'
 import RlButton from 'rela-components/components/common/RlButton.vue'

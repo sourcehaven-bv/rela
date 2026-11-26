@@ -309,7 +309,7 @@ func (s *Store) CreatePile(ctx context.Context, p piles.Pile, refs []entity.Ref,
 				return false, piles.ErrLimit
 			}
 		}
-		refs = firstUnique(refs, maxItems)
+		refs = piles.FirstUnique(refs, maxItems)
 		items := make([]storedItem, len(refs))
 		for i, r := range refs {
 			items[i] = storedItem{ID: r.ID, Face: string(r.Face), Added: p.Created}
@@ -367,7 +367,7 @@ func (s *Store) AddItems(
 			present[it.ref()] = true
 		}
 		var fresh, bumped []storedItem
-		for _, r := range firstUnique(refs, opts.MaxItems) {
+		for _, r := range piles.FirstUnique(refs, opts.MaxItems) {
 			it := storedItem{ID: r.ID, Face: string(r.Face), Added: opts.Now, Actor: opts.Actor, Reason: opts.Reason}
 			switch {
 			case !present[r]:
@@ -643,21 +643,4 @@ func (s *Store) DeleteFace(ctx context.Context, id string, face entity.Face) err
 		}
 		return changed, nil
 	})
-}
-
-// firstUnique collapses duplicate refs, keeping the first, and keeps at most
-// limit of them.
-func firstUnique(refs []entity.Ref, limit int) []entity.Ref {
-	seen := make(map[entity.Ref]bool, len(refs))
-	out := make([]entity.Ref, 0, min(len(refs), limit))
-	for _, r := range refs {
-		if len(out) == limit {
-			break
-		}
-		if !seen[r] {
-			seen[r] = true
-			out = append(out, r)
-		}
-	}
-	return out
 }

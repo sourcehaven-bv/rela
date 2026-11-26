@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // Declaration order of faces and worlds (TKT-7IZHP0 design §3.1).
@@ -42,6 +44,22 @@ func FaceOrderOf(m *Metamodel, entityType string) []string {
 		return slices.Clone(order)
 	}
 	return sortedNames(m.Entities[entityType].Faces)
+}
+
+// FacesOf returns the faces entityType declares, in declaration order, as
+// [entity.Face] values. A faceless or unknown type returns nil.
+//
+// Nil: accepted, returns nil.
+func FacesOf(m *Metamodel, entityType string) []entity.Face {
+	names := FaceOrderOf(m, entityType)
+	if len(names) == 0 {
+		return nil
+	}
+	faces := make([]entity.Face, len(names))
+	for i, n := range names {
+		faces[i] = entity.Face(n)
+	}
+	return faces
 }
 
 // WorldOrderOf returns m's declared world names in declaration order, as a

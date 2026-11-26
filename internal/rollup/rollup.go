@@ -370,7 +370,7 @@ func wherePredicate(
 		}
 		pred.Value = strconv.FormatInt(n, 10) // "+05" names the stored 5
 	case metamodel.StringShaped(meta, rp):
-		if values := enumValues(meta, rp); values != nil && !slices.Contains(values, value) {
+		if values := metamodel.EnumValues(rp, meta); len(values) > 0 && !slices.Contains(values, value) {
 			return pred, fmt.Sprintf("%q is not one of %s", value, strings.Join(values, ", "))
 		}
 		pred.Scalar = true
@@ -378,17 +378,6 @@ func wherePredicate(
 		return pred, fmt.Sprintf("type %q cannot be compared in a where", rp.Type)
 	}
 	return pred, ""
-}
-
-// enumValues is the value set of an enum-shaped property, or nil.
-func enumValues(meta *metamodel.Metamodel, pd metamodel.PropertyDef) []string {
-	if len(pd.Values) > 0 {
-		return pd.Values
-	}
-	if ct, ok := meta.Types[pd.Type]; ok && len(ct.Values) > 0 {
-		return ct.Values
-	}
-	return nil
 }
 
 // sameType reports why a picked property's type differs from the roll-up's

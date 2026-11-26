@@ -399,7 +399,7 @@ func TestMCPServices_WatchSchemaFiresOnRealEdit(t *testing.T) {
 
 // TestMCPServices_ReloadAfterCloseIsRefused pins the shutdown race.
 //
-// storage.Watcher.Stop does not wait for an in-flight OnChange, so a schema
+// fswatch.Watcher.Stop does not wait for an in-flight OnChange, so a schema
 // event can be mid-flight when Close begins. Without the closed check, that
 // callback assembled a whole new generation — job queue, mail worker, GC sweep
 // — against a store Close had already torn down, and nothing would ever stop

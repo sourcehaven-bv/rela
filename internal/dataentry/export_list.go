@@ -550,7 +550,7 @@ func columnCell(
 	meta *metamodel.Metamodel, e *entityPkg.Entity, c dataentryconfig.ListColumn, rels listRelationTitles,
 ) string {
 	if c.Face {
-		return faceLabel(meta, e)
+		return metamodel.FaceLabel(meta, e.Type, string(e.Face))
 	}
 	if c.Relation != "" {
 		if byCol := rels[e.ID]; byCol != nil {
@@ -582,20 +582,6 @@ func columnLabel(c dataentryconfig.ListColumn) string {
 		return c.Relation
 	}
 	return c.Property
-}
-
-// faceLabel is the declared label of the face e was served in, falling back
-// to the face name. An entity outside any face has none.
-func faceLabel(meta *metamodel.Metamodel, e *entityPkg.Entity) string {
-	if e.Face == "" {
-		return ""
-	}
-	if def, ok := meta.Entities[e.Type]; ok {
-		if f, ok := def.Faces[string(e.Face)]; ok && f.Label != "" {
-			return f.Label
-		}
-	}
-	return string(e.Face)
 }
 
 // listCondition resolves the effective list's compiled `condition:`, or nil

@@ -298,3 +298,18 @@ export function shouldDropHeldContent(err: unknown): boolean {
   if (!(err instanceof ApiError)) return false
   return err.status === 401 || err.status === 403 || err.status === 404
 }
+
+/**
+ * isCancelledFetch returns true if the given error represents a fetch
+ * cancelled either by our AbortController or by the browser navigating
+ * away. Suppresses console noise from both axios CancelToken and modern
+ * AbortController paths.
+ */
+export function isCancelledFetch(err: unknown): boolean {
+  if (err == null) return false
+  if (err instanceof ApiError) return err.kind === 'cancelled'
+  const e = err as { code?: string; name?: string; message?: string }
+  if (e.code === 'ECONNABORTED' || e.code === 'ERR_CANCELED') return true
+  if (e.name === 'AbortError' || e.name === 'CanceledError') return true
+  return false
+}

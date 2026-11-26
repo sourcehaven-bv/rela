@@ -5,7 +5,7 @@ import { RouterLink, type RouteLocationRaw } from 'vue-router'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import { getMentionedBy, type MentionSource } from '@/api/mentions'
 import { getErrorMessage, shouldDropHeldContent } from '@/api/errors'
-import { isCancelledFetch } from '@/composables/usePageData'
+import { isCancelledFetch } from '@/api/errors'
 import { useWorld } from '@/composables/useWorld'
 import { entityDetailHref } from '@/utils/entityRoute'
 

@@ -417,7 +417,7 @@ func revivedOwningEdges(
 				if !metamodel.IsOwning(m.deps.Meta, rel.Type) || (inRestore[rel.From] && inRestore[rel.To]) {
 					continue
 				}
-				if _, stillMarked := marked[otherEndOf(rel, id)]; stillMarked {
+				if _, stillMarked := marked[rel.OtherEnd(id)]; stillMarked {
 					continue // stays hidden, and follows the other end
 				}
 				out = append(out, rel.Identity())
@@ -425,12 +425,4 @@ func revivedOwningEdges(
 		}
 	}
 	return out, nil
-}
-
-// otherEndOf returns the endpoint of rel that is not id.
-func otherEndOf(rel *entity.Relation, id string) string {
-	if rel.From == id {
-		return rel.To
-	}
-	return rel.From
 }

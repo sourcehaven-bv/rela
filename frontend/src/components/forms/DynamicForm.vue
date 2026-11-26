@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, shallowRef, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { usePageTitle } from '@/composables/useDocumentTitle'
 import {
   RouterLink,
@@ -12,7 +12,7 @@ import { I18nT, useI18n } from 'vue-i18n'
 import { planPrefillRouting } from './prefillRouting'
 import { dependentsOf, sameIds } from './scopedRelations'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
-import { isCancelledFetch } from '@/composables/usePageData'
+import { isCancelledFetch } from '@/api/errors'
 import { readReturnTo } from '@/utils/returnPath'
 import { pageTabPath, readFromPage } from '@/utils/pageContext'
 import { useWorld } from '@/composables/useWorld'
@@ -49,7 +49,7 @@ import type {
   TaskItemConversionOffer,
 } from '@/types'
 import { getTemplates, createRelation, dryRunCreateEntity, ApiError, getErrorMessage } from '@/api'
-import { uploadAttachment, attachmentErrorReason } from '@/api/attachments'
+import { useStagedFiles } from './useStagedFiles'
 import { workspaceReadOnly } from '@/api/workspaceReadOnly'
 import type { RelationCardState } from './RelationCards.vue'
 import type { RelationPickerIncomingState } from './RelationPicker.vue'
@@ -231,25 +231,6 @@ const relationAffordances = ref<Record<string, RelationAffordance>>({})
 // Per-`file`-property attachment metadata from the loaded entity, passed
 // to the file widget so it can show the current file + drive upload/remove.
 const attachments = ref<Record<string, AttachmentInfo[]>>({})
-// TKT-7K3BJF: files picked in CREATE mode, not yet uploaded. An attachment
-// cannot be written before the entity row exists (every store backend returns
-// ErrNotFound), and there is no id-reservation primitive, so the only possible
-// order is create-then-attach. These are uploaded in handleSubmit once the
-// server returns an id.
-//
-// They are deliberately NOT part of `formData`: `payload.properties` is built
-// from it, so a File (or a placeholder path) sitting there would be POSTed as
-// the file property's value at create. The server stamps that property itself
-// once the bytes land.
-// shallowRef, not ref (RR-C1MI2N): a deep ref proxies its contents, and
-// whether a File escapes that depends on the environment — happy-dom's File
-// reports `[object Object]` and IS proxied (identity not preserved), while a
-// spec File reports `File` and is left alone. That divergence would mean the
-// unit tests exercise proxies while production exercises raw Files, silently
-// changing identity comparisons and the brand checks in URL.createObjectURL /
-// FormData.append. Nothing here needs deep reactivity: updateStagedFiles
-// replaces the whole object on every change.
-const stagedFiles = shallowRef<Record<string, File[]>>({})
 
 // Set once a create has SUCCEEDED, so a later submit from the same mounted
 // form cannot mint a second entity (RR-4QO887). The happy path navigates away
@@ -258,28 +239,6 @@ const stagedFiles = shallowRef<Record<string, File[]>>({})
 // `saving` guard only covers an in-flight submit; this covers a completed one.
 const createdEntityId = ref<string | null>(null)
 
-function updateStagedFiles(property: string, files: File[]) {
-  if (files.length) stagedFiles.value = { ...stagedFiles.value, [property]: files }
-  else {
-    const next = { ...stagedFiles.value }
-    delete next[property]
-    stagedFiles.value = next
-  }
-  // Clear a standing validation error once a file is staged, mirroring what
-  // updateField does as the user edits an ordinary field (BUG-L1DHC5) — else a
-  // "This field is required" flag would persist after the user has addressed
-  // it. A full re-check still runs on submit.
-  if (files.length && errors.value[property]) {
-    const next = { ...errors.value }
-    delete next[property]
-    errors.value = next
-  }
-  checkDirty()
-}
-
-function hasStagedFiles(): boolean {
-  return Object.values(stagedFiles.value).some((list) => list.length > 0)
-}
 // Per-state-machine-field transition verdicts from the loaded entity
 // (`_transitions`, TKT-3G93B8). Present only for machine-typed fields; drives
 // the StatusControl (only-allowed moves) instead of the plain enum select. A
@@ -479,6 +438,12 @@ const showBodyEditor = computed(
 // An embedded wizard keeps its step in memory: `?step=` is a single global key
 // that the host form already owns (see FormWizardOptions.syncUrl).
 const wizard = useFormWizard(formConfig, conditionBindings, { syncUrl: !props.embedded })
+const { stagedFiles, updateStagedFiles, hasStagedFiles, uploadStagedFiles, stagedFailureMessage } = useStagedFiles({
+  errors,
+  onChange: () => checkDirty(),
+  isSkipped: (property) =>
+    wizard.managedProperties.value.has(property) && !wizard.activeProperties.value.has(property),
+})
 
 // Field lookup by property, for reading per-field config (clear_when_hidden)
 // without re-scanning allFields at every call site.
@@ -728,51 +693,6 @@ async function loadEntity(force = false) {
     uiStore.error(t('form.loadFailed'))
     console.error(err)
   }
-}
-
-// uploadStagedFiles pushes every create-mode staged file to the attachment
-// endpoint against the just-created row's address (face included, so a file
-// lands on the face that was created), and returns the failures.
-//
-// Continue-on-error (RR-Z7C3CY): every file is attempted even after one is
-// rejected, so the user is told about all of them at once rather than
-// discovering the rest on a later save. Sequential rather than parallel: the
-// server serializes attachment writes on its write mutex anyway, and
-// WriteAttachment's capacity check is read-then-write, which concurrent
-// uploads to one property would race.
-async function uploadStagedFiles(
-  entityType: string,
-  entityId: string
-): Promise<{ file: string; message: string }[]> {
-  const failures: { file: string; message: string }[] = []
-  // RR-OI6P51: apply the same wizard pruning the property payload gets
-  // (pruneWizardHidden). Without it, staging a file on a step the user then
-  // hides uploads the bytes anyway and the SERVER stamps the property —
-  // persisting a revealed-then-hidden branch, which is exactly what TKT-CHLAJ
-  // prevents for ordinary properties.
-  const active = wizard.activeProperties.value
-  const managed = wizard.managedProperties.value
-  for (const [property, files] of Object.entries(stagedFiles.value)) {
-    if (managed.has(property) && !active.has(property)) continue
-    for (const file of files) {
-      try {
-        await uploadAttachment(entityType, entityId, property, file)
-      } catch (err) {
-        failures.push({ file: file.name, message: attachmentErrorReason(err) })
-      }
-    }
-  }
-  return failures
-}
-
-// One message naming every file that failed, so "which of my files made it?"
-// is answerable without comparing lists by hand.
-function stagedFailureMessage(failures: { file: string; message: string }[]): string {
-  const detail = failures.map((f) => `${f.file} (${f.message})`).join(', ')
-  // Names the files AND says where to fix it: the staged copies are gone once
-  // this form unmounts (RR-4QO887), so "re-attach on the entity" is the only
-  // honest instruction.
-  return t('form.attachFailed', { n: failures.length, detail }, failures.length)
 }
 
 // onAttachmentChanged fires after a file widget uploads or removes an

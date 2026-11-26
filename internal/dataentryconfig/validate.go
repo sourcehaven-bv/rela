@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/httpscheme"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
@@ -3461,7 +3462,7 @@ func validatePlantUMLURL(raw string) []string {
 	switch {
 	case err != nil:
 		return []string{fmt.Sprintf("app.plantuml_server_url: not a valid URL: %v", err)}
-	case u.Scheme != "http" && u.Scheme != "https":
+	case !httpscheme.IsHTTP(u.Scheme):
 		return []string{fmt.Sprintf("app.plantuml_server_url: scheme must be http or https, got %q", u.Scheme)}
 	case u.Host == "":
 		return []string{"app.plantuml_server_url: must include a host"}

@@ -96,7 +96,6 @@ export type FlyoutClickHandler = (item: SidebarItem, id: string, event: MouseEve
 /** Resolves an entry's `status_key` to its current marker, if it has one. */
 export type NavStatusLookup = (key: string | undefined) => NavItemStatus | undefined
 
-
 function toNavItem(
   item: SidebarItem,
   routerLink: Component,

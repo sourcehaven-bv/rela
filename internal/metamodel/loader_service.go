@@ -6,6 +6,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/fswatch"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -147,8 +148,8 @@ func refuseAutomations(path string, data []byte) error {
 func (l *FSLoader) Subscribe(_ context.Context, onChange func()) (func(), error) {
 	files := l.resolveFiles()
 
-	var watcher *storage.Watcher
-	w, err := storage.NewWatcher(storage.WatchConfig{
+	var watcher *fswatch.Watcher
+	w, err := fswatch.New(fswatch.Config{
 		Files:      files,
 		Extensions: []string{".yaml", ".yml"},
 		Debounce:   200 * time.Millisecond,
@@ -156,7 +157,7 @@ func (l *FSLoader) Subscribe(_ context.Context, onChange func()) (func(), error)
 		// coverage-ignore-start: os-fs-event: OnChange fires only on a real debounced file-watcher event, not
 		// reachable deterministically in
 		// a unit test
-		OnChange: func(_ []storage.ChangeEvent) {
+		OnChange: func(_ []fswatch.Event) {
 			onChange()
 			// Include set may have changed — add any new files we
 			// aren't already watching. Removal is tolerated silently;
@@ -168,7 +169,7 @@ func (l *FSLoader) Subscribe(_ context.Context, onChange func()) (func(), error)
 		},
 		// coverage-ignore-end
 	})
-	if err != nil { // coverage-ignore: defensive: storage.NewWatcher does not fail for a valid config over existing
+	if err != nil { // coverage-ignore: defensive: fswatch.New does not fail for a valid config over existing
 		// files; the failure path is not reachable in tests
 		return nil, err
 	}

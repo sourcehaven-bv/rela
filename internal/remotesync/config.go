@@ -51,6 +51,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/httpscheme"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
@@ -635,7 +636,7 @@ func checkURL(raw string, allowInsecure bool) error {
 	switch {
 	case err != nil:
 		return errors.New("does not parse")
-	case u.Scheme != "http" && u.Scheme != "https":
+	case !httpscheme.IsHTTP(u.Scheme):
 		return errors.New("must start with https:// or http://")
 	case u.Hostname() == "":
 		return errors.New("has no host")

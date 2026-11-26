@@ -35,6 +35,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/httpscheme"
 	"github.com/Sourcehaven-BV/rela/internal/ingest"
 	"github.com/Sourcehaven-BV/rela/internal/ingestspec"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -206,7 +207,7 @@ func checkURL(raw string) error {
 	if err != nil {
 		return errors.New("url does not parse")
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
+	if !httpscheme.IsHTTP(u.Scheme) {
 		return errors.New("url must be http or https")
 	}
 	if u.Hostname() == "" {

@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getGitStatus, syncGit, type GitStatus, type GitSyncResponse } from '@/api'
 import { getErrorMessage } from '@/api/errors'
-import { isCancelledFetch } from '@/composables/usePageData'
+import { isCancelledFetch } from '@/api/errors'
 import { t } from '@/i18n'
 import { useSchemaStore } from './schema'
 

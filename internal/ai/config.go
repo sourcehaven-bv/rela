@@ -21,6 +21,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/httpscheme"
 	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
 
@@ -117,7 +118,7 @@ func (c *Config) Validate() error {
 	if err != nil {
 		return fmt.Errorf("base_url is not a valid URL: %w", err)
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
+	if !httpscheme.IsHTTP(u.Scheme) {
 		return fmt.Errorf("base_url must use http:// or https://, got %q", c.BaseURL)
 	}
 	if u.User != nil {
