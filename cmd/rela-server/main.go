@@ -785,7 +785,8 @@ func buildCommandAuthorizer(f *serverFlags, svc *appbuild.Services) (commandAuth
 		return dataentry.TenantModeCommandAuthorizer(), nil
 	}
 	authz, err := dataentry.SelectCommandAuthorizer(
-		svc.ACL(), svc.ACLDeclarative(), dataentry.CommandBind{Loopback: isLoopbackHost(f.bind), AllowUnauthenticated: f.allowUnauthCommands},
+		svc.ACL(), svc.ACLDeclarative(),
+		dataentry.CommandBind{Loopback: isLoopbackHost(f.bind), AllowUnauthenticated: f.allowUnauthCommands},
 		dataentry.CommandAuthNotifier{
 			OnOverride: func() { warnUnauthenticatedCommands(f.bind) },
 			OnRefuse:   func() { warnCommandsRefused(f.bind) },
