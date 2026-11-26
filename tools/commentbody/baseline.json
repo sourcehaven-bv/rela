@@ -7,7 +7,6 @@
   "cmd/rela-desktop/mainwindow.go": 3,
   "cmd/rela-desktop/menu.go": 5,
   "cmd/rela-desktop/notify.go": 4,
-  "cmd/rela-desktop/preferences.go": 6,
   "cmd/rela-desktop/registry.go": 2,
   "cmd/rela-desktop/settings.go": 1,
   "cmd/rela-desktop/window.go": 6,
