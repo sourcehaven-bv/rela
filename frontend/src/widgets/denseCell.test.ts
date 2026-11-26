@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { EntityType } from '@/types'
 import { defaultRegistry } from '@/widgets/registry'
 import { createDenseCellResolver } from './denseCell'
-import { formatAmount } from './format'
+import { formatAmount } from '@/utils/format'
 
 const deal = {
   label: 'Deal',

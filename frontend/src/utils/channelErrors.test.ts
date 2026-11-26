@@ -2,13 +2,13 @@ import { afterEach, describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { ApiError } from '@/api/errors'
-import { CHANNEL_ERROR_RULES, classifyChannelError, problemType } from './channelErrors'
+import { CHANNEL_ERROR_RULES, classifyChannelError, problemType } from '@/utils/channelErrors'
 import { resetLanguageState } from '@/i18n/locale'
 
 // The refusal types the channel service declares. Every one needs a rule,
 // so a type the server gains cannot fall through to "toast and do nothing"
 // unnoticed (TKT-91BK6F AC 14). The message-file types sit in files.go.
-const REALTIME_GO = resolve(__dirname, '../../../../../internal/realtime')
+const REALTIME_GO = resolve(__dirname, '../../../internal/realtime')
 const TYPE_FILES = ['errors.go', 'files.go']
 
 function goTypes(): string[] {

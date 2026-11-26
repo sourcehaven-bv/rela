@@ -13,7 +13,7 @@ import PageLayout from '@/components/common/PageLayout.vue'
 import PageTitle from '@/components/common/PageTitle.vue'
 import { listRemotes, type RemoteSummary } from '@/api/remotes'
 import { getErrorMessage, shouldDropHeldContent } from '@/api/errors'
-import { isCancelledFetch } from '@/composables/usePageData'
+import { isCancelledFetch } from '@/api/errors'
 import { useSpaceStore } from '@/stores/space'
 import { formatInstant } from '@/components/flows/flowView'
 import {

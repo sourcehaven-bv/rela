@@ -4,7 +4,6 @@ import { postAssign, type AssignSource } from '@/api/assign'
 import { getErrorMessage } from '@/api/errors'
 import { t } from '@/i18n'
 import { assignTargetForHref, hasAssignDrag, readAssignDrag } from '@/utils/assignDrag'
-import type { NavDropAttrs } from '@/components/common/sidebarNav'
 
 /**
  * Applies an `assign:` block to entities and reports the outcome in one
@@ -38,6 +37,12 @@ export function useAssign() {
  * entry accepts a drag only while it carries rows; the item type is checked on
  * drop, since a drag's payload is unreadable before it.
  */
+/**
+ * Drag-and-drop handlers for a link entry, by its href: the entries whose list
+ * or page has an `assign:` accept dropped rows (TKT-FGE5G3I).
+ */
+export type NavDropAttrs = (href: string) => Record<string, unknown> | undefined
+
 export function useAssignDrop(): { dropAttrs: NavDropAttrs; dropOver: Ref<string | null> } {
   const schemaStore = useSchemaStore()
   const { assign } = useAssign()

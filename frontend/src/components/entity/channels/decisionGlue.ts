@@ -1,5 +1,5 @@
 import { DECISIONS_BLOCKED_KEY } from 'rela-components/components/channel/channelFields'
-import { classifyChannelError } from './channelErrors'
+import { classifyChannelError } from '@/utils/channelErrors'
 
 /**
  * The glue between useSessionDecisions and a surface that shows its

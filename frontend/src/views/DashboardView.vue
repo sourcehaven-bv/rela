@@ -24,7 +24,7 @@ import {
   tableRows,
   type BreakdownItem,
   type TableRow,
-} from '@/utils/dashboardCards'
+} from '@/widgets/dashboardCards'
 
 import type {
   Entity,
