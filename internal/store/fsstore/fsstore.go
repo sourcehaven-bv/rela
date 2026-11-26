@@ -33,6 +33,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/fswatch"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
@@ -278,7 +279,7 @@ type FSStore struct {
 	nextSubID   int
 
 	// fs watcher (external-change detection). nil when not started.
-	extWatcher *storage.Watcher
+	extWatcher *fswatch.Watcher
 
 	// echoes tracks the hash of bytes most recently written by
 	// this store so the external-change watcher can distinguish
