@@ -29,18 +29,14 @@ const current = computed(() => projects.value.find((p) => p.active) ?? null)
 const show = computed(() => projects.value.length > 1)
 
 onMounted(async () => {
-  // Only the desktop shell mounts several projects, and only it injects the
-  // Wails runtime. Checking first keeps rela-server from issuing a request
-  // per page load for an endpoint it does not serve — which also costs a
-  // round trip that `networkidle` waits on.
   if (!('wails' in window)) return
 
   try {
     const res = await fetch(apiUrl('/api/v1/_projects'))
-    if (!res.ok) return // shell without the endpoint yet
+    if (!res.ok) return
     projects.value = await res.json()
   } catch {
-    // Stay hidden rather than surface a failure the user cannot act on.
+    // why: stay hidden rather than surface a failure the user cannot act on.
   }
 })
 

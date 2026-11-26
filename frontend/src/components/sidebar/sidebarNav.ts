@@ -46,20 +46,11 @@ export function navId(item: SidebarItem): string {
 }
 
 /**
- * Whether an entry has somewhere to go.
- *
- * An entry with neither an action nor a NON-EMPTY href is malformed: the
- * server sends `href: ""` for a nav entry whose kind it does not recognise
- * (rela's own `tickets/data-entry.yaml` has a `graph: true` entry, and
- * `NavigationEntry` has no such field), so an empty string means "no
- * destination", not "the root path".
- *
- * Such an entry MUST NOT be rendered as a link. `RouterLink` resolves `to: ''`
- * against the current location, so the row would match whatever page the user
- * is on and steal the active highlight from the row that should have it — on
- * every route, including ones with no nav entry at all. The old template hid
- * this by rendering nothing for a falsy href; this states the rule instead of
- * relying on a `v-else-if` to imply it.
+ * Whether an entry has somewhere to go. The server sends `href: ""` for a
+ * nav entry whose kind it does not recognise, so an empty href means "no
+ * destination", not "the root path". Such an entry must not render as a
+ * link: `RouterLink` resolves `to: ''` against the current location, so the
+ * row would steal the active highlight on every route.
  */
 export function isNavigable(item: SidebarItem): boolean {
   return Boolean(item.action) || Boolean(item.pile) || Boolean(item.href)
@@ -83,16 +74,12 @@ export function toNavGroups(
   const seen = new Set<string>()
 
   return groups.map((group, index) => ({
-    // A group heading is optional in rela's config, so the index is the only
-    // thing always present to key an unlabelled group on.
     id: group.group ? `group:${group.group}` : `group:${index}`,
     label: group.group,
     ...(group.items_create
       ? { addLabel: t('nav.newItem', { label: group.items_create.label }) }
       : {}),
     ...(group.items_empty ? { emptyLabel: t('nav.emptyGroup') } : {}),
-    // A malformed entry is dropped rather than rendered inert: a row that
-    // looks like a link and goes nowhere is worse than an absent one.
     items: group.items
       .filter(isNavigable)
       .map((item) => toNavItem(item, routerLink, seen, onFlyoutClick, statusFor, dropAttrs)),
@@ -119,9 +106,6 @@ function toNavItem(
   dropAttrs?: NavDropAttrs
 ): NavItem {
   let id = navId(item)
-  // Malformed config can repeat the placeholder, and an operator can point two
-  // entries at one target. Duplicate ids would make `activeId` highlight both,
-  // so disambiguate rather than let the second row shadow the first.
   if (seen.has(id)) {
     let n = 2
     while (seen.has(`${id}:${n}`)) n += 1
@@ -137,16 +121,11 @@ function toNavItem(
   return {
     id,
     label: item.label,
-    // `icon` is passed through as the NAME. The library resolves it against
-    // its own allowlist; rela's registry does the same. Either way the string
-    // selects a glyph, never a component.
     icon: item.icon,
     ...(item.action || item.pile
       ? { as: 'button' as const }
       : { as: routerLink, attrs: { to: item.href, ...drop } }),
     ...(item.pile ? { opensFlyout: true } : {}),
-    // Still a link to the list's page, so a modified click opens it in a new
-    // tab; only the plain click is taken over.
     ...(item.flyout && onFlyoutClick
       ? {
           opensFlyout: true,
@@ -219,8 +198,6 @@ export function expandGeneratedItems(
     }
     const list = lookup(group.items_key)
     if (!list?.entries.length) {
-      // Kept for its "+". Once the entries have loaded, it says that there
-      // are none; a heading over nothing reads as a fault.
       if (group.items_create)
         out.push({ ...group, items: [], ...(list ? { items_empty: true } : {}) })
       continue
@@ -228,8 +205,6 @@ export function expandGeneratedItems(
     const items: SidebarItem[] = list.entries.map((entry) => ({
       label: entry.label,
       href: hrefFor(group, entry),
-      // No glyph: the library renders the badge only where there is no icon,
-      // and an entry without one keeps its label aligned with its siblings.
       ...(entry.initial ? { initial: entry.initial } : {}),
       ...(entry.status ? { status: entry.status } : {}),
       ...(entry.children?.length
@@ -310,7 +285,6 @@ export function expandEntityEntries(
 export function activeNavId(groups: NavGroup[], path: string): string | undefined {
   let best: { id: string; length: number } | undefined
 
-  // A child row (a generated entry's children) is matched like any other.
   const flat = (items: NavItem[]): NavItem[] =>
     items.flatMap((item) => [item, ...flat(item.children ?? [])])
   for (const item of groups.flatMap((group) => flat(group.items))) {
