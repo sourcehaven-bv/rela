@@ -2894,6 +2894,30 @@
       "reason": "Debt: expected for core packages such as metamodel and acl. Every loader of project config reads it through the in-memory migration (TKT-3JF7FSN).",
       "at": "2026-11-25T22:00:00Z",
       "title": "migration is in the zone of pain: 5 components depend on it, and it has few abstractions to change behind."
+    },
+    "concepts.missing_operation-86825c1ad49f": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-11-26T17:00:00Z",
+      "title": "2 components (affordances, transitions) each write their own has_relation for Value, a type of predicate."
+    },
+    "concepts.missing_operation-dc8b30c65e46": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-11-26T17:00:00Z",
+      "title": "2 components (pgstore, sqlitestore) each write their own aggregate_sql for RollupQuery, a type of store."
+    },
+    "concepts.missing_operation-86c2c2c4749b": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-11-26T17:00:00Z",
+      "title": "2 components (pgstore, sqlitestore) each write their own any_sql for FaceSelection and GraphBranch, a type of store."
+    },
+    "concepts.missing_operation-f0f613ee18e6": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-11-26T17:00:00Z",
+      "title": "2 components (triggers, validation) each write their own check_traversals for Program, a type of predicate."
     }
   },
   "labels": {},
