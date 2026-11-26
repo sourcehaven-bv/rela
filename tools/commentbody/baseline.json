@@ -926,7 +926,6 @@
   "internal/storage/memfs.go": 31,
   "internal/storage/rooted.go": 7,
   "internal/storage/safefs.go": 16,
-  "internal/fswatch/watcher.go": 4,
   "internal/store/bgloop/bgloop.go": 1,
   "internal/store/elementrange.go": 2,
   "internal/store/familyreplace.go": 1,

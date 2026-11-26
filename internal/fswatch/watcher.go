@@ -54,12 +54,10 @@ func New(cfg Config) (*Watcher, error) {
 		done:      make(chan struct{}),
 	}
 
-	// Watch directories recursively
 	for _, dir := range cfg.Dirs {
 		w.addRecursive(dir)
 	}
 
-	// Watch individual files
 	for _, file := range cfg.Files {
 		_ = fsw.Add(file)
 	}
@@ -80,7 +78,6 @@ func (w *Watcher) Start() {
 				return
 			}
 
-			// Auto-watch new directories
 			if event.Has(fsnotify.Create) {
 				if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
 					w.addRecursive(event.Name)
@@ -149,7 +146,7 @@ func (w *Watcher) WatchList() []string {
 func (w *Watcher) Pause() {
 	w.mu.Lock()
 	w.paused = true
-	w.pending = nil // Discard any pending events
+	w.pending = nil
 	w.mu.Unlock()
 }
 
