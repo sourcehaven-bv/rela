@@ -2548,7 +2548,7 @@ function hidesType(section: ViewSection): boolean {
   return section.hide?.includes('type') ?? false
 }
 function showsId(section: ViewSection, title: string | undefined): boolean {
-  return !title || !section.hide?.includes('id')
+  return !title?.trim() || !section.hide?.includes('id')
 }
 
 function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): boolean {

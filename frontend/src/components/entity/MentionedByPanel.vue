@@ -117,7 +117,7 @@ onBeforeUnmount(() => controller?.abort())
       <li v-for="s in items" :key="sourceAddress(s)" :data-entity-id="s.id">
         <RouterLink :to="sourceTarget(s)" class="mention-link">
           <span class="entity-title">{{ s.title }}</span>
-          <span v-if="!hideId || !s.title" class="entity-id">{{ sourceAddress(s) }}</span>
+          <span v-if="!hideId || !s.title?.trim()" class="entity-id">{{ sourceAddress(s) }}</span>
         </RouterLink>
       </li>
     </ul>

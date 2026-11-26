@@ -5,7 +5,8 @@ title: Options to hide type and ID on cards and mention lists
 kind: enhancement
 priority: medium
 effort: s
-status: ready
+started: "2026-11-26"
+status: review
 ---
 
 ## Description
