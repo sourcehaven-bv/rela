@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/httpscheme"
 	"github.com/Sourcehaven-BV/rela/internal/reconwire"
 
 	"github.com/Sourcehaven-BV/rela/internal/reconclient"
@@ -89,7 +90,7 @@ func New(c Config) (*Remote, error) {
 		return nil, errors.New("httpremote: the remote URL does not parse")
 	}
 	switch {
-	case u.Scheme != "http" && u.Scheme != "https":
+	case !httpscheme.IsHTTP(u.Scheme):
 		return nil, errors.New("httpremote: the remote URL must start with https:// or http://")
 	case u.Host == "":
 		return nil, errors.New("httpremote: the remote URL has no host")

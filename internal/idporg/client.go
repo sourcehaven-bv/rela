@@ -24,6 +24,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/httpscheme"
 )
 
 // Status is an organization's status at the IdP.
@@ -126,7 +128,7 @@ func parseBase(base string) (*url.URL, *http.Transport, error) {
 		ExpectContinueTimeout: time.Second,
 	}
 	switch u.Scheme {
-	case "http", "https":
+	case httpscheme.HTTP, httpscheme.HTTPS:
 		if u.Host == "" || (u.Path != "" && u.Path != "/") {
 			return nil, nil, errors.New("idporg: the operator API address must be scheme://host[:port]")
 		}
