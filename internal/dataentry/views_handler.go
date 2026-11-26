@@ -1062,7 +1062,7 @@ func viewSectionToV1(sec SectionData, owner map[string]*v1.EntityOwner) v1.ViewS
 		HasContent:   sec.HasContent,
 		// Already wire-shaped; nil for a section not in relation order.
 		RelationOrder: sec.RelationOrder,
-		Hide:          sectionHide(sec.hideType, sec.hideID),
+		Hide:          sec.hide,
 	}
 
 	// The opt-in create affordance. Nil for every section that did not
