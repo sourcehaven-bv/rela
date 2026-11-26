@@ -293,6 +293,8 @@ func parseOptionalFace(raw string) (entityPkg.Face, error) {
 // gate runs the gates a single create runs in the handler, before the
 // manager: the create field gate per entity (BUG-Q60V) and the relation
 // affordance verdict per relation. A denial is audited and answered 403.
+//
+//archplan:guard=authz reason="batch create gate: create field gate per entity and relation affordance per relation"
 func (h *batchHandler) gate(w http.ResponseWriter, r *http.Request, meta *metamodel.Metamodel, plan *batchPlan) bool {
 	ctx := r.Context()
 	for i, c := range plan.candidates {
