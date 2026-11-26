@@ -1,5 +1,5 @@
 // coverage-ignore: file watcher - requires filesystem events
-package storage
+package fswatch
 
 import (
 	"os"
@@ -12,8 +12,8 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// WatchConfig configures a Watcher.
-type WatchConfig struct {
+// Config configures a Watcher.
+type Config struct {
 	// Dirs lists directories to watch recursively.
 	Dirs []string
 	// Files lists individual files to watch.
@@ -26,23 +26,23 @@ type WatchConfig struct {
 	// SkipHidden skips hidden directories (names starting with ".").
 	SkipHidden bool
 	// OnChange is called after debounce with the batched change events.
-	OnChange func(events []ChangeEvent)
+	OnChange func(events []Event)
 }
 
 // Watcher watches files and directories for changes, debouncing events
 // and delivering them in batches via the OnChange callback.
 type Watcher struct {
-	cfg       WatchConfig
+	cfg       Config
 	fsWatcher *fsnotify.Watcher
 	done      chan struct{}
 	mu        sync.Mutex
-	pending   []ChangeEvent
+	pending   []Event
 	paused    bool
 }
 
-// NewWatcher creates a file watcher with the given configuration.
+// New creates a file watcher with the given configuration.
 // Call Start in a goroutine to begin the event loop.
-func NewWatcher(cfg WatchConfig) (*Watcher, error) {
+func New(cfg Config) (*Watcher, error) {
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
@@ -97,9 +97,9 @@ func (w *Watcher) Start() {
 
 			w.mu.Lock()
 			if !w.paused {
-				w.pending = append(w.pending, ChangeEvent{
+				w.pending = append(w.pending, Event{
 					Path: event.Name,
-					Op:   toChangeOp(event.Op),
+					Op:   toOp(event.Op),
 				})
 				timer.Reset(w.cfg.Debounce)
 			}
@@ -190,7 +190,7 @@ func (w *Watcher) isRelevantFile(path string) bool {
 	return slices.Contains(w.cfg.Extensions, ext)
 }
 
-func toChangeOp(op fsnotify.Op) ChangeOp {
+func toOp(op fsnotify.Op) Op {
 	switch {
 	case op.Has(fsnotify.Create):
 		return OpCreate

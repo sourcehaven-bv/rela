@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/fswatch"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
@@ -113,12 +113,12 @@ func (s *FSStore) StartWatching() error {
 		return nil
 	}
 
-	w, err := storage.NewWatcher(storage.WatchConfig{
+	w, err := fswatch.New(fswatch.Config{
 		Dirs:       dirs,
 		Extensions: []string{".md"},
 		Debounce:   200 * time.Millisecond,
 		SkipHidden: true,
-		OnChange: func(events []storage.ChangeEvent) {
+		OnChange: func(events []fswatch.Event) {
 			s.handleExternalEvents(events)
 		},
 	})
@@ -149,7 +149,7 @@ func (s *FSStore) StopWatching() {
 // handleExternalEvents reconciles a batch of filesystem events against the
 // in-memory index and emits store.Events for anything that isn't a
 // self-echo of our own write.
-func (s *FSStore) handleExternalEvents(events []storage.ChangeEvent) {
+func (s *FSStore) handleExternalEvents(events []fswatch.Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -160,7 +160,7 @@ func (s *FSStore) handleExternalEvents(events []storage.ChangeEvent) {
 
 // handleExternalEvent dispatches a single event to the entity or relation
 // path. Must be called under mu.Lock.
-func (s *FSStore) handleExternalEvent(ev storage.ChangeEvent) {
+func (s *FSStore) handleExternalEvent(ev fswatch.Event) {
 	if !strings.HasSuffix(ev.Path, ".md") {
 		return
 	}

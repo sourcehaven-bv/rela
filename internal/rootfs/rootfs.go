@@ -8,7 +8,7 @@
 // files live in its database (FEAT-UP14BT) is served by the same consumers,
 // layered behind this one.
 //
-// Its only internal dependency is storage (for the file watcher), so that
+// Its only internal dependency is fswatch (for the file watcher), so that
 // lua, script and validation, which may not import internal/config, can still
 // fall back to it. [Dir] satisfies config.Loader and config.Subscriber
 // structurally.
@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/fswatch"
 )
 
 // Dir reads files under one directory on disk.
@@ -151,11 +151,11 @@ func (d *Dir) Subscribe(_ context.Context, name string, onChange func()) (func()
 		return nil, fmt.Errorf("rootfs: invalid file name %q", name)
 	}
 	target := filepath.Join(d.path, filepath.FromSlash(name))
-	watcher, err := storage.NewWatcher(storage.WatchConfig{
+	watcher, err := fswatch.New(fswatch.Config{
 		Files:      []string{filepath.Dir(target)},
 		Debounce:   watchDebounce,
 		SkipHidden: true,
-		OnChange: func(events []storage.ChangeEvent) {
+		OnChange: func(events []fswatch.Event) {
 			for _, ev := range events {
 				if filepath.Clean(ev.Path) == target {
 					onChange()

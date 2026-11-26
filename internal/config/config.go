@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/fswatch"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
@@ -204,15 +205,15 @@ func (l *FSLoader) Subscribe(_ context.Context, name string, onChange func()) (f
 	if err := validateName(name); err != nil {
 		return nil, err
 	}
-	watcher, err := storage.NewWatcher(storage.WatchConfig{
+	watcher, err := fswatch.New(fswatch.Config{
 		Files:      []string{filepath.Join(l.root, name)},
 		Debounce:   200 * time.Millisecond,
 		SkipHidden: true,
-		OnChange: func(_ []storage.ChangeEvent) {
+		OnChange: func(_ []fswatch.Event) {
 			onChange()
 		},
 	})
-	// coverage-ignore-start: os-fs-event: storage.NewWatcher only errors when the OS cannot create a watch (for
+	// coverage-ignore-start: os-fs-event: fswatch.New only errors when the OS cannot create a watch (for
 	// example, file-descriptor or inotify exhaustion); no injection seam and valid Files/Dirs never trigger it
 	if err != nil {
 		return nil, err

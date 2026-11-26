@@ -356,6 +356,9 @@ components:
   # Go-side refresher (TKT-01KZSO).
   tokenstore:       { in: internal/tokenstore }
   storage:          { in: internal/storage }
+  # fsnotify file watcher behind live reload; kept out of storage so the FS
+  # abstraction carries no OS event dependency.
+  fswatch:          { in: internal/fswatch }
 
   # Shared utilities
   errors:           { in: internal/errors }
@@ -1966,6 +1969,7 @@ deps:
       # secrets: ScriptReadable refuses the token store key in a
       # capabilities.secrets list (TKT-01KZSO). secrets is a leaf.
       - secrets
+      - fswatch
       - storage
     canUse:
       - rrulego
@@ -2466,6 +2470,7 @@ deps:
       - mentions
       - cache
       - frontmatter
+      - fswatch
       - graphquerynaive
       - markdown
       - storage
@@ -2565,11 +2570,12 @@ deps:
   # cache: pure in-memory utility, no internal deps
   config:
     mayDependOn:
+      - fswatch
       - storage
   rootfs:
-    # Only storage, for the file watcher behind Subscribe.
+    # Only fswatch, for the file watcher behind Subscribe.
     mayDependOn:
-      - storage
+      - fswatch
 
   configsql:
     # Only config, for the Loader interface it implements. No store, no
@@ -2641,5 +2647,6 @@ deps:
       - storeutil
   storage:
     anyProjectDeps: true
+  fswatch:
     canUse:
       - fsnotify
