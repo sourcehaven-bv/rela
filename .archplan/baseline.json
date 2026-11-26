@@ -2911,7 +2911,7 @@
       "largest_tangle": 14,
       "cycle_edges": 67,
       "upward_edges": 0,
-      "propagation_cost": 9.2
+      "propagation_cost": 9.3
     },
     "min_weight": 0,
     "at": "2026-11-17T03:00:00Z",
@@ -3327,6 +3327,17 @@
           "weight.types": [
             3975,
             4020
+          ]
+        }
+      },
+      {
+        "at": "2026-11-26T19:30:00Z",
+        "change": "loosen",
+        "reason": "Merge with develop: #2617 adds the leaf internal/httpscheme, imported across the HTTP clients, so develop's own model is at 9.3. This PR only removes comments. Only propagation_cost changes; the traced weights keep their values.",
+        "metrics": {
+          "propagation_cost": [
+            9.2,
+            9.3
           ]
         }
       }
