@@ -24,6 +24,7 @@ import type { PileSummary } from '@/api/piles'
 import { pileIcon } from '@/components/piles/pileIcon'
 import { t } from '@/i18n'
 import { stripSpace } from '@/stores/space'
+import type { NavDropAttrs } from '@/composables/useAssign'
 
 /**
  * The stable identifier for a nav row.
@@ -106,12 +107,6 @@ export type FlyoutClickHandler = (item: SidebarItem, id: string, event: MouseEve
 
 /** Resolves an entry's `status_key` to its current marker, if it has one. */
 export type NavStatusLookup = (key: string | undefined) => NavItemStatus | undefined
-
-/**
- * Drag-and-drop handlers for a link entry, by its href: the entries whose list
- * or page has an `assign:` accept dropped rows (TKT-FGE5G3I).
- */
-export type NavDropAttrs = (href: string) => Record<string, unknown> | undefined
 
 function toNavItem(
   item: SidebarItem,
