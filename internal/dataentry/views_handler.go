@@ -1062,8 +1062,7 @@ func viewSectionToV1(sec SectionData, owner map[string]*v1.EntityOwner) v1.ViewS
 		HasContent:   sec.HasContent,
 		// Already wire-shaped; nil for a section not in relation order.
 		RelationOrder: sec.RelationOrder,
-		HideType:      sec.hideType,
-		HideID:        sec.hideID,
+		Hide:          sectionHide(sec.hideType, sec.hideID),
 	}
 
 	// The opt-in create affordance. Nil for every section that did not
@@ -1174,6 +1173,18 @@ func hideMentionedByPanel(cfg *Config, view ViewConfig) bool {
 		}
 	}
 	return false
+}
+
+// sectionHide lists the row parts a section leaves off, for [v1.ViewSection.Hide].
+func sectionHide(hideType, hideID bool) []string {
+	var hide []string
+	if hideType {
+		hide = append(hide, v1.SectionHideType)
+	}
+	if hideID {
+		hide = append(hide, v1.SectionHideID)
+	}
+	return hide
 }
 
 // hideMentionedByID reports whether the "Mentioned by" panel leaves the entity

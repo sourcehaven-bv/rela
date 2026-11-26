@@ -1,12 +1,5 @@
 import { api } from './client'
-import type {
-  Entity,
-  EntityOwner,
-  EntityWorld,
-  FieldAffordance,
-  Mention,
-  RelationOrder,
-} from '@/types'
+import type { Entity, EntityOwner, EntityWorld, FieldAffordance, Mention, RelationOrder } from '@/types'
 
 // Field data for view sections
 export interface ViewSectionField {
@@ -213,10 +206,9 @@ export interface ViewSection {
   create?: ViewSectionCreate
   // Entry properties shown under a table section (TKT-4Q2EIVZ).
   totals?: SectionTotal[]
-  // `hide_type` / `hide_id`: leave the type label and the entity ID off the
-  // rows. A row with no title keeps its ID. Presentation only.
-  hideType?: boolean
-  hideId?: boolean
+  // Row parts to leave off (`hide_type`, `hide_id`). A row with no title
+  // keeps its ID. Presentation only.
+  hide?: Array<'type' | 'id'>
 }
 
 /**
@@ -314,7 +306,7 @@ export async function fetchView(
   entityType: string,
   entityId: string,
   world?: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<ViewResponse> {
   const params = world ? { world } : undefined
   return api.get<ViewResponse>(`/_views/${entityType}/${entityId}`, params, signal)

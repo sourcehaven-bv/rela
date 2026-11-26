@@ -1577,7 +1577,7 @@ carries three extra fields:
 | ----- | ----- | ------- |
 | `hideMentionedByPanel` | response | `true` when the page should leave out the built-in panel: the view collects backlinks, or `entity_views.<type>.mentioned_by_panel` is `false`. Omitted otherwise. |
 | `hideMentionedByID` | response | `true` when `entity_views.<type>.mentioned_by_hide_id` is set: the panel leaves the entity ID off its rows. Omitted otherwise. |
-| `hideType`, `hideId` | section | `true` when the section sets `hide_type` or `hide_id`: its rows leave off the type label or the entity ID. Presentation only. Omitted otherwise. |
+| `hide` | section | The row parts the section leaves off: `"type"` for `hide_type`, `"id"` for `hide_id`. Presentation only. Omitted when empty. |
 | `incomplete` | section | `true` when the section's backlinks collection holds only part of the matching sources. Omitted otherwise. |
 | `entityType`, `columns` | `groups[]` | Set on each group of a `columns_by_type` table. The group's rows are of `entityType`, and their cells are positional over the group's `columns`. |
 

@@ -2543,6 +2543,14 @@ function sectionContainsEntity(sec: ViewSection, id: string): boolean {
   return treeContainsEntity(sec.tree, id)
 }
 
+// `hide_type` / `hide_id` on a section. A row with no title keeps its ID.
+function hidesType(section: ViewSection): boolean {
+  return section.hide?.includes('type') ?? false
+}
+function showsId(section: ViewSection, title: string | undefined): boolean {
+  return !title || !section.hide?.includes('id')
+}
+
 function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): boolean {
   return (nodes ?? []).some((n) => n.entity?.id === id || treeContainsEntity(n.children, id))
 }
@@ -3125,9 +3133,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                     class="card-header-link"
                     v-bind="entityTarget(ent) ? { to: entityTarget(ent) } : {}"
                   >
-                    <span v-if="!section.hideType" class="entity-type">{{ ent.type }}</span>
+                    <span v-if="!hidesType(section)" class="entity-type">{{ ent.type }}</span>
                     <span class="entity-title">{{ ent.title }}</span>
-                    <span v-if="!section.hideId || !ent.title" class="entity-id">{{ ent.id }}</span>
+                    <span v-if="showsId(section, ent.title)" class="entity-id">{{ ent.id }}</span>
                   </component>
                   <!--
                   Per-neighbour provenance (RULING 12/14). Each collection
@@ -3171,9 +3179,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                     class="card-header-link"
                     v-bind="entityTarget(ent) ? { to: entityTarget(ent) } : {}"
                   >
-                    <span v-if="!section.hideType" class="entity-type">{{ ent.type }}</span>
+                    <span v-if="!hidesType(section)" class="entity-type">{{ ent.type }}</span>
                     <span class="entity-title">{{ ent.title }}</span>
-                    <span v-if="!section.hideId || !ent.title" class="entity-id">{{ ent.id }}</span>
+                    <span v-if="showsId(section, ent.title)" class="entity-id">{{ ent.id }}</span>
                   </component>
                   <!-- Per-neighbour provenance; see the first WorldBadge above. -->
                   <WorldBadge :world="ent._world" :entity-type="ent.type" />
@@ -3246,9 +3254,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                   class="list-link"
                   v-bind="entityTarget(ent) ? { to: entityTarget(ent) } : {}"
                 >
-                  <span v-if="!section.hideType" class="entity-type">{{ ent.type }}</span>
+                  <span v-if="!hidesType(section)" class="entity-type">{{ ent.type }}</span>
                   <span class="entity-title">{{ ent.title }}</span>
-                  <span v-if="!section.hideId || !ent.title" class="entity-id">{{ ent.id }}</span>
+                  <span v-if="showsId(section, ent.title)" class="entity-id">{{ ent.id }}</span>
                 </component>
                 <!-- Per-neighbour provenance; see the first WorldBadge above. -->
                 <WorldBadge :world="ent._world" :entity-type="ent.type" />
@@ -3485,7 +3493,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                       @click.stop
                     >
                       <span class="entity-title">{{ node.entity.title }}</span>
-                      <span v-if="!section.hideId || !node.entity.title" class="entity-id">{{
+                      <span v-if="showsId(section, node.entity.title)" class="entity-id">{{
                         node.entity.id
                       }}</span>
                     </component>
@@ -3519,7 +3527,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                         "
                       >
                         <span class="entity-title">{{ child.entity.title }}</span>
-                        <span v-if="!section.hideId || !child.entity.title" class="entity-id">{{
+                        <span v-if="showsId(section, child.entity.title)" class="entity-id">{{
                           child.entity.id
                         }}</span>
                       </component>

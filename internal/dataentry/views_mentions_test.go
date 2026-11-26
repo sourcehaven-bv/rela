@@ -194,8 +194,8 @@ func TestViewMentions_HideIdentityPassthrough(t *testing.T) {
 	if got.HideMentionedByID {
 		t.Error("hideMentionedByID set without entity_views.feature.mentioned_by_hide_id")
 	}
-	if sec := got.Sections[0]; !sec.HideType || !sec.HideID {
-		t.Errorf("section flags = %v %v, want both true", sec.HideType, sec.HideID)
+	if sec := got.Sections[0]; !slices.Equal(sec.Hide, []string{v1.SectionHideType, v1.SectionHideID}) {
+		t.Errorf("section hide = %v, want [type id]", sec.Hide)
 	}
 	if app.Cfg().EntityViews == nil {
 		app.Cfg().EntityViews = map[string]dataentryconfig.EntityViewConfig{}

@@ -131,7 +131,7 @@ describe('EntityDetail backlinks through a view', () => {
     })
 
     it('leaves them off when asked, but keeps the ID of an untitled row', async () => {
-      const wrapper = await render({ sections: [section({ hideType: true, hideId: true })] })
+      const wrapper = await render({ sections: [section({ hide: ['type', 'id'] })] })
       expect(wrapper.find('.entity-type').exists()).toBe(false)
       expect(wrapper.findAll('.entity-id').map((e) => e.text())).toEqual(['T-2'])
     })

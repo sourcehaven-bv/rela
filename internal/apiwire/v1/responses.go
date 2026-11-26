@@ -1771,9 +1771,9 @@ type ViewResponse struct {
 // ViewSection represents a section with resolved data.
 //
 // The plimsoll directive is a wire mirror: the section's config keys travel
-// as flat fields, and `hide_type` and `hide_id` raised it from 20 to 22.
+// as flat fields, and Hide raised it from 20 to 21.
 //
-//plimsoll:max-fields=22
+//plimsoll:max-fields=21
 type ViewSection struct {
 	Heading      string         `json:"heading"`
 	SectionID    string         `json:"sectionId"`
@@ -1834,12 +1834,17 @@ type ViewSection struct {
 	// from the entry, which is already gated for the reader.
 	Totals []SectionTotal `json:"totals,omitempty"`
 
-	// HideType and HideID ask a list, cards, content or nested section to
-	// leave the type label and the entity ID off its rows (`hide_type`,
-	// `hide_id`). Presentation only; omitted when false.
-	HideType bool `json:"hideType,omitempty"`
-	HideID   bool `json:"hideId,omitempty"`
+	// Hide names the row parts a list, cards, content or nested section
+	// leaves off: [SectionHideType] for `hide_type`, [SectionHideID] for
+	// `hide_id`. Presentation only; omitted when empty.
+	Hide []string `json:"hide,omitempty"`
 }
+
+// Values of [ViewSection.Hide].
+const (
+	SectionHideType = "type"
+	SectionHideID   = "id"
+)
 
 // SectionTotal is one line of [ViewSection.Totals].
 type SectionTotal struct {
