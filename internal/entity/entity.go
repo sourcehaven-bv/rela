@@ -303,6 +303,14 @@ func NewRelation(from, relationType, to string) *Relation {
 	}
 }
 
+// OtherEnd returns the endpoint of r that is not id; for a self-loop, id.
+func (r *Relation) OtherEnd(id string) string {
+	if r.From == id {
+		return r.To
+	}
+	return r.From
+}
+
 // Key returns a unique string key for this relation: the text form of
 // [Relation.Identity], so the tail face is part of it.
 func (r *Relation) Key() string {

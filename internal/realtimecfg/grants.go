@@ -252,13 +252,8 @@ func faceAddr(typ string, face entity.Face) string {
 // declaredFaces returns the faces typ declares, or the zero face alone for
 // an unfaced type.
 func declaredFaces(meta *metamodel.Metamodel, typ string) []entity.Face {
-	names := metamodel.FaceOrderOf(meta, typ)
-	if len(names) == 0 {
-		return []entity.Face{""}
+	if faces := metamodel.FacesOf(meta, typ); faces != nil {
+		return faces
 	}
-	out := make([]entity.Face, len(names))
-	for i, n := range names {
-		out[i] = entity.Face(n)
-	}
-	return out
+	return []entity.Face{""}
 }

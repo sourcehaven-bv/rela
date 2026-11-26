@@ -292,7 +292,7 @@ func validateCalDAVPriorityMap(
 			errs = append(errs, fmt.Sprintf("%s: emit %d is outside %d-%d",
 				at, e, minPriorityValue, maxPriorityValue))
 		}
-		errs = append(errs, validateCalDAVEnumValue(at, b.Value, enumValues(meta, def))...)
+		errs = append(errs, validateCalDAVEnumValue(at, b.Value, metamodel.EnumValues(def, meta))...)
 	}
 
 	var gaps []string
@@ -446,7 +446,7 @@ func validateCalDAVCompletion(
 	// Both values must be members of the status property's enum when it has
 	// one. A value outside the enum would write an entity the metamodel
 	// rejects, on every single check-off.
-	allowed := enumValues(meta, statusDef)
+	allowed := metamodel.EnumValues(statusDef, meta)
 	for _, v := range []struct{ field, value string }{
 		{"completed_value", comp.CompletedValue},
 		{"pending_value", comp.PendingValue},
@@ -573,7 +573,7 @@ func validatePropertyAssignments(
 				prefix, prop, c.EntityType))
 			continue
 		}
-		allowed := enumValues(meta, def)
+		allowed := metamodel.EnumValues(def, meta)
 		if len(allowed) > 0 && !slices.Contains(allowed, assignments[prop]) {
 			errs = append(errs, fmt.Sprintf("%s: %q is not a valid value for property %q (allowed: %s)",
 				prefix, assignments[prop], prop, strings.Join(allowed, ", ")))
@@ -654,18 +654,6 @@ func sortedPropertyNames(entDef *metamodel.EntityDef) []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// enumValues returns the allowed values for a property, resolving a named
-// custom type. Empty means the property is not enum-constrained.
-func enumValues(meta *metamodel.Metamodel, def metamodel.PropertyDef) []string {
-	if len(def.Values) > 0 {
-		return def.Values
-	}
-	if ct, ok := meta.Types[def.Type]; ok {
-		return ct.Values
-	}
-	return nil
 }
 
 func plural(n int, one, many string) string {

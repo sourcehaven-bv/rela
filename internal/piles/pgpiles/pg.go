@@ -259,7 +259,7 @@ func (s *Store) CreatePile(ctx context.Context, p piles.Pile, refs []entity.Ref,
 		if err != nil {
 			return fmt.Errorf("pgpiles: create pile: %w", err)
 		}
-		_, err = insertItems(ctx, tx, p.ID, firstUnique(refs, maxItems), piles.AddOptions{Now: p.Created})
+		_, err = insertItems(ctx, tx, p.ID, piles.FirstUnique(refs, maxItems), piles.AddOptions{Now: p.Created})
 		return err
 	})
 }
@@ -307,7 +307,7 @@ func (s *Store) AddItems(
 		if err := ownedBy(ctx, tx, owner, id); err != nil {
 			return err
 		}
-		todo := firstUnique(refs, opts.MaxItems)
+		todo := piles.FirstUnique(refs, opts.MaxItems)
 		if opts.Overflow == piles.KeepExisting {
 			var err error
 			if todo, err = fitting(ctx, tx, id, todo, opts); err != nil {
@@ -620,22 +620,4 @@ func split(refs []entity.Ref) (ids, faces []string) {
 		ids[i], faces[i] = r.ID, string(r.Face)
 	}
 	return ids, faces
-}
-
-// firstUnique collapses duplicate refs, keeping the first, and keeps at most
-// limit of them. Collapsing before the insert matters: inserted last ref
-// first, a later duplicate would otherwise claim the slot and the lower seq.
-func firstUnique(refs []entity.Ref, limit int) []entity.Ref {
-	seen := make(map[entity.Ref]bool, len(refs))
-	out := make([]entity.Ref, 0, min(len(refs), limit))
-	for _, r := range refs {
-		if len(out) == limit {
-			break
-		}
-		if !seen[r] {
-			seen[r] = true
-			out = append(out, r)
-		}
-	}
-	return out
 }
