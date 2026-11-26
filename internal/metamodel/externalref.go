@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/Sourcehaven-BV/rela/internal/httpscheme"
 )
 
 // External-ref values (TKT-SM20FG). A property of type `external_ref` links
@@ -163,7 +165,7 @@ func validateExternalURL(raw string) error {
 		return fmt.Errorf("%w: \"url\" is not a URL", ErrInvalidExternalRef)
 	}
 	scheme := strings.ToLower(u.Scheme)
-	if scheme != "http" && scheme != "https" {
+	if !httpscheme.IsHTTP(scheme) {
 		return fmt.Errorf("%w: \"url\" must use http or https", ErrInvalidExternalRef)
 	}
 	if u.Host == "" {

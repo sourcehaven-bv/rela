@@ -187,15 +187,22 @@ type CommandAuthNotifier struct {
 	OnRefuse func()
 }
 
+// CommandBind names how the server is bound when no ACL policy governs
+// commands.
+type CommandBind struct {
+	Loopback             bool
+	AllowUnauthenticated bool
+}
+
 // SelectCommandAuthorizer chooses the command authorizer for rela-server. It is
 // fail-closed; the only ungated paths are loopback or an explicit override:
 // ReadOnlyACL denies exec on every bind (value or pointer form); a Declarative
 // policy is gated and never falls back to the ctx read gate; NopACL is ungated
-// on loopback or with override, and denied otherwise. loopback reports whether
-// the bind host is loopback; override is --allow-unauthenticated-commands.
+// on loopback or with bind.AllowUnauthenticated, and denied otherwise.
+// bind.Loopback is true for an in-process server with no bind.
 // notify logs both the override and the refusal at startup.
 func SelectCommandAuthorizer(
-	active acl.ACL, declarative *acl.Declarative, loopback, override bool, notify CommandAuthNotifier,
+	active acl.ACL, declarative *acl.Declarative, bind CommandBind, notify CommandAuthNotifier,
 ) (commandAuthorizer, error) {
 	if access.ModeOf(active).RefusesWrites() {
 		return denyAuthorizer{}, nil
@@ -205,10 +212,10 @@ func SelectCommandAuthorizer(
 		return newGatedAuthorizer(declarative)
 	}
 
-	if loopback {
+	if bind.Loopback {
 		return ungatedAuthorizer{}, nil
 	}
-	if override {
+	if bind.AllowUnauthenticated {
 		if notify.OnOverride != nil {
 			notify.OnOverride()
 		}
