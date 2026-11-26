@@ -187,6 +187,16 @@ type CommandAuthNotifier struct {
 	OnRefuse func()
 }
 
+// CommandBind names how the server is bound when no ACL policy governs
+// commands.
+type CommandBind struct {
+	// Loopback reports whether the bind host is loopback. An in-process
+	// server with no bind sets it.
+	Loopback bool
+	// AllowUnauthenticated is the --allow-unauthenticated-commands flag.
+	AllowUnauthenticated bool
+}
+
 // SelectCommandAuthorizer chooses the command authorizer for rela-server from
 // the active ACL, the concrete Declarative policy (nil when none), the bind
 // host, and the operator's --allow-unauthenticated-commands override. This is
@@ -203,9 +213,7 @@ type CommandAuthNotifier struct {
 //   - NopACL + network bind, no override→ deny  (THE FIX: was ungated)
 //   - anything else / gate unbuildable  → deny
 //
-// loopback reports whether the bind host is loopback (the caller passes
-// isLoopbackHost(bind); an in-process server with no bind passes true).
-// override is the --allow-unauthenticated-commands flag.
+// bind names the two bind-time choices; see [CommandBind].
 //
 // notify carries the two startup-log hooks. BOTH branches that change what an
 // operator gets are instrumented, deliberately symmetric: taking the override
@@ -213,7 +221,7 @@ type CommandAuthNotifier struct {
 // silently breaks a previously-working deployment (buttons vanish, exec 403s)
 // with nothing on screen to say why.
 func SelectCommandAuthorizer(
-	active acl.ACL, declarative *acl.Declarative, loopback, override bool, notify CommandAuthNotifier,
+	active acl.ACL, declarative *acl.Declarative, bind CommandBind, notify CommandAuthNotifier,
 ) (commandAuthorizer, error) {
 	// ReadOnly is checked before anything else: it is a stronger guarantee than
 	// "no policy" and must deny exec on every bind. access.ModeOf matches the
@@ -231,10 +239,10 @@ func SelectCommandAuthorizer(
 
 	// No policy (NopACL / off-metamodel). Loopback stays ungated for local
 	// desktop/dev use; a network bind refuses unless the operator opts in.
-	if loopback {
+	if bind.Loopback {
 		return ungatedAuthorizer{}, nil
 	}
-	if override {
+	if bind.AllowUnauthenticated {
 		if notify.OnOverride != nil {
 			notify.OnOverride()
 		}
