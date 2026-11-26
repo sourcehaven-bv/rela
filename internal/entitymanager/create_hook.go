@@ -45,11 +45,11 @@ type CreateHook interface {
 	) (afterCommit func(context.Context), err error)
 }
 
-// watchesCreate reports whether deps.CreateHook watches creates of typ.
+// watchesCreate reports whether deps.TxHooks.CreateHook watches creates of typ.
 //
-// Nil: deps.CreateHook accepted (nothing watches).
+// Nil: deps.TxHooks.CreateHook accepted (nothing watches).
 func watchesCreate(deps Deps, typ string) bool {
-	return deps.CreateHook != nil && deps.CreateHook.Watches(typ)
+	return deps.TxHooks.CreateHook != nil && deps.TxHooks.CreateHook.Watches(typ)
 }
 
 // createHookError is a [CreateHook.EntityCreated] failure, written after
@@ -59,13 +59,13 @@ type createHookError struct{ err error }
 func (e createHookError) Error() string { return e.err.Error() }
 func (e createHookError) Unwrap() error { return e.err }
 
-// runCreateHook runs deps.CreateHook for e, created on view, and queues its
+// runCreateHook runs deps.TxHooks.CreateHook for e, created on view, and queues its
 // afterCommit on the commit list of ctx.
 func runCreateHook(ctx context.Context, deps Deps, view store.Store, e *entity.Entity) error {
 	if !watchesCreate(deps, e.Type) {
 		return nil
 	}
-	after, err := deps.CreateHook.EntityCreated(ctx, view, e)
+	after, err := deps.TxHooks.CreateHook.EntityCreated(ctx, view, e)
 	if err != nil {
 		return createHookError{err}
 	}
@@ -108,7 +108,7 @@ func beginCreate(ctx context.Context, deps Deps, types ...string) (context.Conte
 	for _, typ := range types {
 		if watchesCreate(deps, typ) {
 			var err error
-			if ctx, err = deps.CreateHook.PrepareCreate(ctx); err != nil {
+			if ctx, err = deps.TxHooks.CreateHook.PrepareCreate(ctx); err != nil {
 				return nil, nil, err
 			}
 			break

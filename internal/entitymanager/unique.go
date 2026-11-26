@@ -262,6 +262,9 @@ func writeWithUniqueCheck(
 // under the same Tx (the flow run store, TKT-XI7IDBS) then lands either
 // before the check or after the write, never in between.
 //
+// A write on a ctx that carries a transaction view always writes on that
+// view, so a write nested in another write's transaction joins it.
+//
 // Nil: txCheck accepted (no check, and a Tx only when unique values or a
 // write capture need one).
 func writeChecked(
@@ -275,7 +278,9 @@ func writeChecked(
 		return err
 	}
 	capture := writeCaptureFor(ctx, e)
-	if txCheck == nil && capture == nil && len(uniqueValues(deps.Meta, e)) == 0 && !auditsInTx(deps) {
+	if txCheck == nil && capture == nil && len(uniqueValues(deps.Meta, e)) == 0 && !auditsInTx(deps) &&
+		store.TxView(ctx) == nil {
+
 		return write(ctx, deps.Store)
 	}
 	return auditTx(ctx, deps, true, func(txCtx context.Context, view store.Store) error {

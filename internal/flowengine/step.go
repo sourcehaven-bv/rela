@@ -141,10 +141,19 @@ func (e *Engine) settleStep(ctx context.Context, f *flowcfg.Flow, run flowrun.Ru
 	if err != nil {
 		return run, err
 	}
-	if !ok {
-		return e.rest(ctx, f, run, tok, cur)
+	step := flowrun.Step{Via: flowrun.ViaDone}
+	if ok && p.Change != nil {
+		slog.InfoContext(ctx, "flowengine: a done branch took precedence over a kept write event",
+			"run", run.ID, "state", cur.State)
 	}
-	moved, err := e.take(ctx, f, run, tok, cur, b.Targets(), flowrun.Step{Via: flowrun.ViaDone}, e.now())
+	if !ok {
+		var deferred bool
+		b, step, deferred = deferredChange(f, run, tok, cur)
+		if !deferred || !e.g.keptChangeHolds(ctx, run, tok, cur, b, step.By, e.now()) {
+			return e.rest(ctx, f, run, tok, cur)
+		}
+	}
+	moved, err := e.take(ctx, f, run, tok, cur, b.Targets(), step, e.now())
 	if err != nil {
 		if isLost(err) {
 			return flowrun.Run{}, nil
@@ -251,7 +260,7 @@ func (e *Engine) mark(ctx context.Context, run flowrun.Run, tok string, cur flow
 	done, failures int) (flowrun.Run, error) {
 	p := &flowrun.Pending{State: cur.State, Generation: cur.Generation, Done: done, Failures: failures}
 	if old := pendingOf(run, tok); old != nil && old.State == cur.State && old.Generation == cur.Generation {
-		p.Job = old.Job // never drop an attempt
+		p.Job, p.Change = old.Job, old.Change
 	}
 	inst := instOf(run, tok)
 	next, err := e.save(ctx, run, tok, inst, p, nil, e.now())
@@ -436,4 +445,21 @@ func evalProps(o flowcfg.Output, vars flowcfg.Vars) map[string]any {
 // the run.
 func isLost(err error) bool {
 	return errors.Is(err, flowrun.ErrConflict) || errors.Is(err, flowrun.ErrNotFound)
+}
+
+// deferredChange returns the `change` branch that a write chose for token
+// tok while its state settled, and the timeline entry that takes it. It
+// reports false when the mark carries none for the state and generation
+// cur is at, or names a branch the state does not have.
+func deferredChange(f *flowcfg.Flow, run flowrun.Run, tok string, cur flow.Current) (flowcfg.Branch,
+	flowrun.Step, bool) {
+	p := pendingOf(run, tok)
+	if p == nil || p.Change == nil || p.State != cur.State || p.Generation != cur.Generation {
+		return flowcfg.Branch{}, flowrun.Step{}, false
+	}
+	bs := f.Branches(cur.State, flowcfg.EventChange)
+	if p.Change.Branch >= len(bs) {
+		return flowcfg.Branch{}, flowrun.Step{}, false
+	}
+	return bs[p.Change.Branch], flowrun.Step{Via: flowrun.ViaChange, By: p.Change.By}, true
 }

@@ -21,16 +21,17 @@ The file is optional. Without it, a project has no flows and no triggers.
 `schema.yaml` never refers to it.
 
 > **Status.** This release runs flows that a person starts by hand, from
-> the web app, over MCP or with `rela flow start`, and flows that start
-> when their subject is created (`on: create`). A run writes its
-> outputs, follows `done` branches and ends in a final state. People do
-> their steps in the web app or over MCP, and a completed step takes the
-> `change` branches. Timers fire and failed steps are tried again while
-> `rela-server` or the desktop app runs. The `predicate` and
-> `schedule` triggers, `change` events from ordinary edits, retention and
-> the inbox are checked but not acted on yet; they follow in a later
-> release. See [Running flows](#running-flows) and
-> [Doing a step](#doing-a-step).
+> the web app, over MCP or with `rela flow start`, flows that start when
+> their subject is created (`on: create`), and flows that start when
+> their subject comes to match a condition (`on: predicate`). A run
+> writes its outputs, follows `done` branches and ends in a final state.
+> People do their steps in the web app or over MCP. A completed step and
+> an ordinary edit of the subject both take the `change` branches. Timers
+> fire and failed steps are tried again while `rela-server` or the
+> desktop app runs. The `schedule` trigger, retention and the inbox are
+> checked but not acted on yet; they follow in a later release. See
+> [Running flows](#running-flows), [Doing a step](#doing-a-step) and
+> [Change events from edits](#change-events-from-edits).
 
 ## Example
 
@@ -180,6 +181,27 @@ create or later through the flow worker. It limits the length of a
 chain, not its width: one run that creates several subjects starts a run
 for each.
 
+### Starting on a predicate
+
+A flow with an `on: predicate` start gets a run when an update makes its
+subject match `when:`. It needs `per_subject: one`: with `many`, each
+edit that makes `when:` true again would start another run. The condition must not have held before the
+update: an update that leaves it true starts nothing, and so does a
+subject that already matched before the flow was added. A create that
+matches starts a run too, as an `on: create` start would.
+
+It covers the same writes as [Change events from edits](#change-events-from-edits),
+and follows the rules of [Starting on create](#starting-on-create): the
+run is started by `run_as`, is stored in the write's transaction, is
+settled right after the commit, and counts toward the chain depth.
+Only a start whose `when:` reads a property the update changed is
+checked.
+
+To act on a change of a related entity, give the subject a property
+that a trigger, a rollup or a sync script keeps up to date, and test
+that property in `when:`. A `when:` reads only the subject's own
+properties.
+
 ## States
 
 | Key | Meaning |
@@ -283,6 +305,64 @@ branches in order and takes the first that applies.
 A branch has `to` (the next state, required), and optional `label`,
 `roles` and `when`. rela warns about a branch that can never be taken
 because the branch before it has no `roles` and no `when`.
+
+### Change events from edits
+
+An ordinary update of a subject fires the `change` event on each of its
+open runs. It does not matter where the update comes from: the web app,
+the API, MCP, the CLI, `rela import --mapping` or a Lua script, such as
+a sync connector or a webhook action. The move is stored in the same
+transaction as the update and is attributed to the person or script that
+made it.
+
+An edit takes a `change` branch only when all of these hold:
+
+- the branch has a `when:` that reads a property the edit changed;
+- the author holds one of the branch's `roles`, on the subject or
+  globally, or the branch names no roles;
+- the `when:` holds on the subject as written.
+
+A branch without `when:` is taken only by a completed step, never by an
+edit. This keeps an unrelated edit from moving a run.
+
+Some writes fire no event:
+
+- the run's own writes, such as its outputs and job steps;
+- a completed step, on the run whose step it completes (the step takes
+  the branch itself);
+- an edit that changes no property;
+- writes that are not updates: a rename, a conversion, a restore, a copy
+  to another face, and the writes of a trigger's cascade.
+
+If another person has claimed the step, an edit by someone else leaves
+it to them. If the run is still writing the outputs of its state, rela
+keeps the event and takes it once those outputs are done. At that point
+it checks the `when:` again on the subject as it is then, and the claim:
+if the guard no longer holds or another person has claimed the step, the
+event is dropped.
+
+Whether a run moved after an edit tells the author whether `when:`
+holds. That is why a `when:` may not read a property that a `visible:`
+grant in acl.yaml restricts: rela refuses such a flow when it loads.
+
+A script needs a role of the branch, just as a person does. Give the
+principal a sync runs as a role in acl.yaml, and name it in `roles:`.
+For example, a run that waits until an external system confirms an
+order:
+
+```yaml
+      waiting:
+        on:
+          change:
+            to: confirmed
+            roles: [integration]
+            when: "entity.external_status == 'confirmed'"
+```
+
+The author's roles are read once, before the write's transaction opens.
+An update made inside a transaction that the caller opened holds no
+roles there, so it takes only a branch without `roles`. Without
+acl.yaml every role counts as held.
 
 ### Timers
 

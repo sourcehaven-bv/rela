@@ -47,7 +47,7 @@ func renameGuardManager(t *testing.T, g entitymanager.RenameGuard) (
 		ACL:         acl.NopACL{},
 		Transitions: transitions.NoTransitions(),
 		AnchorGuard: entitymanager.NopAnchorGuard{},
-		RenameGuard: g,
+		TxHooks:     entitymanager.TxHooks{RenameGuard: g},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

@@ -2803,10 +2803,13 @@ func buildEntityManager(
 		// engine, face deletes and uploads exclude each other.
 		AttachmentLocker: attachLocker,
 		AnchorGuard:      anchorGuard,
-		RenameGuard:      flowRenameGuardFor(st, guard.flowRuns),
-		CreateHook:       guard.flowStarts.hook(),
-		ValidationMode:   base.validationMode,
-		Clock:            base.clock(),
+		TxHooks: entitymanager.TxHooks{
+			RenameGuard: flowRenameGuardFor(st, guard.flowRuns),
+			CreateHook:  guard.flowStarts.hook(),
+			UpdateHook:  guard.flowEvents.hook(),
+		},
+		ValidationMode: base.validationMode,
+		Clock:          base.clock(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)
@@ -3329,6 +3332,7 @@ func finishAssembly(
 	}
 	s.flowEngine = flowEngine
 	refs.flowStarts.setEngine(flowEngine, s.aclDeclarative, flowAs)
+	refs.flowEvents.setEngine(flowEngine, s.aclDeclarative, flowAs)
 	// Built, not started: the host starts it (see RunFlowWorker).
 	if s.flowWorker, err = buildFlowWorker(s.base, s.store, flowEngine); err != nil {
 		return nil, fmt.Errorf("flows: %w", err)

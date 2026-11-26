@@ -64,7 +64,7 @@ func newManagerWithHook(t *testing.T, hook entitymanager.CreateHook) *entitymana
 		Transitions: transitions.NoTransitions(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
-		CreateHook:  hook,
+		TxHooks:     entitymanager.TxHooks{CreateHook: hook},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -171,7 +171,7 @@ func TestCreateHook_NestedCreateFollowsUpAfterCommit(t *testing.T) {
 		FieldGate:     entitymanager.AllowAllFieldGate{},
 		AnchorGuard:   entitymanager.NopAnchorGuard{},
 		AliasRewriter: notes,
-		CreateHook:    hook,
+		TxHooks:       entitymanager.TxHooks{CreateHook: hook},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -293,7 +293,7 @@ func TestCreateHook_RunsAfterTheCreatesFollowUps(t *testing.T) {
 				FieldGate:     entitymanager.AllowAllFieldGate{},
 				AnchorGuard:   entitymanager.NopAnchorGuard{},
 				AliasRewriter: log,
-				CreateHook:    orderHook{log: log},
+				TxHooks:       entitymanager.TxHooks{CreateHook: orderHook{log: log}},
 			})
 			if err != nil {
 				t.Fatalf("entitymanager.New: %v", err)
