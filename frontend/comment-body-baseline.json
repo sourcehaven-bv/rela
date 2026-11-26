@@ -239,7 +239,7 @@
   "src/utils/entityRef.ts": 1,
   "src/utils/fieldSpan.ts": 1,
   "src/utils/fileRefs.ts": 1,
-  "src/utils/filters.ts": 5,
+  "src/utils/filters.ts": 4,
   "src/utils/format.ts": 9,
   "src/utils/ganttLayout.ts": 4,
   "src/utils/ganttSort.ts": 1,
