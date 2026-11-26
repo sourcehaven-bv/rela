@@ -6,7 +6,7 @@ import {
   isDenseEmpty,
   type DenseRoutingHint,
 } from '@/widgets/viewRouting'
-import { formatCellValue } from '@/utils/format'
+import { formatCellValue } from './format'
 
 /**
  * A property value resolved for a dense read-only surface: the widget to

@@ -50,7 +50,7 @@ import RlEntityChannels from 'rela-components/components/channel/RlEntityChannel
 import OpenChannel from './OpenChannel.vue'
 import ChannelTextDialog from './ChannelTextDialog.vue'
 import { channelGroups, channelKey, parseChannelKey } from './channelView'
-import { classifyChannelError } from '@/utils/channelErrors'
+import { classifyChannelError } from './channelErrors'
 import { useUIStore } from '@/stores'
 
 const props = defineProps<{

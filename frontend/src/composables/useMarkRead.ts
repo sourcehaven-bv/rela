@@ -1,7 +1,7 @@
 import { onScopeDispose, watch, type MaybeRefOrGetter, toValue } from 'vue'
 import { markChannelRead, type ChannelTarget } from '@/api/channels'
 import { ApiError } from '@/api/errors'
-import { retryAfterSeconds } from '@/utils/channelErrors'
+import { retryAfterSeconds } from '@/components/entity/channels/channelErrors'
 import { isPageHidden } from './visibleRefetch'
 import type { ChannelHead, ChannelRead, Message } from '@/types/channels'
 

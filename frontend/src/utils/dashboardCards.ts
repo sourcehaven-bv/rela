@@ -7,7 +7,7 @@
  */
 import type { DashboardCardEntry, DashboardCardValue, Entity, EntityType } from '@/types'
 import { isPropertyRedacted } from '@/utils/affordances'
-import { createDenseCellResolver, type DenseCell } from '@/widgets/denseCell'
+import { createDenseCellResolver, type DenseCell } from '@/utils/denseCell'
 import { formatCellValue, formatDecimal } from '@/utils/format'
 import { styleBarColor, styleClassFor } from '@/utils/styleColors'
 

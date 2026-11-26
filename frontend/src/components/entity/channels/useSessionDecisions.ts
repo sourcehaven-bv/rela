@@ -14,7 +14,7 @@ import type {
 } from 'rela-components/components/channel/types'
 import { fromPropValue } from '@/utils/channelValues'
 import { decisionPendingKey } from 'rela-components/components/channel/channelFields'
-import { problemType } from '@/utils/channelErrors'
+import { problemType } from './channelErrors'
 import type { MessageFileUpload } from '@/api/channels'
 import type { AppDecisionView } from './presetViews'
 import {
