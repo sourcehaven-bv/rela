@@ -16,7 +16,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/desktop"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -50,7 +49,7 @@ func newTestDesktop(t *testing.T) *Desktop {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	d := &Desktop{prefs: &desktop.Preferences{}, registry: newProjectRegistry()}
+	d := &Desktop{prefs: &Preferences{}, registry: newProjectRegistry()}
 	t.Cleanup(d.releaseLoadedProject)
 	return d
 }

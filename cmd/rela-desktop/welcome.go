@@ -5,12 +5,10 @@ import (
 	"html"
 	"net/http"
 	"strings"
-
-	"github.com/Sourcehaven-BV/rela/internal/desktop"
 )
 
 // serveWelcomePage renders the welcome/project picker page with recent projects and optional error.
-func serveWelcomePage(w http.ResponseWriter, prefs *desktop.Preferences, loadErr string) {
+func serveWelcomePage(w http.ResponseWriter, prefs *Preferences, loadErr string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	var errorHTML string

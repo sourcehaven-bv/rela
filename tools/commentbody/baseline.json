@@ -505,7 +505,6 @@
   "internal/datamigration/reverserelation.go": 3,
   "internal/datamigration/run.go": 4,
   "internal/datamigration/steps.go": 25,
-  "internal/desktop/preferences.go": 6,
   "internal/desktopnotify/config.go": 5,
   "internal/desktopnotify/evaluate.go": 3,
   "internal/desktopnotify/tracker.go": 2,

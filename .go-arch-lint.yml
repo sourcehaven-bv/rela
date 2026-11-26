@@ -68,7 +68,6 @@ components:
   # generator that fixes it unbuildable.
   icondefs:         { in: internal/dataentryconfig/icondefs }
   conditionlint:    { in: internal/conditionlint }
-  desktop:          { in: internal/desktop }
   docs:             { in: internal/docs }
   docscapture:      { in: internal/docscapture }
   dataentrywire:    { in: internal/dataentrywire }
@@ -563,7 +562,6 @@ deps:
       - dataentrywire
       # fsimport.Report: the import dialog lists the problems it found.
       - fsimport
-      - desktop
       - desktopnotify
       - git
       # hostconfig, secrets: the desktop's host config keeps secrets in the
@@ -906,10 +904,6 @@ deps:
       - predicate
       - predicatefns
       - searchparser
-  desktop:
-    canUse:
-      - wails
-
   # Server protocols
   #
   # mcp takes a focused mcp.Deps struct (domain types only) from the
