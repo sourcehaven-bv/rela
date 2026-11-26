@@ -4,10 +4,12 @@ package websocket
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
-	"runtime"
+	"runtime/pprof"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -183,31 +185,17 @@ func TestServer_AwarenessExpiry_GoroutineStoppedOnEvict(t *testing.T) {
 	s := NewServer()
 	s.AwarenessExpiry = 50 * time.Millisecond
 
-	before := runtime.NumGoroutine()
-	rm, _, err := s.getOrCreateRoom(context.Background(), "room")
-	if err != nil {
-		t.Fatalf("getOrCreateRoom: %v", err)
-	}
+	rm, label := createLabeledRoom(t, s, "room")
 	if rm.awareness == nil {
 		t.Fatal("room has no awareness")
+	}
+	if n, recs := expiryGoroutines(t, label); n != 1 {
+		t.Fatalf("expiry goroutines before evict = %d, want 1:\n%s", n, recs)
 	}
 	if err := s.CloseRoom("room", true); err != nil {
 		t.Fatalf("CloseRoom: %v", err)
 	}
-
-	// Poll until the goroutine count returns to baseline (the expiry goroutine
-	// exits when Destroy stops it). Condition-based wait avoids flakiness.
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		runtime.Gosched()
-		if runtime.NumGoroutine() <= before+1 { // +1 tolerance for scheduler noise
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("expiry goroutine leaked: before=%d after=%d", before, runtime.NumGoroutine())
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitExpiryGoroutinesGone(t, label)
 }
 
 // TestServer_Shutdown_DestroysAwarenessOfResidentRooms verifies that Shutdown
@@ -223,13 +211,12 @@ func TestServer_Shutdown_DestroysAwarenessOfResidentRooms(t *testing.T) {
 	s.AwarenessExpiry = 50 * time.Millisecond
 	s.RoomIdleTimeout = time.Hour // large enough that the sweeper (if started) never evicts
 
-	before := runtime.NumGoroutine()
-	rm, _, err := s.getOrCreateRoom(context.Background(), "room")
-	if err != nil {
-		t.Fatalf("getOrCreateRoom: %v", err)
-	}
+	rm, label := createLabeledRoom(t, s, "room")
 	if rm.awareness == nil {
 		t.Fatal("room has no awareness")
+	}
+	if n, recs := expiryGoroutines(t, label); n != 1 {
+		t.Fatalf("expiry goroutines before Shutdown = %d, want 1:\n%s", n, recs)
 	}
 
 	if err := s.Shutdown(context.Background()); err != nil {
@@ -245,16 +232,74 @@ func TestServer_Shutdown_DestroysAwarenessOfResidentRooms(t *testing.T) {
 		t.Fatal("Shutdown must not remove a resident room from s.rooms")
 	}
 
-	// Poll until the goroutine count returns to baseline (the expiry goroutine
-	// exits when Destroy stops it). Condition-based wait avoids flakiness.
+	waitExpiryGoroutinesGone(t, label)
+}
+
+// expiryLabelKey is the pprof label key that tags goroutines started by one
+// test, so a count ignores goroutines that other tests leave winding down.
+const expiryLabelKey = "ygows-expiry-test"
+
+// expiryLabelSeq makes each label unique across -count repetitions.
+var expiryLabelSeq atomic.Uint64
+
+// createLabeledRoom creates the room under a pprof label unique to this call.
+// getOrCreateRoom starts the awareness expiry goroutine synchronously, and a
+// goroutine inherits the labels of the goroutine that starts it.
+func createLabeledRoom(t *testing.T, s *Server, name string) (*room, string) {
+	t.Helper()
+	label := fmt.Sprintf("%s/%d", t.Name(), expiryLabelSeq.Add(1))
+	var (
+		rm  *room
+		err error
+	)
+	pprof.Do(context.Background(), pprof.Labels(expiryLabelKey, label), func(ctx context.Context) {
+		rm, _, err = s.getOrCreateRoom(ctx, name)
+	})
+	if err != nil {
+		t.Fatalf("getOrCreateRoom: %v", err)
+	}
+	return rm, label
+}
+
+// expiryGoroutines counts the live awareness expiry goroutines that carry
+// label, read from the goroutine profile. It also returns the matching
+// profile records for failure messages.
+func expiryGoroutines(t *testing.T, label string) (int, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := pprof.Lookup("goroutine").WriteTo(&buf, 1); err != nil {
+		t.Fatalf("goroutine profile: %v", err)
+	}
+	want := fmt.Sprintf("%q:%q", expiryLabelKey, label)
+	_, records, _ := strings.Cut(buf.String(), "\n")
+	total := 0
+	var matched strings.Builder
+	for _, rec := range strings.Split(records, "\n\n") {
+		if !strings.Contains(rec, want) || !strings.Contains(rec, "awareness.(*Awareness).StartAutoExpiry.func") {
+			continue
+		}
+		var n int
+		if _, err := fmt.Sscanf(rec, "%d @", &n); err != nil {
+			t.Fatalf("parse goroutine profile record %q: %v", rec, err)
+		}
+		total += n
+		matched.WriteString(rec + "\n\n")
+	}
+	return total, matched.String()
+}
+
+// waitExpiryGoroutinesGone fails the test unless every expiry goroutine
+// carrying label exits within two seconds.
+func waitExpiryGoroutinesGone(t *testing.T, label string) {
+	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		runtime.Gosched()
-		if runtime.NumGoroutine() <= before+1 { // +1 tolerance for scheduler noise
+		n, recs := expiryGoroutines(t, label)
+		if n == 0 {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("expiry goroutine of a resident room leaked past Shutdown: before=%d after=%d", before, runtime.NumGoroutine())
+			t.Fatalf("expiry goroutine leaked: %d still running:\n%s", n, recs)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
