@@ -46,7 +46,7 @@ function openPicker() {
       el.showPicker()
       return
     } catch {
-      // Refused, for example outside a user gesture: fall back to focus.
+      // why: refused outside a user gesture; fall back to focus.
     }
   }
   el.focus()

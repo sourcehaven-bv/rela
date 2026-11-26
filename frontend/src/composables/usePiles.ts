@@ -25,7 +25,7 @@ import { useSchemaStore, useUIStore } from '@/stores'
 import { useEvents } from '@/composables/useEvents'
 import { useWorld } from '@/composables/useWorld'
 import { useFlyout } from '@/composables/useFlyout'
-import { pileNavId } from '@/components/common/sidebarNav'
+import { pileNavId } from './pileNav'
 import { forgetPileName, rememberPileNames, resetPileNames } from './pileNames'
 import { runWhenVisible } from './visibleRefetch'
 

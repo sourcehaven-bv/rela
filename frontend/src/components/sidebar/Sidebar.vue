@@ -22,12 +22,12 @@ import AccountMenu from './AccountMenu.vue'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { spaceOf, stripSpace, useSpaceStore, withSpace } from '@/stores/space'
 import { usePageStore } from '@/stores/pages'
+import { PILE_NAV_PREFIX } from '@/composables/pileNav'
 import {
   activeNavId,
   expandEntityEntries,
   expandGeneratedItems,
   PILE_NAME_NAV_PREFIX,
-  PILE_NAV_PREFIX,
   PILES_GROUP_ID,
   declaredPilesNavGroup,
   pileNamed,
@@ -86,8 +86,6 @@ const logoUrl = computed(() => schemaStore.logoUrl)
  * pinned pair keeps its own slot.
  */
 const appGroups = computed<SidebarGroup[]>(() => {
-  // Custom apps (sandboxed-iframe extensions). The label falls back to title,
-  // then the id, so an app with no metadata still gets a usable entry.
   const apps = Array.from(schemaStore.apps.entries()).map(([id, app]) => ({
     label: app.label || app.title || id,
     href: `/app/${id}`,
@@ -197,9 +195,6 @@ const allNavGroups = computed(() => {
   if (!piles.available.value) return groups
   const unpinned = (p: { id: string }) => !pinnedPileIds.value.has(p.id)
   const declaredGroup = declaredPilesNavGroup(piles.declared.value.filter(unpinned))
-  // An empty Piles heading reads as broken, so the group waits for the first
-  // pile, which "Add to pile" makes. A pile a `pile:` entry places still
-  // counts, so the group keeps its "+" when every pile is placed.
   const pilesGroup =
     piles.collected.value.length > 0 ? pilesNavGroup(piles.collected.value.filter(unpinned)) : null
   const lead = groups[0] && !groups[0].label ? 1 : 0
@@ -325,8 +320,6 @@ const pinnedGroups = computed(() => {
     },
   ]
   const items = rows.filter((r) => r.when && showsBuiltin(r.row)).map((r) => r.item)
-  // The audit view is not a `builtins:` row: the server offers it only to a
-  // holder of audit:read on a database backend.
   if (schemaStore.auditGlobal) {
     items.push({ label: t('nav.audit'), href: '/audit', icon: 'history' })
   }
@@ -371,8 +364,6 @@ let sidebarRequest = 0
 async function loadSidebar() {
   const request = ++sidebarRequest
   try {
-    // Before the initial navigation resolves the route reads `/`, which
-    // would send a deep link to the first space.
     await router.isReady()
     const data = await getSidebar(spaceOf(route.path))
     if (request !== sidebarRequest) return
@@ -388,20 +379,12 @@ async function loadSidebar() {
     builtinsKnown.value = true
     navLoaded.value = true
     schemaStore.setLogoUrl(data.logoUrl ?? null)
-    // Principal-scoped inline-create offers ride on this payload; see
-    // SidebarData.inline_create for why the sidebar carries them.
     schemaStore.setInlineCreate(data.inline_create ?? {})
-    // So is whether this principal may use piles (TKT-K3RJLH).
     schemaStore.setPiles(data)
     schemaStore.setAudit(data.audit)
-    // And which entity header buttons it is shown (TKT-31822PN).
     schemaStore.setHeaderButtons(data.header_buttons)
     schemaStore.setListButtons(data.list_buttons)
   } catch (err) {
-    // Suppress cancellation errors from rapid navigation in Firefox
-    // (see BUG-6C3V and src/composables/usePageData.ts).
-    // A failed or cancelled current request still ends the wait, so the
-    // built-in rows show instead of an empty sidebar.
     if (request === sidebarRequest) navLoaded.value = true
     if (isCancelledFetch(err)) return
     console.error('Failed to load sidebar:', err)
@@ -424,7 +407,6 @@ function handleKeydown(e: KeyboardEvent) {
   if (isInputFocused()) return
   if (hasVisibleSearchBox()) return
   if (document.querySelector('.rl-sidebar .rl-search-box input')) return
-  // A sidebar without its Search row has no shortcut to it either.
   if (!showsBuiltin('search')) return
   e.preventDefault()
   router.push('/search')

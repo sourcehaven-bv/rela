@@ -107,8 +107,6 @@ watch(
 )
 
 onMounted(() => {
-  // Resolve once per session. The composable is a singleton, so this and the
-  // page-level card share one suggestion rather than racing for two.
   void naLoadOnce()
 })
 
@@ -143,7 +141,7 @@ async function handleSync() {
       router.push('/conflicts')
     }
   } catch {
-    // Error is already captured in store
+    // why: the store already holds the error.
   }
 }
 </script>

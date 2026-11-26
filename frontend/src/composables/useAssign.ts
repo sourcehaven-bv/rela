@@ -33,16 +33,16 @@ export function useAssign() {
 }
 
 /**
- * Drop handlers for sidebar entries whose list or page has an `assign:`. The
- * entry accepts a drag only while it carries rows; the item type is checked on
- * drop, since a drag's payload is unreadable before it.
- */
-/**
  * Drag-and-drop handlers for a link entry, by its href: the entries whose list
  * or page has an `assign:` accept dropped rows (TKT-FGE5G3I).
  */
 export type NavDropAttrs = (href: string) => Record<string, unknown> | undefined
 
+/**
+ * Drop handlers for sidebar entries whose list or page has an `assign:`. The
+ * entry accepts a drag only while it carries rows; the item type is checked on
+ * drop, since a drag's payload is unreadable before it.
+ */
 export function useAssignDrop(): { dropAttrs: NavDropAttrs; dropOver: Ref<string | null> } {
   const schemaStore = useSchemaStore()
   const { assign } = useAssign()

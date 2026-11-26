@@ -6,8 +6,8 @@ import RlThemeToggle, {
   type ThemeChoice,
 } from 'rela-components/components/layout/RlThemeToggle.vue'
 import type { NavGroup } from 'rela-components/types'
-import SpaceSwitcher from '@/components/common/SpaceSwitcher.vue'
-import AccountMenu from '@/components/common/AccountMenu.vue'
+import SpaceSwitcher from '@/components/sidebar/SpaceSwitcher.vue'
+import AccountMenu from '@/components/sidebar/AccountMenu.vue'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { configureRoute } from '@/configure/routes'
 
