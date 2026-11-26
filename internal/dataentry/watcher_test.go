@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -509,28 +510,68 @@ func TestReloadConfigBroadcasts(t *testing.T) {
 	}
 }
 
-// TestReloadConfigErrorOmitsHostPath pins that a rejected reload never puts
-// the project directory on the SSE wire. The deprecated-syntax error names its
-// file by absolute path, so it is the case that would leak without the rewrite.
-func TestReloadConfigErrorOmitsHostPath(t *testing.T) {
+// TestReloadConfig_MigratesDeprecatedSyntax pins that a reload of a file
+// with deprecated syntax is accepted through the in-memory migration, as at
+// startup, and leaves the file on disk as the operator wrote it.
+func TestReloadConfig_MigratesDeprecatedSyntax(t *testing.T) {
 	root := t.TempDir()
 	app, fs := setupReloadTestAppAt(t, root)
-	_ = fs.WriteFile(filepath.Join(root, ConfigFile), []byte(`version: "1.0"
+	path := filepath.Join(root, ConfigFile)
+	deprecated := []byte(`version: "1.0"
 app:
   name: "Deprecated"
 lists:
   tickets:
     entity_type: ticket
     detail_view: ticket_detail
-`), 0o644)
-	if len(migration.DetectBytes(mustReadFile(t, fs, filepath.Join(root, ConfigFile)), migration.FileTypeDataEntry)) == 0 {
+`)
+	_ = fs.WriteFile(path, deprecated, 0o644)
+	if len(migration.DetectBytes(deprecated, migration.FileTypeDataEntry)) == 0 {
 		t.Fatal("fixture no longer triggers a deprecated-syntax detection; pick another")
 	}
 	ch := app.broker.subscribe()
 	defer app.broker.unsubscribe(ch)
 
-	if err := app.reloadConfig(); err == nil {
-		t.Fatal("reloadConfig accepted deprecated syntax")
+	if err := app.reloadConfig(); err != nil {
+		t.Fatalf("reloadConfig refused deprecated syntax: %v", err)
+	}
+
+	select {
+	case ev := <-ch:
+		if ev.Name != "refresh" {
+			t.Fatalf("event = %q (%s), want refresh", ev.Name, ev.Data)
+		}
+	default:
+		t.Fatal("no event broadcast")
+	}
+	if app.Cfg().App.Name != "Deprecated" {
+		t.Errorf("reloaded app name = %q, want Deprecated", app.Cfg().App.Name)
+	}
+	if got := mustReadFile(t, fs, path); !bytes.Equal(got, deprecated) {
+		t.Errorf("%s changed on disk:\n%s", ConfigFile, got)
+	}
+}
+
+// TestReloadConfigErrorOmitsHostPath pins that a rejected reload never puts
+// the project directory on the SSE wire. A refused migration names its file
+// by absolute path, so it is the case that would leak without the rewrite.
+func TestReloadConfigErrorOmitsHostPath(t *testing.T) {
+	root := t.TempDir()
+	app, fs := setupReloadTestAppAt(t, root)
+	_ = fs.WriteFile(filepath.Join(root, ConfigFile), []byte(`version: "1.0"
+app:
+  name: "Elevated"
+lists:
+  tickets:
+    entity_type: ticket
+    allow_acl_bypass: true
+`), 0o644)
+	ch := app.broker.subscribe()
+	defer app.broker.unsubscribe(ch)
+
+	err := app.reloadConfig()
+	if !migration.IsMigrationError(err) {
+		t.Fatalf("reloadConfig err = %v, want a refused migration", err)
 	}
 
 	var ev sseEvent

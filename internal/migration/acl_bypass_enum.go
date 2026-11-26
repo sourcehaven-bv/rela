@@ -34,6 +34,10 @@ func (m *ACLBypassEnumMigration) Name() string {
 	return "acl-bypass-enum"
 }
 
+// ReviewRequired reports true: the rewrite turns a boolean into the broadest
+// grant, which a person confirms by running `rela migrate`.
+func (m *ACLBypassEnumMigration) ReviewRequired() bool { return true }
+
 func (m *ACLBypassEnumMigration) Description() string {
 	return "Rewrite boolean allow_acl_bypass to the read/write/read+write enum"
 }

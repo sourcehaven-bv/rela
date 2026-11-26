@@ -110,6 +110,20 @@ type Advisory interface {
 	Advisory() bool
 }
 
+// ReviewRequired is implemented by a migration that rewrites a
+// privilege-bearing value. Loaders refuse it instead of applying it in
+// memory, so a person reviews the grant before the file is migrated.
+type ReviewRequired interface {
+	Migration
+	ReviewRequired() bool
+}
+
+// IsReviewRequired reports whether m is a [ReviewRequired] migration.
+func IsReviewRequired(m Migration) bool {
+	r, ok := m.(ReviewRequired)
+	return ok && r.ReviewRequired()
+}
+
 // ProjectLevelMigration is implemented by a migration that spans more than
 // one file, such as moving a schema block into another file. Detection works
 // per file as usual, but the per-file runner never applies it: the project

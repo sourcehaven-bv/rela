@@ -1707,28 +1707,27 @@ func NewApp(
 // loadConfig turns the raw bytes of data-entry.yaml into a validated,
 // normalized Config. It is the single pipeline for both startup (NewApp) and
 // hot reload (App.reloadConfig), so a config the server would refuse at boot
-// is refused on reload too (TKT-IMBOK). It logs non-fatal config warnings.
+// is refused on reload too (TKT-IMBOK). Deprecated syntax is read through
+// in-memory migrations. It logs non-fatal config warnings.
 //
 // Nil: never returned with a nil error.
 func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string, files lua.ProjectFiles) (*Config, error) {
-	// Check for deprecated syntax that needs migration
 	configPath := filepath.Join(root, ConfigFile)
-	detections := migration.DetectBytes(cfgData, migration.FileTypeDataEntry)
-	if len(detections) > 0 {
-		return nil, &migration.Error{
-			FilePath:   configPath,
-			Detections: detections,
-		}
+	migrated, err := migration.MigrateBytes(configPath, cfgData, migration.FileTypeDataEntry, nil)
+	if err != nil {
+		return nil, err
 	}
+	migration.WarnApplied(configPath, migrated.Applied)
+	cfgData = migrated.Data
 
 	var cfg Config
 	if unmarshalErr := yaml.Unmarshal(cfgData, &cfg); unmarshalErr != nil {
-		return nil, fmt.Errorf("parsing %s: %w", ConfigFile, unmarshalErr)
+		return nil, migrated.Explain(fmt.Errorf("parsing %s: %w", ConfigFile, unmarshalErr))
 	}
 
 	// Validate config against metamodel
 	if validationErr := ValidateConfig(cfgData, &cfg, meta); validationErr != nil {
-		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, validationErr)
+		return nil, migrated.Explain(fmt.Errorf("invalid %s: %w", ConfigFile, validationErr))
 	}
 
 	// Fill in calendar defaults. AFTER validation, deliberately: normalizing

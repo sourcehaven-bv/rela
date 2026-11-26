@@ -124,8 +124,8 @@ func (m *DataEntryCleanupMigration) detectInFormRelations(formDef *yaml.Node, en
 //
 // Note there is deliberately no label check here: a label is authored, never
 // derived (DEC-6C1NAA). Stripping a label the consumer cannot reproduce
-// silently downgrades it to a raw identifier, and because the server refuses
-// to start on unmigrated config the user cannot decline the downgrade.
+// silently downgrades it to a raw identifier, and because loaders apply this
+// migration in memory the user cannot decline the downgrade.
 func (m *DataEntryCleanupMigration) isRedundantField(node *yaml.Node, entityType string) bool {
 	return m.isRedundantWidget(node, entityType) ||
 		m.isRedundantRequired(node, entityType) ||
