@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
-	"github.com/Sourcehaven-BV/rela/internal/desktop"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -388,7 +387,7 @@ func TestProjectDirFromArgs(t *testing.T) {
 // pin that seam without needing a webview, so a regression in the v3 asset
 // wiring is caught in CI rather than by launching the app.
 func TestDesktopServeHTTP_WelcomePageWhenNoProject(t *testing.T) {
-	d := &Desktop{prefs: &desktop.Preferences{}}
+	d := &Desktop{prefs: &Preferences{}}
 
 	rec := httptest.NewRecorder()
 	d.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
@@ -402,7 +401,7 @@ func TestDesktopServeHTTP_WelcomePageWhenNoProject(t *testing.T) {
 // A failed load must surface its error on the welcome page rather than
 // silently showing an empty picker.
 func TestDesktopServeHTTP_ShowsLoadError(t *testing.T) {
-	d := &Desktop{prefs: &desktop.Preferences{}, loadErr: "sentinel-load-failure"}
+	d := &Desktop{prefs: &Preferences{}, loadErr: "sentinel-load-failure"}
 
 	rec := httptest.NewRecorder()
 	d.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
@@ -416,7 +415,7 @@ func TestDesktopServeHTTP_ShowsLoadError(t *testing.T) {
 func TestDesktopServeHTTP_DelegatesToProjectHandler(t *testing.T) {
 	var gotPath string
 	d := &Desktop{
-		prefs: &desktop.Preferences{},
+		prefs: &Preferences{},
 		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotPath = r.URL.Path
 			w.WriteHeader(http.StatusTeapot)
@@ -441,7 +440,7 @@ func TestDesktopServeHTTP_DelegatesToProjectHandler(t *testing.T) {
 // exposes are actually bound on Desktop.
 func TestWelcomePageBindingsExist(t *testing.T) {
 	rec := httptest.NewRecorder()
-	serveWelcomePage(rec, &desktop.Preferences{}, "")
+	serveWelcomePage(rec, &Preferences{}, "")
 	page := rec.Body.String()
 
 	// Assert on the executable line, not the surrounding comment: window._wails

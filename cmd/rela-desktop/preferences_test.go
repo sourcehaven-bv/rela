@@ -1,4 +1,4 @@
-package desktop
+package main
 
 import (
 	"encoding/json"
@@ -47,13 +47,13 @@ func readPrefsFile(t *testing.T, path string) *Preferences {
 func TestLoadReturnsEmptyWhenFileDoesNotExist(t *testing.T) {
 	// Load uses os.UserConfigDir which we can't easily override,
 	// but we can test the behavior by directly testing the logic.
-	prefs, err := Load()
+	prefs, err := loadPreferences()
 	if err != nil {
-		t.Fatalf("Load() error: %v", err)
+		t.Fatalf("loadPreferences() error: %v", err)
 	}
 	// Should return a valid Preferences (possibly with data if user has used the app).
 	if prefs == nil {
-		t.Fatal("Load() returned nil")
+		t.Fatal("loadPreferences() returned nil")
 	}
 }
 

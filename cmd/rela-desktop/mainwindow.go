@@ -8,8 +8,6 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
-
-	"github.com/Sourcehaven-BV/rela/internal/desktop"
 )
 
 // The main window.
@@ -57,7 +55,7 @@ func (m *mainWindows) live(app *application.App) *application.WebviewWindow {
 
 // mainWindowOptions is the main window's configuration: the saved geometry
 // when there is usable state, else the default size, centered.
-func mainWindowOptions(title string, ws desktop.WindowState) application.WebviewWindowOptions {
+func mainWindowOptions(title string, ws WindowState) application.WebviewWindowOptions {
 	opts := application.WebviewWindowOptions{
 		Name:   mainWindowName,
 		Title:  title,
@@ -161,10 +159,10 @@ func (d *Desktop) onDockReopen(e *application.ApplicationEvent) {
 // Failures are logged and swallowed: losing window position must never block
 // a quit.
 // coverage-ignore-func: requires Wails runtime
-func saveWindowState(prefs *desktop.Preferences, win *application.WebviewWindow) {
+func saveWindowState(prefs *Preferences, win *application.WebviewWindow) {
 	w, h := win.Size()
 	x, y := win.Position()
-	st := desktop.WindowState{Width: w, Height: h, X: x, Y: y, Maximized: win.IsMaximised()}
+	st := WindowState{Width: w, Height: h, X: x, Y: y, Maximized: win.IsMaximised()}
 	if !st.Valid() {
 		return // don't overwrite good state with a minimized/degenerate size
 	}

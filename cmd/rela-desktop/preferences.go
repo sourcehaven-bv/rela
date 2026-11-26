@@ -1,6 +1,4 @@
-// Package desktop provides desktop-specific functionality for the Wails desktop app,
-// including user preferences persistence.
-package desktop
+package main
 
 import (
 	"encoding/json"
@@ -59,9 +57,9 @@ type Preferences struct {
 	Window         WindowState     `json:"window,omitzero"`
 }
 
-// Load reads preferences from the user's config directory.
+// loadPreferences reads preferences from the user's config directory.
 // It returns empty preferences (not an error) if the file does not exist.
-func Load() (*Preferences, error) {
+func loadPreferences() (*Preferences, error) {
 	path, err := preferencesPath()
 	if err != nil {
 		return &Preferences{}, nil //nolint:nilerr // no config dir is not an error
@@ -77,7 +75,6 @@ func Load() (*Preferences, error) {
 
 	var prefs Preferences
 	if unmarshalErr := json.Unmarshal(data, &prefs); unmarshalErr != nil {
-		// Corrupted file: return empty preferences rather than failing.
 		return &Preferences{}, nil //nolint:nilerr // corrupted prefs file is not fatal
 	}
 	return &prefs, nil
@@ -96,13 +93,9 @@ func (p *Preferences) Save() error {
 	}
 
 	data, err := json.MarshalIndent(p, "", "  ")
-	// coverage-ignore-start: defensive: Preferences has only string/slice/time.Time fields, json.MarshalIndent cannot
-	// fail for any valid
-	// *Preferences value
 	if err != nil {
 		return err
 	}
-	// coverage-ignore-end
 	return os.WriteFile(path, data, 0o644)
 }
 
@@ -112,7 +105,6 @@ func (p *Preferences) Save() error {
 func (p *Preferences) AddRecentProject(path, name string) {
 	p.LastProject = path
 
-	// Remove existing entry for this path.
 	filtered := make([]RecentProject, 0, len(p.RecentProjects))
 	for _, rp := range p.RecentProjects {
 		if rp.Path != path {
@@ -120,7 +112,6 @@ func (p *Preferences) AddRecentProject(path, name string) {
 		}
 	}
 
-	// Prepend new entry.
 	entry := RecentProject{
 		Path:       path,
 		Name:       name,
@@ -128,7 +119,6 @@ func (p *Preferences) AddRecentProject(path, name string) {
 	}
 	p.RecentProjects = append([]RecentProject{entry}, filtered...)
 
-	// Cap the list.
 	if len(p.RecentProjects) > maxRecentProjects {
 		p.RecentProjects = p.RecentProjects[:maxRecentProjects]
 	}
