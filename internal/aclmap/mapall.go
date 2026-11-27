@@ -2,7 +2,7 @@ package aclmap
 
 import (
 	"context"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 )
@@ -101,7 +101,7 @@ func (e *Engine) MapAll(
 	for id := range byPrincipal {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	for _, id := range ids {
 		pr := byPrincipal[id]
 		stripEveryoneBaseline(pr)
@@ -126,7 +126,7 @@ func (e *Engine) everyoneBaseline(verbs []acl.Verb, types []string) []EveryoneTy
 			}
 		}
 		if len(granted) > 0 {
-			sort.Strings(granted)
+			slices.Sort(granted)
 			out = append(out, EveryoneType{Type: typ, Verbs: granted})
 		}
 	}

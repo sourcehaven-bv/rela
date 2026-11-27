@@ -85,94 +85,163 @@ func TestCacheInInlineRaisesError(t *testing.T) {
 	}
 }
 
-func TestCacheSetAndGetRoundTrip(t *testing.T) {
+func TestCacheScripts(t *testing.T) {
 	t.Parallel()
-	r, _ := newCachedWriter(t, "script-a.lua")
-	mustRun(t, r, `
-		rela.cache.set("k", 42)
-		local v = rela.cache.get("k")
-		assert(v == 42, "expected 42 got " .. tostring(v))
-	`)
-}
+	tests := []struct {
+		name string
+		code string
+	}{
+		{name: "SetAndGetRoundTrip", code: `
+			rela.cache.set("k", 42)
+			local v = rela.cache.get("k")
+			assert(v == 42, "expected 42 got " .. tostring(v))
+		`},
+		// Passing nil as the value is the only delete surface exposed to
+		// Lua; it matches Lua table semantics (nil = absent).
+		{name: "SetNilDeletes", code: `
+			rela.cache.set("k", "hello")
+			assert(rela.cache.get("k") == "hello", "expected hello after set")
+			rela.cache.set("k", nil)
+			assert(rela.cache.get("k") == nil, "expected nil after set(nil)")
+		`},
+		// Two branches reaching the same (non-cyclic) inner table should
+		// not be false-positive-rejected. The cycle detector must unwind
+		// its ancestry set between siblings.
+		{name: "SetAcceptsSharedNoncyclicTable", code: `
+			local shared = {x = 1}
+			local outer = {left = shared, right = shared}
+			rela.cache.set("k", outer)
+			local v = rela.cache.get("k")
+			assert(v.left.x == 1 and v.right.x == 1, "shared branch lost")
+		`},
+		// Exactly 512 is the boundary — must succeed.
+		{name: "SetAcceptsMaxKey", code: `
+			local k = string.rep("x", 512)
+			rela.cache.set(k, "ok")
+			assert(rela.cache.get(k) == "ok")
+		`},
+		// Second call to memoize must not invoke fn — that's the whole
+		// point of caching. Use a shared upvalue counter to detect extra
+		// calls.
+		{name: "MemoizeHitSkipsFn", code: `
+			local calls = 0
+			local function compute()
+				calls = calls + 1
+				return "result"
+			end
+			local a = rela.cache.memoize("k", compute)
+			local b = rela.cache.memoize("k", compute)
+			assert(a == "result" and b == "result", "values not equal")
+			assert(calls == 1, "expected 1 call, got " .. calls)
+		`},
+		// Lua fns routinely return (value, err); dropping anything past
+		// the first is a silent footgun. Memoize captures and re-emits
+		// ALL returns — this is the core AC-11 guarantee.
+		{name: "MemoizeMultipleReturns", code: `
+			local function mk() return 1, "two", {three = 3} end
+			local a, b, c = rela.cache.memoize("k", mk)
+			assert(a == 1, "a")
+			assert(b == "two", "b")
+			assert(type(c) == "table" and c.three == 3, "c")
 
-func TestCacheSetNilDeletes(t *testing.T) {
-	t.Parallel()
-	// Passing nil as the value is the only delete surface exposed to
-	// Lua; it matches Lua table semantics (nil = absent).
-	r, _ := newCachedWriter(t, "s.lua")
-	mustRun(t, r, `
-		rela.cache.set("k", "hello")
-		assert(rela.cache.get("k") == "hello", "expected hello after set")
-		rela.cache.set("k", nil)
-		assert(rela.cache.get("k") == nil, "expected nil after set(nil)")
-	`)
-}
-
-func TestCacheGetRejectsOptions(t *testing.T) {
-	t.Parallel()
-	// get takes no options; passing any table should fail loudly so a
-	// user who expected opts to do something sees the mistake.
-	r, _ := newCachedWriter(t, "s.lua")
-	err := mustRunErr(t, r, `rela.cache.get("k", {ttl = 60})`)
-	if !strings.Contains(err.Error(), "takes 1 argument") {
-		t.Fatalf("unexpected error: %v", err)
+			-- On hit, all three must come back again.
+			local x, y, z = rela.cache.memoize("k", mk)
+			assert(x == 1 and y == "two" and z.three == 3, "hit lost data")
+		`},
+		// bypass=true skips the read but still writes. Useful when the
+		// caller knows the cached value is stale.
+		{name: "MemoizeBypass", code: `
+			local calls = 0
+			local function f()
+				calls = calls + 1
+				return calls
+			end
+			local a = rela.cache.memoize("k", f)
+			local b = rela.cache.memoize("k", f, {bypass = true})
+			assert(a == 1, "first call")
+			assert(b == 2, "bypass re-ran fn, got " .. b)
+			-- After bypass the cache holds the latest.
+			local c = rela.cache.get("k")
+			assert(c == 2, "cache not updated by bypass-memoize")
+		`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r, _ := newCachedWriter(t, "s.lua")
+			mustRun(t, r, tc.code)
+		})
 	}
 }
 
-func TestCacheSetRejectsFunction(t *testing.T) {
+func TestCacheRejectsInvalidCalls(t *testing.T) {
 	t.Parallel()
-	// Functions/userdata/coroutines hold live state; caching them is
-	// always a mistake. Reject at set-time with a message naming the
-	// offending type.
-	r, _ := newCachedWriter(t, "s.lua")
-	err := mustRunErr(t, r, `rela.cache.set("k", function() end)`)
-	if !strings.Contains(err.Error(), "cannot cache value of type function") {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name    string
+		code    string
+		wantErr string
+	}{
+		// get takes no options; passing any table should fail loudly so a
+		// user who expected opts to do something sees the mistake.
+		{name: "GetRejectsOptions", code: `rela.cache.get("k", {ttl = 60})`, wantErr: "takes 1 argument"},
+		// Functions/userdata/coroutines hold live state; caching them is
+		// always a mistake. Reject at set-time with a message naming the
+		// offending type.
+		{
+			name:    "SetRejectsFunction",
+			code:    `rela.cache.set("k", function() end)`,
+			wantErr: "cannot cache value of type function",
+		},
+		// The representability walk recurses into tables; a function
+		// buried inside a map still surfaces.
+		{
+			name:    "SetRejectsNestedFunction",
+			code:    `rela.cache.set("k", {data = {fn = function() end}})`,
+			wantErr: "cannot cache value of type function",
+		},
+		// Without cycle detection, the walk eats the Go stack until the
+		// runtime crashes the whole process with "stack exceeds 1000000000
+		// byte limit" — not catchable from PCall. A Lua error at the cache
+		// boundary is the only safe way out.
+		{name: "SetRejectsCyclicTable", wantErr: "cyclic", code: `
+			local t = {}
+			t.self = t
+			rela.cache.set("k", t)
+		`},
+		// Cycle through two tables (a.child = b, b.parent = a) is the
+		// realistic case — direct self-reference is rarer than a pair
+		// of entities that link to each other.
+		{name: "SetRejectsIndirectCycle", wantErr: "cyclic", code: `
+			local a = {}
+			local b = {parent = a}
+			a.child = b
+			rela.cache.set("k", a)
+		`},
+		// A TTL that overflows float64→int64 would be interpreted as a
+		// large negative Duration and the entry would be born already
+		// expired, masquerading as a silently broken cache.
+		{name: "RejectsOversizedTTL", code: `rela.cache.set("k", "v", {ttl = 1e20})`, wantErr: "ttl too large"},
+		// 513-byte key.
+		{name: "SetRejectsLongKey", code: `rela.cache.set(string.rep("x", 513), "v")`, wantErr: "key length 513"},
+		// Typos like `refersh` are caught because we allowlist option names.
+		{
+			name:    "SetRejectsUnknownOption",
+			code:    `rela.cache.set("k", "v", {refersh = true})`,
+			wantErr: "unknown option",
+		},
+		{name: "MemoizeRejectsUnknownOption", wantErr: "unknown option", code: `
+			rela.cache.memoize("k", function() return 1 end, {refersh = true})
+		`},
 	}
-}
-
-func TestCacheSetRejectsNestedFunction(t *testing.T) {
-	t.Parallel()
-	// The representability walk recurses into tables; a function
-	// buried inside a map still surfaces.
-	r, _ := newCachedWriter(t, "s.lua")
-	err := mustRunErr(t, r, `rela.cache.set("k", {data = {fn = function() end}})`)
-	if !strings.Contains(err.Error(), "cannot cache value of type function") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestCacheSetRejectsCyclicTable(t *testing.T) {
-	t.Parallel()
-	// Without cycle detection, the walk eats the Go stack until the
-	// runtime crashes the whole process with "stack exceeds 1000000000
-	// byte limit" — not catchable from PCall. A Lua error at the cache
-	// boundary is the only safe way out.
-	r, _ := newCachedWriter(t, "s.lua")
-	err := mustRunErr(t, r, `
-		local t = {}
-		t.self = t
-		rela.cache.set("k", t)
-	`)
-	if !strings.Contains(err.Error(), "cyclic") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestCacheSetRejectsIndirectCycle(t *testing.T) {
-	t.Parallel()
-	// Cycle through two tables (a.child = b, b.parent = a) is the
-	// realistic case — direct self-reference is rarer than a pair
-	// of entities that link to each other.
-	r, _ := newCachedWriter(t, "s.lua")
-	err := mustRunErr(t, r, `
-		local a = {}
-		local b = {parent = a}
-		a.child = b
-		rela.cache.set("k", a)
-	`)
-	if !strings.Contains(err.Error(), "cyclic") {
-		t.Fatalf("unexpected error: %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r, _ := newCachedWriter(t, "s.lua")
+			err := mustRunErr(t, r, tc.code)
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }
 
@@ -226,102 +295,6 @@ func TestLuaValueToGoHandlesCycleWithoutCrash(t *testing.T) {
 	}
 }
 
-func TestCacheSetAcceptsSharedNoncyclicTable(t *testing.T) {
-	t.Parallel()
-	// Two branches reaching the same (non-cyclic) inner table should
-	// not be false-positive-rejected. The cycle detector must unwind
-	// its ancestry set between siblings.
-	r, _ := newCachedWriter(t, "s.lua")
-	mustRun(t, r, `
-		local shared = {x = 1}
-		local outer = {left = shared, right = shared}
-		rela.cache.set("k", outer)
-		local v = rela.cache.get("k")
-		assert(v.left.x == 1 and v.right.x == 1, "shared branch lost")
-	`)
-}
-
-func TestCacheRejectsOversizedTTL(t *testing.T) {
-	t.Parallel()
-	// A TTL that overflows float64→int64 would be interpreted as a
-	// large negative Duration and the entry would be born already
-	// expired, masquerading as a silently broken cache.
-	r, _ := newCachedWriter(t, "s.lua")
-	err := mustRunErr(t, r, `rela.cache.set("k", "v", {ttl = 1e20})`)
-	if !strings.Contains(err.Error(), "ttl too large") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestCacheSetRejectsLongKey(t *testing.T) {
-	t.Parallel()
-	r, _ := newCachedWriter(t, "s.lua")
-	// 513-byte key.
-	err := mustRunErr(t, r, `rela.cache.set(string.rep("x", 513), "v")`)
-	if !strings.Contains(err.Error(), "key length 513") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestCacheSetAcceptsMaxKey(t *testing.T) {
-	t.Parallel()
-	// Exactly 512 is the boundary — must succeed.
-	r, _ := newCachedWriter(t, "s.lua")
-	mustRun(t, r, `
-		local k = string.rep("x", 512)
-		rela.cache.set(k, "ok")
-		assert(rela.cache.get(k) == "ok")
-	`)
-}
-
-func TestCacheSetRejectsUnknownOption(t *testing.T) {
-	t.Parallel()
-	// Typos like `refersh` are caught because we allowlist option names.
-	r, _ := newCachedWriter(t, "s.lua")
-	err := mustRunErr(t, r, `rela.cache.set("k", "v", {refersh = true})`)
-	if !strings.Contains(err.Error(), "unknown option") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestCacheMemoizeHitSkipsFn(t *testing.T) {
-	t.Parallel()
-	// Second call to memoize must not invoke fn — that's the whole
-	// point of caching. Use a shared upvalue counter to detect extra
-	// calls.
-	r, _ := newCachedWriter(t, "s.lua")
-	mustRun(t, r, `
-		local calls = 0
-		local function compute()
-			calls = calls + 1
-			return "result"
-		end
-		local a = rela.cache.memoize("k", compute)
-		local b = rela.cache.memoize("k", compute)
-		assert(a == "result" and b == "result", "values not equal")
-		assert(calls == 1, "expected 1 call, got " .. calls)
-	`)
-}
-
-func TestCacheMemoizeMultipleReturns(t *testing.T) {
-	t.Parallel()
-	// Lua fns routinely return (value, err); dropping anything past
-	// the first is a silent footgun. Memoize captures and re-emits
-	// ALL returns — this is the core AC-11 guarantee.
-	r, _ := newCachedWriter(t, "s.lua")
-	mustRun(t, r, `
-		local function mk() return 1, "two", {three = 3} end
-		local a, b, c = rela.cache.memoize("k", mk)
-		assert(a == 1, "a")
-		assert(b == "two", "b")
-		assert(type(c) == "table" and c.three == 3, "c")
-
-		-- On hit, all three must come back again.
-		local x, y, z = rela.cache.memoize("k", mk)
-		assert(x == 1 and y == "two" and z.three == 3, "hit lost data")
-	`)
-}
-
 func TestCacheMemoizeFnRaisesNotCached(t *testing.T) {
 	t.Parallel()
 	// If fn errors, cache stays empty so the next call re-runs it
@@ -345,38 +318,6 @@ func TestCacheMemoizeFnRaisesNotCached(t *testing.T) {
 		assert(v == "ok")
 		assert(called, "fn not called — cache stored previous failure!")
 	`)
-}
-
-func TestCacheMemoizeBypass(t *testing.T) {
-	t.Parallel()
-	// bypass=true skips the read but still writes. Useful when the
-	// caller knows the cached value is stale.
-	r, _ := newCachedWriter(t, "s.lua")
-	mustRun(t, r, `
-		local calls = 0
-		local function f()
-			calls = calls + 1
-			return calls
-		end
-		local a = rela.cache.memoize("k", f)
-		local b = rela.cache.memoize("k", f, {bypass = true})
-		assert(a == 1, "first call")
-		assert(b == 2, "bypass re-ran fn, got " .. b)
-		-- After bypass the cache holds the latest.
-		local c = rela.cache.get("k")
-		assert(c == 2, "cache not updated by bypass-memoize")
-	`)
-}
-
-func TestCacheMemoizeRejectsUnknownOption(t *testing.T) {
-	t.Parallel()
-	r, _ := newCachedWriter(t, "s.lua")
-	err := mustRunErr(t, r, `
-		rela.cache.memoize("k", function() return 1 end, {refersh = true})
-	`)
-	if !strings.Contains(err.Error(), "unknown option") {
-		t.Fatalf("unexpected error: %v", err)
-	}
 }
 
 func TestCacheNamespacedIsolation(t *testing.T) {

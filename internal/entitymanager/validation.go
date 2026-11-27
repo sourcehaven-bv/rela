@@ -1,9 +1,10 @@
 package entitymanager
 
 import (
+	"cmp"
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -95,9 +96,7 @@ func partitionValidationErrors(mode ValidationMode, errs []*metamodel.Validation
 			hard = append(hard, err)
 		}
 	}
-	sort.Slice(warnings, func(i, j int) bool {
-		return warnings[i].Path < warnings[j].Path
-	})
+	slices.SortFunc(warnings, func(a, b entity.Warning) int { return cmp.Compare(a.Path, b.Path) })
 	return hard, warnings
 }
 

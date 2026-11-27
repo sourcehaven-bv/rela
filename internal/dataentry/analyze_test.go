@@ -63,26 +63,6 @@ func TestAnalyzeOrphans(t *testing.T) {
 	}
 }
 
-func TestAnalyzeOrphans_NoOrphans(t *testing.T) {
-	g := newFixture()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
-		},
-	}
-
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{}})
-	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]any{}})
-	g.AddEdge(&entity.Relation{From: "T-001", Type: "blocks", To: "T-002"})
-
-	svc := newAnalyzeService(t, g, meta)
-	section := svc.analyzeOrphans(context.Background(), meta)
-
-	if len(section.Issues) != 0 {
-		t.Errorf("expected 0 orphans, got %d", len(section.Issues))
-	}
-}
-
 func TestAnalyzeDuplicates(t *testing.T) {
 	g := newFixture()
 	meta := &metamodel.Metamodel{
@@ -107,27 +87,6 @@ func TestAnalyzeDuplicates(t *testing.T) {
 	if section.Issues[0].EntityID != "T-001" || section.Issues[1].EntityID != "T-002" {
 		t.Errorf("expected T-001 and T-002, got %s and %s",
 			section.Issues[0].EntityID, section.Issues[1].EntityID)
-	}
-}
-
-func TestAnalyzeDuplicates_NoDuplicates(t *testing.T) {
-	g := newFixture()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {Properties: map[string]metamodel.PropertyDef{
-				"title": {Type: "string"},
-			}},
-		},
-	}
-
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{"title": "Alpha"}})
-	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]any{"title": "Beta"}})
-
-	svc := newAnalyzeService(t, g, meta)
-	section := svc.analyzeDuplicates(context.Background(), meta)
-
-	if len(section.Issues) != 0 {
-		t.Errorf("expected 0 duplicate issues, got %d", len(section.Issues))
 	}
 }
 
@@ -162,25 +121,6 @@ func TestAnalyzeGaps(t *testing.T) {
 	}
 	if issue.EntityID != "" {
 		t.Errorf("expected empty EntityID for gap row, got %q", issue.EntityID)
-	}
-}
-
-func TestAnalyzeGaps_ManualIDsSkipped(t *testing.T) {
-	g := newFixture()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"component": {IDType: "manual", IDPrefix: "C-", Properties: map[string]metamodel.PropertyDef{}},
-		},
-	}
-
-	g.AddNode(&entity.Entity{ID: "C-001", Type: "component", Properties: map[string]any{}})
-	g.AddNode(&entity.Entity{ID: "C-005", Type: "component", Properties: map[string]any{}})
-
-	svc := newAnalyzeService(t, g, meta)
-	section := svc.analyzeGaps(context.Background(), meta)
-
-	if len(section.Issues) != 0 {
-		t.Errorf("expected 0 gap issues for manual ID type, got %d", len(section.Issues))
 	}
 }
 
@@ -253,35 +193,6 @@ func TestAnalyzeCardinality(t *testing.T) {
 	}
 }
 
-func TestAnalyzeCardinality_AllSatisfied(t *testing.T) {
-	g := newFixture()
-	min1 := 1
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket":    {Properties: map[string]metamodel.PropertyDef{}},
-			"component": {Properties: map[string]metamodel.PropertyDef{}},
-		},
-		Relations: map[string]metamodel.RelationDef{
-			"implements": {
-				From:        []string{"ticket"},
-				To:          []string{"component"},
-				MinOutgoing: &min1,
-			},
-		},
-	}
-
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{}})
-	g.AddNode(&entity.Entity{ID: "C-001", Type: "component", Properties: map[string]any{}})
-	g.AddEdge(&entity.Relation{From: "T-001", Type: "implements", To: "C-001"})
-
-	svc := newAnalyzeService(t, g, meta)
-	section := svc.analyzeCardinality(context.Background(), meta)
-
-	if len(section.Issues) != 0 {
-		t.Errorf("expected 0 violations, got %d", len(section.Issues))
-	}
-}
-
 func TestAnalyzeProperties(t *testing.T) {
 	g := newFixture()
 	meta := &metamodel.Metamodel{
@@ -315,29 +226,6 @@ func TestAnalyzeProperties(t *testing.T) {
 		if issue.Severity != "error" {
 			t.Errorf("expected severity 'error', got %q", issue.Severity)
 		}
-	}
-}
-
-func TestAnalyzeProperties_AllValid(t *testing.T) {
-	g := newFixture()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {
-				IDPrefix: "T-",
-				Properties: map[string]metamodel.PropertyDef{
-					"title": {Type: "string", Required: true},
-				},
-			},
-		},
-	}
-
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{"title": "Valid"}})
-
-	svc := newAnalyzeService(t, g, meta)
-	section := svc.analyzeProperties(context.Background(), meta)
-
-	if len(section.Issues) != 0 {
-		t.Errorf("expected 0 property issues, got %d", len(section.Issues))
 	}
 }
 
@@ -514,19 +402,104 @@ func TestAnalyzeValidations_SurfacesLoadError(t *testing.T) {
 	}
 }
 
-func TestAnalyzeValidations_NoRules(t *testing.T) {
-	g := newFixture()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+// TestAnalyze_NoIssues runs each check over a graph it must accept.
+func TestAnalyze_NoIssues(t *testing.T) {
+	min1 := 1
+	tests := []struct {
+		name    string
+		meta    *metamodel.Metamodel
+		nodes   []*entity.Entity
+		edges   []*entity.Relation
+		analyze func(analyzeService, context.Context, *metamodel.Metamodel) AnalysisSection
+	}{
+		{
+			name: "Orphans_NoOrphans",
+			meta: &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+				"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+			}},
+			nodes: []*entity.Entity{
+				{ID: "T-001", Type: "ticket", Properties: map[string]any{}},
+				{ID: "T-002", Type: "ticket", Properties: map[string]any{}},
+			},
+			edges:   []*entity.Relation{{From: "T-001", Type: "blocks", To: "T-002"}},
+			analyze: analyzeService.analyzeOrphans,
+		},
+		{
+			name: "Duplicates_NoDuplicates",
+			meta: &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+				"ticket": {Properties: map[string]metamodel.PropertyDef{"title": {Type: "string"}}},
+			}},
+			nodes: []*entity.Entity{
+				{ID: "T-001", Type: "ticket", Properties: map[string]any{"title": "Alpha"}},
+				{ID: "T-002", Type: "ticket", Properties: map[string]any{"title": "Beta"}},
+			},
+			analyze: analyzeService.analyzeDuplicates,
+		},
+		{
+			name: "Gaps_ManualIDsSkipped",
+			meta: &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+				"component": {IDType: "manual", IDPrefix: "C-", Properties: map[string]metamodel.PropertyDef{}},
+			}},
+			nodes: []*entity.Entity{
+				{ID: "C-001", Type: "component", Properties: map[string]any{}},
+				{ID: "C-005", Type: "component", Properties: map[string]any{}},
+			},
+			analyze: analyzeService.analyzeGaps,
+		},
+		{
+			name: "Cardinality_AllSatisfied",
+			meta: &metamodel.Metamodel{
+				Entities: map[string]metamodel.EntityDef{
+					"ticket":    {Properties: map[string]metamodel.PropertyDef{}},
+					"component": {Properties: map[string]metamodel.PropertyDef{}},
+				},
+				Relations: map[string]metamodel.RelationDef{
+					"implements": {From: []string{"ticket"}, To: []string{"component"}, MinOutgoing: &min1},
+				},
+			},
+			nodes: []*entity.Entity{
+				{ID: "T-001", Type: "ticket", Properties: map[string]any{}},
+				{ID: "C-001", Type: "component", Properties: map[string]any{}},
+			},
+			edges:   []*entity.Relation{{From: "T-001", Type: "implements", To: "C-001"}},
+			analyze: analyzeService.analyzeCardinality,
+		},
+		{
+			name: "Properties_AllValid",
+			meta: &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+				"ticket": {
+					IDPrefix:   "T-",
+					Properties: map[string]metamodel.PropertyDef{"title": {Type: "string", Required: true}},
+				},
+			}},
+			nodes:   []*entity.Entity{{ID: "T-001", Type: "ticket", Properties: map[string]any{"title": "Valid"}}},
+			analyze: analyzeService.analyzeProperties,
+		},
+		{
+			name: "Validations_NoRules",
+			meta: &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+				"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+			}},
+			analyze: analyzeService.analyzeValidations,
 		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newFixture()
+			for _, n := range tc.nodes {
+				g.AddNode(n)
+			}
+			for _, e := range tc.edges {
+				g.AddEdge(e)
+			}
 
-	svc := newAnalyzeService(t, g, meta)
-	section := svc.analyzeValidations(context.Background(), meta)
+			svc := newAnalyzeService(t, g, tc.meta)
+			section := tc.analyze(svc, context.Background(), tc.meta)
 
-	if len(section.Issues) != 0 {
-		t.Errorf("expected 0 issues with no rules, got %d", len(section.Issues))
+			if len(section.Issues) != 0 {
+				t.Errorf("expected 0 issues, got %d", len(section.Issues))
+			}
+		})
 	}
 }
 

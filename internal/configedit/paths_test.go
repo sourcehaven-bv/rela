@@ -3,7 +3,7 @@ package configedit
 import (
 	"os"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -70,7 +70,7 @@ func yamlPaths(t reflect.Type) []string {
 		}
 	}
 	walk(t, "")
-	sort.Strings(out)
+	slices.Sort(out)
 	for i := range out {
 		out[i] = strings.TrimPrefix(out[i], ".")
 	}

@@ -15,11 +15,11 @@
 package writerule
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"slices"
-	"sort"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -109,7 +109,7 @@ func NewSet(meta *metamodel.Metamodel, opts ...Option) (*Set, error) {
 		types := rule.TargetTypes()
 		if types == nil {
 			types = meta.EntityTypes()
-			sort.Strings(types)
+			slices.Sort(types)
 		}
 		for _, typ := range types {
 			if _, ok := meta.GetEntityDef(typ); !ok {
@@ -156,7 +156,7 @@ func attributes(progs []*predicate.Program) []string {
 			}
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -206,15 +206,15 @@ func (s *Set) Reads() []Read {
 			for p := range seen {
 				props = append(props, p)
 			}
-			sort.Strings(props)
+			slices.Sort(props)
 			out = append(out, Read{Type: typ, Rule: r.name, Properties: props})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Type != out[j].Type {
-			return out[i].Type < out[j].Type
-		}
-		return out[i].Rule < out[j].Rule
+	slices.SortFunc(out, func(a, b Read) int {
+		return cmp.Or(
+			cmp.Compare(a.Type, b.Type),
+			cmp.Compare(a.Rule, b.Rule),
+		)
 	})
 	return out
 }

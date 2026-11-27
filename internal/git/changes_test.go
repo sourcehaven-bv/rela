@@ -1,171 +1,116 @@
 package git
 
 import (
+	"slices"
 	"testing"
 )
 
-func TestGenerateCommitMessage_SingleAdd(t *testing.T) {
-	cs := &ChangeSet{
-		Added: []EntityChange{
-			{Type: "ticket", ID: "TKT-001", IsNew: true},
+func TestGenerateCommitMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		cs   *ChangeSet
+		// want lists every accepted message; group order follows map iteration.
+		want []string
+	}{
+		{
+			name: "SingleAdd",
+			cs:   &ChangeSet{Added: []EntityChange{{Type: "ticket", ID: "TKT-001", IsNew: true}}},
+			want: []string{"Add ticket TKT-001"},
+		},
+		{
+			name: "MultipleAdds",
+			cs: &ChangeSet{Added: []EntityChange{
+				{Type: "ticket", ID: "TKT-001", IsNew: true},
+				{Type: "ticket", ID: "TKT-002", IsNew: true},
+			}},
+			want: []string{"Add ticket TKT-001, TKT-002", "Add ticket TKT-002, TKT-001"},
+		},
+		{
+			name: "ManyAdds",
+			cs: &ChangeSet{Added: []EntityChange{
+				{Type: "ticket", ID: "TKT-001", IsNew: true},
+				{Type: "ticket", ID: "TKT-002", IsNew: true},
+				{Type: "ticket", ID: "TKT-003", IsNew: true},
+				{Type: "ticket", ID: "TKT-004", IsNew: true},
+			}},
+			want: []string{"Add 4 tickets"},
+		},
+		{
+			name: "SingleModify",
+			cs: &ChangeSet{Modified: []EntityChange{
+				{Type: "ticket", ID: "TKT-001", PropsChanged: []string{"status", "priority"}},
+			}},
+			want: []string{"TKT-001: update status, priority"},
+		},
+		{
+			name: "SingleModifyBodyOnly",
+			cs:   &ChangeSet{Modified: []EntityChange{{Type: "ticket", ID: "TKT-001", BodyChanged: true}}},
+			want: []string{"TKT-001: update description"},
+		},
+		{
+			name: "SingleModifyUnknown",
+			cs:   &ChangeSet{Modified: []EntityChange{{Type: "ticket", ID: "TKT-001"}}},
+			want: []string{"TKT-001: update"},
+		},
+		{
+			name: "MultipleModify",
+			cs: &ChangeSet{Modified: []EntityChange{
+				{Type: "ticket", ID: "TKT-001", PropsChanged: []string{"status"}},
+				{Type: "ticket", ID: "TKT-002", PropsChanged: []string{"priority"}},
+			}},
+			want: []string{"Update ticket TKT-001, TKT-002", "Update ticket TKT-002, TKT-001"},
+		},
+		{
+			name: "SingleDelete",
+			cs:   &ChangeSet{Deleted: []EntityRef{{Type: "ticket", ID: "TKT-001"}}},
+			want: []string{"Remove ticket TKT-001"},
+		},
+		{
+			name: "MultipleDeletes",
+			cs: &ChangeSet{Deleted: []EntityRef{
+				{Type: "ticket", ID: "TKT-001"},
+				{Type: "ticket", ID: "TKT-002"},
+			}},
+			want: []string{"Remove 2 entities"},
+		},
+		{
+			name: "SingleRelation",
+			cs: &ChangeSet{Relations: []RelationChange{
+				{From: "TKT-001", RelType: "blocks", To: "TKT-002", IsNew: true},
+			}},
+			want: []string{"Link TKT-001 -> TKT-002"},
+		},
+		{
+			name: "MultipleRelations",
+			cs: &ChangeSet{Relations: []RelationChange{
+				{From: "TKT-001", RelType: "blocks", To: "TKT-002", IsNew: true},
+				{From: "TKT-001", RelType: "blocks", To: "TKT-003", IsNew: true},
+			}},
+			want: []string{"Add 2 relations"},
+		},
+		{
+			name: "Combined",
+			cs: &ChangeSet{
+				Added: []EntityChange{{Type: "ticket", ID: "TKT-003", IsNew: true}},
+				Modified: []EntityChange{
+					{Type: "ticket", ID: "TKT-001", PropsChanged: []string{"status"}},
+				},
+			},
+			want: []string{"Add ticket TKT-003; TKT-001: update status"},
+		},
+		{
+			name: "Empty",
+			cs:   &ChangeSet{},
+			want: []string{"Update entities"},
 		},
 	}
-	msg := cs.GenerateCommitMessage()
-	if msg != "Add ticket TKT-001" {
-		t.Errorf("expected 'Add ticket TKT-001', got %q", msg)
-	}
-}
-
-func TestGenerateCommitMessage_MultipleAdds(t *testing.T) {
-	cs := &ChangeSet{
-		Added: []EntityChange{
-			{Type: "ticket", ID: "TKT-001", IsNew: true},
-			{Type: "ticket", ID: "TKT-002", IsNew: true},
-		},
-	}
-	msg := cs.GenerateCommitMessage()
-	// Order may vary due to map iteration
-	if msg != "Add ticket TKT-001, TKT-002" && msg != "Add ticket TKT-002, TKT-001" {
-		t.Errorf("expected 'Add ticket TKT-001, TKT-002' or similar, got %q", msg)
-	}
-}
-
-func TestGenerateCommitMessage_ManyAdds(t *testing.T) {
-	cs := &ChangeSet{
-		Added: []EntityChange{
-			{Type: "ticket", ID: "TKT-001", IsNew: true},
-			{Type: "ticket", ID: "TKT-002", IsNew: true},
-			{Type: "ticket", ID: "TKT-003", IsNew: true},
-			{Type: "ticket", ID: "TKT-004", IsNew: true},
-		},
-	}
-	msg := cs.GenerateCommitMessage()
-	if msg != "Add 4 tickets" {
-		t.Errorf("expected 'Add 4 tickets', got %q", msg)
-	}
-}
-
-func TestGenerateCommitMessage_SingleModify(t *testing.T) {
-	cs := &ChangeSet{
-		Modified: []EntityChange{
-			{Type: "ticket", ID: "TKT-001", PropsChanged: []string{"status", "priority"}},
-		},
-	}
-	msg := cs.GenerateCommitMessage()
-	if msg != "TKT-001: update status, priority" {
-		t.Errorf("expected 'TKT-001: update status, priority', got %q", msg)
-	}
-}
-
-func TestGenerateCommitMessage_SingleModifyBodyOnly(t *testing.T) {
-	cs := &ChangeSet{
-		Modified: []EntityChange{
-			{Type: "ticket", ID: "TKT-001", BodyChanged: true},
-		},
-	}
-	msg := cs.GenerateCommitMessage()
-	if msg != "TKT-001: update description" {
-		t.Errorf("expected 'TKT-001: update description', got %q", msg)
-	}
-}
-
-func TestGenerateCommitMessage_SingleModifyUnknown(t *testing.T) {
-	cs := &ChangeSet{
-		Modified: []EntityChange{
-			{Type: "ticket", ID: "TKT-001"},
-		},
-	}
-	msg := cs.GenerateCommitMessage()
-	if msg != "TKT-001: update" {
-		t.Errorf("expected 'TKT-001: update', got %q", msg)
-	}
-}
-
-func TestGenerateCommitMessage_MultipleModify(t *testing.T) {
-	cs := &ChangeSet{
-		Modified: []EntityChange{
-			{Type: "ticket", ID: "TKT-001", PropsChanged: []string{"status"}},
-			{Type: "ticket", ID: "TKT-002", PropsChanged: []string{"priority"}},
-		},
-	}
-	msg := cs.GenerateCommitMessage()
-	// Order may vary
-	if msg != "Update ticket TKT-001, TKT-002" && msg != "Update ticket TKT-002, TKT-001" {
-		t.Errorf("expected 'Update ticket TKT-001, TKT-002' or similar, got %q", msg)
-	}
-}
-
-func TestGenerateCommitMessage_SingleDelete(t *testing.T) {
-	cs := &ChangeSet{
-		Deleted: []EntityRef{
-			{Type: "ticket", ID: "TKT-001"},
-		},
-	}
-	msg := cs.GenerateCommitMessage()
-	if msg != "Remove ticket TKT-001" {
-		t.Errorf("expected 'Remove ticket TKT-001', got %q", msg)
-	}
-}
-
-func TestGenerateCommitMessage_MultipleDeletes(t *testing.T) {
-	cs := &ChangeSet{
-		Deleted: []EntityRef{
-			{Type: "ticket", ID: "TKT-001"},
-			{Type: "ticket", ID: "TKT-002"},
-		},
-	}
-	msg := cs.GenerateCommitMessage()
-	if msg != "Remove 2 entities" {
-		t.Errorf("expected 'Remove 2 entities', got %q", msg)
-	}
-}
-
-func TestGenerateCommitMessage_SingleRelation(t *testing.T) {
-	cs := &ChangeSet{
-		Relations: []RelationChange{
-			{From: "TKT-001", RelType: "blocks", To: "TKT-002", IsNew: true},
-		},
-	}
-	msg := cs.GenerateCommitMessage()
-	if msg != "Link TKT-001 -> TKT-002" {
-		t.Errorf("expected 'Link TKT-001 -> TKT-002', got %q", msg)
-	}
-}
-
-func TestGenerateCommitMessage_MultipleRelations(t *testing.T) {
-	cs := &ChangeSet{
-		Relations: []RelationChange{
-			{From: "TKT-001", RelType: "blocks", To: "TKT-002", IsNew: true},
-			{From: "TKT-001", RelType: "blocks", To: "TKT-003", IsNew: true},
-		},
-	}
-	msg := cs.GenerateCommitMessage()
-	if msg != "Add 2 relations" {
-		t.Errorf("expected 'Add 2 relations', got %q", msg)
-	}
-}
-
-func TestGenerateCommitMessage_Combined(t *testing.T) {
-	cs := &ChangeSet{
-		Added: []EntityChange{
-			{Type: "ticket", ID: "TKT-003", IsNew: true},
-		},
-		Modified: []EntityChange{
-			{Type: "ticket", ID: "TKT-001", PropsChanged: []string{"status"}},
-		},
-	}
-	msg := cs.GenerateCommitMessage()
-	// Should contain both
-	if msg != "Add ticket TKT-003; TKT-001: update status" {
-		t.Errorf("expected 'Add ticket TKT-003; TKT-001: update status', got %q", msg)
-	}
-}
-
-func TestGenerateCommitMessage_Empty(t *testing.T) {
-	cs := &ChangeSet{}
-	msg := cs.GenerateCommitMessage()
-	if msg != "Update entities" {
-		t.Errorf("expected 'Update entities', got %q", msg)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := tc.cs.GenerateCommitMessage()
+			if !slices.Contains(tc.want, msg) {
+				t.Errorf("expected one of %q, got %q", tc.want, msg)
+			}
+		})
 	}
 }
 

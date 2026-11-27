@@ -31,13 +31,64 @@ func evalString(t *testing.T, r *Runtime, expr string) string {
 	return s.String()
 }
 
-func TestURLFormEdit(t *testing.T) {
+func TestURLRoutes(t *testing.T) {
 	t.Parallel()
-	r := newURLWriter(t)
-	got := evalString(t, r, `rela.url.form_edit("full_ticket", {id="TKT-001", type="ticket"})`)
-	want := "/form/full_ticket/TKT-001"
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
+	cases := []struct {
+		name string
+		code string
+		want string
+	}{
+		{
+			name: "FormEdit",
+			code: `rela.url.form_edit("full_ticket", {id="TKT-001", type="ticket"})`,
+			want: "/form/full_ticket/TKT-001",
+		},
+		// form_edit takes an entity table and extracts the id — any other keys
+		// (including "query") are ignored. Authors wanting extra query on an
+		// edit URL have no supported shape today; the return_to rewriter is
+		// the usual source of form-link query, and extra ad-hoc params on
+		// edit URLs have no use case.
+		{
+			name: "FormEdit_ignoresExtraTableKeys",
+			code: `rela.url.form_edit("full_ticket", {id="TKT-001", type="ticket", source="doc"})`,
+			want: "/form/full_ticket/TKT-001",
+		},
+		// The form_create "with relations + properties + query" case used the
+		// old opts.query wrapper. The bare-query shape is for non-form helpers
+		// only; form_create keeps the three-sub-key opts shape because it has
+		// genuinely three semantics (rel./prop./passthrough).
+		{
+			name: "FormCreate_queryIsStillSubKey",
+			code: `rela.url.form_create("full_ticket", {
+				relations = {parent = "TKT-1"},
+				properties = {status = "open"},
+				query = {source = "doc"},
+			})`,
+			want: "/form/full_ticket?prop.status=open&rel.parent=TKT-1&source=doc",
+		},
+		{name: "Detail", code: `rela.url.detail({id="TKT-001", type="ticket"})`, want: "/entity/ticket/TKT-001"},
+		{
+			name: "View",
+			code: `rela.url.view("timeline", {id="TKT-001", type="ticket"})`,
+			want: "/view/timeline/TKT-001",
+		},
+		{name: "Kanban", code: `rela.url.kanban("sprint")`, want: "/kanban/sprint"},
+		{name: "Calendar", code: `rela.url.calendar("schedule")`, want: "/calendar/schedule"},
+		{
+			name: "Document",
+			code: `rela.url.document("release_notes", {id="REL-001", type="release"})`,
+			want: "/document/release_notes/REL-001",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newURLWriter(t)
+			got := evalString(t, r, tc.code)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -90,22 +141,6 @@ func TestURLFormCreate(t *testing.T) {
 	}
 }
 
-// form_edit takes an entity table and extracts the id — any other keys
-// (including "query") are ignored. Authors wanting extra query on an
-// edit URL have no supported shape today; the return_to rewriter is
-// the usual source of form-link query, and extra ad-hoc params on
-// edit URLs have no use case.
-func TestURLFormEdit_ignoresExtraTableKeys(t *testing.T) {
-	t.Parallel()
-	r := newURLWriter(t)
-	got := evalString(t, r,
-		`rela.url.form_edit("full_ticket", {id="TKT-001", type="ticket", source="doc"})`)
-	want := "/form/full_ticket/TKT-001"
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
 func TestURLForm_errors(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -149,16 +184,6 @@ func TestURLForm_errors(t *testing.T) {
 	}
 }
 
-func TestURLDetail(t *testing.T) {
-	t.Parallel()
-	r := newURLWriter(t)
-	got := evalString(t, r, `rela.url.detail({id="TKT-001", type="ticket"})`)
-	want := "/entity/ticket/TKT-001"
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
 func TestURLDetail_requiresFields(t *testing.T) {
 	t.Parallel()
 	cases := []string{
@@ -197,34 +222,6 @@ func TestURLList(t *testing.T) {
 	}
 }
 
-func TestURLView(t *testing.T) {
-	t.Parallel()
-	r := newURLWriter(t)
-	got := evalString(t, r, `rela.url.view("timeline", {id="TKT-001", type="ticket"})`)
-	want := "/view/timeline/TKT-001"
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-func TestURLKanban(t *testing.T) {
-	t.Parallel()
-	r := newURLWriter(t)
-	got := evalString(t, r, `rela.url.kanban("sprint")`)
-	if got != "/kanban/sprint" {
-		t.Errorf("got %q, want /kanban/sprint", got)
-	}
-}
-
-func TestURLCalendar(t *testing.T) {
-	t.Parallel()
-	r := newURLWriter(t)
-	got := evalString(t, r, `rela.url.calendar("schedule")`)
-	if got != "/calendar/schedule" {
-		t.Errorf("got %q, want /calendar/schedule", got)
-	}
-}
-
 // TestURLCalendarWithQuery covers the optional query table, which is how a
 // script deep-links to a specific period rather than the calendar's default.
 func TestURLCalendarWithQuery(t *testing.T) {
@@ -232,16 +229,6 @@ func TestURLCalendarWithQuery(t *testing.T) {
 	r := newURLWriter(t)
 	got := evalString(t, r, `rela.url.calendar("schedule", {view="week", date="2026-08-22"})`)
 	want := "/calendar/schedule?date=2026-08-22&view=week"
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-func TestURLDocument(t *testing.T) {
-	t.Parallel()
-	r := newURLWriter(t)
-	got := evalString(t, r, `rela.url.document("release_notes", {id="REL-001", type="release"})`)
-	want := "/document/release_notes/REL-001"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -324,25 +311,6 @@ func TestURLParams_validation(t *testing.T) {
 				t.Fatalf("error %v does not contain %q", err, tc.wantSub)
 			}
 		})
-	}
-}
-
-// The form_create "with relations + properties + query" case used the
-// old opts.query wrapper. The bare-query shape is for non-form helpers
-// only; form_create keeps the three-sub-key opts shape because it has
-// genuinely three semantics (rel./prop./passthrough).
-func TestURLFormCreate_queryIsStillSubKey(t *testing.T) {
-	t.Parallel()
-	r := newURLWriter(t)
-	got := evalString(t, r,
-		`rela.url.form_create("full_ticket", {
-			relations = {parent = "TKT-1"},
-			properties = {status = "open"},
-			query = {source = "doc"},
-		})`)
-	want := "/form/full_ticket?prop.status=open&rel.parent=TKT-1&source=doc"
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
 	}
 }
 

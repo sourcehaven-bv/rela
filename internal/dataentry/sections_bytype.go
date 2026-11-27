@@ -1,7 +1,8 @@
 package dataentry
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -45,6 +46,6 @@ func groupByType(entities []*entity.Entity) []typeGroup {
 	for t, es := range byType {
 		groups = append(groups, typeGroup{entityType: t, entities: es})
 	}
-	sort.Slice(groups, func(i, j int) bool { return groups[i].entityType < groups[j].entityType })
+	slices.SortFunc(groups, func(a, b typeGroup) int { return cmp.Compare(a.entityType, b.entityType) })
 	return groups
 }

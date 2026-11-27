@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
@@ -120,7 +120,7 @@ func computedWriteError(entityType string, names []string) error {
 	if len(names) == 0 {
 		return nil
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	names = slicesCompact(names)
 	return &ComputedWriteError{EntityType: entityType, Properties: names}
 }

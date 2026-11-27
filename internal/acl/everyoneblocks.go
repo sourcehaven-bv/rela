@@ -1,9 +1,9 @@
 package acl
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -57,7 +57,7 @@ func EveryoneOpenedFieldBlocks(p *Policy, facesOf func(entityType string) []stri
 			names = append(names, name)
 		}
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	var out []OpenedFieldBlock
 	for _, name := range names {
@@ -181,11 +181,11 @@ func fieldBlocksOf(role RoleDef) []fieldBlock {
 	for t := range role.Options {
 		add("options", t, writeVerbs)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].key != out[j].key {
-			return out[i].key < out[j].key
-		}
-		return out[i].dimension < out[j].dimension
+	slices.SortFunc(out, func(a, b fieldBlock) int {
+		return cmp.Or(
+			cmp.Compare(a.key, b.key),
+			cmp.Compare(a.dimension, b.dimension),
+		)
 	})
 	return out
 }

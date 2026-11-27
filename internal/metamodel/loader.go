@@ -1,12 +1,12 @@
 package metamodel
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -1027,11 +1027,11 @@ func sortedPrimacyKeys[V any](m map[primacyKey]V) []primacyKey {
 	for k := range m {
 		out = append(out, k)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].entityType != out[j].entityType {
-			return out[i].entityType < out[j].entityType
-		}
-		return out[i].face < out[j].face
+	slices.SortFunc(out, func(a, b primacyKey) int {
+		return cmp.Or(
+			cmp.Compare(a.entityType, b.entityType),
+			cmp.Compare(a.face, b.face),
+		)
 	})
 	return out
 }
@@ -1603,14 +1603,14 @@ func checkUnknownKeys(data []byte) error {
 			for k := range validTopLevelKeys {
 				keys = append(keys, k)
 			}
-			sort.Strings(keys)
+			slices.Sort(keys)
 			unknownKeyErrors = append(unknownKeyErrors,
 				fmt.Sprintf("unknown key %q (valid keys: %s)", key, strings.Join(keys, ", ")))
 		}
 	}
 
 	if len(unknownKeyErrors) > 0 {
-		sort.Strings(unknownKeyErrors)
+		slices.Sort(unknownKeyErrors)
 		return &SchemaValidationError{Errors: unknownKeyErrors}
 	}
 	return nil
@@ -1633,7 +1633,7 @@ func checkUnknownValidationRuleKeys(data []byte) error {
 	for k := range validValidationRuleKeys {
 		valid = append(valid, k)
 	}
-	sort.Strings(valid)
+	slices.Sort(valid)
 
 	var errs []string
 	for i, rule := range raw.Validations {
@@ -1652,7 +1652,7 @@ func checkUnknownValidationRuleKeys(data []byte) error {
 	}
 
 	if len(errs) > 0 {
-		sort.Strings(errs)
+		slices.Sort(errs)
 		return &SchemaValidationError{Errors: errs}
 	}
 	return nil

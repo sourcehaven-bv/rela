@@ -33,8 +33,9 @@
 package scopes
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -111,7 +112,7 @@ func (c *Compiled) Names(entityType string) []string {
 			out = append(out, key.Name)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -139,11 +140,11 @@ func (c *Compiled) Each(fn func(key Key, prog *predicate.Program)) {
 	for key := range c.byKey {
 		keys = append(keys, key)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].EntityType != keys[j].EntityType {
-			return keys[i].EntityType < keys[j].EntityType
-		}
-		return keys[i].Name < keys[j].Name
+	slices.SortFunc(keys, func(a, b Key) int {
+		return cmp.Or(
+			cmp.Compare(a.EntityType, b.EntityType),
+			cmp.Compare(a.Name, b.Name),
+		)
 	})
 	for _, key := range keys {
 		fn(key, c.byKey[key])
@@ -175,7 +176,7 @@ func (c *Compiled) RequiresIdentity() []string {
 			out = append(out, key.EntityType)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -254,7 +255,7 @@ func sortedEntityTypes(m *metamodel.Metamodel) []string {
 	for name := range m.Entities {
 		out = append(out, name)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -263,6 +264,6 @@ func sortedScopeNames(scopes map[string]string) []string {
 	for name := range scopes {
 		out = append(out, name)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

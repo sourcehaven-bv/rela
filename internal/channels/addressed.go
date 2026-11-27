@@ -1,6 +1,7 @@
 package channels
 
 import (
+	"cmp"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -131,7 +132,7 @@ func CheckMentions(ms []Mention) ([]Mention, error) {
 	if len(out) > MaxMentions {
 		return nil, fmt.Errorf("%w: %d mention targets, at most %d", ErrTooLarge, len(out), MaxMentions)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Target < out[j].Target })
+	slices.SortFunc(out, func(a, b Mention) int { return cmp.Compare(a.Target, b.Target) })
 	return out, nil
 }
 

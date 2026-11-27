@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"maps"
 	"math/rand/v2"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 
@@ -421,7 +421,7 @@ func (t *Timers) warnStranded(ctx context.Context, typ string, stranded map[stri
 	for st := range stranded {
 		states = append(states, st)
 	}
-	sort.Strings(states)
+	slices.Sort(states)
 	for _, st := range states {
 		k := [2]string{typ, st}
 		if t.warned[k] {

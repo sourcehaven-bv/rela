@@ -3,7 +3,6 @@ package dataentryconfig
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -149,7 +148,7 @@ func pilesSetWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
 		for prop := range action.Set {
 			props = append(props, prop)
 		}
-		sort.Strings(props)
+		slices.Sort(props)
 		for _, prop := range props {
 			if !anyTypeDeclares(meta, prop) {
 				warnings = append(warnings, fmt.Sprintf(

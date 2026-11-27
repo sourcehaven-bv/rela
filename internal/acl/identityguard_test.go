@@ -6,7 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -77,7 +77,7 @@ func evaluatorIdentityCalls(fset *token.FileSet, files map[string][]byte) ([]str
 	for name := range files {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	var decls []*ast.FuncDecl
 	for _, name := range names {

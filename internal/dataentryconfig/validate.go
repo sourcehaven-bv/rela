@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 
 	"golang.org/x/text/language"
@@ -376,7 +375,7 @@ func validateSectionCreate(
 	}
 	for typeName := range s.Create.Types {
 		if !slices.Contains(reachable, typeName) {
-			sort.Strings(reachable)
+			slices.Sort(reachable)
 			errs = append(errs, fmt.Sprintf(
 				"view %q: section[%d] create.types names %q, which relation %q cannot reach (valid: %s)",
 				viewID, i, typeName, relation, strings.Join(reachable, ", ")))
@@ -395,7 +394,7 @@ func validateSectionCreate(
 	// button, so the whole block is inert — worth saying once, at the block
 	// level, rather than leaving the operator to infer it.
 	if !slices.ContainsFunc(reachable, func(t string) bool { return hasCreateForm(cfg, t) }) {
-		sort.Strings(reachable)
+		slices.Sort(reachable)
 		errs = append(errs, fmt.Sprintf(
 			"view %q: section[%d] declares create but no type reachable by relation %q has a form to create it (reachable: %s)",
 			viewID, i, relation, strings.Join(reachable, ", ")))
@@ -1490,7 +1489,7 @@ func inertSectionRenderWarnings(cfg *Config) []string {
 	for id := range cfg.Views {
 		viewIDs = append(viewIDs, id)
 	}
-	sort.Strings(viewIDs)
+	slices.Sort(viewIDs)
 	for _, viewID := range viewIDs {
 		for i, s := range cfg.Views[viewID].Sections {
 			if sectionDisplayModesRenderingFields[s.Display] {
@@ -1551,7 +1550,7 @@ func inertWidgetWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
 	for id := range cfg.Views {
 		viewIDs = append(viewIDs, id)
 	}
-	sort.Strings(viewIDs)
+	slices.Sort(viewIDs)
 	for _, viewID := range viewIDs {
 		view := cfg.Views[viewID]
 		collections := viewCollectionTypes(view, meta)
@@ -1686,7 +1685,7 @@ func viewCommandPermissionWarnings(cfg *Config) []string {
 	for id := range cfg.Commands {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	for _, id := range ids {
 		cmd := cfg.Commands[id]
 		if cmd.Context == "view" && cmd.Permission != "" {
@@ -1803,7 +1802,7 @@ func sortedListIDs(cfg *Config) []string {
 	for id := range cfg.Lists {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	return ids
 }
 
@@ -1826,7 +1825,7 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 		if len(viewIDs) <= 1 {
 			continue
 		}
-		sort.Strings(viewIDs)
+		slices.Sort(viewIDs)
 		errs = append(errs, fmt.Sprintf(
 			"multiple views target entity type %q: %s — at most one view per entity type is allowed",
 			entityType, strings.Join(viewIDs, ", ")))

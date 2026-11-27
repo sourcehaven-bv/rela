@@ -3,7 +3,7 @@ package mcp
 import (
 	"context"
 	"log/slog"
-	"sort"
+	"slices"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -112,7 +112,7 @@ func handleListWorlds(ctx context.Context, deps Deps) *mcpgo.CallToolResult {
 	for name := range declared {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	for _, name := range names {
 		def := declared[name]
 		readable := false

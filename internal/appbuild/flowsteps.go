@@ -1,6 +1,7 @@
 package appbuild
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -238,11 +239,11 @@ func (c *FlowControl) SubjectRuns(ctx context.Context, addr string) ([]flowview.
 	if err != nil {
 		return nil, classify(err)
 	}
-	sort.SliceStable(views, func(i, j int) bool {
-		if !views[i].Started.Equal(views[j].Started) {
-			return views[i].Started.After(views[j].Started)
-		}
-		return views[i].ID < views[j].ID
+	slices.SortStableFunc(views, func(a, b flowview.Run) int {
+		return cmp.Or(
+			b.Started.Compare(a.Started),
+			cmp.Compare(a.ID, b.ID),
+		)
 	})
 	return views, nil
 }
@@ -1236,11 +1237,11 @@ func (c *FlowControl) Tasks(ctx context.Context, flowName string, page, perPage 
 			ts.state.Label
 		out.Tasks = append(out.Tasks, task)
 	}
-	sort.SliceStable(out.Tasks, func(i, j int) bool {
-		if !out.Tasks[i].Started.Equal(out.Tasks[j].Started) {
-			return out.Tasks[i].Started.Before(out.Tasks[j].Started)
-		}
-		return out.Tasks[i].Run < out.Tasks[j].Run
+	slices.SortStableFunc(out.Tasks, func(a, b flowview.Task) int {
+		return cmp.Or(
+			a.Started.Compare(b.Started),
+			cmp.Compare(a.Run, b.Run),
+		)
 	})
 	out.Total = len(out.Tasks)
 	lo, hi := pageRange(len(out.Tasks), page, perPage)
@@ -1343,11 +1344,11 @@ func (c *FlowControl) FailedTasks(ctx context.Context, flowName string) (tasks [
 		}
 		tasks = append(tasks, t)
 	}
-	sort.SliceStable(tasks, func(i, j int) bool {
-		if !tasks[i].Started.Equal(tasks[j].Started) {
-			return tasks[i].Started.After(tasks[j].Started)
-		}
-		return tasks[i].Run < tasks[j].Run
+	slices.SortStableFunc(tasks, func(a, b flowview.Task) int {
+		return cmp.Or(
+			b.Started.Compare(a.Started),
+			cmp.Compare(a.Run, b.Run),
+		)
 	})
 	addrs := make([]string, len(tasks))
 	for i, t := range tasks {

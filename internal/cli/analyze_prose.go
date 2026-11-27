@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/check"
@@ -106,9 +105,7 @@ func collectProse(ctx context.Context, svc *readServices, typeName string) (pros
 		report.Errors += len(res.Errors)
 		report.Entities = append(report.Entities, pe)
 	}
-	sort.Slice(report.Entities, func(i, j int) bool {
-		return natsort.Less(report.Entities[i].ID, report.Entities[j].ID)
-	})
+	slices.SortFunc(report.Entities, func(a, b proseEntity) int { return natsort.Compare(a.ID, b.ID) })
 	return report, nil
 }
 

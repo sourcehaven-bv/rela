@@ -2,7 +2,7 @@ package dataentry
 
 import (
 	_ "embed"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -128,7 +128,7 @@ func renderTokenBlock(selector string, vars map[string]string) string {
 	for k := range vars {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 
 	var b strings.Builder
 	b.WriteString(selector)

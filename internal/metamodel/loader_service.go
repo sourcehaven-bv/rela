@@ -2,11 +2,9 @@ package metamodel
 
 import (
 	"context"
-	"time"
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Sourcehaven-BV/rela/internal/fswatch"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -21,18 +19,6 @@ import (
 // not part of the load contract.
 type Loader interface {
 	Load(ctx context.Context) (*Metamodel, []string, error)
-}
-
-// Subscriber is the optional change-notification interface on a Loader.
-// Implementations that can detect external changes to the metamodel data
-// satisfy Subscriber; consumers type-assert to subscribe. Backends with no
-// change-detection capability (e.g. an embedded byte-slice loader) simply
-// don't implement it.
-type Subscriber interface {
-	// Subscribe starts a watcher that invokes onChange whenever the
-	// underlying metamodel data changes. The returned stop function
-	// releases all watcher resources.
-	Subscribe(ctx context.Context, onChange func()) (stop func(), err error)
 }
 
 // FSLoader loads a metamodel from a file on the given filesystem. Deprecated
@@ -57,10 +43,7 @@ func NewStrictFSLoader(fs storage.FS, path string) *FSLoader {
 	return &FSLoader{fs: fs, path: path, strict: true}
 }
 
-var (
-	_ Loader     = (*FSLoader)(nil)
-	_ Subscriber = (*FSLoader)(nil)
-)
+var _ Loader = (*FSLoader)(nil)
 
 // Load migrates or refuses deprecated syntax in the root file, then parses
 // the metamodel. Includes are resolved recursively; the returned file list
@@ -140,54 +123,4 @@ func refuseAutomations(path string, data []byte) error {
 	return &migration.Error{FilePath: path, Detections: []migration.DetectionResult{
 		{Migration: m, Description: m.Description()},
 	}}
-}
-
-// Subscribe watches the metamodel file and its includes. Because includes
-// can change between reloads, the file list is refreshed on each event —
-// new includes are added to the watcher so they fire subsequent events.
-func (l *FSLoader) Subscribe(_ context.Context, onChange func()) (func(), error) {
-	files := l.resolveFiles()
-
-	var watcher *fswatch.Watcher
-	w, err := fswatch.New(fswatch.Config{
-		Files:      files,
-		Extensions: []string{".yaml", ".yml"},
-		Debounce:   200 * time.Millisecond,
-		SkipHidden: true,
-		// coverage-ignore-start: os-fs-event: OnChange fires only on a real debounced file-watcher event, not
-		// reachable deterministically in
-		// a unit test
-		OnChange: func(_ []fswatch.Event) {
-			onChange()
-			// Include set may have changed — add any new files we
-			// aren't already watching. Removal is tolerated silently;
-			// the watcher will ignore events for files that no longer
-			// exist.
-			for _, f := range l.resolveFiles() {
-				_ = watcher.AddFile(f)
-			}
-		},
-		// coverage-ignore-end
-	})
-	if err != nil { // coverage-ignore: defensive: fswatch.New does not fail for a valid config over existing
-		// files; the failure path is not reachable in tests
-		return nil, err
-	}
-	watcher = w
-
-	go watcher.Start()
-	return watcher.Stop, nil
-}
-
-// resolveFiles returns the main metamodel file plus all includes. Uses
-// LoadWithoutMigrationCheck so the watch list stays current even when the
-// file is pending a migration (Load() would return an error in that case,
-// leaving the watcher blind to subsequent fixes). Returns just the main
-// file on any error — the watcher will still trigger on changes to it.
-func (l *FSLoader) resolveFiles() []string {
-	_, files, err := LoadWithoutMigrationCheck(l.path, l.fs)
-	if err != nil || len(files) == 0 {
-		return []string{l.path}
-	}
-	return files
 }

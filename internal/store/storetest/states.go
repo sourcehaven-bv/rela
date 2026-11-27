@@ -1,7 +1,7 @@
 package storetest
 
 import (
-	"sort"
+	"slices"
 	"testing"
 	"time"
 
@@ -698,7 +698,7 @@ func RunStateTests(t *testing.T, f Factory) {
 			}
 		}
 		// Two creates + two deletes, each carrying its state's face.
-		sort.Strings(faces)
+		slices.Sort(faces)
 		assert.Equal(t, []string{"", "", "draft", "draft"}, faces)
 	})
 }

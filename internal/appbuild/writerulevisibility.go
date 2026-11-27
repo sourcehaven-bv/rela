@@ -3,7 +3,7 @@ package appbuild
 import (
 	"fmt"
 	"log/slog"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -69,6 +69,6 @@ func WriteRuleVisibilityConflicts(meta *metamodel.Metamodel, policy *acl.Policy)
 				r.Type, r.Rule, prop, quotedRoleList(roles)))
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

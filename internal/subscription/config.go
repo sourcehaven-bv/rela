@@ -30,7 +30,6 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -163,7 +162,7 @@ func (c *Config) Names() []string {
 	for name := range c.Subscriptions {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 

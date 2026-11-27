@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path"
 	"slices"
-	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -352,7 +351,7 @@ func FileKeys(v any) []string {
 	for _, r := range refs {
 		keys = append(keys, r.Key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return slices.Compact(keys)
 }
 
@@ -372,7 +371,7 @@ func FileProperties(m *Metamodel, entityType string) []string {
 			names = append(names, name)
 		}
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 

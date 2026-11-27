@@ -56,120 +56,140 @@ func newAIRuntimeNoProvider(t *testing.T) *Runtime {
 	return rt
 }
 
-func TestLuaAI_GlobalAlwaysRegistered(t *testing.T) {
-	rt := newAIRuntimeNoProvider(t)
-	if err := rt.RunString(`
-		assert(type(ai) == "table", "ai global must be a table, got " .. type(ai))
-		assert(type(ai.chat) == "function", "ai.chat must be a function")
-		assert(type(ai.complete) == "function", "ai.complete must be a function")
-	`); err != nil {
-		t.Fatalf("RunString: %v", err)
+func TestLuaAI_NoProviderScripts(t *testing.T) {
+	tests := []struct {
+		name string
+		code string
+	}{
+		{name: "GlobalAlwaysRegistered", code: `
+			assert(type(ai) == "table", "ai global must be a table, got " .. type(ai))
+			assert(type(ai.chat) == "function", "ai.chat must be a function")
+			assert(type(ai.complete) == "function", "ai.complete must be a function")
+		`},
+		{name: "NotConfiguredError", code: `
+			local result, err = ai.chat({messages = {{role="user", content="hi"}}})
+			assert(result == nil, "result should be nil")
+			assert(type(err) == "table", "err should be a table, got " .. type(err))
+			assert(err.kind == "not_configured", "err.kind = " .. tostring(err.kind))
+			assert(string.find(err.message, ".rela/ai.yaml"),
+				"message should mention .rela/ai.yaml, got: " .. err.message)
+		`},
+		{name: "NotConfiguredError_Complete", code: `
+			local result, err = ai.complete("hi")
+			assert(result == nil)
+			assert(err.kind == "not_configured")
+		`},
+		{name: "EmbedGlobalRegistered", code: `
+			assert(type(ai.embed) == "function", "ai.embed must be a function")
+		`},
+		{name: "EmbedNotConfigured", code: `
+			local result, err = ai.embed("hello")
+			assert(result == nil, "result should be nil")
+			assert(err.kind == "not_configured", "err.kind = " .. tostring(err.kind))
+		`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := newAIRuntimeNoProvider(t)
+			if err := rt.RunString(tc.code); err != nil {
+				t.Fatalf("RunString: %v", err)
+			}
+		})
 	}
 }
 
-func TestLuaAI_NotConfiguredError(t *testing.T) {
-	rt := newAIRuntimeNoProvider(t)
-	if err := rt.RunString(`
-		local result, err = ai.chat({messages = {{role="user", content="hi"}}})
-		assert(result == nil, "result should be nil")
-		assert(type(err) == "table", "err should be a table, got " .. type(err))
-		assert(err.kind == "not_configured", "err.kind = " .. tostring(err.kind))
-		assert(string.find(err.message, ".rela/ai.yaml"), "message should mention .rela/ai.yaml, got: " .. err.message)
-	`); err != nil {
-		t.Fatalf("RunString: %v", err)
+// TestLuaAI_ResponseScripts serves one canned response per case and runs a
+// script that asserts how the binding surfaces it.
+func TestLuaAI_ResponseScripts(t *testing.T) {
+	const serverErrorBody = `{"error":{"type":"server_error","message":"oops"}}`
+	tests := []struct {
+		name       string
+		status     int
+		retryAfter string
+		body       string
+		code       string
+	}{
+		{name: "ChatSuccess", body: aiSuccessBody, code: `
+			local result, err = ai.chat({messages = {{role="user", content="hi"}}})
+			assert(err == nil, "expected nil err, got " .. tostring(err))
+			assert(type(result) == "table", "result should be a table")
+			assert(result.content == "hello from gemma", "content = " .. tostring(result.content))
+			assert(result.model == "gemma3:12b", "model = " .. tostring(result.model))
+			assert(result.finish_reason == "stop", "finish_reason = " .. tostring(result.finish_reason))
+			assert(type(result.usage) == "table", "usage should be a table")
+			assert(result.usage.prompt_tokens == 20, "prompt_tokens = " .. tostring(result.usage.prompt_tokens))
+			assert(result.usage.completion_tokens == 5)
+			assert(result.usage.total_tokens == 25)
+		`},
+		{name: "CompleteSuccess", body: aiSuccessBody, code: `
+			local text, err = ai.complete("hi")
+			assert(err == nil)
+			assert(text == "hello from gemma", "text = " .. tostring(text))
+		`},
+		{name: "HTTPErrorReturnsTypedTable", status: http.StatusInternalServerError, body: serverErrorBody, code: `
+			local result, err = ai.chat({messages = {{role="user", content="hi"}}})
+			assert(result == nil)
+			assert(type(err) == "table")
+			assert(err.kind == "server_error", "kind = " .. tostring(err.kind))
+			assert(err.status == 500, "status = " .. tostring(err.status))
+			assert(string.find(err.message, "oops"), "message = " .. tostring(err.message))
+		`},
+		{
+			name:       "RateLimitedHasRetryAfter",
+			status:     http.StatusTooManyRequests,
+			retryAfter: "60",
+			body:       `{"error":{"type":"rate_limit_error","message":"slow down"}}`,
+			code: `
+				local result, err = ai.chat({messages = {{role="user", content="hi"}}})
+				assert(err.kind == "rate_limited")
+				assert(err.status == 429)
+				assert(err.retry_after == 60, "retry_after = " .. tostring(err.retry_after))
+			`,
+		},
+		{name: "EmbedSingleString", body: embedSuccessBody, code: `
+			local result, err = ai.embed("hello")
+			assert(err == nil, "expected nil err, got " .. tostring(err))
+			assert(type(result) == "table", "result should be a table")
+			-- Always returns array-of-arrays, even for single input
+			assert(#result == 1, "#result = " .. #result)
+			assert(type(result[1]) == "table", "result[1] should be a table")
+			assert(#result[1] == 3, "vector length = " .. #result[1])
+			assert(result[1][1] == 0.1, "first value = " .. tostring(result[1][1]))
+			assert(result[1][2] == 0.2)
+			assert(result[1][3] == 0.3)
+		`},
+		{name: "EmbedBatch", body: embedBatchBody, code: `
+			local result, err = ai.embed({"first", "second"})
+			assert(err == nil, "expected nil err")
+			assert(#result == 2, "#result = " .. #result)
+			assert(result[1][1] == 0.1)
+			assert(result[2][1] == 0.3)
+		`},
+		{name: "EmbedHTTPError", status: http.StatusInternalServerError, body: serverErrorBody, code: `
+			local result, err = ai.embed("hello")
+			assert(result == nil)
+			assert(err.kind == "server_error", "kind = " .. tostring(err.kind))
+		`},
 	}
-}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if tc.retryAfter != "" {
+					w.Header().Set("Retry-After", tc.retryAfter)
+				}
+				if tc.status != 0 {
+					w.WriteHeader(tc.status)
+				}
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(server.Close)
 
-func TestLuaAI_NotConfiguredError_Complete(t *testing.T) {
-	rt := newAIRuntimeNoProvider(t)
-	if err := rt.RunString(`
-		local result, err = ai.complete("hi")
-		assert(result == nil)
-		assert(err.kind == "not_configured")
-	`); err != nil {
-		t.Fatalf("RunString: %v", err)
-	}
-}
-
-func TestLuaAI_ChatSuccess(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(aiSuccessBody))
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "TEST_KEY")
-	if err := rt.RunString(`
-		local result, err = ai.chat({messages = {{role="user", content="hi"}}})
-		assert(err == nil, "expected nil err, got " .. tostring(err))
-		assert(type(result) == "table", "result should be a table")
-		assert(result.content == "hello from gemma", "content = " .. tostring(result.content))
-		assert(result.model == "gemma3:12b", "model = " .. tostring(result.model))
-		assert(result.finish_reason == "stop", "finish_reason = " .. tostring(result.finish_reason))
-		assert(type(result.usage) == "table", "usage should be a table")
-		assert(result.usage.prompt_tokens == 20, "prompt_tokens = " .. tostring(result.usage.prompt_tokens))
-		assert(result.usage.completion_tokens == 5)
-		assert(result.usage.total_tokens == 25)
-	`); err != nil {
-		t.Fatalf("RunString: %v", err)
-	}
-}
-
-func TestLuaAI_CompleteSuccess(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(aiSuccessBody))
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "TEST_KEY")
-	if err := rt.RunString(`
-		local text, err = ai.complete("hi")
-		assert(err == nil)
-		assert(text == "hello from gemma", "text = " .. tostring(text))
-	`); err != nil {
-		t.Fatalf("RunString: %v", err)
-	}
-}
-
-func TestLuaAI_HTTPErrorReturnsTypedTable(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":{"type":"server_error","message":"oops"}}`))
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "TEST_KEY")
-	if err := rt.RunString(`
-		local result, err = ai.chat({messages = {{role="user", content="hi"}}})
-		assert(result == nil)
-		assert(type(err) == "table")
-		assert(err.kind == "server_error", "kind = " .. tostring(err.kind))
-		assert(err.status == 500, "status = " .. tostring(err.status))
-		assert(string.find(err.message, "oops"), "message = " .. tostring(err.message))
-	`); err != nil {
-		t.Fatalf("RunString: %v", err)
-	}
-}
-
-func TestLuaAI_RateLimitedHasRetryAfter(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Retry-After", "60")
-		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = w.Write([]byte(`{"error":{"type":"rate_limit_error","message":"slow down"}}`))
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "TEST_KEY")
-	if err := rt.RunString(`
-		local result, err = ai.chat({messages = {{role="user", content="hi"}}})
-		assert(err.kind == "rate_limited")
-		assert(err.status == 429)
-		assert(err.retry_after == 60, "retry_after = " .. tostring(err.retry_after))
-	`); err != nil {
-		t.Fatalf("RunString: %v", err)
+			rt := newAIRuntime(t, server, "TEST_KEY")
+			if err := rt.RunString(tc.code); err != nil {
+				t.Fatalf("RunString: %v", err)
+			}
+		})
 	}
 }
 
@@ -206,93 +226,87 @@ func TestLuaAI_TemperatureZeroPropagated(t *testing.T) {
 	}
 }
 
-func TestLuaAI_EmptyMessagesRaisesProgrammingError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		t.Errorf("server should not be called for programming error")
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "TEST_KEY")
-	err := rt.RunString(`ai.chat({messages={}})`)
-	if err == nil {
-		t.Fatal("expected Lua error")
+// TestLuaAI_ProgrammingErrorsRaise covers argument mistakes: each raises a
+// Lua error before any request reaches the provider.
+func TestLuaAI_ProgrammingErrorsRaise(t *testing.T) {
+	tests := []struct {
+		name    string
+		code    string
+		wantErr string
+	}{
+		{
+			name:    "EmptyMessagesRaisesProgrammingError",
+			code:    `ai.chat({messages={}})`,
+			wantErr: "messages must not be empty",
+		},
+		{
+			name:    "MessagesNotTableRaises",
+			code:    `ai.chat({messages="not a table"})`,
+			wantErr: "messages must be a table",
+		},
+		{name: "MessageMissingRoleRaises", code: `ai.chat({messages={{content="hi"}}})`, wantErr: "role"},
+		// gopher-lua's CheckString reports the type mismatch like
+		// "string expected, got table". Assert a specific substring so a
+		// regression that breaks ai.complete entirely (e.g. global no longer
+		// registered) doesn't accidentally satisfy this test.
+		{name: "CompleteRejectsNonString", code: `ai.complete({})`, wantErr: "string expected"},
+		{name: "EmbedEmptyStringRaises", code: `ai.embed("")`, wantErr: "empty string"},
+		{name: "EmbedEmptyTableRaises", code: `ai.embed({})`, wantErr: "empty"},
+		{name: "EmbedNonStringInTableRaises", code: `ai.embed({"hello", 42})`, wantErr: "input[2] must be a string"},
+		{name: "EmbedWrongArgTypeRaises", code: `ai.embed(42)`, wantErr: "string or table"},
 	}
-	if !strings.Contains(err.Error(), "messages must not be empty") {
-		t.Errorf("error = %v", err)
-	}
-}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+				t.Error("server should not be called")
+			}))
+			t.Cleanup(server.Close)
 
-func TestLuaAI_MessagesNotTableRaises(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		t.Errorf("server should not be called")
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "TEST_KEY")
-	err := rt.RunString(`ai.chat({messages="not a table"})`)
-	if err == nil {
-		t.Fatal("expected Lua error")
-	}
-	if !strings.Contains(err.Error(), "messages must be a table") {
-		t.Errorf("error = %v", err)
-	}
-}
-
-func TestLuaAI_MessageMissingRoleRaises(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		t.Errorf("server should not be called")
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "TEST_KEY")
-	err := rt.RunString(`ai.chat({messages={{content="hi"}}})`)
-	if err == nil {
-		t.Fatal("expected Lua error")
-	}
-	if !strings.Contains(err.Error(), "role") {
-		t.Errorf("error should mention role, got: %v", err)
-	}
-}
-
-func TestLuaAI_CompleteRejectsNonString(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		t.Errorf("server should not be called")
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "TEST_KEY")
-	err := rt.RunString(`ai.complete({})`)
-	if err == nil {
-		t.Fatal("expected Lua error")
-	}
-	// gopher-lua's CheckString reports the type mismatch like
-	// "string expected, got table". Assert a specific substring so a
-	// regression that breaks ai.complete entirely (e.g. global no longer
-	// registered) doesn't accidentally satisfy this test.
-	if !strings.Contains(err.Error(), "string expected") {
-		t.Errorf("expected 'string expected' in error, got: %v", err)
+			rt := newAIRuntime(t, server, "TEST_KEY")
+			err := rt.RunString(tc.code)
+			if err == nil {
+				t.Fatal("expected Lua error")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("expected %q in error, got: %v", tc.wantErr, err)
+			}
+		})
 	}
 }
 
-func TestLuaAI_NoAuthHeaderWhenAPIKeyEnvEmpty(t *testing.T) {
-	var receivedAuth string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedAuth = r.Header.Get("Authorization")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(aiSuccessBody))
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "")
-	if err := rt.RunString(`ai.chat({messages={{role="user",content="hi"}}})`); err != nil {
-		t.Fatalf("RunString: %v", err)
+func TestLuaAI_NoAuthHeader(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		code string
+	}{
+		{
+			name: "NoAuthHeaderWhenAPIKeyEnvEmpty",
+			body: aiSuccessBody,
+			code: `ai.chat({messages={{role="user",content="hi"}}})`,
+		},
+		{name: "EmbedNoAuthHeader", body: embedSuccessBody, code: `ai.embed("hello")`},
 	}
-	if receivedAuth != "" {
-		t.Errorf("expected no Authorization header, got %q", receivedAuth)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var receivedAuth string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				receivedAuth = r.Header.Get("Authorization")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(server.Close)
+
+			rt := newAIRuntime(t, server, "")
+			if err := rt.RunString(tc.code); err != nil {
+				t.Fatalf("RunString: %v", err)
+			}
+			if receivedAuth != "" {
+				t.Errorf("expected no Authorization header, got %q", receivedAuth)
+			}
+		})
 	}
 }
-
-// --- ai.embed tests ---
 
 const embedSuccessBody = `{
   "object": "list",
@@ -311,217 +325,55 @@ const embedBatchBody = `{
   "usage": {"prompt_tokens": 8, "total_tokens": 8}
 }`
 
-func TestLuaAI_EmbedGlobalRegistered(t *testing.T) {
-	rt := newAIRuntimeNoProvider(t)
-	if err := rt.RunString(`
-		assert(type(ai.embed) == "function", "ai.embed must be a function")
-	`); err != nil {
-		t.Fatalf("RunString: %v", err)
+// TestLuaAI_RequestBodyPassthrough checks that call options reach the
+// request body the provider receives.
+func TestLuaAI_RequestBodyPassthrough(t *testing.T) {
+	tests := []struct {
+		name     string
+		respBody string
+		code     string
+		wantBody []string
+	}{
+		{
+			name:     "EmbedModelOverride",
+			respBody: embedSuccessBody,
+			code:     `ai.embed("hello", {model = "custom-embed-model"})`,
+			wantBody: []string{`"model":"custom-embed-model"`},
+		},
+		{
+			name:     "AdditionalParametersPassthrough",
+			respBody: aiSuccessBody,
+			code: `
+				ai.chat({
+					messages = {{role="user", content="hi"}},
+					model = "override-model",
+					temperature = 0.5,
+					max_tokens = 100,
+				})
+			`,
+			wantBody: []string{`"model":"override-model"`, `"temperature":0.5`, `"max_tokens":100`},
+		},
 	}
-}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var bodySeen []byte
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				bodySeen, _ = io.ReadAll(r.Body)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.respBody))
+			}))
+			t.Cleanup(server.Close)
 
-func TestLuaAI_EmbedNotConfigured(t *testing.T) {
-	rt := newAIRuntimeNoProvider(t)
-	if err := rt.RunString(`
-		local result, err = ai.embed("hello")
-		assert(result == nil, "result should be nil")
-		assert(err.kind == "not_configured", "err.kind = " .. tostring(err.kind))
-	`); err != nil {
-		t.Fatalf("RunString: %v", err)
-	}
-}
-
-func TestLuaAI_EmbedSingleString(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(embedSuccessBody))
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "TEST_KEY")
-	if err := rt.RunString(`
-		local result, err = ai.embed("hello")
-		assert(err == nil, "expected nil err, got " .. tostring(err))
-		assert(type(result) == "table", "result should be a table")
-		-- Always returns array-of-arrays, even for single input
-		assert(#result == 1, "#result = " .. #result)
-		assert(type(result[1]) == "table", "result[1] should be a table")
-		assert(#result[1] == 3, "vector length = " .. #result[1])
-		assert(result[1][1] == 0.1, "first value = " .. tostring(result[1][1]))
-		assert(result[1][2] == 0.2)
-		assert(result[1][3] == 0.3)
-	`); err != nil {
-		t.Fatalf("RunString: %v", err)
-	}
-}
-
-func TestLuaAI_EmbedBatch(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(embedBatchBody))
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "TEST_KEY")
-	if err := rt.RunString(`
-		local result, err = ai.embed({"first", "second"})
-		assert(err == nil, "expected nil err")
-		assert(#result == 2, "#result = " .. #result)
-		assert(result[1][1] == 0.1)
-		assert(result[2][1] == 0.3)
-	`); err != nil {
-		t.Fatalf("RunString: %v", err)
-	}
-}
-
-func TestLuaAI_EmbedModelOverride(t *testing.T) {
-	var bodySeen []byte
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		bodySeen, _ = io.ReadAll(r.Body)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(embedSuccessBody))
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "TEST_KEY")
-	if err := rt.RunString(`
-		ai.embed("hello", {model = "custom-embed-model"})
-	`); err != nil {
-		t.Fatalf("RunString: %v", err)
-	}
-	if !strings.Contains(string(bodySeen), `"model":"custom-embed-model"`) {
-		t.Errorf("expected custom model in body, got %s", bodySeen)
-	}
-}
-
-func TestLuaAI_EmbedHTTPError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":{"type":"server_error","message":"oops"}}`))
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "TEST_KEY")
-	if err := rt.RunString(`
-		local result, err = ai.embed("hello")
-		assert(result == nil)
-		assert(err.kind == "server_error", "kind = " .. tostring(err.kind))
-	`); err != nil {
-		t.Fatalf("RunString: %v", err)
-	}
-}
-
-func TestLuaAI_EmbedEmptyStringRaises(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("server should not be called")
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "TEST_KEY")
-	err := rt.RunString(`ai.embed("")`)
-	if err == nil {
-		t.Fatal("expected Lua error")
-	}
-	if !strings.Contains(err.Error(), "empty string") {
-		t.Errorf("error = %v", err)
-	}
-}
-
-func TestLuaAI_EmbedEmptyTableRaises(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("server should not be called")
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "TEST_KEY")
-	err := rt.RunString(`ai.embed({})`)
-	if err == nil {
-		t.Fatal("expected Lua error")
-	}
-	if !strings.Contains(err.Error(), "empty") {
-		t.Errorf("error = %v", err)
-	}
-}
-
-func TestLuaAI_EmbedNonStringInTableRaises(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("server should not be called")
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "TEST_KEY")
-	err := rt.RunString(`ai.embed({"hello", 42})`)
-	if err == nil {
-		t.Fatal("expected Lua error")
-	}
-	if !strings.Contains(err.Error(), "input[2] must be a string") {
-		t.Errorf("error = %v", err)
-	}
-}
-
-func TestLuaAI_EmbedWrongArgTypeRaises(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("server should not be called")
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "TEST_KEY")
-	err := rt.RunString(`ai.embed(42)`)
-	if err == nil {
-		t.Fatal("expected Lua error")
-	}
-	if !strings.Contains(err.Error(), "string or table") {
-		t.Errorf("error = %v", err)
-	}
-}
-
-func TestLuaAI_EmbedNoAuthHeader(t *testing.T) {
-	var receivedAuth string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedAuth = r.Header.Get("Authorization")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(embedSuccessBody))
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "")
-	if err := rt.RunString(`ai.embed("hello")`); err != nil {
-		t.Fatalf("RunString: %v", err)
-	}
-	if receivedAuth != "" {
-		t.Errorf("expected no Authorization header, got %q", receivedAuth)
-	}
-}
-
-func TestLuaAI_AdditionalParametersPassthrough(t *testing.T) {
-	var bodySeen []byte
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		bodySeen, _ = io.ReadAll(r.Body)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(aiSuccessBody))
-	}))
-	t.Cleanup(server.Close)
-
-	rt := newAIRuntime(t, server, "TEST_KEY")
-	if err := rt.RunString(`
-		ai.chat({
-			messages = {{role="user", content="hi"}},
-			model = "override-model",
-			temperature = 0.5,
-			max_tokens = 100,
+			rt := newAIRuntime(t, server, "TEST_KEY")
+			if err := rt.RunString(tc.code); err != nil {
+				t.Fatalf("RunString: %v", err)
+			}
+			body := string(bodySeen)
+			for _, want := range tc.wantBody {
+				if !strings.Contains(body, want) {
+					t.Errorf("expected %s in body, got %s", want, body)
+				}
+			}
 		})
-	`); err != nil {
-		t.Fatalf("RunString: %v", err)
-	}
-	body := string(bodySeen)
-	if !strings.Contains(body, `"model":"override-model"`) {
-		t.Errorf("expected override-model in body, got %s", body)
-	}
-	if !strings.Contains(body, `"temperature":0.5`) {
-		t.Errorf("expected temperature:0.5, got %s", body)
-	}
-	if !strings.Contains(body, `"max_tokens":100`) {
-		t.Errorf("expected max_tokens:100, got %s", body)
 	}
 }

@@ -4,7 +4,7 @@
 // For example, "REQ-2" sorts before "REQ-10".
 package natsort
 
-import "sort"
+import "slices"
 
 // Compare returns -1, 0, or +1 comparing a and b using natural ordering.
 // Text is compared case-insensitively with case used only as a final tiebreaker.
@@ -160,7 +160,5 @@ func Less(a, b string) bool {
 
 // Strings sorts a slice of strings in natural order.
 func Strings(s []string) {
-	sort.Slice(s, func(i, j int) bool {
-		return Compare(s[i], s[j]) < 0
-	})
+	slices.SortFunc(s, Compare)
 }

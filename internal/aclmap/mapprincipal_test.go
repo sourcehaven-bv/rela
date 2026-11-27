@@ -2,7 +2,7 @@ package aclmap_test
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
@@ -378,6 +378,6 @@ func typeNames(res *aclmap.MapPrincipalResult) []string {
 	for _, ta := range res.Types {
 		out = append(out, ta.Type)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

@@ -41,7 +41,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -331,7 +331,7 @@ func assertDemoProperties(t *testing.T, got []captured) {
 	for e := range byEmail {
 		emails = append(emails, e)
 	}
-	sort.Strings(emails)
+	slices.Sort(emails)
 	require.Equal(t, []string{"alice@example.test", "bob@example.test"}, emails,
 		"the inactive person must not be selected by where: [active = true]")
 
@@ -387,7 +387,7 @@ func assertDemoProperties(t *testing.T, got []captured) {
 	for k := range got[0].Body {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	fmt.Printf("  top-level JSON keys on the wire: %v\n", keys)
 	fmt.Printf("  path: %s   auth: Bearer <redacted>\n", got[0].Path)
 

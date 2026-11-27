@@ -3,6 +3,7 @@ package aclmap
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -95,7 +96,7 @@ func (e *Engine) WhoCan(ctx context.Context, verb acl.Verb, entityID string) (*W
 			existing.Raw = access.Raw
 		}
 	}
-	sort.Strings(order)
+	slices.Sort(order)
 	for _, id := range order {
 		result.Principals = append(result.Principals, *byPrincipal[id])
 	}

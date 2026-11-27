@@ -1,12 +1,13 @@
 package storage
 
 import (
+	"cmp"
 	"errors"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -358,9 +359,7 @@ func (m *MemFS) ReadDir(path string) ([]os.DirEntry, error) {
 	}
 
 	// Sort by name (os.ReadDir contract).
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Name() < entries[j].Name()
-	})
+	slices.SortFunc(entries, func(a, b os.DirEntry) int { return cmp.Compare(a.Name(), b.Name()) })
 
 	return entries, nil
 }
@@ -373,7 +372,7 @@ func (m *MemFS) Walk(root string, fn fs.WalkDirFunc) error {
 
 	// Build sorted list of all paths under root.
 	paths := m.collectPaths(root)
-	sort.Strings(paths)
+	slices.Sort(paths)
 
 	i := 0
 	for i < len(paths) {

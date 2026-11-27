@@ -3,7 +3,7 @@ package metamodel
 import (
 	"fmt"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -75,7 +75,7 @@ func (m *Metamodel) PileKeys() []string {
 	for k := range m.Piles {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 
@@ -145,7 +145,7 @@ func validatePiles(m *Metamodel) []string {
 		for r := range d.Reasons {
 			reasons = append(reasons, r)
 		}
-		sort.Strings(reasons)
+		slices.Sort(reasons)
 		for _, r := range reasons {
 			if !pileKeyPattern.MatchString(r) {
 				errs = append(errs, fmt.Sprintf("%s: reason key %q must be lowercase letters, digits, - and _", at, r))

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -554,7 +553,7 @@ func sortedBaselineNames(m map[string]ClientBaseline) []string {
 	for k := range m {
 		out = append(out, k)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -563,6 +562,6 @@ func sortedScopeNames(m map[string]ScopeGrant) []string {
 	for k := range m {
 		out = append(out, k)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

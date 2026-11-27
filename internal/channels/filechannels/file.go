@@ -81,6 +81,7 @@ package filechannels
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base32"
 	"encoding/json"
@@ -990,7 +991,7 @@ func visitFaceAt(d *disk, dir string, a channels.Anchor, typ string, fn func(cha
 	if err != nil {
 		return fmt.Errorf("filechannels: list %s: %w", a.ID, err)
 	}
-	sort.Strings(types)
+	slices.Sort(types)
 	for _, t := range types {
 		if (typ != "" && t != typ) || !channels.ValidName(t) {
 			continue
@@ -999,7 +1000,7 @@ func visitFaceAt(d *disk, dir string, a channels.Anchor, typ string, fn func(cha
 		if err != nil {
 			return fmt.Errorf("filechannels: list %s: %w", a.ID, err)
 		}
-		sort.Strings(names)
+		slices.Sort(names)
 		for _, n := range names {
 			k := channels.Key{Anchor: a, Type: t}
 			if n != none {
@@ -1051,7 +1052,7 @@ func visitEntityAt(d *disk, dir, id, typ string, fn func(channels.Key, *meta) er
 			anchors = append(anchors, a)
 		}
 	}
-	sort.Slice(anchors, func(i, j int) bool { return anchors[i].Face < anchors[j].Face })
+	slices.SortFunc(anchors, func(a, b channels.Anchor) int { return cmp.Compare(a.Face, b.Face) })
 	for _, a := range anchors {
 		if err := visitFaceAt(d, dir+"/"+faceSeg(a.Face), a, typ, fn); err != nil {
 			return err

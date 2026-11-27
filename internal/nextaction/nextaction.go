@@ -34,7 +34,7 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"net/url"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -372,7 +372,7 @@ func New(
 			}
 		}
 		if len(withCondition) > 0 {
-			sort.Strings(withCondition) // deterministic message
+			slices.Sort(withCondition) // deterministic message
 			return nil, fmt.Errorf(
 				"nextaction: source %q declares a condition but no matchers were supplied "+
 					"(pass WithMatchers)", withCondition[0])
@@ -724,7 +724,7 @@ func (e *Engine) sourceIDsForBand(bandID string) []string {
 		}
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	return ids
 }
 
@@ -754,8 +754,8 @@ func (e *Engine) pick(user string, eligible []Suggestion, now time.Time) Suggest
 	}
 	// Sort by key so the input order (map iteration inside a source) cannot
 	// shift the choice; the seed alone decides.
-	sort.Slice(eligible, func(i, j int) bool {
-		return keyString(eligible[i].Key) < keyString(eligible[j].Key)
+	slices.SortFunc(eligible, func(a, b Suggestion) int {
+		return cmp.Compare(keyString(a.Key), keyString(b.Key))
 	})
 	return eligible[pickStableRandom(user, now, len(eligible))]
 }

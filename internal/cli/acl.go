@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 
 	"gopkg.in/yaml.v3"
 
@@ -308,7 +307,7 @@ func (r *metamodelReader) EnumOptions(t, field string) ([]string, bool) {
 // is deterministic regardless of metamodel iteration.
 func sortedClone(xs []string) []string {
 	out := append([]string(nil), xs...)
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

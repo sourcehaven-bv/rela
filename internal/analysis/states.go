@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -115,7 +114,7 @@ func (s *Service) collectStateFamilies(
 		}
 		f.states = append(f.states, stateRow{face: h.Face, typ: h.Type})
 	}
-	sort.Strings(order)
+	slices.Sort(order)
 	return families, order, nil
 }
 

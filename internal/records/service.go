@@ -1,6 +1,7 @@
 package records
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -8,7 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"math/big"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -381,7 +382,7 @@ func ledgerGroups(typ string, d metamodel.RecordTypeDef, recs []Record) ([]Group
 	for g := range dated {
 		groups = append(groups, GroupKey{Type: typ, Group: g})
 	}
-	sort.Slice(groups, func(i, j int) bool { return groups[i].Group < groups[j].Group })
+	slices.SortFunc(groups, func(a, b GroupKey) int { return cmp.Compare(a.Group, b.Group) })
 	return groups, nil
 }
 

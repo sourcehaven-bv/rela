@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"mime"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -31,7 +31,7 @@ func validateTransforms(m *Metamodel) []string {
 	for name := range m.Transforms {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	for _, name := range names {
 		def := m.Transforms[name]

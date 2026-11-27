@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -66,7 +66,7 @@ func scopedIDs(resp v1.ListResponse) []string {
 	for _, e := range resp.Data {
 		ids = append(ids, e.ID)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	return ids
 }
 

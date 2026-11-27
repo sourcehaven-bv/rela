@@ -42,6 +42,7 @@ package lua
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -51,7 +52,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -553,7 +554,7 @@ func parseFormFields(v lua.LValue) ([]formField, error) {
 	if fieldErr != nil {
 		return nil, fieldErr
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+	slices.SortFunc(out, func(a, b formField) int { return cmp.Compare(a.name, b.name) })
 	return out, nil
 }
 

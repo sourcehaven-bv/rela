@@ -3,7 +3,7 @@ package conditionlint
 import (
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -54,7 +54,7 @@ func CompileNextActions(
 			programs[id] = progs
 		}
 	}
-	sort.Strings(problems)
+	slices.Sort(problems)
 	return programs, problems
 }
 

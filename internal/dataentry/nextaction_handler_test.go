@@ -6,7 +6,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -439,7 +439,7 @@ func TestQueryPushdown_MatchesGoSideFiltering(t *testing.T) {
 			for _, e := range got {
 				ids = append(ids, e.ID)
 			}
-			sort.Strings(ids)
+			slices.Sort(ids)
 			require.Equal(t, tc.want, ids)
 		})
 	}

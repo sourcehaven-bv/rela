@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -39,7 +39,7 @@ func TestSectionFieldWidgetTypes_MatchesFixture(t *testing.T) {
 	got := make(map[string][]string, len(sectionFieldWidgetTypes))
 	for widget, types := range sectionFieldWidgetTypes {
 		sorted := append([]string(nil), types...)
-		sort.Strings(sorted)
+		slices.Sort(sorted)
 		got[widget] = sorted
 	}
 
@@ -81,7 +81,7 @@ func loadWidgetFixture(t *testing.T) map[string][]string {
 		t.Fatal("widget fixture is empty; it is the cross-language contract")
 	}
 	for widget, types := range out {
-		sort.Strings(types)
+		slices.Sort(types)
 		out[widget] = types
 	}
 	return out
@@ -92,6 +92,6 @@ func sortedWidgetNames(m map[string][]string) []string {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }

@@ -1,12 +1,12 @@
 package dataentry
 
 import (
+	"cmp"
 	"fmt"
 	htmltemplate "html/template"
 	"io"
 	"net/http"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/mermaid"
@@ -96,7 +96,7 @@ func (a *App) handleEntityHelp(w http.ResponseWriter, r *http.Request) {
 		}
 		props = append(props, ph)
 	}
-	sort.Slice(props, func(i, j int) bool { return props[i].Name < props[j].Name })
+	slices.SortFunc(props, func(a, b PropertyHelp) int { return cmp.Compare(a.Name, b.Name) })
 
 	outgoingRels := a.gatherRelations(s.Meta, entityType, true)
 	incomingRels := a.gatherRelations(s.Meta, entityType, false)
@@ -124,7 +124,7 @@ func gatherEnumHelp(meta *metamodel.Metamodel, entDef *metamodel.EntityDef) []En
 	for name := range entDef.Properties {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	for _, name := range names {
 		prop := entDef.Properties[name]
@@ -309,7 +309,7 @@ func (a *App) gatherRelations(meta *metamodel.Metamodel, entityType string, outg
 		}
 		rels = append(rels, rh)
 	}
-	sort.Slice(rels, func(i, j int) bool { return rels[i].Name < rels[j].Name })
+	slices.SortFunc(rels, func(a, b RelationHelp) int { return cmp.Compare(a.Name, b.Name) })
 	return rels
 }
 

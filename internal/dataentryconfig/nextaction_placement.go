@@ -19,7 +19,7 @@ package dataentryconfig
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -219,7 +219,7 @@ func validateNextActionPlacement(cfg *Config, meta *metamodel.Metamodel) []strin
 	for k := range cfg.NextActionSurfaces {
 		keys = append(keys, string(k))
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	for _, k := range keys {
 		if _, ok := ParseNextActionSurface(k); !ok {
 			errs = append(errs, fmt.Sprintf(

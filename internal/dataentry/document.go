@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -11,7 +12,6 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -469,7 +469,7 @@ func renderEntityMarkdown(e *entity.Entity) (string, error) {
 			rest = append(rest, k)
 		}
 	}
-	sort.Strings(rest)
+	slices.Sort(rest)
 	for _, k := range rest {
 		if err := appendPair(k, e.Properties[k]); err != nil {
 			return "", err
@@ -548,9 +548,7 @@ func hashEntities(entities []*entity.Entity) string {
 
 	sorted := make([]*entity.Entity, len(entities))
 	copy(sorted, entities)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].ID < sorted[j].ID
-	})
+	slices.SortFunc(sorted, func(a, b *entity.Entity) int { return cmp.Compare(a.ID, b.ID) })
 
 	for _, e := range sorted {
 		h.Write([]byte(e.ID))
@@ -560,7 +558,7 @@ func hashEntities(entities []*entity.Entity) string {
 		for k := range e.Properties {
 			propKeys = append(propKeys, k)
 		}
-		sort.Strings(propKeys)
+		slices.Sort(propKeys)
 		for _, k := range propKeys {
 			h.Write([]byte(k))
 			fmt.Fprintf(h, "%v", e.Properties[k])

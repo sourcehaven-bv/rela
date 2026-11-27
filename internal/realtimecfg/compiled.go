@@ -3,7 +3,6 @@ package realtimecfg
 import (
 	"context"
 	"slices"
-	"sort"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/flow"
@@ -125,7 +124,7 @@ func sortedValues[V any](m map[string]*V) []*V {
 	for name := range m {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	out := make([]*V, 0, len(names))
 	for _, name := range names {
 		out = append(out, m[name])

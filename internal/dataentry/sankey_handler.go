@@ -1,9 +1,10 @@
 package dataentry
 
 import (
+	"cmp"
 	"log/slog"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -95,7 +96,7 @@ func (h *sankeyHandler) loadNodes(
 			if gerr != nil {
 				return nil, nil, false, gerr
 			}
-			sort.Slice(ents, func(i, j int) bool { return ents[i].ID < ents[j].ID })
+			slices.SortFunc(ents, func(a, b *entity.Entity) int { return cmp.Compare(a.ID, b.ID) })
 			kept, gerr := h.filterNodes(now, s, typeName, cfg.Types[typeName], ents)
 			if gerr != nil {
 				return nil, nil, false, gerr

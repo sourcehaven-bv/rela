@@ -3,7 +3,7 @@ package dataentry
 import (
 	"log/slog"
 	"net/http"
-	"sort"
+	"slices"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -30,7 +30,7 @@ func (h *sankeyHandler) attachPips(
 	for name := range cfg.Types {
 		typeNames = append(typeNames, name)
 	}
-	sort.Strings(typeNames)
+	slices.Sort(typeNames)
 	for _, typeName := range typeNames {
 		p := cfg.Types[typeName].Pips
 		if p == nil {
@@ -97,7 +97,7 @@ func (h *sankeyHandler) attachTypePips(
 		for id := range set {
 			peerIDs = append(peerIDs, id)
 		}
-		sort.Strings(peerIDs)
+		slices.Sort(peerIDs)
 		n := &nodes[byID[nodeID]]
 		for i, id := range peerIDs {
 			if i >= p.Max {

@@ -33,7 +33,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -364,7 +363,7 @@ func sortedWorldNames(m *metamodel.Metamodel) []string {
 	for name := range m.Worlds {
 		out = append(out, name)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -373,7 +372,7 @@ func sortedTypeNames(m *metamodel.Metamodel) []string {
 	for name := range m.Entities {
 		out = append(out, name)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

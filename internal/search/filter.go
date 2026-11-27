@@ -3,7 +3,7 @@ package search
 import (
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -186,7 +186,7 @@ func IndexText(e *entity.Entity) string {
 			strs[k] = s
 		}
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	for i, k := range keys {
 		if i > 0 {
 			b.WriteByte('\n')

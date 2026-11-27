@@ -3,7 +3,7 @@ package aclmap
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -85,6 +85,6 @@ func (e *Engine) enumeratePrincipals(ctx context.Context) ([]string, error) {
 	for k := range set {
 		out = append(out, k)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, nil
 }

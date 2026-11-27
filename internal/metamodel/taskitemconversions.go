@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -132,7 +131,7 @@ func validateTaskItemConversions(m *Metamodel) []string {
 	for name := range m.TaskItemConversions {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	errs := make([]string, 0, len(names))
 	for _, name := range names {
 		errs = append(errs, validateTaskItemConversion(m, name, m.TaskItemConversions[name])...)
@@ -175,7 +174,7 @@ func validateTaskItemConversion(m *Metamodel, name string, d TaskItemConversionD
 	for key := range d.Fields {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	usesItem := false
 	for _, key := range keys {
 		tokens, err := ParseTaskItemTemplate(d.Fields[key])
@@ -289,7 +288,7 @@ func validateTaskItemTarget(d TaskItemConversionDef, to EntityDef, bad conversio
 	for key := range to.Properties {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	for _, key := range keys {
 		property := to.Properties[key]
 		if property.Computed != "" || property.Type != PropertyTypeFile && property.Type != PropertyTypeExternalRef {

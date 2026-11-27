@@ -1,6 +1,7 @@
 package aclmap
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -405,7 +406,7 @@ func (e *Engine) typeExceptions(
 			exceptions = append(exceptions, EntityException{Entity: ent.ID, Extra: extra})
 		}
 	}
-	sort.Slice(exceptions, func(i, j int) bool { return exceptions[i].Entity < exceptions[j].Entity })
+	slices.SortFunc(exceptions, func(a, b EntityException) int { return cmp.Compare(a.Entity, b.Entity) })
 	return exceptions, sawNonEveryone, nil
 }
 
@@ -510,6 +511,6 @@ func mapTypes(typeFilter string, entityTypes []string) []string {
 		seen[t] = struct{}{}
 		out = append(out, t)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

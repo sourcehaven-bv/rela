@@ -30,12 +30,13 @@ package rewrite
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/printer"
 	"go/token"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -342,11 +343,11 @@ func (r *rewriter) ctxArg(t *ast.FuncType) string {
 }
 
 func (r *rewriter) apply() []byte {
-	sort.SliceStable(r.ins, func(i, j int) bool {
-		if r.ins[i].off != r.ins[j].off {
-			return r.ins[i].off < r.ins[j].off
-		}
-		return r.ins[i].seq < r.ins[j].seq
+	slices.SortStableFunc(r.ins, func(a, b insertion) int {
+		return cmp.Or(
+			cmp.Compare(a.off, b.off),
+			cmp.Compare(a.seq, b.seq),
+		)
 	})
 	var out bytes.Buffer
 	out.Grow(len(r.src) + len(r.ins)*96)

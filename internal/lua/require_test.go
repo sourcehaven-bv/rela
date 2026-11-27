@@ -35,71 +35,118 @@ func newModuleWriter(t *testing.T, root string, opts ...Option) *Runtime {
 	return r
 }
 
-func TestRequire_LoadsModuleFromLib(t *testing.T) {
+func TestRequire_Scripts(t *testing.T) {
 	t.Parallel()
-	root := newModuleProject(t, map[string]string{
-		"lib/fmt/date.lua": `local M = {}
+	tests := []struct {
+		name  string
+		files map[string]string
+		code  string
+	}{
+		{
+			name: "LoadsModuleFromLib",
+			files: map[string]string{
+				"lib/fmt/date.lua": `local M = {}
 function M.iso(y, m, d) return string.format("%04d-%02d-%02d", y, m, d) end
 return M`,
-		"lib/util.lua": `return { answer = 42 }`,
-	})
-	r := newModuleWriter(t, root)
-	mustRun(t, r, `
+				"lib/util.lua": `return { answer = 42 }`,
+			},
+			code: `
 local date = require("fmt.date")
 assert(date.iso(2026, 1, 2) == "2026-01-02", "fmt.date")
 assert(require("util").answer == 42, "util")
-`)
-}
-
-func TestRequire_ModuleRunsOncePerRun(t *testing.T) {
-	t.Parallel()
-	root := newModuleProject(t, map[string]string{
-		"lib/counter.lua": `loads = (loads or 0) + 1
+`,
+		},
+		{
+			name: "ModuleRunsOncePerRun",
+			files: map[string]string{
+				"lib/counter.lua": `loads = (loads or 0) + 1
 return { id = {} }`,
-	})
-	r := newModuleWriter(t, root)
-	mustRun(t, r, `
+			},
+			code: `
 local a = require("counter")
 local b = require("counter")
 assert(loads == 1, "module ran " .. tostring(loads) .. " times")
 assert(a == b, "require returned different values")
-`)
-}
-
-func TestRequire_NilReturnBecomesTrue(t *testing.T) {
-	t.Parallel()
-	root := newModuleProject(t, map[string]string{
-		"lib/sideeffect.lua": `marker = "set"`,
-	})
-	r := newModuleWriter(t, root)
-	mustRun(t, r, `
+`,
+		},
+		{
+			name:  "NilReturnBecomesTrue",
+			files: map[string]string{"lib/sideeffect.lua": `marker = "set"`},
+			code: `
 assert(require("sideeffect") == true)
 assert(marker == "set")
-`)
-}
-
-func TestRequire_ModuleReceivesName(t *testing.T) {
-	t.Parallel()
-	root := newModuleProject(t, map[string]string{
-		"lib/a/b.lua": `local name = ... ; return name`,
-	})
-	r := newModuleWriter(t, root)
-	mustRun(t, r, `assert(require("a.b") == "a.b")`)
-}
-
-func TestRequire_StandardLibraries(t *testing.T) {
-	t.Parallel()
-	// A lib/string.lua must never shadow the standard library.
-	root := newModuleProject(t, map[string]string{
-		"lib/string.lua": `error("lib/string.lua must not load")`,
-	})
-	r := newModuleWriter(t, root)
-	mustRun(t, r, `
+`,
+		},
+		{
+			name:  "ModuleReceivesName",
+			files: map[string]string{"lib/a/b.lua": `local name = ... ; return name`},
+			code:  `assert(require("a.b") == "a.b")`,
+		},
+		// A lib/string.lua must never shadow the standard library.
+		{
+			name:  "StandardLibraries",
+			files: map[string]string{"lib/string.lua": `error("lib/string.lua must not load")`},
+			code: `
 assert(require("string") == string)
 assert(require("table") == table)
 assert(require("math") == math)
 assert(require("coroutine") == coroutine)
-`)
+`,
+		},
+		{
+			name: "FailedLoadIsNotCached",
+			files: map[string]string{
+				"lib/flaky.lua": `attempts = (attempts or 0) + 1
+error("fail")`,
+			},
+			code: `
+assert(not pcall(require, "flaky"))
+assert(not pcall(require, "flaky"))
+assert(attempts == 2, "attempts = " .. tostring(attempts))
+`,
+		},
+		{name: "SandboxModuleGlobalRemoved", code: `assert(module == nil)`},
+		{
+			name: "StandardLibraryIgnoresReassignedGlobal",
+			code: `
+local s = string
+string = nil
+assert(require("string") == s)
+`,
+		},
+		// A module's thread starts with a small registry and call stack; both must
+		// grow to the runtime's own limits.
+		{
+			name: "ModuleThreadGrowsToRuntimeLimits",
+			files: map[string]string{
+				"lib/heavy.lua": `
+local function depth(n) if n == 0 then return 0 end return 1 + depth(n - 1) end
+local t = {}
+for i = 1, 5000 do t[i] = i end
+return { depth = depth(900), n = #t, packed = select("#", unpack(t, 1, 4000)) }
+`,
+			},
+			code: `
+local h = require("heavy")
+assert(h.depth == 900 and h.n == 5000 and h.packed == 4000)
+`,
+		},
+		{
+			name:  "NonStringErrorPassesThrough",
+			files: map[string]string{"lib/te.lua": `error({code = "E1"})`},
+			code: `
+local ok, e = pcall(require, "te")
+assert(not ok and type(e) == "table" and e.code == "E1", "error value = " .. tostring(e))
+`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newModuleWriter(t, newModuleProject(t, tc.files))
+			mustRun(t, r, tc.code)
+		})
+	}
 }
 
 func TestRequire_InvalidNames(t *testing.T) {
@@ -188,20 +235,6 @@ func TestRequire_Errors(t *testing.T) {
 	}
 }
 
-func TestRequire_FailedLoadIsNotCached(t *testing.T) {
-	t.Parallel()
-	root := newModuleProject(t, map[string]string{
-		"lib/flaky.lua": `attempts = (attempts or 0) + 1
-error("fail")`,
-	})
-	r := newModuleWriter(t, root)
-	mustRun(t, r, `
-assert(not pcall(require, "flaky"))
-assert(not pcall(require, "flaky"))
-assert(attempts == 2, "attempts = " .. tostring(attempts))
-`)
-}
-
 func TestRequire_ErrorFramesNameModule(t *testing.T) {
 	t.Parallel()
 	root := newModuleProject(t, map[string]string{
@@ -258,22 +291,6 @@ func TestRequire_CacheUsesEntryScriptNamespace(t *testing.T) {
 	t.Cleanup(b.Close)
 	b.SetScriptPath("scripts/b.lua")
 	mustRun(t, b, `assert(rela.cache.get("k") == nil, "cache entry crossed script namespaces")`)
-}
-
-func TestSandbox_ModuleGlobalRemoved(t *testing.T) {
-	t.Parallel()
-	r := newModuleWriter(t, t.TempDir())
-	mustRun(t, r, `assert(module == nil)`)
-}
-
-func TestRequire_StandardLibraryIgnoresReassignedGlobal(t *testing.T) {
-	t.Parallel()
-	r := newModuleWriter(t, t.TempDir())
-	mustRun(t, r, `
-local s = string
-string = nil
-assert(require("string") == s)
-`)
 }
 
 func TestRequire_CompileErrorPointsAtModuleLine(t *testing.T) {
@@ -347,35 +364,6 @@ func TestRequire_ChainAtDepthLimitLoads(t *testing.T) {
 	files[fmt.Sprintf("lib/m%d.lua", maxModuleDepth-1)] = `return "bottom"`
 	r := newModuleWriter(t, newModuleProject(t, files))
 	mustRun(t, r, `assert(require("m0") == "bottom")`)
-}
-
-// A module's thread starts with a small registry and call stack; both must
-// grow to the runtime's own limits.
-func TestRequire_ModuleThreadGrowsToRuntimeLimits(t *testing.T) {
-	t.Parallel()
-	root := newModuleProject(t, map[string]string{
-		"lib/heavy.lua": `
-local function depth(n) if n == 0 then return 0 end return 1 + depth(n - 1) end
-local t = {}
-for i = 1, 5000 do t[i] = i end
-return { depth = depth(900), n = #t, packed = select("#", unpack(t, 1, 4000)) }
-`,
-	})
-	r := newModuleWriter(t, root)
-	mustRun(t, r, `
-local h = require("heavy")
-assert(h.depth == 900 and h.n == 5000 and h.packed == 4000)
-`)
-}
-
-func TestRequire_NonStringErrorPassesThrough(t *testing.T) {
-	t.Parallel()
-	root := newModuleProject(t, map[string]string{"lib/te.lua": `error({code = "E1"})`})
-	r := newModuleWriter(t, root)
-	mustRun(t, r, `
-local ok, e = pcall(require, "te")
-assert(not ok and type(e) == "table" and e.code == "E1", "error value = " .. tostring(e))
-`)
 }
 
 func TestRequire_NestedCompileErrorPointsAtInnerModule(t *testing.T) {

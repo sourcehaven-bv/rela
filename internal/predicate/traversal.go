@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/yuin/gopher-lua/ast"
@@ -114,7 +113,7 @@ func (s TraversalSpec) PropNames() []string {
 			out = append(out, k)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

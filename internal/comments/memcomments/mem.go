@@ -4,7 +4,7 @@ package memcomments
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -211,7 +211,7 @@ func faceKeysFor[V any](m map[string]V, id string) []string {
 			out = append(out, k)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

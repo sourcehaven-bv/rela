@@ -3,7 +3,7 @@ package entitymanager
 import (
 	"context"
 	"errors"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -105,7 +105,7 @@ func CopiesForSource(
 	for name := range m.deps.Meta.Copies {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	var out []CopyOffer
 	for _, name := range names {

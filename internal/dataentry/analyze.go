@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 
@@ -256,7 +257,7 @@ func (svc analyzeService) analyzeOrphans(ctx context.Context, meta *metamodel.Me
 		return checkFailed(ctx, section, "Orphans", err)
 	}
 
-	sort.Slice(found, func(i, j int) bool { return natsort.Less(found[i].ID, found[j].ID) })
+	slices.SortFunc(found, func(a, b tracer.Orphan) int { return natsort.Compare(a.ID, b.ID) })
 	for start := 0; start < len(found) && len(section.Issues) <= maxSectionIssues; start += resolveBatch {
 		chunk := found[start:min(start+resolveBatch, len(found))]
 		refs := make([]entity.Ref, len(chunk))
@@ -389,7 +390,7 @@ func (svc analyzeService) analyzeGaps(ctx context.Context, meta *metamodel.Metam
 
 	for _, prefix := range prefixes {
 		numbers := prefixGroups[prefix]
-		sort.Ints(numbers)
+		slices.Sort(numbers)
 
 		var gaps []int
 		for i := 1; i < len(numbers); i++ {
@@ -641,9 +642,7 @@ func scriptErrorSummary(se *lua.ScriptError) string {
 }
 
 func sortStoreEntitiesByID(entities []*entity.Entity) {
-	sort.Slice(entities, func(i, j int) bool {
-		return natsort.Less(entities[i].ID, entities[j].ID)
-	})
+	slices.SortFunc(entities, func(a, b *entity.Entity) int { return natsort.Compare(a.ID, b.ID) })
 }
 
 // safeDisplayTitle renders an entity's display title, falling back to the id if
@@ -679,8 +678,8 @@ func sortHeadersByID(headers []store.EntityHeader) {
 // An unstable sort would shuffle the messages within an entity and turn a
 // pure refactor into a visible behavior change.
 func sortIssuesByEntityID(issues []AnalysisIssue) {
-	sort.SliceStable(issues, func(i, j int) bool {
-		return natsort.Less(issues[i].EntityID, issues[j].EntityID)
+	slices.SortStableFunc(issues, func(a, b AnalysisIssue) int {
+		return natsort.Compare(a.EntityID, b.EntityID)
 	})
 }
 

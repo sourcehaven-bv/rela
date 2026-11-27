@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -589,7 +588,7 @@ func (w *bcWorld) stamps() string {
 		full := w.get(e.ID)
 		parts = append(parts, fmt.Sprintf("%s=%s@%d", e.ID, store.VersionOf(full), w.base(e.ID)))
 	}
-	sort.Strings(parts)
+	slices.Sort(parts)
 	return strings.Join(parts, ",")
 }
 

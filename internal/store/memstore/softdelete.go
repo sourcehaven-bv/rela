@@ -1,8 +1,9 @@
 package memstore
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -251,7 +252,7 @@ func sortedEntities(in map[string]*entity.Entity) []*entity.Entity {
 	for _, e := range in {
 		out = append(out, e)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Face < out[j].Face })
+	slices.SortFunc(out, func(a, b *entity.Entity) int { return cmp.Compare(a.Face, b.Face) })
 	return out
 }
 
@@ -260,15 +261,15 @@ func sortedRelations(in map[string]*entity.Relation) []*entity.Relation {
 	for _, r := range in {
 		out = append(out, r)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Key() < out[j].Key() })
+	slices.SortFunc(out, func(a, b *entity.Relation) int { return cmp.Compare(a.Key(), b.Key()) })
 	return out
 }
 
 func sortMarked(out []store.MarkedEntity) {
-	sort.Slice(out, func(i, j int) bool {
-		if !out[i].DeletedAt.Equal(out[j].DeletedAt) {
-			return out[i].DeletedAt.Before(out[j].DeletedAt)
-		}
-		return out[i].ID < out[j].ID
+	slices.SortFunc(out, func(a, b store.MarkedEntity) int {
+		return cmp.Or(
+			a.DeletedAt.Compare(b.DeletedAt),
+			cmp.Compare(a.ID, b.ID),
+		)
 	})
 }

@@ -1,6 +1,7 @@
 package attachment
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -11,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -64,7 +64,7 @@ func (s *Service) Resolve(ctx context.Context, ref entity.Ref) (*entity.Entity, 
 			for _, f := range family {
 				addrs = append(addrs, entity.FormatStateRef(f.ID, f.Face))
 			}
-			sort.Strings(addrs)
+			slices.Sort(addrs)
 			return nil, fmt.Errorf("%w: %s has faces; use one of %s",
 				ErrFaceRequired, ref.ID, strings.Join(addrs, ", "))
 		}
@@ -364,7 +364,7 @@ func (s *Service) references(ctx context.Context, e *entity.Entity, property str
 	if !found {
 		return refState{}, fmt.Errorf("get entity %s: %w", entity.FormatStateRef(e.ID, e.Face), store.ErrNotFound)
 	}
-	sort.Strings(out.others)
+	slices.Sort(out.others)
 	out.others = slices.Compact(out.others)
 	out.bytes, err = s.byteKeys(ctx, e.ID, property)
 	if err != nil {
@@ -605,7 +605,7 @@ func (s *Service) byteKeys(ctx context.Context, entityID, property string) ([]st
 			names = append(names, info.FileName)
 		}
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names, nil
 }
 
@@ -773,11 +773,11 @@ func faceFiles(e *entity.Entity, items []store.AttachmentInfo) []faceFile {
 			out = append(out, faceFile{info: info, entry: r.Entry})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].info.Property != out[j].info.Property {
-			return out[i].info.Property < out[j].info.Property
-		}
-		return out[i].info.FileName < out[j].info.FileName
+	slices.SortFunc(out, func(a, b faceFile) int {
+		return cmp.Or(
+			cmp.Compare(a.info.Property, b.info.Property),
+			cmp.Compare(a.info.FileName, b.info.FileName),
+		)
 	})
 	return out
 }

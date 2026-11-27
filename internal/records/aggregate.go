@@ -1,10 +1,11 @@
 package records
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math/big"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -172,11 +173,11 @@ func (f *Folder) Points() []Point {
 		}
 		out = append(out, pt)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Owner != out[j].Owner {
-			return out[i].Owner < out[j].Owner
-		}
-		return out[i].Start.Before(out[j].Start)
+	slices.SortFunc(out, func(a, b Point) int {
+		return cmp.Or(
+			cmp.Compare(a.Owner, b.Owner),
+			a.Start.Compare(b.Start),
+		)
 	})
 	return out
 }

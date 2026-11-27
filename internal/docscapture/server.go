@@ -20,7 +20,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -405,7 +404,7 @@ func pickDefaultUser(pol *acl.Policy, byRole map[string]string) string {
 	for r := range byRole {
 		names = append(names, r)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	if len(names) > 0 {
 		return byRole[names[0]]
 	}
@@ -461,7 +460,7 @@ func knownRoles(byRole map[string]string) []string {
 	for r := range byRole {
 		out = append(out, r)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -563,7 +562,7 @@ func sortedRoleNames(roles map[string]acl.RoleDef) []string {
 	for name := range roles {
 		out = append(out, name)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

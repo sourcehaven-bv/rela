@@ -3,7 +3,7 @@ package conditionlint
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -95,7 +95,7 @@ func (m *NextActionMatcher) Types() []string {
 	for t := range m.progs {
 		out = append(out, t)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

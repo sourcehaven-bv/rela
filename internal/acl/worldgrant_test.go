@@ -2,7 +2,7 @@ package acl_test
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -407,7 +407,7 @@ func TestReadFaces(t *testing.T) {
 			for _, f := range faces {
 				got = append(got, f.String())
 			}
-			sort.Strings(got)
+			slices.Sort(got)
 			if strings.Join(got, ",") != strings.Join(tc.wantFaces, ",") {
 				t.Errorf("faces = %v, want %v", got, tc.wantFaces)
 			}

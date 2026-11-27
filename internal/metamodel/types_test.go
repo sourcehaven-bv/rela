@@ -3,7 +3,6 @@ package metamodel
 import (
 	"errors"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 
@@ -341,7 +340,7 @@ func TestGetPrimaryPropertyDeterministic(t *testing.T) {
 
 	// The result should be one of the valid properties
 	validProps := []string{"foo", "bar", "baz"}
-	sort.Strings(validProps)
+	slices.Sort(validProps)
 	found := slices.Contains(validProps, first)
 	if !found {
 		t.Errorf("GetPrimaryProperty() = %q, expected one of %v", first, validProps)

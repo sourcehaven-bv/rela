@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -27,7 +26,7 @@ func validateConversions(m *Metamodel) []string {
 	for name := range m.Conversions {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	errs := make([]string, 0, len(m.Conversions))
 	if _, clash := m.Relations[ConversionDrop]; clash && len(m.Conversions) > 0 {
 		errs = append(errs, fmt.Sprintf("relation type %q is reserved while conversions are declared", ConversionDrop))
@@ -104,7 +103,7 @@ func validateMappedTargetProperties(
 	for key := range fields {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	for _, key := range keys {
 		property, exists := to.Properties[key]
 		switch {
@@ -145,7 +144,7 @@ func validateConversionRelations(m *Metamodel, d ConversionDef, fromOK, toOK boo
 	for key := range d.Relations {
 		rels = append(rels, key)
 	}
-	sort.Strings(rels)
+	slices.Sort(rels)
 	for _, sourceRel := range rels {
 		sourceDef, exists := m.GetRelationDef(sourceRel)
 		if !exists {

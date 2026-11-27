@@ -2,7 +2,7 @@ package migration
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -180,13 +180,13 @@ func (m *ViewsByEntityTypeMigration) rekeyViews(root *yaml.Node) error {
 		if len(viewIDs) <= 1 {
 			continue
 		}
-		sort.Strings(viewIDs)
+		slices.Sort(viewIDs)
 		conflicts = append(conflicts,
 			fmt.Sprintf("entity type %q is targeted by views: %s",
 				entityType, strings.Join(viewIDs, ", ")))
 	}
 	if len(conflicts) > 0 {
-		sort.Strings(conflicts)
+		slices.Sort(conflicts)
 		return fmt.Errorf(
 			"%s: cannot collapse views to one-per-entity-type — please consolidate manually:\n  - %s",
 			m.Name(), strings.Join(conflicts, "\n  - "))

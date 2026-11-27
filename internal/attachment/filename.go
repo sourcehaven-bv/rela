@@ -3,7 +3,7 @@ package attachment
 import (
 	"mime"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -27,7 +27,7 @@ func findFileProperty(entityDef *metamodel.EntityDef) string {
 	if len(names) == 0 {
 		return ""
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names[0]
 }
 

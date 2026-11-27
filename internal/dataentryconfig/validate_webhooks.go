@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -190,7 +190,7 @@ func sortedWebhookIDs(cfg *Config) []string {
 	for id := range cfg.Webhooks {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	return ids
 }
 

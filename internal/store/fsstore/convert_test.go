@@ -3,7 +3,7 @@ package fsstore_test
 import (
 	"context"
 	"errors"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -77,6 +77,6 @@ func familyRows(t *testing.T, s store.Store) []string {
 		require.NoError(t, err)
 		out = append(out, e.Type+"|"+e.Face.String())
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

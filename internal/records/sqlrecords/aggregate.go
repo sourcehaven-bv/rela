@@ -1,9 +1,10 @@
 package sqlrecords
 
 import (
+	"cmp"
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -63,11 +64,11 @@ func (s *Store) Aggregate(ctx context.Context, q records.AggregateQuery, scale i
 	for _, p := range merged {
 		out = append(out, *p)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Owner != out[j].Owner {
-			return out[i].Owner < out[j].Owner
-		}
-		return out[i].Start.Before(out[j].Start)
+	slices.SortFunc(out, func(a, b records.Point) int {
+		return cmp.Or(
+			cmp.Compare(a.Owner, b.Owner),
+			a.Start.Compare(b.Start),
+		)
 	})
 	return out, nil
 }

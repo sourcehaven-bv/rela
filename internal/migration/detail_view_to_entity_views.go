@@ -17,7 +17,7 @@ package migration
 import (
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 
 	"gopkg.in/yaml.v3"
 )
@@ -86,7 +86,7 @@ func (m *DetailViewToEntityViewsMigration) Apply(doc *yaml.Node) error {
 	for t := range migratable {
 		types = append(types, t)
 	}
-	sort.Strings(types)
+	slices.Sort(types)
 
 	for _, entityType := range types {
 		view := migratable[entityType]

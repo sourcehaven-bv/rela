@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sort"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -130,7 +129,7 @@ func (c *Converter) Offers(ctx context.Context, sourceType, sourceID string) []C
 	for name := range m.deps.Meta.Conversions {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	out := make([]ConversionOffer, 0)
 	for _, name := range names {
 		d := m.deps.Meta.Conversions[name]
@@ -141,12 +140,12 @@ func (c *Converter) Offers(ctx context.Context, sourceType, sourceID string) []C
 		for field := range d.Fields {
 			o.MappedFields = append(o.MappedFields, field)
 		}
-		sort.Strings(o.MappedFields)
+		slices.Sort(o.MappedFields)
 		o.ContentMapped = d.Content != ""
 		o.FaceChoices = make(map[string][]string, len(d.Faces))
 		for sourceFace, choices := range d.Faces {
 			o.FaceChoices[sourceFace] = append([]string(nil), choices...)
-			sort.Strings(o.FaceChoices[sourceFace])
+			slices.Sort(o.FaceChoices[sourceFace])
 		}
 		if o.Label == "" {
 			o.Label = name
@@ -207,7 +206,7 @@ func (c *Converter) Preview(ctx context.Context, req ConversionRequest) (*Conver
 		problems = append(problems, capacity...)
 	}
 	preview.InvalidRelations = relationProblemTexts(problems)
-	sort.Strings(preview.RelationsToDrop)
+	slices.Sort(preview.RelationsToDrop)
 	return preview, nil
 }
 
@@ -408,8 +407,8 @@ func resolveConversionFaces(
 			invalid = append(invalid, source+" (unknown source face)")
 		}
 	}
-	sort.Strings(required)
-	sort.Strings(invalid)
+	slices.Sort(required)
+	slices.Sort(invalid)
 	return result, required, invalid
 }
 

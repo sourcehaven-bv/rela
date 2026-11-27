@@ -1,6 +1,7 @@
 package remotesync
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -313,7 +314,7 @@ func (l *ledger) buildIndex() {
 		}
 	}
 	for _, rows := range l.index {
-		sort.Slice(rows, func(i, j int) bool { return rows[i].Address < rows[j].Address })
+		slices.SortFunc(rows, func(a, b *ledgerRow) int { return cmp.Compare(a.Address, b.Address) })
 	}
 }
 

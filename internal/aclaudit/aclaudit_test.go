@@ -96,47 +96,191 @@ func ruleSeverity(findings []Finding, rule string) Severity {
 
 // ---- Tier A ------------------------------------------------------------
 
-func TestAudit_A1_UngatedMembership(t *testing.T) {
+// TestAudit_SingleRule pins one rule's verdict per policy: whether it fires,
+// and at which severity when checkSev is set.
+func TestAudit_SingleRule(t *testing.T) {
 	t.Parallel()
-	// Default member-of, an assignment to a declared role, no requires_permission
-	// gate → A1 high. (Covers the DEFAULT relation, not just configured.)
-	p := &acl.Policy{
-		Roles:       map[string]acl.RoleDef{"editor": {Create: []string{"ticket"}, Read: []string{"ticket"}}},
-		Assignments: map[string]string{"engineering": "editor"},
+	ticketMeta := fakeMetamodel{types: map[string]bool{"ticket": true}}
+	ticketStatusMeta := fakeMetamodel{
+		types:  map[string]bool{"ticket": true},
+		fields: map[string]map[string][]string{"ticket": {"status": {"open", "done"}}},
 	}
-	got := Audit(p, nil, allPerms{})
-	if !hasRule(got, "A1-ungated-membership") {
-		t.Fatalf("expected A1, got %+v", got)
+	tests := []struct {
+		name     string
+		policy   *acl.Policy
+		meta     MetamodelReader
+		rule     string
+		want     bool
+		checkSev bool
+		wantSev  Severity
+	}{
+		{
+			// Default member-of, an assignment to a declared role, no
+			// requires_permission gate: A1 high. (Covers the DEFAULT relation,
+			// not just configured.)
+			name: "A1_UngatedMembership",
+			policy: &acl.Policy{
+				Roles:       map[string]acl.RoleDef{"editor": {Create: []string{"ticket"}, Read: []string{"ticket"}}},
+				Assignments: map[string]string{"engineering": "editor"},
+			},
+			rule: "A1-ungated-membership", want: true, checkSev: true, wantSev: High,
+		},
+		{
+			// Same, but member-of is gated by requires_permission: no A1.
+			name: "A1_GatedMembership_NoFinding",
+			policy: &acl.Policy{
+				Roles: map[string]acl.RoleDef{"editor": {
+					Create: []string{"ticket"}, Read: []string{"ticket"}, Permissions: []string{"delegate-membership"},
+				}},
+				Assignments:   map[string]string{"engineering": "editor"},
+				RoleRelations: map[string]acl.RoleRelationDef{"member-of": {RequiresPermission: "delegate-membership"}},
+			},
+			rule: "A1-ungated-membership",
+		},
+		{
+			// RR-EG5D3E: a group assigned only a READ-ONLY role is a visibility
+			// choice, not an escalation path. A1 must NOT fire (symmetric with
+			// A2). This is the false-positive the design fought; gating must be
+			// on isPrivileged.
+			name: "A1_ReadOnlyGroup_NoFinding",
+			policy: &acl.Policy{
+				Roles:       map[string]acl.RoleDef{"reader": {Read: []string{"ticket"}}},
+				Assignments: map[string]string{"engineering": "reader"},
+			},
+			rule: "A1-ungated-membership",
+		},
+		{
+			// A role-relation conferring a read-only (non-privileged) role is
+			// fine ungated.
+			name: "A2_NonPrivilegedRole_NoFinding",
+			policy: &acl.Policy{
+				Roles:         map[string]acl.RoleDef{"reader": {Read: []string{"ticket"}}},
+				RoleRelations: map[string]acl.RoleRelationDef{"reader-of": {Confers: "reader"}},
+			},
+			rule: "A2-ungated-role-relation",
+		},
+		{
+			// everyone with a write grant: A3 critical.
+			name:   "A3_EveryonePrivileged",
+			policy: &acl.Policy{Roles: map[string]acl.RoleDef{acl.EveryoneRole: {Update: []string{"ticket"}}}},
+			rule:   "A3-everyone-privileged", want: true, checkSev: true, wantSev: Critical,
+		},
+		{
+			// The DOCUMENTED `everyone: read: ["*"]` pattern must NOT flag A3
+			// (RR-UR0LJU).
+			name:   "A3_EveryoneReadOnly_NoFinding",
+			policy: &acl.Policy{Roles: map[string]acl.RoleDef{acl.EveryoneRole: {Read: []string{"*"}}}},
+			rule:   "A3-everyone-privileged",
+		},
+		{
+			name: "A4_AssignmentToUnknownRole",
+			policy: &acl.Policy{
+				Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}}},
+				Assignments: map[string]string{"alice": "edutor"}, // typo
+			},
+			rule: "A4-assignment-unknown-role", want: true,
+		},
+		{
+			name: "A5_ConfersUnknownRole",
+			policy: &acl.Policy{
+				Roles:         map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}}},
+				RoleRelations: map[string]acl.RoleRelationDef{"editor-of": {Confers: "edutor"}},
+			},
+			rule: "A5-confers-unknown-role", want: true,
+		},
+		{
+			// requires_permission names a perm no role grants: A6 low, since an
+			// intentional lockdown may be valid.
+			name: "A6_UngrantablePermission",
+			policy: &acl.Policy{
+				Roles: map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}}},
+				RoleRelations: map[string]acl.RoleRelationDef{
+					"editor-of": {Confers: "editor", RequiresPermission: "delegate-nobody-has"},
+				},
+			},
+			rule: "A6-ungrantable-permission", want: true, checkSev: true, wantSev: Low,
+		},
+		{
+			name: "A10_NameWhitespace",
+			policy: &acl.Policy{
+				MembershipRelation: "heeft_rol ",
+				Assignments:        map[string]string{"x": "editor"},
+				Roles:              map[string]acl.RoleDef{"editor": {Read: []string{"t"}}},
+			},
+			rule: "A10-name-whitespace", want: true,
+		},
+		{
+			// RR-KUOAVH: a padded assignment KEY silently matches no member.
+			name: "A10_AssignmentKeyWhitespace",
+			policy: &acl.Policy{
+				Assignments: map[string]string{"engineering ": "editor"},
+				Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}}},
+			},
+			rule: "A10-name-whitespace", want: true,
+		},
+		{
+			name: "B1_UndeclaredType",
+			policy: &acl.Policy{Roles: map[string]acl.RoleDef{
+				"editor": {Create: []string{"ticket", "tickets"}, Read: []string{"ticket"}}, // "tickets" is a typo
+			}},
+			meta: ticketMeta,
+			rule: "B1-undeclared-type", want: true,
+		},
+		{
+			// A wildcard grant must NOT flag B1: "*" is not an entity type
+			// (RR-TZ2S3G).
+			name: "B1_WildcardSkipped",
+			policy: &acl.Policy{Roles: map[string]acl.RoleDef{
+				"admin": {Create: []string{"*"}, Update: []string{"*"}, Delete: []string{"*"}, Read: []string{"*"}},
+			}},
+			meta: ticketMeta,
+			rule: "B1-undeclared-type",
+		},
+		{
+			// membership_relation names a relation the schema lacks: B2.
+			name:   "B2_UndeclaredRelation",
+			policy: &acl.Policy{MembershipRelation: "heeft_rol"},
+			meta:   ticketMeta,
+			rule:   "B2-undeclared-relation", want: true,
+		},
+		{
+			name: "B4_UndeclaredField",
+			policy: &acl.Policy{Roles: map[string]acl.RoleDef{
+				"triager": {Read: []string{"ticket"}, Fields: map[string][]acl.FieldGrant{
+					"ticket": {{Field: "stutus"}}, // typo
+				}},
+			}},
+			meta: ticketStatusMeta,
+			rule: "B4-undeclared-field", want: true,
+		},
+		{
+			name: "B5_UndeclaredOption",
+			policy: &acl.Policy{Roles: map[string]acl.RoleDef{
+				"triager": {Read: []string{"ticket"}, Options: map[string][]acl.OptionGrant{
+					"ticket": {{Field: "status", Option: "finished"}}, // not in enum
+				}},
+			}},
+			meta: ticketStatusMeta,
+			rule: "B5-undeclared-option", want: true,
+		},
+		{
+			name:   "B7_UndeclaredUserType",
+			policy: &acl.Policy{UserEntityType: "persoon"}, // not declared
+			meta:   ticketMeta,
+			rule:   "B7-undeclared-user-type", want: true,
+		},
 	}
-	if sev := ruleSeverity(got, "A1-ungated-membership"); sev != High {
-		t.Errorf("A1 severity = %v, want high", sev)
-	}
-}
-
-func TestAudit_A1_GatedMembership_NoFinding(t *testing.T) {
-	t.Parallel()
-	// Same, but member-of is gated by requires_permission → no A1.
-	p := &acl.Policy{
-		Roles:         map[string]acl.RoleDef{"editor": {Create: []string{"ticket"}, Read: []string{"ticket"}, Permissions: []string{"delegate-membership"}}},
-		Assignments:   map[string]string{"engineering": "editor"},
-		RoleRelations: map[string]acl.RoleRelationDef{"member-of": {RequiresPermission: "delegate-membership"}},
-	}
-	if got := Audit(p, nil, allPerms{}); hasRule(got, "A1-ungated-membership") {
-		t.Errorf("gated membership must not flag A1, got %+v", got)
-	}
-}
-
-func TestAudit_A1_ReadOnlyGroup_NoFinding(t *testing.T) {
-	t.Parallel()
-	// RR-EG5D3E: a group assigned only a READ-ONLY role is a visibility choice,
-	// not an escalation path. A1 must NOT fire (symmetric with A2). This is the
-	// false-positive the design fought; gating must be on isPrivileged.
-	p := &acl.Policy{
-		Roles:       map[string]acl.RoleDef{"reader": {Read: []string{"ticket"}}},
-		Assignments: map[string]string{"engineering": "reader"},
-	}
-	if got := Audit(p, nil, allPerms{}); hasRule(got, "A1-ungated-membership") {
-		t.Errorf("read-only assigned role must not flag A1, got %+v", got)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := Audit(tc.policy, tc.meta, allPerms{})
+			if hasRule(got, tc.rule) != tc.want {
+				t.Fatalf("%s reported = %v, want %v (findings %+v)", tc.rule, !tc.want, tc.want, got)
+			}
+			if sev := ruleSeverity(got, tc.rule); tc.checkSev && sev != tc.wantSev {
+				t.Errorf("%s severity = %v, want %v", tc.rule, sev, tc.wantSev)
+			}
+		})
 	}
 }
 
@@ -168,44 +312,6 @@ func TestAudit_A2_UngatedRoleRelation(t *testing.T) {
 	p.RoleRelations["editor-of"] = acl.RoleRelationDef{Confers: "editor", RequiresPermission: "delegate-editor"}
 	if got := Audit(p, nil, allPerms{}); hasRule(got, "A2-ungated-role-relation") {
 		t.Errorf("gated role-relation must not flag A2, got %+v", got)
-	}
-}
-
-func TestAudit_A2_NonPrivilegedRole_NoFinding(t *testing.T) {
-	t.Parallel()
-	// A role-relation conferring a read-only (non-privileged) role is fine ungated.
-	p := &acl.Policy{
-		Roles:         map[string]acl.RoleDef{"reader": {Read: []string{"ticket"}}},
-		RoleRelations: map[string]acl.RoleRelationDef{"reader-of": {Confers: "reader"}},
-	}
-	if got := Audit(p, nil, allPerms{}); hasRule(got, "A2-ungated-role-relation") {
-		t.Errorf("read-only role-relation must not flag A2, got %+v", got)
-	}
-}
-
-func TestAudit_A3_EveryonePrivileged(t *testing.T) {
-	t.Parallel()
-	// everyone with a write grant → A3 critical.
-	p := &acl.Policy{Roles: map[string]acl.RoleDef{
-		acl.EveryoneRole: {Update: []string{"ticket"}},
-	}}
-	got := Audit(p, nil, allPerms{})
-	if !hasRule(got, "A3-everyone-privileged") {
-		t.Fatalf("expected A3, got %+v", got)
-	}
-	if sev := ruleSeverity(got, "A3-everyone-privileged"); sev != Critical {
-		t.Errorf("A3 severity = %v, want critical", sev)
-	}
-}
-
-func TestAudit_A3_EveryoneReadOnly_NoFinding(t *testing.T) {
-	t.Parallel()
-	// The DOCUMENTED `everyone: read: ["*"]` pattern must NOT flag A3 (RR-UR0LJU).
-	p := &acl.Policy{Roles: map[string]acl.RoleDef{
-		acl.EveryoneRole: {Read: []string{"*"}},
-	}}
-	if got := Audit(p, nil, allPerms{}); hasRule(got, "A3-everyone-privileged") {
-		t.Errorf("read-only everyone must not flag A3, got %+v", got)
 	}
 }
 
@@ -341,44 +447,6 @@ func TestAudit_A14_DetailNamesTheFaces(t *testing.T) {
 		!strings.Contains(details[0], "draft")
 	if !namesOnlyPublished {
 		t.Errorf("A14 details = %q, want one naming only the published face", details)
-	}
-}
-
-func TestAudit_A4_AssignmentToUnknownRole(t *testing.T) {
-	t.Parallel()
-	p := &acl.Policy{
-		Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}}},
-		Assignments: map[string]string{"alice": "edutor"}, // typo
-	}
-	if got := Audit(p, nil, allPerms{}); !hasRule(got, "A4-assignment-unknown-role") {
-		t.Fatalf("expected A4, got %+v", got)
-	}
-}
-
-func TestAudit_A5_ConfersUnknownRole(t *testing.T) {
-	t.Parallel()
-	p := &acl.Policy{
-		Roles:         map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}}},
-		RoleRelations: map[string]acl.RoleRelationDef{"editor-of": {Confers: "edutor"}},
-	}
-	if got := Audit(p, nil, allPerms{}); !hasRule(got, "A5-confers-unknown-role") {
-		t.Fatalf("expected A5, got %+v", got)
-	}
-}
-
-func TestAudit_A6_UngrantablePermission(t *testing.T) {
-	t.Parallel()
-	// requires_permission names a perm no role grants → A6 low.
-	p := &acl.Policy{
-		Roles:         map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}}},
-		RoleRelations: map[string]acl.RoleRelationDef{"editor-of": {Confers: "editor", RequiresPermission: "delegate-nobody-has"}},
-	}
-	got := Audit(p, nil, allPerms{})
-	if !hasRule(got, "A6-ungrantable-permission") {
-		t.Fatalf("expected A6, got %+v", got)
-	}
-	if sev := ruleSeverity(got, "A6-ungrantable-permission"); sev != Low {
-		t.Errorf("A6 severity = %v, want low (intentional lockdown may be valid)", sev)
 	}
 }
 
@@ -540,60 +608,7 @@ func TestAudit_A9_WildcardWrite_NotRead(t *testing.T) {
 	}
 }
 
-func TestAudit_A10_NameWhitespace(t *testing.T) {
-	t.Parallel()
-	p := &acl.Policy{MembershipRelation: "heeft_rol ", Assignments: map[string]string{"x": "editor"}, Roles: map[string]acl.RoleDef{"editor": {Read: []string{"t"}}}}
-	if got := Audit(p, nil, allPerms{}); !hasRule(got, "A10-name-whitespace") {
-		t.Fatalf("expected A10 for trailing space, got %+v", got)
-	}
-}
-
-func TestAudit_A10_AssignmentKeyWhitespace(t *testing.T) {
-	t.Parallel()
-	// RR-KUOAVH: a padded assignment KEY silently matches no member.
-	p := &acl.Policy{
-		Assignments: map[string]string{"engineering ": "editor"},
-		Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}}},
-	}
-	if got := Audit(p, nil, allPerms{}); !hasRule(got, "A10-name-whitespace") {
-		t.Fatalf("expected A10 for padded assignment key, got %+v", got)
-	}
-}
-
 // ---- Tier B ------------------------------------------------------------
-
-func TestAudit_B1_UndeclaredType(t *testing.T) {
-	t.Parallel()
-	meta := fakeMetamodel{types: map[string]bool{"ticket": true}}
-	p := &acl.Policy{Roles: map[string]acl.RoleDef{
-		"editor": {Create: []string{"ticket", "tickets"}, Read: []string{"ticket"}}, // "tickets" is a typo
-	}}
-	if got := Audit(p, meta, allPerms{}); !hasRule(got, "B1-undeclared-type") {
-		t.Fatalf("expected B1, got %+v", got)
-	}
-}
-
-func TestAudit_B1_WildcardSkipped(t *testing.T) {
-	t.Parallel()
-	// A wildcard grant must NOT flag B1 — "*" is not an entity type (RR-TZ2S3G).
-	meta := fakeMetamodel{types: map[string]bool{"ticket": true}}
-	p := &acl.Policy{Roles: map[string]acl.RoleDef{
-		"admin": {Create: []string{"*"}, Update: []string{"*"}, Delete: []string{"*"}, Read: []string{"*"}},
-	}}
-	if got := Audit(p, meta, allPerms{}); hasRule(got, "B1-undeclared-type") {
-		t.Errorf("wildcard role must not flag B1, got %+v", got)
-	}
-}
-
-func TestAudit_B2_UndeclaredRelation(t *testing.T) {
-	t.Parallel()
-	meta := fakeMetamodel{types: map[string]bool{"ticket": true}}
-	// membership_relation names a relation the schema lacks → B2.
-	p := &acl.Policy{MembershipRelation: "heeft_rol"}
-	if got := Audit(p, meta, allPerms{}); !hasRule(got, "B2-undeclared-relation") {
-		t.Fatalf("expected B2 for membership_relation, got %+v", got)
-	}
-}
 
 func TestAudit_B3_MembershipFromMismatch(t *testing.T) {
 	t.Parallel()
@@ -610,22 +625,6 @@ func TestAudit_B3_MembershipFromMismatch(t *testing.T) {
 	p.UserEntityType = "persoon"
 	if got := Audit(p, meta, allPerms{}); hasRule(got, "B3-membership-from-mismatch") {
 		t.Errorf("compatible from must not flag B3, got %+v", got)
-	}
-}
-
-func TestAudit_B4_UndeclaredField(t *testing.T) {
-	t.Parallel()
-	meta := fakeMetamodel{
-		types:  map[string]bool{"ticket": true},
-		fields: map[string]map[string][]string{"ticket": {"status": {"open", "done"}}},
-	}
-	p := &acl.Policy{Roles: map[string]acl.RoleDef{
-		"triager": {Read: []string{"ticket"}, Fields: map[string][]acl.FieldGrant{
-			"ticket": {{Field: "stutus"}}, // typo
-		}},
-	}}
-	if got := Audit(p, meta, allPerms{}); !hasRule(got, "B4-undeclared-field") {
-		t.Fatalf("expected B4, got %+v", got)
 	}
 }
 
@@ -697,22 +696,6 @@ func TestAudit_B4B5_FaceKeys(t *testing.T) {
 	}
 }
 
-func TestAudit_B5_UndeclaredOption(t *testing.T) {
-	t.Parallel()
-	meta := fakeMetamodel{
-		types:  map[string]bool{"ticket": true},
-		fields: map[string]map[string][]string{"ticket": {"status": {"open", "done"}}},
-	}
-	p := &acl.Policy{Roles: map[string]acl.RoleDef{
-		"triager": {Read: []string{"ticket"}, Options: map[string][]acl.OptionGrant{
-			"ticket": {{Field: "status", Option: "finished"}}, // not in enum
-		}},
-	}}
-	if got := Audit(p, meta, allPerms{}); !hasRule(got, "B5-undeclared-option") {
-		t.Fatalf("expected B5, got %+v", got)
-	}
-}
-
 func TestAudit_B5_AbsentField_ReportsUndeclaredNotNonEnum(t *testing.T) {
 	t.Parallel()
 	// RR-O50E4R: an options grant on a field that doesn't exist must report
@@ -732,15 +715,6 @@ func TestAudit_B5_AbsentField_ReportsUndeclaredNotNonEnum(t *testing.T) {
 	}
 	if hasRule(got, "B5-options-non-enum") {
 		t.Errorf("absent field must NOT be reported as non-enum, got %+v", got)
-	}
-}
-
-func TestAudit_B7_UndeclaredUserType(t *testing.T) {
-	t.Parallel()
-	meta := fakeMetamodel{types: map[string]bool{"ticket": true}}
-	p := &acl.Policy{UserEntityType: "persoon"} // not declared
-	if got := Audit(p, meta, allPerms{}); !hasRule(got, "B7-undeclared-user-type") {
-		t.Fatalf("expected B7, got %+v", got)
 	}
 }
 

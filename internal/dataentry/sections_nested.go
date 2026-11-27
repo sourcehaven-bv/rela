@@ -2,7 +2,7 @@ package dataentry
 
 import (
 	"context"
-	"sort"
+	"slices"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -128,7 +128,7 @@ func sortedColumnTypes(m map[string][]ListColumn) []string {
 	for k := range m {
 		out = append(out, k)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

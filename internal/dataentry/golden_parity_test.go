@@ -17,7 +17,6 @@ import (
 	"regexp"
 	"runtime/debug"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -710,7 +709,7 @@ func sortByName(raw json.RawMessage) (json.RawMessage, error) {
 	for i := range order {
 		order[i] = i
 	}
-	sort.SliceStable(order, func(a, b int) bool { return names[order[a]] < names[order[b]] })
+	slices.SortStableFunc(order, func(x, y int) int { return cmp.Compare(names[x], names[y]) })
 	sorted := make([]json.RawMessage, len(items))
 	for i, k := range order {
 		sorted[i] = items[k]
@@ -796,7 +795,7 @@ func goldenVersionLine(calls map[string]int) string {
 	for k := range calls {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	parts := make([]string, 0, len(keys))
 	for _, k := range keys {
 		parts = append(parts, fmt.Sprintf("%s=%d", k, calls[k]))

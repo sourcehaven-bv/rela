@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -357,7 +356,7 @@ func checkUndeclaredRelations(p *acl.Policy, m MetamodelReader) []Finding {
 		check(rel, "role_relations key")
 	}
 	inherited := append([]string(nil), p.InheritRolesThrough...)
-	sort.Strings(inherited)
+	slices.Sort(inherited)
 	for _, rel := range inherited {
 		check(rel, "inherit_roles_through entry")
 	}
@@ -492,7 +491,7 @@ func sortedKeysFieldGrant(m map[string][]acl.FieldGrant) []string {
 	for k := range m {
 		out = append(out, k)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -501,6 +500,6 @@ func sortedKeysOptionGrant(m map[string][]acl.OptionGrant) []string {
 	for k := range m {
 		out = append(out, k)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

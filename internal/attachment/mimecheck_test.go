@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -120,7 +120,7 @@ func TestMIME_AllowsZipContainerDocuments(t *testing.T) {
 	for ext := range zipContainerExtensions {
 		names = append(names, "document"+ext)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {

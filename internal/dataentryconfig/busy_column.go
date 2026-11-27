@@ -2,7 +2,7 @@ package dataentryconfig
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 )
 
 // checkListBusyColumn checks the shape of a list busy column (TKT-TU3XH4):
@@ -82,7 +82,7 @@ func refuseSectionBusyColumns(viewID string, i int, s ViewSection) []string {
 		for t := range group.cols {
 			types = append(types, t)
 		}
-		sort.Strings(types)
+		slices.Sort(types)
 		for _, t := range types {
 			for j, c := range group.cols[t] {
 				errs = append(errs, check(fmt.Sprintf("%s %s.%s[%d]", prefix, group.key, t, j), c, group.primaryOK)...)

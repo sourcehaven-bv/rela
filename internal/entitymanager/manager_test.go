@@ -252,42 +252,52 @@ func createDec(t *testing.T, mgr *entitymanager.Manager, title string) *entity.E
 
 // --- Constructor validation ---
 
-func TestNew_RejectsNilStore(t *testing.T) {
-	t.Parallel()
-	_, err := entitymanager.New(entitymanager.Deps{
-		FieldGate:   entitymanager.AllowAllFieldGate{},
+// validDeps is the smallest Deps that New accepts.
+func validDeps(t *testing.T) entitymanager.Deps {
+	t.Helper()
+	return entitymanager.Deps{
+		Store:       memstore.New(),
 		Meta:        parseMeta(t),
 		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
+		Transitions: transitions.NoTransitions(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
 		AnchorGuard: entitymanager.NopAnchorGuard{},
-	})
-	if err == nil || !strings.Contains(err.Error(), "Store") {
-		t.Fatalf("expected Store-required error, got %v", err)
 	}
 }
 
-func TestNew_RejectsNilMeta(t *testing.T) {
+// TestNew_RejectsInvalidDeps removes or breaks one collaborator of an
+// otherwise valid Deps. A nil Audit is pinned on its own by
+// TestNew_RejectsNilAudit.
+func TestNew_RejectsInvalidDeps(t *testing.T) {
 	t.Parallel()
-	_, err := entitymanager.New(entitymanager.Deps{
-		FieldGate:   entitymanager.AllowAllFieldGate{},
-		Store:       memstore.New(),
-		Templater:   nopTemplater{},
-		AnchorGuard: entitymanager.NopAnchorGuard{},
-	})
-	if err == nil || !strings.Contains(err.Error(), "Meta") {
-		t.Fatalf("expected Meta-required error, got %v", err)
+	tests := []struct {
+		name    string
+		mutate  func(*entitymanager.Deps)
+		wantErr string
+	}{
+		{"RejectsNilStore", func(d *entitymanager.Deps) { d.Store = nil }, "Store"},
+		{"RejectsNilMeta", func(d *entitymanager.Deps) { d.Meta = nil }, "Meta"},
+		{"RejectsNilTemplater", func(d *entitymanager.Deps) { d.Templater = nil }, "Templater"},
+		{"RejectsNilACL", func(d *entitymanager.Deps) { d.ACL = nil }, "ACL"},
+		{"RejectsNilTransitions", func(d *entitymanager.Deps) { d.Transitions = nil }, "Transitions"},
+		{
+			name:    "RejectsAutomationsWithoutCascade",
+			mutate:  func(d *entitymanager.Deps) { d.Automations = triggers.NewEngine(nil) },
+			wantErr: "Automations and Cascade",
+		},
 	}
-}
-
-func TestNew_RejectsNilTemplater(t *testing.T) {
-	t.Parallel()
-	_, err := entitymanager.New(entitymanager.Deps{
-		FieldGate:   entitymanager.AllowAllFieldGate{},
-		Store:       memstore.New(),
-		Meta:        parseMeta(t),
-		AnchorGuard: entitymanager.NopAnchorGuard{},
-	})
-	if err == nil || !strings.Contains(err.Error(), "Templater") {
-		t.Fatalf("expected Templater-required error, got %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			deps := validDeps(t)
+			tc.mutate(&deps)
+			_, err := entitymanager.New(deps)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected %s error, got %v", tc.wantErr, err)
+			}
+		})
 	}
 }
 
@@ -305,68 +315,9 @@ func TestNew_RejectsNilAudit(t *testing.T) {
 	}
 }
 
-func TestNew_RejectsNilACL(t *testing.T) {
-	t.Parallel()
-	_, err := entitymanager.New(entitymanager.Deps{
-		FieldGate:   entitymanager.AllowAllFieldGate{},
-		Store:       memstore.New(),
-		Meta:        parseMeta(t),
-		Templater:   nopTemplater{},
-		Audit:       audit.Nop{},
-		AnchorGuard: entitymanager.NopAnchorGuard{},
-	})
-	if err == nil || !strings.Contains(err.Error(), "ACL") {
-		t.Fatalf("expected ACL-required error, got %v", err)
-	}
-}
-
-func TestNew_RejectsNilTransitions(t *testing.T) {
-	t.Parallel()
-	_, err := entitymanager.New(entitymanager.Deps{
-		FieldGate:   entitymanager.AllowAllFieldGate{},
-		Store:       memstore.New(),
-		Meta:        parseMeta(t),
-		Templater:   nopTemplater{},
-		Audit:       audit.Nop{},
-		ACL:         acl.NopACL{},
-		AnchorGuard: entitymanager.NopAnchorGuard{},
-	})
-	if err == nil || !strings.Contains(err.Error(), "Transitions") {
-		t.Fatalf("expected Transitions-required error, got %v", err)
-	}
-}
-
-func TestNew_RejectsAutomationsWithoutCascade(t *testing.T) {
-	t.Parallel()
-	engine := triggers.NewEngine(nil)
-	_, err := entitymanager.New(entitymanager.Deps{
-		Store:       memstore.New(),
-		Meta:        parseMeta(t),
-		Templater:   nopTemplater{},
-		Audit:       audit.Nop{},
-		ACL:         acl.NopACL{},
-		Transitions: transitions.NoTransitions(),
-		FieldGate:   entitymanager.AllowAllFieldGate{},
-		Automations: engine,
-		AnchorGuard: entitymanager.NopAnchorGuard{},
-	})
-	if err == nil || !strings.Contains(err.Error(), "Automations and Cascade") {
-		t.Fatalf("expected Automations/Cascade pairing error, got %v", err)
-	}
-}
-
 func TestNew_AllowsNoAutomation(t *testing.T) {
 	t.Parallel()
-	if _, err := entitymanager.New(entitymanager.Deps{
-		Store:       memstore.New(),
-		Meta:        parseMeta(t),
-		Templater:   nopTemplater{},
-		Audit:       audit.Nop{},
-		ACL:         acl.NopACL{},
-		Transitions: transitions.NoTransitions(),
-		FieldGate:   entitymanager.AllowAllFieldGate{},
-		AnchorGuard: entitymanager.NopAnchorGuard{},
-	}); err != nil {
+	if _, err := entitymanager.New(validDeps(t)); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

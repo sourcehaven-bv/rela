@@ -22,7 +22,6 @@ import (
 	"os"
 	"path"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -210,7 +209,7 @@ func (s *Store) owners(typ string) ([]string, error) {
 		}
 		out = append(out, id)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, nil
 }
 
@@ -278,7 +277,7 @@ func (s *Store) Append(ctx context.Context, r records.AppendRequest) error {
 	for p := range byFile {
 		files = append(files, p)
 	}
-	sort.Strings(files)
+	slices.Sort(files)
 	// Read every file first, so a damaged one fails the append before
 	// anything is written.
 	merged := make(map[string][]records.Record, len(files))
@@ -376,7 +375,7 @@ func (s *Store) Types(ctx context.Context) ([]string, error) {
 			out = append(out, typ)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, nil
 }
 

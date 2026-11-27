@@ -1,11 +1,12 @@
 package mcp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -389,14 +390,12 @@ func convertStoreRelationsList(relations []*entity.Relation) []relationJSON {
 
 // sortStoreRelations sorts entity.Relation slice using natural ordering.
 func sortStoreRelations(relations []*entity.Relation) {
-	sort.Slice(relations, func(i, j int) bool {
-		if relations[i].From != relations[j].From {
-			return natsort.Less(relations[i].From, relations[j].From)
-		}
-		if relations[i].Type != relations[j].Type {
-			return natsort.Less(relations[i].Type, relations[j].Type)
-		}
-		return natsort.Less(relations[i].To, relations[j].To)
+	slices.SortFunc(relations, func(a, b *entity.Relation) int {
+		return cmp.Or(
+			natsort.Compare(a.From, b.From),
+			natsort.Compare(a.Type, b.Type),
+			natsort.Compare(a.To, b.To),
+		)
 	})
 }
 

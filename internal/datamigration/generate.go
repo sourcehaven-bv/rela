@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -505,7 +504,7 @@ func sortedShapeKeys(m map[string]metamodel.EntityShape) []string {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 
@@ -514,6 +513,6 @@ func sortedPropKeys(m map[string]metamodel.PropertyShape) []string {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }

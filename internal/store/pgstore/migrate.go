@@ -1,11 +1,12 @@
 package pgstore
 
 import (
+	"cmp"
 	"context"
 	"embed"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -177,7 +178,7 @@ func loadMigrations() ([]migration, error) {
 		}
 		migs = append(migs, migration{version: version, name: e.Name(), sql: string(data)})
 	}
-	sort.Slice(migs, func(i, j int) bool { return migs[i].version < migs[j].version })
+	slices.SortFunc(migs, func(a, b migration) int { return cmp.Compare(a.version, b.version) })
 	return migs, nil
 }
 

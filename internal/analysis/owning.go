@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -35,7 +34,7 @@ func (s *Service) CheckOwning(ctx context.Context, opts Options) ([]OwningIssue,
 			types = append(types, name)
 		}
 	}
-	sort.Strings(types)
+	slices.Sort(types)
 	for _, relType := range types {
 		for r, err := range s.deps.Store.ListRelations(ctx, store.RelationQuery{Type: relType}) {
 			if err != nil {
@@ -62,13 +61,13 @@ func (s *Service) CheckOwning(ctx context.Context, opts Options) ([]OwningIssue,
 	for id := range owners {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	for _, id := range ids {
 		if !inScope(id, opts.Scope) {
 			continue
 		}
 		ps := owners[id]
-		sort.Strings(ps)
+		slices.Sort(ps)
 		if len(ps) > 1 {
 			issues = append(issues, OwningIssue{EntityID: id, Kind: "multiple-owners", Owners: ps})
 		}

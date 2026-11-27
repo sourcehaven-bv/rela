@@ -20,13 +20,13 @@ package memstore
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"io"
 	"iter"
 	"maps"
 	"slices"
-	"sort"
 	"sync"
 	"time"
 
@@ -707,7 +707,7 @@ func (m *MemStore) deleteEntity(_ context.Context, id string, cascade bool) (*st
 	if len(family) == 0 {
 		return nil, store.ErrNotFound
 	}
-	sort.Slice(family, func(i, j int) bool { return family[i].e.Face < family[j].e.Face })
+	slices.SortFunc(family, func(a, b famEntry) int { return cmp.Compare(a.e.Face, b.e.Face) })
 
 	// Find related relations; the bare From/To match sweeps every tail.
 	var related []*entity.Relation
@@ -801,7 +801,7 @@ func (m *MemStore) deleteFace(_ context.Context, ref entity.Ref) (*store.DeleteR
 			owned = append(owned, r)
 		}
 	}
-	sort.Slice(owned, func(i, j int) bool { return owned[i].Key() < owned[j].Key() })
+	slices.SortFunc(owned, func(a, b *entity.Relation) int { return cmp.Compare(a.Key(), b.Key()) })
 
 	result := &store.DeleteResult{DeletedEntities: []*entity.Entity{target.Clone()}}
 	delete(m.entities, key)
@@ -906,7 +906,7 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 	if len(family) == 0 {
 		return nil, store.ErrNotFound
 	}
-	sort.Slice(family, func(i, j int) bool { return family[i].e.Face < family[j].e.Face })
+	slices.SortFunc(family, func(a, b famEntry) int { return cmp.Compare(a.e.Face, b.e.Face) })
 
 	// except=oldID: renaming an entity to a different casing of its own ID
 	// (abc -> ABC) is legitimate and must not self-collide. idTaken folds

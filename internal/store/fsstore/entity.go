@@ -1,13 +1,14 @@
 package fsstore
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
 	"os"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -469,7 +470,7 @@ func (s *FSStore) stateFamily(id string) (family []entityMeta, related []relatio
 			family = append(family, meta)
 		}
 	}
-	sort.Slice(family, func(i, j int) bool { return family[i].Face < family[j].Face })
+	slices.SortFunc(family, func(a, b entityMeta) int { return cmp.Compare(a.Face, b.Face) })
 	for _, rm := range s.relations {
 		if rm.From == id || rm.To == id {
 			related = append(related, rm)
@@ -479,18 +480,13 @@ func (s *FSStore) stateFamily(id string) (family []entityMeta, related []relatio
 	// (from, type, to, face) identity the key is built from: a partially
 	// failed cascade must remove — and therefore report — the same relations
 	// in the same order on every run, or DeletedRelations is nondeterministic.
-	sort.Slice(related, func(i, j int) bool {
-		a, b := related[i], related[j]
-		if a.From != b.From {
-			return a.From < b.From
-		}
-		if a.Type != b.Type {
-			return a.Type < b.Type
-		}
-		if a.To != b.To {
-			return a.To < b.To
-		}
-		return a.FromFace < b.FromFace
+	slices.SortFunc(related, func(a, b relationMeta) int {
+		return cmp.Or(
+			cmp.Compare(a.From, b.From),
+			cmp.Compare(a.Type, b.Type),
+			cmp.Compare(a.To, b.To),
+			cmp.Compare(a.FromFace, b.FromFace),
+		)
 	})
 	return family, related
 }
@@ -694,7 +690,7 @@ func (s *FSStore) deleteFace(_ context.Context, ref entity.Ref) (*store.DeleteRe
 			owned = append(owned, rm)
 		}
 	}
-	sort.Slice(owned, func(i, j int) bool { return owned[i].key() < owned[j].key() })
+	slices.SortFunc(owned, func(a, b relationMeta) int { return cmp.Compare(a.key(), b.key()) })
 
 	deletedRelations := make([]*entity.Relation, 0, len(owned))
 	for _, rm := range owned {

@@ -1,7 +1,8 @@
 package appbuild
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
@@ -59,7 +60,9 @@ func (s realtimeChannelSchema) MessageType(channelType, messageType string) (dat
 	for _, p := range mt.Properties {
 		props = append(props, channelProperty(p))
 	}
-	sort.Slice(props, func(i, j int) bool { return props[i].Name < props[j].Name })
+	slices.SortFunc(props, func(a, b dataentryconfig.ChannelProperty) int {
+		return cmp.Compare(a.Name, b.Name)
+	})
 	counts := mt.Persist == realtimecfg.PersistLog && !mt.NoUnread
 	return dataentryconfig.MessageFacts{
 		Properties:       props,
@@ -97,7 +100,9 @@ func channelProperty(p realtimecfg.Property) dataentryconfig.ChannelProperty {
 		f.Name = name
 		out.Fields = append(out.Fields, channelProperty(f))
 	}
-	sort.Slice(out.Fields, func(i, j int) bool { return out.Fields[i].Name < out.Fields[j].Name })
+	slices.SortFunc(out.Fields, func(a, b dataentryconfig.ChannelProperty) int {
+		return cmp.Compare(a.Name, b.Name)
+	})
 	return out
 }
 

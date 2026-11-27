@@ -2,7 +2,7 @@ package analysis
 
 import (
 	"context"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -38,7 +38,7 @@ func (s *Service) CheckRelationOrder(ctx context.Context, opts Options) []Relati
 	for name := range meta.Relations {
 		relNames = append(relNames, name)
 	}
-	sort.Strings(relNames)
+	slices.Sort(relNames)
 
 	for _, relName := range relNames {
 		relDef := meta.Relations[relName]
@@ -78,7 +78,7 @@ func checkOrderSide(
 	for id := range parents {
 		parentIDs = append(parentIDs, id)
 	}
-	sort.Strings(parentIDs)
+	slices.Sort(parentIDs)
 	types := familyTypes(ctx, st, parentIDs)
 
 	for _, pid := range parentIDs {

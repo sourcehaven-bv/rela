@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
@@ -96,7 +96,7 @@ func (c *RenderCmd) relationGroups(ctx context.Context, svc *readServices, id st
 	for t := range byType {
 		types = append(types, t)
 	}
-	sort.Strings(types)
+	slices.Sort(types)
 
 	groups := make([]transform.RelationGroup, 0, len(types))
 	for _, t := range types {

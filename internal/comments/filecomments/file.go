@@ -27,7 +27,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -349,7 +349,7 @@ func (s *Store) allThreadKeys() ([]string, error) {
 		}
 		return nil, fmt.Errorf("filecomments: listing threads: %w", err)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, nil
 }
 

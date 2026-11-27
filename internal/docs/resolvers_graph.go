@@ -3,7 +3,6 @@ package docs
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -286,7 +285,7 @@ func sortedRelNames(rels map[string]metamodel.RelationDef) []string {
 	for n := range rels {
 		names = append(names, n)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 

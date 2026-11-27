@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -292,8 +291,8 @@ func Equal(f Field, a, b any) bool {
 			ka[i] = key(el, la[i])
 			kb[i] = key(el, lb[i])
 		}
-		sort.Strings(ka)
-		sort.Strings(kb)
+		slices.Sort(ka)
+		slices.Sort(kb)
 		return slices.Equal(ka, kb)
 	}
 	return key(f, a) == key(f, b)
@@ -315,7 +314,7 @@ func Digest(f Field, v any) string {
 		for i, item := range l {
 			keys[i] = key(el, item)
 		}
-		sort.Strings(keys)
+		slices.Sort(keys)
 		var b strings.Builder
 		b.WriteString("l:")
 		for _, k := range keys {

@@ -2,7 +2,7 @@ package pgstore
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -57,7 +57,7 @@ func worldSQL(w store.WorldScope, alias string, args *[]any) (rank, candidate st
 		return alias + "." + name
 	}
 	types := w.Types()
-	sort.Strings(types)
+	slices.Sort(types)
 
 	var rankArms, candArms, typeTests []string
 	for _, typ := range types {

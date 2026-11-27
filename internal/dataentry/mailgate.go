@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -58,7 +58,7 @@ func collectUngatedMailActions(
 			ungated = append(ungated, fmt.Sprintf("%s (%s)", id, action.Script))
 		}
 	}
-	sort.Strings(ungated)
+	slices.Sort(ungated)
 	return ungated
 }
 

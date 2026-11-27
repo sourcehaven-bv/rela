@@ -3,7 +3,7 @@ package diagram
 import (
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -104,7 +104,7 @@ func writeEdgeDeltas(b *strings.Builder, old, cur map[string]int) {
 			ks = append(ks, k)
 		}
 	}
-	sort.Strings(ks)
+	slices.Sort(ks)
 	for _, k := range ks {
 		o, n := old[k], cur[k]
 		switch {

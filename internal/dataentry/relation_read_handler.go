@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
@@ -181,6 +181,6 @@ func redactedRelationKeys(raw, visible map[string]any) *[]string {
 			out = append(out, k)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return &out
 }

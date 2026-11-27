@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 
@@ -175,7 +174,7 @@ func denied(m map[string]bool) []string {
 			out = append(out, k)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -189,7 +188,7 @@ func deniedOptionPaths(m map[string]map[string]bool) []string {
 			}
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

@@ -1,11 +1,12 @@
 package appbuild
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"iter"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -258,11 +259,11 @@ func (c *FlowControl) Runs(ctx context.Context, name string) ([]FlowRunHeader, e
 		}
 		out = append(out, h)
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Started != out[j].Started {
-			return out[i].Started > out[j].Started
-		}
-		return out[i].ID < out[j].ID
+	slices.SortStableFunc(out, func(a, b FlowRunHeader) int {
+		return cmp.Or(
+			cmp.Compare(b.Started, a.Started),
+			cmp.Compare(a.ID, b.ID),
+		)
 	})
 	return out, nil
 }

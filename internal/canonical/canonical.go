@@ -48,7 +48,7 @@ import (
 	"fmt"
 	"hash"
 	"math"
-	"sort"
+	"slices"
 	"strconv"
 	"time"
 
@@ -211,7 +211,7 @@ func (w *writer) properties(props map[string]any) {
 	for k := range props {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	w.count(len(keys))
 	for _, k := range keys {
 		w.str(k)
@@ -265,7 +265,7 @@ func (w *writer) writeValue(v any) {
 		for k := range val {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys)
+		slices.Sort(keys)
 		w.count(len(keys))
 		for _, k := range keys {
 			w.str(k)

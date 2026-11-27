@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -30,7 +30,7 @@ func (c *RenumberCmd) Run(ctx context.Context, svc *writeServices) error {
 	for name := range schema.Relations {
 		relNames = append(relNames, name)
 	}
-	sort.Strings(relNames)
+	slices.Sort(relNames)
 
 	for _, relName := range relNames {
 		relDef := schema.Relations[relName]
@@ -110,7 +110,7 @@ func buildRenumberPlan(
 	for id := range parents {
 		parentIDs = append(parentIDs, id)
 	}
-	sort.Strings(parentIDs)
+	slices.Sort(parentIDs)
 
 	var plan []renumberEntry
 	for _, pid := range parentIDs {

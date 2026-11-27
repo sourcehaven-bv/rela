@@ -2,7 +2,7 @@ package docs
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -238,6 +238,6 @@ func seededIDs(dr *docRuntime, typ string) []string {
 		}
 		ids = append(ids, e.ID)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	return ids
 }

@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,7 +10,6 @@ import (
 	"maps"
 	"reflect"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -543,7 +543,7 @@ func TestGolden_ChannelToolsList(t *testing.T) {
 		}
 		tools = append(tools, goldenTool{Name: tool.Name, Description: tool.Description, InputSchema: schema})
 	}
-	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
+	slices.SortFunc(tools, func(a, b goldenTool) int { return cmp.Compare(a.Name, b.Name) })
 	got := marshalStable(t, tools)
 	if updateGolden {
 		writeGolden(t, goldenChannelTools, got)

@@ -45,7 +45,7 @@ func nonNilCapability[T comparable](v T) T {
 func wrapsNil(v any) bool {
 	rv := reflect.ValueOf(v)
 	switch rv.Kind() {
-	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.Interface:
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.Interface:
 		return rv.IsNil()
 	default:
 		// Not a nilable kind (a struct value, say), so it cannot wrap nil.

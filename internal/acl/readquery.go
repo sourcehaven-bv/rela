@@ -3,7 +3,6 @@ package acl
 import (
 	"context"
 	"slices"
-	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -207,7 +206,7 @@ func readConferring(r *Request, entityType string) (
 		facesByRel[relType] = dedupeFaces(fs)
 		allByRel[relType] = all
 	}
-	sort.Strings(conferring)
+	slices.Sort(conferring)
 	return conferring, facesByRel, allByRel, faceUnion, allFaces
 }
 

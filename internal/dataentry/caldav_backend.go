@@ -9,7 +9,6 @@ import (
 	"maps"
 	"net/http"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -99,7 +98,7 @@ func (b *caldavBackend) ListCalendars(ctx context.Context) ([]caldav.Calendar, e
 	for name := range cfg.CalDAV.Static {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	out := make([]caldav.Calendar, 0, len(names))
 	for _, name := range names {
@@ -110,7 +109,7 @@ func (b *caldavBackend) ListCalendars(ctx context.Context) ([]caldav.Calendar, e
 	for name := range cfg.CalDAV.Dynamic {
 		patterns = append(patterns, name)
 	}
-	sort.Strings(patterns)
+	slices.Sort(patterns)
 	for _, pattern := range patterns {
 		expanded, err := b.expandPattern(ctx, pattern, cfg.CalDAV.Dynamic[pattern])
 		if err != nil {

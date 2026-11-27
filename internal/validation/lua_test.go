@@ -214,57 +214,50 @@ func TestLuaValidation_MultipleViolations(t *testing.T) {
 	}
 }
 
-func TestLuaValidation_SeverityOverride(t *testing.T) {
+func TestLuaValidation_Severity(t *testing.T) {
 	t.Parallel()
-	ws := newMockWorkspace()
-	meta := ticketMeta([]metamodel.ValidationRule{
+
+	tests := []struct {
+		name         string
+		lua          string
+		ruleSeverity string
+		why          string
+	}{
 		{
-			Name:       "test-rule",
-			EntityType: "ticket",
-			Lua:        `return { message = "Custom warning", severity = "warning" }`,
-			Severity:   "error", // default is error, but Lua overrides to warning
+			// The rule default is error, but Lua overrides it to warning.
+			name:         "Override",
+			lua:          `return { message = "Custom warning", severity = "warning" }`,
+			ruleSeverity: "error",
+			why:          "Lua should override rule default",
 		},
-	})
-
-	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
-	}
-
-	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil).Violations
-
-	if len(violations) != 1 {
-		t.Fatalf("got %d violations, want 1", len(violations))
-	}
-	if violations[0].Severity != "warning" {
-		t.Errorf("severity = %s, want warning (Lua should override rule default)", violations[0].Severity)
-	}
-}
-
-func TestLuaValidation_SeverityDefault(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace()
-	meta := ticketMeta([]metamodel.ValidationRule{
 		{
-			Name:       "test-rule",
-			EntityType: "ticket",
-			Lua:        `return { message = "Uses default severity" }`, // no severity specified
-			Severity:   "warning",
+			name:         "Default",
+			lua:          `return { message = "Uses default severity" }`, // no severity specified
+			ruleSeverity: "warning",
+			why:          "should use rule default",
 		},
-	})
-
-	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 
-	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil).Violations
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			meta := ticketMeta([]metamodel.ValidationRule{
+				{Name: "test-rule", EntityType: "ticket", Lua: tt.lua, Severity: tt.ruleSeverity},
+			})
+			entities := []*entity.Entity{
+				{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
+			}
 
-	if len(violations) != 1 {
-		t.Fatalf("got %d violations, want 1", len(violations))
-	}
-	if violations[0].Severity != "warning" {
-		t.Errorf("severity = %s, want warning (should use rule default)", violations[0].Severity)
+			svc := New(meta, newMockWorkspace().services(t.TempDir()))
+			violations := svc.Check(context.Background(), entities, nil).Violations
+
+			if len(violations) != 1 {
+				t.Fatalf("got %d violations, want 1", len(violations))
+			}
+			if violations[0].Severity != "warning" {
+				t.Errorf("severity = %s, want warning (%s)", violations[0].Severity, tt.why)
+			}
+		})
 	}
 }
 
@@ -390,14 +383,22 @@ func TestLuaValidation_EntityContext(t *testing.T) {
 	}
 }
 
-func TestLuaValidation_ReadOnlyWorkspace(t *testing.T) {
+// TestLuaValidation_NoViolation runs one inline rule against a bare ticket.
+// Each rule either passes on its own or must fail open: an erroring rule is
+// skipped rather than reported as a violation.
+func TestLuaValidation_NoViolation(t *testing.T) {
 	t.Parallel()
-	ws := newMockWorkspace()
-	meta := ticketMeta([]metamodel.ValidationRule{
+
+	tests := []struct {
+		name     string
+		ruleName string
+		lua      string
+		why      string
+	}{
 		{
-			Name:       "cross-entity-lookup",
-			EntityType: "ticket",
-			Lua: `
+			name:     "ReadOnlyWorkspace",
+			ruleName: "cross-entity-lookup",
+			lua: `
 			-- Can look up other entities
 			local other = rela.get_entity("PARENT-001")
 			if not other then
@@ -408,29 +409,12 @@ func TestLuaValidation_ReadOnlyWorkspace(t *testing.T) {
 			end
 			return nil
 		`,
+			why: "cross-entity lookup should work",
 		},
-	})
-
-	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
-	}
-
-	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil).Violations
-
-	if len(violations) != 0 {
-		t.Errorf("got %d violations, want 0 (cross-entity lookup should work)", len(violations))
-	}
-}
-
-func TestLuaValidation_MutationsBlocked(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace()
-	meta := ticketMeta([]metamodel.ValidationRule{
 		{
-			Name:       "try-create",
-			EntityType: "ticket",
-			Lua: `
+			name:     "MutationsBlocked",
+			ruleName: "try-create",
+			lua: `
 			local ok, err = pcall(function()
 				rela.create_entity("ticket", {title = "New"})
 			end)
@@ -440,18 +424,46 @@ func TestLuaValidation_MutationsBlocked(t *testing.T) {
 			end
 			return nil
 		`,
+			why: "mutations should be blocked",
 		},
-	})
-
-	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
+		{
+			name:     "SyntaxError",
+			ruleName: "syntax-error",
+			lua:      `this is not valid lua!!!`,
+			why:      "syntax error should skip rule",
+		},
+		{
+			name:     "RuntimeError",
+			ruleName: "runtime-error",
+			lua:      `return nil_variable.property`,
+			why:      "runtime error should skip rule",
+		},
+		{
+			// This would run forever without the timeout.
+			name:     "Timeout",
+			ruleName: "infinite-loop",
+			lua:      `while true do end`,
+			why:      "timeout should skip rule",
+		},
 	}
 
-	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil).Violations
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			meta := ticketMeta([]metamodel.ValidationRule{
+				{Name: tt.ruleName, EntityType: "ticket", Lua: tt.lua},
+			})
+			entities := []*entity.Entity{
+				{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
+			}
 
-	if len(violations) != 0 {
-		t.Errorf("got %d violations, want 0 (mutations should be blocked)", len(violations))
+			svc := New(meta, newMockWorkspace().services(t.TempDir()))
+			violations := svc.Check(context.Background(), entities, nil).Violations
+
+			if len(violations) != 0 {
+				t.Errorf("got %d violations, want 0 (%s)", len(violations), tt.why)
+			}
+		})
 	}
 }
 
@@ -501,54 +513,6 @@ func TestLuaValidation_CombinedWithWhenThen(t *testing.T) {
 	}
 	if !ids["TKT-003"] {
 		t.Error("expected violation for TKT-003 (lua fails)")
-	}
-}
-
-func TestLuaValidation_SyntaxError(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace()
-	meta := ticketMeta([]metamodel.ValidationRule{
-		{
-			Name:       "syntax-error",
-			EntityType: "ticket",
-			Lua:        `this is not valid lua!!!`,
-		},
-	})
-
-	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
-	}
-
-	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil).Violations
-
-	// Syntax error should fail open (no violation)
-	if len(violations) != 0 {
-		t.Errorf("got %d violations, want 0 (syntax error should skip rule)", len(violations))
-	}
-}
-
-func TestLuaValidation_RuntimeError(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace()
-	meta := ticketMeta([]metamodel.ValidationRule{
-		{
-			Name:       "runtime-error",
-			EntityType: "ticket",
-			Lua:        `return nil_variable.property`,
-		},
-	})
-
-	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
-	}
-
-	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil).Violations
-
-	// Runtime error should fail open (no violation)
-	if len(violations) != 0 {
-		t.Errorf("got %d violations, want 0 (runtime error should skip rule)", len(violations))
 	}
 }
 
@@ -673,32 +637,6 @@ func TestLuaValidation_CrossEntityValidation(t *testing.T) {
 
 	if len(violations) != 0 {
 		t.Errorf("got %d violations, want 0", len(violations))
-	}
-}
-
-func TestLuaValidation_Timeout(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace()
-	meta := ticketMeta([]metamodel.ValidationRule{
-		{
-			Name:       "infinite-loop",
-			EntityType: "ticket",
-			// This would run forever without timeout
-			Lua: `while true do end`,
-		},
-	})
-
-	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
-	}
-
-	// Should complete within reasonable time (timeout kicks in)
-	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil).Violations
-
-	// Timeout should fail open (no violation, rule skipped due to error)
-	if len(violations) != 0 {
-		t.Errorf("got %d violations, want 0 (timeout should skip rule)", len(violations))
 	}
 }
 

@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -368,7 +367,7 @@ func (s *Service) FindGaps(ctx context.Context, opts Options) ([]GapResult, erro
 
 	var allGaps []GapResult
 	for prefix, numbers := range prefixGroups {
-		sort.Ints(numbers)
+		slices.Sort(numbers)
 		var gaps []int
 		for i := 1; i < len(numbers); i++ {
 			expected := numbers[i-1] + 1
@@ -703,11 +702,11 @@ func distinctIDs(rows []*entity.Entity) int {
 
 // sortRows orders rows by id, then face.
 func sortRows(rows []*entity.Entity) {
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].ID != rows[j].ID {
-			return rows[i].ID < rows[j].ID
-		}
-		return rows[i].Face < rows[j].Face
+	slices.SortFunc(rows, func(a, b *entity.Entity) int {
+		return cmp.Or(
+			cmp.Compare(a.ID, b.ID),
+			cmp.Compare(a.Face, b.Face),
+		)
 	})
 }
 

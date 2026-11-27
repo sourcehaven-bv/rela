@@ -758,7 +758,7 @@ func formatTargets(
 			}
 			names = append(names, n)
 		}
-		sort.Strings(names)
+		slices.Sort(names)
 		missing := make([]string, 0, effectiveTotal-len(to))
 		for _, n := range names {
 			if !included[n] {
@@ -772,7 +772,7 @@ func formatTargets(
 		for _, t := range to {
 			labels = append(labels, html.EscapeString(labelOf[t]))
 		}
-		sort.Strings(labels)
+		slices.Sort(labels)
 		const perLine = 2
 		var lines []string
 		for i := 0; i < len(labels); i += perLine {
@@ -846,8 +846,8 @@ func getSortedEntityNames(m *metamodel.Metamodel) []string {
 	for name := range m.Entities {
 		names = append(names, name)
 	}
-	sort.Slice(names, func(i, j int) bool {
-		return natsort.Less(m.Entities[names[i]].Label, m.Entities[names[j]].Label)
+	slices.SortFunc(names, func(a, b string) int {
+		return natsort.Compare(m.Entities[a].Label, m.Entities[b].Label)
 	})
 	return names
 }
@@ -857,8 +857,8 @@ func getSortedRelationNames(m *metamodel.Metamodel) []string {
 	for name := range m.Relations {
 		names = append(names, name)
 	}
-	sort.Slice(names, func(i, j int) bool {
-		return natsort.Less(m.Relations[names[i]].Label, m.Relations[names[j]].Label)
+	slices.SortFunc(names, func(a, b string) int {
+		return natsort.Compare(m.Relations[a].Label, m.Relations[b].Label)
 	})
 	return names
 }

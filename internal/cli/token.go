@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -120,7 +120,7 @@ func (c *TokenStatusCmd) Run(ctx context.Context, svc *writeServices) error {
 		for n := range admin.Connections() {
 			names = append(names, string(n))
 		}
-		sort.Strings(names)
+		slices.Sort(names)
 	}
 	if len(names) == 0 {
 		out.WriteMessage("No connections are declared in %s.", tokenstore.ConnectionsFile)

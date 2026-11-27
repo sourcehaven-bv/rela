@@ -1,9 +1,9 @@
 package realtimecfg
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -152,7 +152,7 @@ func ShapeMismatches(c *Compiled, stored map[string]TypeShape) []ShapeMismatch {
 			out = append(out, ShapeMismatch{ChannelType: name, Stored: old, Configured: cur, LostRefs: lost})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ChannelType < out[j].ChannelType })
+	slices.SortFunc(out, func(a, b ShapeMismatch) int { return cmp.Compare(a.ChannelType, b.ChannelType) })
 	return out
 }
 

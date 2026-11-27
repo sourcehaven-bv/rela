@@ -12,41 +12,24 @@ func toRecord(e *entity.Entity) Record {
 	return Record{ID: e.ID, Type: e.Type, Properties: e.Properties}
 }
 
-func TestMatchString(t *testing.T) {
-	propDef := &metamodel.PropertyDef{Type: metamodel.PropertyTypeString}
-	mm := &metamodel.Metamodel{}
+type matchCase struct {
+	name    string
+	value   any
+	filter  string
+	want    bool
+	wantErr bool
+}
 
-	tests := []struct {
-		name    string
-		value   any
-		filter  string
-		want    bool
-		wantErr bool
-	}{
-		{"exact match", "hello", "title=hello", true, false},
-		{"no match", "hello", "title=world", false, false},
-		{"glob match", "A.9.1.1", "title=A.9.*", true, false},
-		{"glob no match", "A.10.1", "title=A.9.*", false, false},
-		{"regex match", "access control policy", "title=~access.*policy", true, false},
-		{"regex no match", "security policy", "title=~access.*policy", false, false},
-		{"not equal match", "hello", "title!=world", true, false},
-		{"not equal no match", "hello", "title!=hello", false, false},
-	}
-
+func runMatchCases(t *testing.T, prop string, propDef *metamodel.PropertyDef, mm *metamodel.Metamodel, tests []matchCase) {
+	t.Helper()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entity := &entity.Entity{
-				ID:         "TEST-001",
-				Type:       "test",
-				Properties: map[string]any{"title": tt.value},
-			}
-
+			rec := Record{ID: "TEST-001", Type: "test", Properties: map[string]any{prop: tt.value}}
 			f, err := Parse(tt.filter)
 			if err != nil {
 				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
 			}
-
-			got, err := Match(toRecord(entity), f, propDef, mm)
+			got, err := Match(rec, f, propDef, mm)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -63,6 +46,24 @@ func TestMatchString(t *testing.T) {
 	}
 }
 
+func TestMatchString(t *testing.T) {
+	propDef := &metamodel.PropertyDef{Type: metamodel.PropertyTypeString}
+	mm := &metamodel.Metamodel{}
+
+	tests := []matchCase{
+		{"exact match", "hello", "title=hello", true, false},
+		{"no match", "hello", "title=world", false, false},
+		{"glob match", "A.9.1.1", "title=A.9.*", true, false},
+		{"glob no match", "A.10.1", "title=A.9.*", false, false},
+		{"regex match", "access control policy", "title=~access.*policy", true, false},
+		{"regex no match", "security policy", "title=~access.*policy", false, false},
+		{"not equal match", "hello", "title!=world", true, false},
+		{"not equal no match", "hello", "title!=hello", false, false},
+	}
+
+	runMatchCases(t, "title", propDef, mm, tests)
+}
+
 func TestMatchDate(t *testing.T) {
 	propDef := &metamodel.PropertyDef{
 		Type:   metamodel.PropertyTypeDate,
@@ -70,13 +71,7 @@ func TestMatchDate(t *testing.T) {
 	}
 	mm := &metamodel.Metamodel{}
 
-	tests := []struct {
-		name    string
-		value   any
-		filter  string
-		want    bool
-		wantErr bool
-	}{
+	tests := []matchCase{
 		{"equal", "2025-02-01", "valid_until=2025-02-01", true, false},
 		{"not equal", "2025-02-01", "valid_until=2025-03-01", false, false},
 		{"less than true", "2025-01-15", "valid_until<2025-02-01", true, false},
@@ -89,47 +84,14 @@ func TestMatchDate(t *testing.T) {
 		{"invalid filter date", "2025-02-01", "valid_until=not-a-date", false, true},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			entity := &entity.Entity{
-				ID:         "TEST-001",
-				Type:       "test",
-				Properties: map[string]any{"valid_until": tt.value},
-			}
-
-			f, err := Parse(tt.filter)
-			if err != nil {
-				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
-			}
-
-			got, err := Match(toRecord(entity), f, propDef, mm)
-			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Match error: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("Match = %v, want %v", got, tt.want)
-			}
-		})
-	}
+	runMatchCases(t, "valid_until", propDef, mm, tests)
 }
 
 func TestMatchDatetime(t *testing.T) {
 	propDef := &metamodel.PropertyDef{Type: metamodel.PropertyTypeDatetime}
 	mm := &metamodel.Metamodel{}
 
-	tests := []struct {
-		name    string
-		value   any
-		filter  string
-		want    bool
-		wantErr bool
-	}{
+	tests := []matchCase{
 		{"greater than true", "2026-07-13T14:30:00Z", "starts_at>2026-07-13T09:00:00Z", true, false},
 		{"greater than false", "2026-07-13T14:30:00Z", "starts_at>2026-07-13T20:00:00Z", false, false},
 		{"less than true", "2026-07-13T08:00:00Z", "starts_at<2026-07-13T09:00:00Z", true, false},
@@ -173,13 +135,7 @@ func TestMatchInteger(t *testing.T) {
 	propDef := &metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger}
 	mm := &metamodel.Metamodel{}
 
-	tests := []struct {
-		name    string
-		value   any
-		filter  string
-		want    bool
-		wantErr bool
-	}{
+	tests := []matchCase{
 		{"equal int", 5, "score=5", true, false},
 		{"equal string", "5", "score=5", true, false},
 		{"not equal", 5, "score=10", false, false},
@@ -193,47 +149,14 @@ func TestMatchInteger(t *testing.T) {
 		{"invalid filter value", 5, "score=abc", false, true},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			entity := &entity.Entity{
-				ID:         "TEST-001",
-				Type:       "test",
-				Properties: map[string]any{"score": tt.value},
-			}
-
-			f, err := Parse(tt.filter)
-			if err != nil {
-				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
-			}
-
-			got, err := Match(toRecord(entity), f, propDef, mm)
-			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Match error: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("Match = %v, want %v", got, tt.want)
-			}
-		})
-	}
+	runMatchCases(t, "score", propDef, mm, tests)
 }
 
 func TestMatchBoolean(t *testing.T) {
 	propDef := &metamodel.PropertyDef{Type: metamodel.PropertyTypeBoolean}
 	mm := &metamodel.Metamodel{}
 
-	tests := []struct {
-		name    string
-		value   any
-		filter  string
-		want    bool
-		wantErr bool
-	}{
+	tests := []matchCase{
 		{"equal true bool", true, "archived=true", true, false},
 		{"equal false bool", false, "archived=false", true, false},
 		{"equal true string", "true", "archived=true", true, false},
@@ -242,34 +165,7 @@ func TestMatchBoolean(t *testing.T) {
 		{"not equal operator", true, "archived!=false", true, false},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			entity := &entity.Entity{
-				ID:         "TEST-001",
-				Type:       "test",
-				Properties: map[string]any{"archived": tt.value},
-			}
-
-			f, err := Parse(tt.filter)
-			if err != nil {
-				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
-			}
-
-			got, err := Match(toRecord(entity), f, propDef, mm)
-			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Match error: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("Match = %v, want %v", got, tt.want)
-			}
-		})
-	}
+	runMatchCases(t, "archived", propDef, mm, tests)
 }
 
 func TestMatchEnum(t *testing.T) {
@@ -279,47 +175,14 @@ func TestMatchEnum(t *testing.T) {
 	}
 	mm := &metamodel.Metamodel{}
 
-	tests := []struct {
-		name    string
-		value   any
-		filter  string
-		want    bool
-		wantErr bool
-	}{
+	tests := []matchCase{
 		{"exact match", "draft", "status=draft", true, false},
 		{"no match", "draft", "status=accepted", false, false},
 		{"not equal match", "draft", "status!=accepted", true, false},
 		{"invalid filter value", "draft", "status=invalid", false, true},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			entity := &entity.Entity{
-				ID:         "TEST-001",
-				Type:       "test",
-				Properties: map[string]any{"status": tt.value},
-			}
-
-			f, err := Parse(tt.filter)
-			if err != nil {
-				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
-			}
-
-			got, err := Match(toRecord(entity), f, propDef, mm)
-			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Match error: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("Match = %v, want %v", got, tt.want)
-			}
-		})
-	}
+	runMatchCases(t, "status", propDef, mm, tests)
 }
 
 func TestMatchNilValue(t *testing.T) {
@@ -781,13 +644,7 @@ func TestMatchStringEdgeCases(t *testing.T) {
 	propDef := &metamodel.PropertyDef{Type: metamodel.PropertyTypeString}
 	mm := &metamodel.Metamodel{}
 
-	tests := []struct {
-		name    string
-		value   any
-		filter  string
-		want    bool
-		wantErr bool
-	}{
+	tests := []matchCase{
 		// Type error cases
 		{"wrong type int", 123, "title=123", false, true},
 		{"wrong type bool", true, "title=true", false, true},
@@ -800,34 +657,7 @@ func TestMatchStringEdgeCases(t *testing.T) {
 		{"unsupported operator greater equal", "hello", "title>=world", false, true},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			entity := &entity.Entity{
-				ID:         "TEST-001",
-				Type:       "test",
-				Properties: map[string]any{"title": tt.value},
-			}
-
-			f, err := Parse(tt.filter)
-			if err != nil {
-				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
-			}
-
-			got, err := Match(toRecord(entity), f, propDef, mm)
-			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Match error: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("Match = %v, want %v", got, tt.want)
-			}
-		})
-	}
+	runMatchCases(t, "title", propDef, mm, tests)
 }
 
 // TestMatchBooleanEdgeCases tests additional edge cases for matchBoolean
@@ -835,13 +665,7 @@ func TestMatchBooleanEdgeCases(t *testing.T) {
 	propDef := &metamodel.PropertyDef{Type: metamodel.PropertyTypeBoolean}
 	mm := &metamodel.Metamodel{}
 
-	tests := []struct {
-		name    string
-		value   any
-		filter  string
-		want    bool
-		wantErr bool
-	}{
+	tests := []matchCase{
 		// Error cases - invalid value types
 		{"invalid value type int", 123, "archived=true", false, true},
 		{"invalid value type string", "not-a-bool", "archived=true", false, true},
@@ -853,34 +677,7 @@ func TestMatchBooleanEdgeCases(t *testing.T) {
 		{"unsupported operator regex", true, "archived=~true", false, true},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			entity := &entity.Entity{
-				ID:         "TEST-001",
-				Type:       "test",
-				Properties: map[string]any{"archived": tt.value},
-			}
-
-			f, err := Parse(tt.filter)
-			if err != nil {
-				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
-			}
-
-			got, err := Match(toRecord(entity), f, propDef, mm)
-			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Match error: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("Match = %v, want %v", got, tt.want)
-			}
-		})
-	}
+	runMatchCases(t, "archived", propDef, mm, tests)
 }
 
 // TestMatchEnumEdgeCases tests additional edge cases for matchEnum
@@ -891,13 +688,7 @@ func TestMatchEnumEdgeCases(t *testing.T) {
 	}
 	mm := &metamodel.Metamodel{}
 
-	tests := []struct {
-		name    string
-		value   any
-		filter  string
-		want    bool
-		wantErr bool
-	}{
+	tests := []matchCase{
 		// Empty value tests
 		{"empty filter equal to empty value", "", "status=", true, false},
 		{"empty filter equal to non-empty value", "draft", "status=", false, false},
@@ -918,34 +709,7 @@ func TestMatchEnumEdgeCases(t *testing.T) {
 		{"unsupported operator fuzzy", "draft", "status~draft", false, true},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			entity := &entity.Entity{
-				ID:         "TEST-001",
-				Type:       "test",
-				Properties: map[string]any{"status": tt.value},
-			}
-
-			f, err := Parse(tt.filter)
-			if err != nil {
-				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
-			}
-
-			got, err := Match(toRecord(entity), f, propDef, mm)
-			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Match error: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("Match = %v, want %v", got, tt.want)
-			}
-		})
-	}
+	runMatchCases(t, "status", propDef, mm, tests)
 }
 
 // TestMatchLegacyTypeRegex pins that =~ works on the legacy status and
@@ -1097,13 +861,7 @@ func TestMatchFuzzy(t *testing.T) {
 	propDef := &metamodel.PropertyDef{Type: metamodel.PropertyTypeString}
 	mm := &metamodel.Metamodel{}
 
-	tests := []struct {
-		name    string
-		value   any
-		filter  string
-		want    bool
-		wantErr bool
-	}{
+	tests := []matchCase{
 		// Exact match (similarity = 1.0)
 		{"exact match", "REQ", "id~REQ", true, false},
 		// Case insensitive exact match (similarity = 1.0)
@@ -1120,34 +878,7 @@ func TestMatchFuzzy(t *testing.T) {
 		{"empty entity value", "", "id~test", false, false},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			entity := &entity.Entity{
-				ID:         "TEST-001",
-				Type:       "test",
-				Properties: map[string]any{"id": tt.value},
-			}
-
-			f, err := Parse(tt.filter)
-			if err != nil {
-				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
-			}
-
-			got, err := Match(toRecord(entity), f, propDef, mm)
-			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Match error: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("Match = %v, want %v", got, tt.want)
-			}
-		})
-	}
+	runMatchCases(t, "id", propDef, mm, tests)
 }
 
 // TestMatchFuzzyWithWildcard tests fuzzy+wildcard matching

@@ -17,7 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	goruntime "runtime"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1272,7 +1272,7 @@ func generateDataEntryConfig(appName string, meta *metamodel.Metamodel) string {
 	for name := range meta.Entities {
 		entityTypes = append(entityTypes, name)
 	}
-	sort.Strings(entityTypes)
+	slices.Sort(entityTypes)
 
 	forms := yaml.Node{Kind: yaml.MappingNode}
 	lists := yaml.Node{Kind: yaml.MappingNode}
@@ -1288,7 +1288,7 @@ func generateDataEntryConfig(appName string, meta *metamodel.Metamodel) string {
 		for name := range entDef.Properties {
 			propNames = append(propNames, name)
 		}
-		sort.Strings(propNames)
+		slices.Sort(propNames)
 
 		// No generated field/column labels: a label is authored, never derived
 		// (DEC-6C1NAA). Emitting titleCase(property) here would bake an English

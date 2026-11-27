@@ -3,7 +3,7 @@ package entitymanager
 import (
 	"fmt"
 	"reflect"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -76,7 +76,7 @@ func externalRefWriteError(names []string) error {
 	if len(names) == 0 {
 		return nil
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	errs := make([]*metamodel.ValidationError, 0, len(names))
 	for _, name := range names {
 		errs = append(errs, &metamodel.ValidationError{

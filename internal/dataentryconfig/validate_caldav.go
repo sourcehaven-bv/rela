@@ -3,7 +3,6 @@ package dataentryconfig
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -32,7 +31,7 @@ func validateCalDAV(cfg *Config, meta *metamodel.Metamodel) []string {
 	for name := range cfg.CalDAV.Dynamic {
 		dynNames = append(dynNames, name)
 	}
-	sort.Strings(dynNames)
+	slices.Sort(dynNames)
 	for _, name := range dynNames {
 		errs = append(errs, validateCalDAVDynamic(name, cfg.CalDAV.Dynamic[name], cfg, meta)...)
 	}
@@ -89,7 +88,7 @@ func sortedCalDAVNames(m map[string]CalDAVCollection) []string {
 	for name := range m {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 
@@ -564,7 +563,7 @@ func validatePropertyAssignments(
 	for k := range assignments {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 
 	for _, prop := range keys {
 		def, ok := entDef.Properties[prop]
@@ -652,7 +651,7 @@ func sortedPropertyNames(entDef *metamodel.EntityDef) []string {
 	for name := range entDef.Properties {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 

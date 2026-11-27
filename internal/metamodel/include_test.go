@@ -239,17 +239,26 @@ includes:
 	}
 }
 
-func TestLoadWithIncludes_DuplicateEntity(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	createFile(t, filepath.Join(tmpDir, "metamodel.yaml"), `
+func TestLoadWithIncludes_Duplicates(t *testing.T) {
+	tests := []struct {
+		name     string
+		root     string
+		includes map[string]string
+		wantKind string
+		wantName string
+		// wantFile1 and wantFile2 are checked only when set.
+		wantFile1, wantFile2 string
+	}{
+		{
+			name: "DuplicateEntity",
+			root: `
 version: "1.0"
 includes:
   - a.yaml
   - b.yaml
-`)
-
-	createFile(t, filepath.Join(tmpDir, "a.yaml"), `
+`,
+			includes: map[string]string{
+				"a.yaml": `
 entities:
   control:
     label: Control
@@ -258,9 +267,8 @@ entities:
     properties:
       title:
         type: string
-`)
-
-	createFile(t, filepath.Join(tmpDir, "b.yaml"), `
+`,
+				"b.yaml": `
 entities:
   control:
     label: Control Duplicate
@@ -269,91 +277,63 @@ entities:
     properties:
       title:
         type: string
-`)
-
-	_, _, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
-	assertError(t, err)
-
-	var dupErr *DuplicateDefinitionError
-	if !errors.As(err, &dupErr) {
-		t.Fatalf("expected DuplicateDefinitionError, got %T: %v", err, err)
-	}
-	assertEqual(t, dupErr.Kind, "entity")
-	assertEqual(t, dupErr.Name, "control")
-	assertEqual(t, dupErr.File1, "a.yaml")
-	assertEqual(t, dupErr.File2, "b.yaml")
-}
-
-func TestLoadWithIncludes_DuplicateType(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	createFile(t, filepath.Join(tmpDir, "metamodel.yaml"), `
+`,
+			},
+			wantKind:  "entity",
+			wantName:  "control",
+			wantFile1: "a.yaml",
+			wantFile2: "b.yaml",
+		},
+		{
+			name: "DuplicateType",
+			root: `
 version: "1.0"
 includes:
   - a.yaml
 types:
   severity:
     values: [low, medium, high]
-`)
-
-	createFile(t, filepath.Join(tmpDir, "a.yaml"), `
+`,
+			includes: map[string]string{
+				"a.yaml": `
 types:
   severity:
     values: [low, high, critical]
-`)
-
-	_, _, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
-	assertError(t, err)
-
-	var dupErr *DuplicateDefinitionError
-	if !errors.As(err, &dupErr) {
-		t.Fatalf("expected DuplicateDefinitionError, got %T: %v", err, err)
-	}
-	assertEqual(t, dupErr.Kind, "type")
-	assertEqual(t, dupErr.Name, "severity")
-}
-
-func TestLoadWithIncludes_DuplicateRelation(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	createFile(t, filepath.Join(tmpDir, "metamodel.yaml"), `
+`,
+			},
+			wantKind: "type",
+			wantName: "severity",
+		},
+		{
+			name: "DuplicateRelation",
+			root: `
 version: "1.0"
 includes:
   - a.yaml
   - b.yaml
-`)
-
-	createFile(t, filepath.Join(tmpDir, "a.yaml"), `
+`,
+			includes: map[string]string{
+				"a.yaml": `
 relations:
   mitigates:
     label: mitigates
     from: [decision]
     to: [risk]
-`)
-
-	createFile(t, filepath.Join(tmpDir, "b.yaml"), `
+`,
+				"b.yaml": `
 relations:
   mitigates:
     label: mitigates
     from: [solution]
     to: [risk]
-`)
-
-	_, _, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
-	assertError(t, err)
-
-	var dupErr *DuplicateDefinitionError
-	if !errors.As(err, &dupErr) {
-		t.Fatalf("expected DuplicateDefinitionError, got %T: %v", err, err)
-	}
-	assertEqual(t, dupErr.Kind, "relation")
-	assertEqual(t, dupErr.Name, "mitigates")
-}
-
-func TestLoadWithIncludes_DuplicateValidation(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	createFile(t, filepath.Join(tmpDir, "metamodel.yaml"), `
+`,
+			},
+			wantKind: "relation",
+			wantName: "mitigates",
+		},
+		{
+			name: "DuplicateValidation",
+			root: `
 version: "1.0"
 includes:
   - a.yaml
@@ -362,25 +342,45 @@ validations:
     description: "Must have title"
     then:
       - "title!="
-`)
-
-	createFile(t, filepath.Join(tmpDir, "a.yaml"), `
+`,
+			includes: map[string]string{
+				"a.yaml": `
 validations:
   - name: needs-title
     description: "Duplicate rule"
     then:
       - "title!="
-`)
-
-	_, _, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
-	assertError(t, err)
-
-	var dupErr *DuplicateDefinitionError
-	if !errors.As(err, &dupErr) {
-		t.Fatalf("expected DuplicateDefinitionError, got %T: %v", err, err)
+`,
+			},
+			wantKind: "validation",
+			wantName: "needs-title",
+		},
 	}
-	assertEqual(t, dupErr.Kind, "validation")
-	assertEqual(t, dupErr.Name, "needs-title")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			createFile(t, filepath.Join(tmpDir, "metamodel.yaml"), tc.root)
+			for name, content := range tc.includes {
+				createFile(t, filepath.Join(tmpDir, name), content)
+			}
+
+			_, _, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+			assertError(t, err)
+
+			var dupErr *DuplicateDefinitionError
+			if !errors.As(err, &dupErr) {
+				t.Fatalf("expected DuplicateDefinitionError, got %T: %v", err, err)
+			}
+			assertEqual(t, dupErr.Kind, tc.wantKind)
+			assertEqual(t, dupErr.Name, tc.wantName)
+			if tc.wantFile1 != "" {
+				assertEqual(t, dupErr.File1, tc.wantFile1)
+			}
+			if tc.wantFile2 != "" {
+				assertEqual(t, dupErr.File2, tc.wantFile2)
+			}
+		})
+	}
 }
 
 func TestLoadWithIncludes_FileNotFound(t *testing.T) {
@@ -402,26 +402,18 @@ includes:
 	assertEqual(t, notFoundErr.Path, "nonexistent.yaml")
 }
 
-func TestLoadWithIncludes_IncludeHasVersion(t *testing.T) {
+// loadRootFieldError loads a root schema that includes one file and returns
+// the IncludeHasRootFieldError the load must fail with.
+func loadRootFieldError(t *testing.T, includeName, includeYAML string) *IncludeHasRootFieldError {
+	t.Helper()
 	tmpDir := t.TempDir()
 
 	createFile(t, filepath.Join(tmpDir, "metamodel.yaml"), `
 version: "1.0"
 includes:
-  - bad.yaml
+  - `+includeName+`
 `)
-
-	createFile(t, filepath.Join(tmpDir, "bad.yaml"), `
-version: "1.0"
-entities:
-  control:
-    label: Control
-    id_prefix: "CTL-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-`)
+	createFile(t, filepath.Join(tmpDir, includeName), includeYAML)
 
 	_, _, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertError(t, err)
@@ -430,20 +422,11 @@ entities:
 	if !errors.As(err, &rootFieldErr) {
 		t.Fatalf("expected IncludeHasRootFieldError, got %T: %v", err, err)
 	}
-	assertEqual(t, rootFieldErr.Field, "version")
+	return rootFieldErr
 }
 
-func TestLoadWithIncludes_IncludeHasIRI(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	createFile(t, filepath.Join(tmpDir, "metamodel.yaml"), `
-version: "1.0"
-includes:
-  - bad.yaml
-`)
-
-	createFile(t, filepath.Join(tmpDir, "bad.yaml"), `
-iri: "https://example.org"
+func TestLoadWithIncludes_IncludeHasRootField(t *testing.T) {
+	const control = `
 entities:
   control:
     label: Control
@@ -452,49 +435,25 @@ entities:
     properties:
       title:
         type: string
-`)
-
-	_, _, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
-	assertError(t, err)
-
-	var rootFieldErr *IncludeHasRootFieldError
-	if !errors.As(err, &rootFieldErr) {
-		t.Fatalf("expected IncludeHasRootFieldError, got %T: %v", err, err)
+`
+	tests := []struct {
+		name   string
+		header string
+		field  string
+	}{
+		{"IncludeHasVersion", `version: "1.0"`, "version"},
+		{"IncludeHasIRI", `iri: "https://example.org"`, "iri"},
+		// description is a deployment-wide, root-only field (TKT-0YBFT8): like
+		// version and namespace it must be rejected in an included partial,
+		// not silently dropped.
+		{"IncludeHasDescription", "description: A partial should not carry the deployment description.", "description"},
 	}
-	assertEqual(t, rootFieldErr.Field, "iri")
-}
-
-// description is a deployment-wide, root-only field (TKT-0YBFT8) — like version
-// and namespace it must be rejected in an included partial, not silently dropped.
-func TestLoadWithIncludes_IncludeHasDescription(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	createFile(t, filepath.Join(tmpDir, "metamodel.yaml"), `
-version: "1.0"
-includes:
-  - bad.yaml
-`)
-
-	createFile(t, filepath.Join(tmpDir, "bad.yaml"), `
-description: A partial should not carry the deployment description.
-entities:
-  control:
-    label: Control
-    id_prefix: "CTL-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-`)
-
-	_, _, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
-	assertError(t, err)
-
-	var rootFieldErr *IncludeHasRootFieldError
-	if !errors.As(err, &rootFieldErr) {
-		t.Fatalf("expected IncludeHasRootFieldError, got %T: %v", err, err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := loadRootFieldError(t, "bad.yaml", "\n"+tc.header+control)
+			assertEqual(t, err.Field, tc.field)
+		})
 	}
-	assertEqual(t, rootFieldErr.Field, "description")
 }
 
 func TestLoadWithIncludes_EmptyIncludes(t *testing.T) {
@@ -883,41 +842,49 @@ entities:
 	}
 }
 
-// Error message tests
-
-func TestDuplicateDefinitionError_Error(t *testing.T) {
-	err := &DuplicateDefinitionError{
-		Kind: "entity", Name: "control",
-		File1: "compliance.yaml", File2: "risk.yaml",
+func TestIncludeErrors_Error(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "DuplicateDefinitionError",
+			err: &DuplicateDefinitionError{
+				Kind: "entity", Name: "control",
+				File1: "compliance.yaml", File2: "risk.yaml",
+			},
+			want: `duplicate entity "control": defined in both compliance.yaml and risk.yaml`,
+		},
+		{
+			name: "CircularIncludeError",
+			err: &CircularIncludeError{
+				Chain: []string{"metamodel.yaml", "a.yaml", "b.yaml", "a.yaml"},
+			},
+			want: "circular include detected: metamodel.yaml → a.yaml → b.yaml → a.yaml",
+		},
+		{
+			name: "IncludeNotFoundError",
+			err: &IncludeNotFoundError{
+				Path:         "compliance.yaml",
+				IncludedFrom: "metamodel.yaml",
+			},
+			want: "include file not found: compliance.yaml (included from metamodel.yaml)",
+		},
+		{
+			name: "IncludeHasRootFieldError",
+			err: &IncludeHasRootFieldError{
+				Path:  "compliance.yaml",
+				Field: "version",
+			},
+			want: `included file compliance.yaml must not contain "version" (only allowed in root schema file)`,
+		},
 	}
-	expected := `duplicate entity "control": defined in both compliance.yaml and risk.yaml`
-	assertEqual(t, err.Error(), expected)
-}
-
-func TestCircularIncludeError_Error(t *testing.T) {
-	err := &CircularIncludeError{
-		Chain: []string{"metamodel.yaml", "a.yaml", "b.yaml", "a.yaml"},
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assertEqual(t, tc.err.Error(), tc.want)
+		})
 	}
-	expected := "circular include detected: metamodel.yaml → a.yaml → b.yaml → a.yaml"
-	assertEqual(t, err.Error(), expected)
-}
-
-func TestIncludeNotFoundError_Error(t *testing.T) {
-	err := &IncludeNotFoundError{
-		Path:         "compliance.yaml",
-		IncludedFrom: "metamodel.yaml",
-	}
-	expected := "include file not found: compliance.yaml (included from metamodel.yaml)"
-	assertEqual(t, err.Error(), expected)
-}
-
-func TestIncludeHasRootFieldError_Error(t *testing.T) {
-	err := &IncludeHasRootFieldError{
-		Path:  "compliance.yaml",
-		Field: "version",
-	}
-	expected := `included file compliance.yaml must not contain "version" (only allowed in root schema file)`
-	assertEqual(t, err.Error(), expected)
 }
 
 // TestLoadWithIncludes_IncludeHasWorlds pins that `worlds:` is root-only
@@ -925,15 +892,7 @@ func TestIncludeHasRootFieldError_Error(t *testing.T) {
 // and that half merges — so a silently dropped `worlds:` would leave a
 // project holding content states with no world and no diagnostic.
 func TestLoadWithIncludes_IncludeHasWorlds(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	createFile(t, filepath.Join(tmpDir, "metamodel.yaml"), `
-version: "1.0"
-includes:
-  - pages.yaml
-`)
-
-	createFile(t, filepath.Join(tmpDir, "pages.yaml"), `
+	err := loadRootFieldError(t, "pages.yaml", `
 entities:
   page:
     label: Page
@@ -950,15 +909,7 @@ worlds:
     select: published
     otherwise: exclude
 `)
-
-	_, _, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
-	assertError(t, err)
-
-	var rootFieldErr *IncludeHasRootFieldError
-	if !errors.As(err, &rootFieldErr) {
-		t.Fatalf("expected IncludeHasRootFieldError, got %T: %v", err, err)
-	}
-	assertEqual(t, rootFieldErr.Field, "worlds")
+	assertEqual(t, err.Field, "worlds")
 }
 
 // TestLoadWithIncludes_IncludeHasCopies pins that `copies:` is root-only too.
@@ -966,15 +917,7 @@ worlds:
 // diagnostic, and the symptom was a promote button that never appeared for a
 // definition the operator could see in their file.
 func TestLoadWithIncludes_IncludeHasCopies(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	createFile(t, filepath.Join(tmpDir, "metamodel.yaml"), `
-version: "1.0"
-includes:
-  - pages.yaml
-`)
-
-	createFile(t, filepath.Join(tmpDir, "pages.yaml"), `
+	err := loadRootFieldError(t, "pages.yaml", `
 entities:
   page:
     label: Page
@@ -994,13 +937,5 @@ copies:
     guard:
       permission: promote
 `)
-
-	_, _, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
-	assertError(t, err)
-
-	var rootFieldErr *IncludeHasRootFieldError
-	if !errors.As(err, &rootFieldErr) {
-		t.Fatalf("expected IncludeHasRootFieldError, got %T: %v", err, err)
-	}
-	assertEqual(t, rootFieldErr.Field, "copies")
+	assertEqual(t, err.Field, "copies")
 }

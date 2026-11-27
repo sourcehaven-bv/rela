@@ -1,12 +1,13 @@
 package filechannels
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -69,12 +70,11 @@ func writeMarkers(d *disk, k channels.Key, rs map[channels.Reader]readerRow) err
 	for _, r := range rs {
 		doc.Readers = append(doc.Readers, r)
 	}
-	sort.Slice(doc.Readers, func(i, j int) bool {
-		a, b := doc.Readers[i], doc.Readers[j]
-		if a.User != b.User {
-			return a.User < b.User
-		}
-		return a.Org < b.Org
+	slices.SortFunc(doc.Readers, func(a, b readerRow) int {
+		return cmp.Or(
+			cmp.Compare(a.User, b.User),
+			cmp.Compare(a.Org, b.Org),
+		)
 	})
 	data, err := json.Marshal(doc)
 	if err != nil { // coverage-ignore: invariant: plain data

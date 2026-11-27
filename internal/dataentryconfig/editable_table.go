@@ -2,7 +2,7 @@ package dataentryconfig
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -198,6 +198,6 @@ func sortedColumnTypes(m map[string][]ListColumn) []string {
 	for t := range m {
 		types = append(types, t)
 	}
-	sort.Strings(types)
+	slices.Sort(types)
 	return types
 }

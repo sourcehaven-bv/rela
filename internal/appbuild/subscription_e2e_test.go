@@ -1,12 +1,13 @@
 package appbuild_test
 
 import (
+	"cmp"
 	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -152,8 +153,8 @@ func listArticles(t *testing.T, svc *appbuild.Services) []article {
 		require.NoError(t, err)
 		out = append(out, article{Content: e.Content, Properties: e.Properties})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].Properties["guid"].(string) < out[j].Properties["guid"].(string)
+	slices.SortFunc(out, func(a, b article) int {
+		return cmp.Compare(a.Properties["guid"].(string), b.Properties["guid"].(string))
 	})
 	return out
 }

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -836,7 +835,7 @@ func sortedNames(m map[string]store.DerivedObjectSpec) []string {
 	for n := range m {
 		names = append(names, n)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 

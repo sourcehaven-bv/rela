@@ -6,7 +6,6 @@ import (
 	"os"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 
@@ -279,7 +278,7 @@ func TestColorNamesMatchSPA(t *testing.T) {
 	for _, m := range regexp.MustCompile(`(?m)^\s*([a-z]+):`).FindAllSubmatch(block[1], -1) {
 		spa = append(spa, string(m[1]))
 	}
-	sort.Strings(spa)
+	slices.Sort(spa)
 	assert.Equal(t, slices.Sorted(maps.Keys(ColorNames)), spa)
 }
 

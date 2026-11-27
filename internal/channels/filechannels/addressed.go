@@ -1,11 +1,13 @@
 package filechannels
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"time"
 
@@ -93,15 +95,12 @@ func writeRows(d *disk, k channels.Key, rows []mentionRow) error {
 }
 
 func sortRows(rows []mentionRow) {
-	sort.Slice(rows, func(i, j int) bool {
-		a, b := rows[i], rows[j]
-		if a.Seq != b.Seq {
-			return a.Seq < b.Seq
-		}
-		if a.Target != b.Target {
-			return a.Target < b.Target
-		}
-		return a.Kind < b.Kind
+	slices.SortFunc(rows, func(a, b mentionRow) int {
+		return cmp.Or(
+			cmp.Compare(a.Seq, b.Seq),
+			cmp.Compare(a.Target, b.Target),
+			cmp.Compare(a.Kind, b.Kind),
+		)
 	})
 }
 

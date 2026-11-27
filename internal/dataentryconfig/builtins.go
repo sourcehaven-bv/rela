@@ -2,7 +2,7 @@ package dataentryconfig
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -113,7 +113,7 @@ func validateBuiltins(b Builtins, name string) []string {
 	for row := range b {
 		rows = append(rows, string(row))
 	}
-	sort.Strings(rows)
+	slices.Sort(rows)
 
 	var errs []string
 	for _, key := range rows {

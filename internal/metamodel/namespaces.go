@@ -23,7 +23,6 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -273,7 +272,7 @@ func qualifyPartial(p *partialMetamodel) error {
 		q.validation(&p.Validations[i])
 	}
 	if errs := *q.errs; len(errs) > 0 {
-		sort.Strings(errs)
+		slices.Sort(errs)
 		return &SchemaValidationError{Errors: errs}
 	}
 	return nil
@@ -525,7 +524,7 @@ func expandVariants(m *Metamodel) []string {
 				"%s is abstract but no type extends it; add `extends: %s` to a type or remove `abstract`",
 				a.Def.describe(name), name))
 		}
-		sort.Strings(a.Variants)
+		slices.Sort(a.Variants)
 		abstracts[name] = a
 		delete(m.Entities, name)
 	}
@@ -784,7 +783,7 @@ func singleTypeErrors(m *Metamodel) []string {
 			}
 		}
 	}
-	sort.Strings(errs)
+	slices.Sort(errs)
 	return errs
 }
 

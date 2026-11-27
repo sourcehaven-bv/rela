@@ -16,10 +16,11 @@ package realtimecfg
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"io"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -89,7 +90,7 @@ func Parse(data []byte, meta *metamodel.Metamodel, policy *acl.Policy) (*Compile
 	v := &validator{meta: meta, policy: policy, root: &root}
 	c := v.compile(&raw)
 	if len(v.problems) > 0 {
-		sort.SliceStable(v.problems, func(i, j int) bool { return v.problems[i].Key < v.problems[j].Key })
+		slices.SortStableFunc(v.problems, func(a, b Problem) int { return cmp.Compare(a.Key, b.Key) })
 		return nil, &Error{Problems: v.problems}
 	}
 	return c, nil

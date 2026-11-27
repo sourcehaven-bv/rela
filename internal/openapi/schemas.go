@@ -1,7 +1,7 @@
 package openapi
 
 import (
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -118,7 +118,7 @@ func (g *Generator) buildPropertiesSchema(def metamodel.EntityDef) *Schema {
 	for name := range def.Properties {
 		propNames = append(propNames, name)
 	}
-	sort.Strings(propNames)
+	slices.Sort(propNames)
 
 	for _, name := range propNames {
 		propDef := def.Properties[name]

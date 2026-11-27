@@ -2,7 +2,7 @@ package realtime
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -72,7 +72,7 @@ func flowMap(m map[string]string) string {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	parts := make([]string, 0, len(keys))
 	for _, k := range keys {
 		parts = append(parts, k+": '"+strings.ReplaceAll(m[k], "'", "''")+"'")

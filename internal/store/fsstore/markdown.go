@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -129,7 +129,7 @@ func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 			remaining = append(remaining, key)
 		}
 	}
-	sort.Strings(remaining)
+	slices.Sort(remaining)
 
 	for _, key := range remaining {
 		node.Content = append(node.Content, markdown.KeyNode(key))

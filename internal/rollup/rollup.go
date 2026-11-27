@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -178,7 +177,7 @@ func Compile(meta *metamodel.Metamodel) (*Set, error) {
 		}
 	}
 	if len(problems) > 0 {
-		sort.Strings(problems)
+		slices.Sort(problems)
 		return nil, fmt.Errorf("rollup: invalid roll-up properties:\n  %s", strings.Join(problems, "\n  "))
 	}
 	return set, nil

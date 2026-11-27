@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"sort"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
@@ -223,7 +222,7 @@ func principals(r *aclmap.WhoCanResult) []string {
 	for _, p := range r.Principals {
 		out = append(out, p.Principal)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -239,7 +238,7 @@ func routeKindsFor(r *aclmap.WhoCanResult, who string) []string {
 			kinds = append(kinds, rt.Kind)
 		}
 	}
-	sort.Strings(kinds)
+	slices.Sort(kinds)
 	return kinds
 }
 

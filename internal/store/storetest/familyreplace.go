@@ -3,7 +3,7 @@ package storetest
 import (
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"testing"
 	"time"
 
@@ -53,7 +53,7 @@ func familyFaces(t *testing.T, s store.Store) []string {
 		require.NoError(t, err)
 		out = append(out, e.Type+"|"+e.Face.String()+"|"+e.GetString("title"))
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

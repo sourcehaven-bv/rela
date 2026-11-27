@@ -2,7 +2,6 @@ package dataentry
 
 import (
 	"slices"
-	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -63,7 +62,7 @@ func buildDefaultViewConfig(meta *metamodel.Metamodel, entityType string) (ViewC
 	for name := range meta.Relations {
 		relationNames = append(relationNames, name)
 	}
-	sort.Strings(relationNames)
+	slices.Sort(relationNames)
 
 	for _, name := range relationNames {
 		def := meta.Relations[name]

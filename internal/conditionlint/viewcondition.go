@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -137,7 +136,7 @@ func CompileViewConditions(
 	compileTraverseConditions(ev, meta, cfg, programs, &problems)
 	problems = append(problems, assignExprProblems(cfg, meta)...)
 
-	sort.Strings(problems)
+	slices.Sort(problems)
 	if len(programs) == 0 {
 		programs = nil
 	}

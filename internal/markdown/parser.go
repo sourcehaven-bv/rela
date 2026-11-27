@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -118,7 +117,7 @@ func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 			remaining = append(remaining, key)
 		}
 	}
-	sort.Strings(remaining)
+	slices.Sort(remaining)
 
 	// Add remaining keys alphabetically
 	for _, key := range remaining {

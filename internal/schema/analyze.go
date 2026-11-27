@@ -4,8 +4,8 @@
 package schema
 
 import (
+	"cmp"
 	"slices"
-	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
@@ -395,7 +395,5 @@ func findCustomTypeReferences(typeName string, meta *metamodel.Metamodel) []Refe
 
 // sortTypeUsages sorts a slice of TypeUsage by name.
 func sortTypeUsages(usages []TypeUsage) {
-	sort.Slice(usages, func(i, j int) bool {
-		return usages[i].Name < usages[j].Name
-	})
+	slices.SortFunc(usages, func(a, b TypeUsage) int { return cmp.Compare(a.Name, b.Name) })
 }

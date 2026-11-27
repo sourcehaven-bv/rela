@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -86,7 +85,7 @@ func validateCopies(m *Metamodel) []string {
 	for name := range m.Copies {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	var errs []string
 	for _, name := range names {
@@ -256,7 +255,7 @@ func validateCopyFields(m *Metamodel, name string, def CopyDef, to CopyTarget) [
 	for f := range def.Fields {
 		fields = append(fields, f)
 	}
-	sort.Strings(fields)
+	slices.Sort(fields)
 
 	var errs []string
 	for _, f := range fields {
@@ -350,7 +349,7 @@ func validateCopyRelations(m *Metamodel, name string, def CopyDef, to CopyTarget
 	for r := range def.Relations {
 		rels = append(rels, r)
 	}
-	sort.Strings(rels)
+	slices.Sort(rels)
 
 	var errs []string
 	for _, rel := range rels {

@@ -2,7 +2,7 @@ package docs
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -117,7 +117,7 @@ func (a *aclBindings) matrixTypes(typ string) []string {
 		return []string{typ}
 	}
 	all := a.meta.EntityTypes()
-	sort.Strings(all)
+	slices.Sort(all)
 	return all
 }
 
@@ -131,7 +131,7 @@ func namedRoleNames(roles map[string]acl.RoleDef) []string {
 		}
 		names = append(names, n)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 
@@ -167,7 +167,7 @@ func readScopeSuffix(role, everyone acl.RoleDef, hasEveryone bool, v verbSpec, t
 	for _, f := range faces {
 		names = append(names, f.String())
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return " @" + strings.Join(names, "/")
 }
 
@@ -281,6 +281,6 @@ func declaredWorldNames(m *metamodel.Metamodel) []string {
 	for name := range m.Worlds {
 		out = append(out, name)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

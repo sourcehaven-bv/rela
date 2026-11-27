@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -9,7 +10,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"path"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -114,7 +115,7 @@ func scanApps(ctx context.Context, files projectAssets) ([]appInfo, error) {
 		}
 		apps = append(apps, info)
 	}
-	sort.Slice(apps, func(i, j int) bool { return apps[i].ID < apps[j].ID })
+	slices.SortFunc(apps, func(a, b appInfo) int { return cmp.Compare(a.ID, b.ID) })
 	return apps, nil
 }
 

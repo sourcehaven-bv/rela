@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/flowcfg/transitions"
 
@@ -1133,7 +1132,7 @@ func (r *PolicyResolver) resolveViaDeclarative(
 	// Stable order so multi-role deny attribution is deterministic
 	// (RR-QV18 / DR-S3). Matches the legacy effectiveRoles ordering
 	// the affordance verdicts have always assumed.
-	sort.Strings(roles)
+	slices.Sort(roles)
 	return global, roles
 }
 

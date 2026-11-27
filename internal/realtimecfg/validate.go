@@ -7,7 +7,6 @@ import (
 	"maps"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -88,7 +87,7 @@ func (v *validator) compile(raw *rawFile) *Compiled {
 	for p := range v.perms {
 		c.permissions = append(c.permissions, p)
 	}
-	sort.Strings(c.permissions)
+	slices.Sort(c.permissions)
 	return c
 }
 

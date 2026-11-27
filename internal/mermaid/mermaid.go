@@ -18,7 +18,6 @@ package mermaid
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -199,7 +198,7 @@ func ClassDefs(styles map[string]string) string {
 	for name := range styles {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	var b strings.Builder
 	for _, name := range names {

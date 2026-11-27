@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -880,7 +880,7 @@ func TestPaletteCarriesEveryDefaultToken(t *testing.T) {
 			missing = append(missing, name)
 		}
 	}
-	sort.Strings(missing)
+	slices.Sort(missing)
 	if len(missing) > 0 {
 		t.Errorf("palette path drops %d token(s) the default path defines: %v\n"+
 			"Add them to dataentryconfig.deriveTheme — a rule using one of these "+
