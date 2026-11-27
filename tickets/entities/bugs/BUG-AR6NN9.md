@@ -4,7 +4,7 @@ type: bug
 title: Provisioned principal loses its client ceiling
 description: 'unmatched_principal: provision re-stamps with principal.Verified, which drops PrincipalType and Scopes, so a restricted client loses its ceiling on the provisioned request.'
 priority: high
-status: backlog
+status: wont-fix
 severity: high
 ---
 
@@ -29,3 +29,7 @@ there).
 Rebuild the provisioned principal with `principal.VerifiedFrom` and every claim,
 as `Open` does, and add a test with a scoped client principal that is
 provisioned and then denied a write outside its ceiling.
+
+## Closed as wont-fix (2026-11-27)
+
+Already fixed in acd88b0c4 (#1907). `maybeProvision` calls `access.Restamp`, which rebuilds the principal with every claim, including the client ceiling. Pinned by `TestRestamp_KeepsClaims` (`internal/access/opener_test.go`).

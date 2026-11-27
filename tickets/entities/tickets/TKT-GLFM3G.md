@@ -5,7 +5,7 @@ title: Fail closed when no read gate is on the request context
 kind: enhancement
 priority: medium
 effort: s
-status: backlog
+status: wont-fix
 description: Under a Declarative policy a request without a gate on ctx falls back to nopReadGate (permits all, readgate.go:224). Fail closed instead; fix tests that call handlers directly.
 ---
 
@@ -21,3 +21,7 @@ therefore opens reads instead of denying them.
 - Return an error (or deny) when the policy is Declarative and no gate is present.
 - Update tests that call handlers without the middleware.
 - After TKT-WFS778 this logic lives in internal/access.
+
+## Closed as wont-fix (2026-11-27)
+
+Already fixed in acd88b0c4 (#1907). `readGateFromContext` returns `denyReadGate` when the context marks the ACL as enforced (`internal/dataentry/readgate.go`). The suggested move to `internal/access` was not done and is not needed.

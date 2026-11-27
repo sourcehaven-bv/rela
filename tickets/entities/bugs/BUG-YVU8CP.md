@@ -5,7 +5,7 @@ title: rela.delete_relation silently deletes the default-face edge and reports s
 description: 'Manager.DeleteRelation (internal/entitymanager/manager.go:2022-2024) is hardcoded to DeleteRelationState(ctx, from, "", relType, to) — the zero face, unconditionally. Its sibling''s doc comment at :2029-2032 states the consequence outright: a caller holding a state-tailed edge that drops the face ''does not delete roughly the right edge — it deletes the default face''s, and reports success.'' lua.Mutator (internal/lua/deps.go:120) exposes only DeleteRelation, never DeleteRelationState, so a Lua script has no way to reach the correct behaviour. The failure is silent and returns true. Found during design review of TKT-E9BAAA.'
 priority: high
 effort: s
-status: backlog
+status: wont-fix
 ---
 
 ## Symptom
@@ -77,3 +77,7 @@ Found during `/design-review` of `TKT-E9BAAA`, while resolving that ticket's
 "may already work" deferral for the update/delete paths. The companion findings:
 `update_entity` does carry a faced id correctly; `delete_entity` deletes the
 whole family (`RR-AQGG5O`); this one is the silent-wrong-row case.
+
+## Closed as wont-fix (2026-11-27)
+
+Already fixed by TKT-7IZHP0 (cf0fe87e8, #1753). `Manager.DeleteRelation` takes an `entity.RelationKey` with `FromFace`, and Lua `delete_relation` accepts `{face=...}`. Pinned by `TestDeleteRelation_FaceReachesTheManager`.

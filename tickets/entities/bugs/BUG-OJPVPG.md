@@ -4,7 +4,7 @@ type: bug
 title: Search ranks faces before the face gate, so a face-restricted reader gets the wrong hits
 description: Search resolves each entity's world prime over every face and only then drops withheld faces. A type@face reader misses entities the list shows, and list ?q= matches text of a face the reader may not read.
 priority: high
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -26,3 +26,7 @@ Consequences, all confirmed in the BUG-6XTX0G and BUG-SMPOZB security reviews:
 Carry the face allowlist on `search.Query` (an allowlist, compiled from grants)
 and honour it in every backend (bleve, linear, pgstore `worldSQL`, sqlite)
 before ranking. Keep `faceGatedHits` as a backstop.
+
+## Closed as wont-fix (2026-11-27)
+
+Already fixed by TKT-7IZHP0 (cf0fe87e8, #1753). `search.TypeScope.Faces` drops denied faces before ranking, in the generic searcher and in pgstore. #1907 removed `faceGatedHits`. Pinned by the `FaceAllowlistFallsThroughToReadableFace` and `FaceAllowlistMatchesTheFallbackText` conformance cases.
