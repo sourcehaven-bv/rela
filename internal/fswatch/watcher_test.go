@@ -200,12 +200,41 @@ func TestChangeOp_String(t *testing.T) {
 	}
 }
 
+// eventTimeout is the outer deadline for every wait in this file. It is not a
+// latency budget: each wait returns as soon as its condition holds, so the
+// bound only decides how long a genuinely missing event takes to fail. It is
+// sized for -race, coverage instrumentation and a contended CI runner rather
+// than for an uncontended local run.
+const eventTimeout = 30 * time.Second
+
+// waitForEvent reads batches from events until one holds an event for which
+// match returns true, failing the test after eventTimeout. Batches without a
+// match are skipped, so a stray or split debounce batch cannot fail the wait.
+// It returns every event it read, including those of skipped batches, so a
+// caller can also assert that some event did NOT arrive before the match.
+func waitForEvent(t *testing.T, events <-chan []Event, what string, match func(Event) bool) []Event {
+	t.Helper()
+	deadline := time.After(eventTimeout)
+	var seen []Event
+	for {
+		select {
+		case batch := <-events:
+			seen = append(seen, batch...)
+			if slices.ContainsFunc(batch, match) {
+				return seen
+			}
+		case <-deadline:
+			t.Fatalf("timeout after %s waiting for %s; events seen: %v", eventTimeout, what, seen)
+		}
+	}
+}
+
 // waitWatched polls until path shows up in the watch list, failing the
-// test after a generous deadline. Used where the event loop registers
+// test after eventTimeout. Used where the event loop registers
 // watches asynchronously (auto-watching newly created directories).
 func waitWatched(t *testing.T, w *Watcher, path string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) {
 		if slices.Contains(w.WatchList(), path) {
 			return
@@ -244,25 +273,9 @@ func TestWatcher_FileChangeEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Wait for event
-	select {
-	case events := <-eventsChan:
-		if len(events) == 0 {
-			t.Error("expected at least one event")
-		}
-		found := false
-		for _, e := range events {
-			if e.Path == testFile {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected event for %s, got %v", testFile, events)
-		}
-	case <-time.After(2 * time.Second):
-		t.Error("timeout waiting for file create event")
-	}
+	waitForEvent(t, eventsChan, "file create event", func(e Event) bool {
+		return e.Path == testFile
+	})
 }
 
 func TestWatcher_IgnoresNonMatchingExtensions(t *testing.T) {
@@ -297,22 +310,12 @@ func TestWatcher_IgnoresNonMatchingExtensions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	deadline := time.After(2 * time.Second)
-	for {
-		select {
-		case events := <-eventsChan:
-			for _, e := range events {
-				if e.Path == txtFile {
-					t.Errorf("should not receive event for non-matching extension: %v", e)
-				}
-			}
-			for _, e := range events {
-				if e.Path == mdFile {
-					return // sentinel arrived; .txt was filtered
-				}
-			}
-		case <-deadline:
-			t.Fatal("timeout waiting for sentinel .md event")
+	seen := waitForEvent(t, eventsChan, "sentinel .md event", func(e Event) bool {
+		return e.Path == mdFile
+	})
+	for _, e := range seen {
+		if e.Path == txtFile {
+			t.Errorf("should not receive event for non-matching extension: %v", e)
 		}
 	}
 }
@@ -353,22 +356,9 @@ func TestWatcher_AutoWatchesNewDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Wait for event from the new subdirectory
-	select {
-	case events := <-eventsChan:
-		found := false
-		for _, e := range events {
-			if e.Path == testFile {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected event for %s in new subdir, got %v", testFile, events)
-		}
-	case <-time.After(2 * time.Second):
-		t.Error("timeout waiting for event from new subdirectory")
-	}
+	waitForEvent(t, eventsChan, "event from new subdirectory", func(e Event) bool {
+		return e.Path == testFile
+	})
 }
 
 func TestWatcher_FileModifyAndDelete(t *testing.T) {
@@ -402,44 +392,18 @@ func TestWatcher_FileModifyAndDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Wait for modify event
-	select {
-	case events := <-eventsChan:
-		found := false
-		for _, e := range events {
-			if e.Path == testFile && e.Op == OpModify {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Logf("received events: %v (looking for MODIFY)", events)
-		}
-	case <-time.After(2 * time.Second):
-		t.Error("timeout waiting for file modify event")
-	}
+	waitForEvent(t, eventsChan, "file modify event", func(e Event) bool {
+		return e.Path == testFile && e.Op == OpModify
+	})
 
 	// Delete the file
 	if err := os.Remove(testFile); err != nil {
 		t.Fatal(err)
 	}
 
-	// Wait for delete event
-	select {
-	case events := <-eventsChan:
-		found := false
-		for _, e := range events {
-			if e.Path == testFile && e.Op == OpDelete {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Logf("received events: %v (looking for DELETE)", events)
-		}
-	case <-time.After(2 * time.Second):
-		t.Error("timeout waiting for file delete event")
-	}
+	waitForEvent(t, eventsChan, "file delete event", func(e Event) bool {
+		return e.Path == testFile && e.Op == OpDelete
+	})
 }
 
 func TestWatcher_PauseResumeIsPaused(t *testing.T) {

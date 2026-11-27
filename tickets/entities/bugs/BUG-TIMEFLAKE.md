@@ -2,22 +2,31 @@
 id: BUG-TIMEFLAKE
 type: bug
 title: Two flaky tests, one root cause — fixed timeouts sized against uninstrumented, uncontended local timing
+description: 'Fixed wall-clock deadlines sized against fast uncontended local runs made tests flaky under -race and CI load. Instance 1 (analyze_cap_test.go) was fixed in #1875. Instance 2 (internal/fswatch/watcher_test.go) now waits on the event with a 30s outer deadline. The docscapture capture deadline is already covered by the cold-start retry from #1618.'
+why1: TestWatcher_AutoWatchesNewDirectories waited a fixed 2s for an fsnotify event and the event arrived later under -race and coverage instrumentation on a contended runner.
+why2: The 2s value was chosen against fast uninstrumented local runs where the event arrives in milliseconds, so it looked generous.
+why3: The wait was written as a latency budget (time.After per select) rather than as a condition with an outer failure bound, and the same pattern was copied into every wait in the file.
+why4: Nothing distinguishes a latency budget from a failure bound in review; a short fixed wait passes locally every time and only fails on slow CI runs.
+why5: Test deadlines are sized against the author machine instead of the slowest instrumented environment the test runs in (the same class as instance 1 and the docscapture capture deadline).
+prevention: Waits in tests block on the condition and use one generous named outer deadline (eventTimeout = 30s) whose doc comment says it is a failure bound, not a latency budget. Absence assertions use a positive sentinel. The docscapture capture deadline is already backed by a bounded retry for cold start (#1618).
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 severity: medium
-status: backlog
-description: 'Two tests fail intermittently in CI for the same reason: a hard-coded wall-clock deadline sized against fast, uninstrumented, uncontended local runs. analyze_cap_test.go seeds 5000 entities to prove a cap of 100 (a measured 88x reduction is available); watcher_test.go hard-codes a 2s fsnotify wait.'
 ---
 
-**Two tests fail intermittently in CI for the same reason: a hard-coded wall-clock
-deadline chosen against fast, uninstrumented, uncontended local runs.** Under
-`-race` (slower) or CPU contention (slower still), the deadline slips.
+**Two tests fail intermittently in CI for the same reason: a hard-coded
+wall-clock deadline chosen against fast, uninstrumented, uncontended local
+runs.** Under `-race` (slower) or CPU contention (slower still), the deadline
+slips.
 
 Filed as one bug rather than two because the fix is a class, not two constants.
 
 ## Instance 1 — `TestAnalyzeProperties_StopsScanningAtCap`
 
-`internal/dataentry/analyze_cap_test.go:134`. Seeds **5000** entities to prove the
-analyzer stops at a cap of **100** — 50× the cap, with the assertion only checking
-`rows <= 102`.
+`internal/dataentry/analyze_cap_test.go:134`. Seeds **5000** entities to prove
+the analyzer stops at a cap of **100** — 50× the cap, with the assertion only
+checking `rows <= 102`.
 
 Measured:
 
@@ -65,8 +74,8 @@ test correct, and the next slow runner brings both back.
 ## Why it matters beyond noise
 
 A flaky red trains people to re-run rather than read. This arc had a genuine
-`EXIT=1` on an integration branch that took real analysis to attribute
-correctly — that analysis is only cheap while flakes are rare.
+`EXIT=1` on an integration branch that took real analysis to attribute correctly
+— that analysis is only cheap while flakes are rare.
 
 Found while landing FEAT-9CD2MX. Neither test is touched by that work: the
 branch modifies no file under `internal/storage`, and no `analyze*` file.
@@ -91,11 +100,45 @@ Two costs worth recording, since they argue for the fix rather than for raising
 the timeout:
 
 - The failure surfaces as a package-level panic over a goroutine dump of bleve
-  internals, so it reads as a deadlock in search. Establishing that it was
-  unrelated to the branch under test took longer than the fix would.
+internals, so it reads as a deadlock in search. Establishing that it was
+unrelated to the branch under test took longer than the fix would.
 - It blocks the whole package, so one slow test's budget overrun is reported as
-  `FAIL internal/dataentry` with no named culprit in the summary line.
+`FAIL internal/dataentry` with no named culprit in the summary line.
 
 ## Merged from BUG-7ZG8Q6 (2026-11-27)
 
-The worlds-manual CI step fails the same way. `internal/docscapture/capture.go` bounds one navigate, render and capture with `perCaptureTimeout = 30 * time.Second`. The step runs last in the E2E job, on a runner loaded by the full Playwright suite and a postgres container. The first `screenshot{}` also pays the SPA's first-load cost inside the same budget. A re-run with no code change passes (run 35185989373). Omitting the sweep env vars locally fails at a second deadline, the version-sweep wait (`manual:936`).
+The worlds-manual CI step fails the same way. `internal/docscapture/capture.go`
+bounds one navigate, render and capture with `perCaptureTimeout = 30 *
+time.Second`. The step runs last in the E2E job, on a runner loaded by the full
+Playwright suite and a postgres container. The first `screenshot{}` also pays
+the SPA's first-load cost inside the same budget. A re-run with no code change
+passes (run 35185989373). Omitting the sweep env vars locally fails at a second
+deadline, the version-sweep wait (`manual:936`).
+
+## Resolution (2026-11-27)
+
+**Instance 1** was fixed by b9f2b42bf (#1875): `analyze_cap_test.go` now seeds
+500 entities.
+
+**Instance 2** moved to `internal/fswatch/watcher_test.go` (aa2a7a289, #2614)
+and still waited a fixed 2s. Every wait in that file (five `time.After(2 *
+time.Second)` selects and the `waitWatched` poll) now blocks on the condition
+itself through a `waitForEvent` helper, under one named outer deadline,
+`eventTimeout = 30s`. The deadline is a failure bound, not a latency budget: a
+passing wait returns as soon as the event arrives. Batches without the wanted
+event are skipped instead of failing the test. The absence check in
+`TestWatcher_IgnoresNonMatchingExtensions` keeps its positive `.md` sentinel.
+The modify and delete waits now fail when the expected op never arrives; before,
+they only logged it. `go test -race -count=100 -run
+TestWatcher_AutoWatchesNewDirectories ./internal/fswatch/` passes.
+
+**Docscapture (merged from BUG-7ZG8Q6)**: no code change. `perCaptureTimeout` is
+still 30s, but e8015b901 (#1618, BUG-EB2BGR), landed on 2026-09-19, two days
+after the failures recorded above, already separates the first capture's
+cold-start cost from the budget. `Capture` retries a transient failure up to
+three times, each attempt with its own fresh 30s deadline and a relaunched
+browser. A check of the 277 failed `ci.yml` runs from 2026-09-19 to 2026-11-27
+found no failure of the "Build the worlds manual" step. An env-tunable ceiling
+would add a knob for a failure that has not recurred, so it is left out. The
+second deadline, `versionAwaitTimeout` (60s), only expires when the
+version-sweep env vars are omitted, and the CI step sets them.
