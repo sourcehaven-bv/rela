@@ -121,6 +121,12 @@ func TestCheck(t *testing.T) {
 			`{check: {where: "title!=", severity: warning, message: m}}`), ""},
 		{"unknown check severity", oneTrigger(created, `{check: {where: "title!=", severity: fatal, message: m}}`),
 			`check 1: severity "fatal" is not warning or error`},
+		{"relation check of severity error", oneTrigger(`{relation_created: blocks}`,
+			`{check: {where: "title!=", severity: error, message: m}}`), ""},
+		{"relation check without a severity", oneTrigger(`{relation_created: blocks}`,
+			`{check: {where: "title!=", message: m}}`), "a relation trigger cannot show a warning"},
+		{"relation check with a bad where", oneTrigger(`{relation_removed: blocks}`,
+			`{check: {where: "", severity: error, message: m}}`), "invalid `where` clause"},
 
 		{"copy alone", oneTrigger(`{copy: promote}`), ""},
 		{"copy with matching entity and face",

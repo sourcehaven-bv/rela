@@ -360,6 +360,24 @@ func (e *Engine) Process(ctx context.Context, event Event) *Result {
 	return result
 }
 
+// WatchesRelation reports whether a trigger may fire on event ev for a
+// relation of type relType. A write that raises no event a trigger watches
+// can skip the work of raising it. A managed relation type is never watched.
+func (e *Engine) WatchesRelation(ev EventType, relType string) bool {
+	if e == nil || entity.IsManagedName(relType) {
+		return false
+	}
+	for _, i := range e.byEvent[ev] {
+		on := e.triggers[i].on
+		if (ev == EventRelationCreated && on.RelationCreated == relType) ||
+			(ev == EventRelationRemoved && on.RelationRemoved == relType) {
+
+			return true
+		}
+	}
+	return false
+}
+
 // admits applies a trigger's scope to the event.
 func (e *Engine) admits(trigger Trigger, event Event) bool {
 	// A rela-managed record (a flow run, its `_carries` edge) is written by

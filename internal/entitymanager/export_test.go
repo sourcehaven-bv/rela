@@ -2,6 +2,7 @@ package entitymanager
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -78,4 +79,11 @@ func BindAs(ctx context.Context, tb testing.TB, m *Manager) context.Context {
 		tb.Fatalf("acl.BindRequest: %v", err)
 	}
 	return out
+}
+
+// WithSpentRelationBudgetForTest returns ctx carrying a relation-event
+// budget with nothing left, as at the end of a long trigger chain.
+func WithSpentRelationBudgetForTest(ctx context.Context) context.Context {
+	b := new(atomic.Int32)
+	return context.WithValue(ctx, relationBudgetKey{}, b)
 }

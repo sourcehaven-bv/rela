@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 
+	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -26,6 +27,7 @@ func Check(meta *metamodel.Metamodel, rules []Rule) []string {
 		errs = append(errs, copyErrors(meta, r)...)
 		errs = append(errs, updatedTriggerErrors(r)...)
 		errs = append(errs, deletedTriggerErrors(r)...)
+		errs = append(errs, relationCheckErrors(r)...)
 		errs = append(errs, backgroundErrors(r)...)
 		errs = append(errs, pileErrors(meta, r)...)
 		errs = append(errs, externalRefErrors(meta, r)...)
@@ -107,6 +109,27 @@ func updatedTriggerErrors(r Rule) []string {
 		if !a.Background && (a.Lua != "" || a.LuaFile != "") {
 			errs = append(errs, fmt.Sprintf("%s action %d: a script under `on.updated` must be `background: true`; "+
 				"its own write would trigger it again", ruleWhere(r), i+1))
+		}
+	}
+	return errs
+}
+
+// relationCheckErrors checks the `check` outputs of a relation rule. A
+// relation write returns no warnings, so only a check of severity error,
+// which refuses the write, has an effect. A warning check, or one whose
+// `where` does not parse, would be silent.
+func relationCheckErrors(r Rule) []string {
+	if r.On.RelationCreated == "" && r.On.RelationRemoved == "" {
+		return nil
+	}
+	var errs []string
+	for i, v := range r.Validate {
+		if v.GetSeverity() != SeverityError {
+			errs = append(errs, fmt.Sprintf("%s: check %d: a relation trigger cannot show a warning; "+
+				"use `severity: error` to refuse the relation write", ruleWhere(r), i+1))
+		}
+		if _, err := filter.Parse(v.Check); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: check %d: invalid `where` clause %q: %v", ruleWhere(r), i+1, v.Check, err))
 		}
 	}
 	return errs

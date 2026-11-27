@@ -8,6 +8,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -213,13 +214,19 @@ func (m *Manager) ReplaceRelations(
 	if scopeErr := rp.scope.prepass(ctx, m, rp.createKeys(), rp.removes); scopeErr != nil {
 		return nil, scopeErr
 	}
+	if ctx, err = rp.spendBudget(ctx); err != nil {
+		return nil, err
+	}
 	var deleted []*entity.Relation
 	err = auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
 		var txErr error
 		if deleted, txErr = rp.write(txCtx, view); txErr != nil {
 			return txErr
 		}
-		return rp.audit(txCtx, view, deleted)
+		if txErr := rp.audit(txCtx, view, deleted); txErr != nil {
+			return txErr
+		}
+		return rp.fire(txCtx, view, deleted)
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) {
@@ -265,6 +272,47 @@ func (rp *relationReplace) audit(ctx context.Context, view store.Store, deleted 
 	}
 	for _, rel := range rp.rels {
 		if err := rp.m.recordRelationAudit(ctx, view, audit.OpCreateRelation, rel, "created"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// spendBudget spends one relation-event dispatch when a trigger watches one
+// of the replace's removes, and one when a trigger watches one of its
+// creates; see [spendRelationBudget].
+func (rp *relationReplace) spendBudget(ctx context.Context) (context.Context, error) {
+	var err error
+	removed := make([]string, len(rp.removes))
+	for i, k := range rp.removes {
+		removed[i] = k.Type
+	}
+	if ctx, err = spendRelationBudget(ctx, rp.m.deps, triggers.EventRelationRemoved, removed...); err != nil {
+		return ctx, err
+	}
+	created := make([]string, len(rp.creates))
+	for i, c := range rp.creates {
+		created[i] = c.Key.Type
+	}
+	return spendRelationBudget(ctx, rp.m.deps, triggers.EventRelationCreated, created...)
+}
+
+// fire raises the relation events of the replace on view: relation_removed
+// for each edge the caller removed, then relation_created for each edge it
+// created. An edge a scope cleared raises nothing, as on every write path.
+func (rp *relationReplace) fire(
+	ctx context.Context, view store.Store, deleted []*entity.Relation,
+) error {
+	for _, r := range deleted {
+		if !slices.Contains(rp.removes, r.Identity()) {
+			continue
+		}
+		if err := fireRelationEvent(ctx, rp.m, view, triggers.EventRelationRemoved, r); err != nil {
+			return err
+		}
+	}
+	for _, rel := range rp.rels {
+		if err := fireRelationEvent(ctx, rp.m, view, triggers.EventRelationCreated, rel); err != nil {
 			return err
 		}
 	}

@@ -194,6 +194,11 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 	// below. An automation may not grow a bounded relation past its bound
 	// either (TKT-65LVAK): the count shares the Tx too, and an edge that
 	// exists already is the same no-op, not a refusal.
+	ctx, spendErr := spendRelationBudget(ctx, h.deps, triggers.EventRelationCreated, r.Type)
+	if spendErr != nil {
+		return spendErr
+	}
+	watched := watchesRelation(h.deps, triggers.EventRelationCreated, r.Type)
 	bounded := relTypeHasMax(h.deps.Meta, r.Type)
 	write := func(ctx context.Context, st store.Store) error {
 		if bounded {
@@ -216,9 +221,13 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 		}); err != nil {
 			return err
 		}
-		return h.recordCascade(ctx, st, audit.OpCreateRelation, relationSubject(r), "created")
+		if err := h.recordCascade(ctx, st, audit.OpCreateRelation, relationSubject(r), "created"); err != nil {
+			return err
+		}
+		return fireRelationEvent(ctx, &Manager{deps: h.deps, cascadeWrite: true}, st,
+			triggers.EventRelationCreated, r)
 	}
-	inTx := bounded || metamodel.IsOwning(h.deps.Meta, r.Type) || h.deps.scopes.touches(r.Identity())
+	inTx := bounded || metamodel.IsOwning(h.deps.Meta, r.Type) || h.deps.scopes.touches(r.Identity()) || watched
 	err := auditTx(ctx, h.deps, inTx, write)
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) {

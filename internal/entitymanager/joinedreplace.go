@@ -29,6 +29,9 @@ import (
 // file and memory stores it can leave the entity written without its edges,
 // as any multi-row write there can.
 //
+// The replace raises relation_removed and then relation_created events in
+// the transaction, as [Manager.ReplaceRelations] does.
+//
 // An error from the replace is a [*JoinedRelationError], so the caller can
 // report it as a relation error. The created edges are returned in the order
 // of creates. Their audit records are written in the transaction, their
@@ -58,6 +61,9 @@ func PatchWithRelations(
 	}
 	if scopeErr := rp.scope.prepass(ctx, m, rp.createKeys(), rp.removes); scopeErr != nil {
 		return nil, nil, &JoinedRelationError{Err: scopeErr}
+	}
+	if ctx, err = rp.spendBudget(ctx); err != nil {
+		return nil, nil, &JoinedRelationError{Err: err}
 	}
 	j := &joinedReplace{rp: rp, id: g.ref.ID}
 	res, err := patchEntity(context.WithValue(ctx, joinedReplaceKey{}, j), m, id, p,
@@ -134,6 +140,9 @@ func (j *joinedReplace) after(
 			return &JoinedRelationError{Err: err}
 		}
 		j.deleted = deleted
-		return j.rp.audit(txCtx, view, deleted)
+		if err := j.rp.audit(txCtx, view, deleted); err != nil {
+			return err
+		}
+		return j.rp.fire(txCtx, view, deleted)
 	}
 }
