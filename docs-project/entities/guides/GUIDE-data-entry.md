@@ -2519,6 +2519,11 @@ view condition errors:
 That is deliberate — a filter that silently matches nothing is far harder to
 notice than a server that refuses to start.
 
+A condition that stops compiling after a hot reload of `data-entry.yaml` does
+not stop the server. The problem is logged once per reload, and that list or
+kanban answers with an error (HTTP 500) until the condition is fixed. It never
+falls back to showing every row. Other lists keep their conditions.
+
 #### It is a different language from `filters:`
 
 `condition:` is a Lua expression subset (the same language as a trigger's

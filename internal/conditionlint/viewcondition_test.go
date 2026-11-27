@@ -207,6 +207,51 @@ func TestCompileViewConditions_ActionWhen(t *testing.T) {
 	}
 }
 
+// A condition that does not compile leaves the lookup holding every condition
+// that did. The broken surface is absent and named in the problems.
+func TestViewConditionMatchers_PartialOnProblems(t *testing.T) {
+	tests := []struct {
+		name      string
+		cfg       *dataentryconfig.Config
+		good, bad ViewConditionKey
+	}{
+		{
+			name: "list beside a broken list",
+			cfg: &dataentryconfig.Config{Lists: map[string]dataentryconfig.List{
+				"good":   {EntityType: "taak", Condition: "entity.status == 'open'"},
+				"broken": {EntityType: "taak", Condition: "entity.staus == 'open'"},
+			}},
+			good: ViewConditionKey{ViewConditionList, "good"},
+			bad:  ViewConditionKey{ViewConditionList, "broken"},
+		},
+		{
+			name: "kanban beside a broken list",
+			cfg: &dataentryconfig.Config{
+				Lists: map[string]dataentryconfig.List{
+					"broken": {EntityType: "taak", Condition: "entity.staus == 'open'"},
+				},
+				Kanbans: map[string]dataentryconfig.Kanban{
+					"good": {EntityType: "taak", Condition: "entity.status == 'open'"},
+				},
+			},
+			good: ViewConditionKey{ViewConditionKanban, "good"},
+			bad:  ViewConditionKey{ViewConditionList, "broken"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			lookup, problems := ViewConditionMatchers(tc.cfg, vcMeta())
+			require.Len(t, problems, 1)
+			require.Contains(t, problems[0], tc.bad.String())
+			require.NotNil(t, lookup)
+			_, ok := lookup(string(tc.good.Kind), tc.good.ID)
+			require.True(t, ok, "the good condition is still compiled")
+			_, ok = lookup(string(tc.bad.Kind), tc.bad.ID)
+			require.False(t, ok, "the broken condition is absent")
+		})
+	}
+}
+
 // The matcher for an action key evaluates against the type encoded in its id.
 func TestViewConditionMatchers_ActionWhen(t *testing.T) {
 	cfg := &dataentryconfig.Config{Actions: map[string]dataentryconfig.Action{"regen": {

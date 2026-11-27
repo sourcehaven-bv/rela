@@ -489,7 +489,7 @@ func (o actionOps) llmConditions(s *Schema) (ViewConditionLookup, error) {
 		return nil, errors.New("llm action: no condition compiler is wired")
 	}
 	lookup, problems := compile(s.Cfg, s.Meta)
-	if len(problems) > 0 {
+	if lookup == nil && len(problems) > 0 {
 		return nil, fmt.Errorf("llm action: conditions did not compile: %v", problems)
 	}
 	return lookup, nil

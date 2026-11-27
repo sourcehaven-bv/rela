@@ -38,9 +38,11 @@ type exportHandler struct {
 	// condition is applied above it (in listPage), so an export that only
 	// called the shared read path emitted rows the list excludes.
 	//
-	// Nil means no condition is ever applied, which is the pre-condition
-	// behavior: the ACL-scoped superset of the view, never more.
-	viewCondition func(listID string) ViewConditionMatcher
+	// It returns nil when the list declares no condition. It returns
+	// errViewConditionNotCompiled when the list declares one that has no
+	// compiled matcher, including when no compiler is wired; the export then
+	// fails. A nil seam applies no condition; only tests leave it nil.
+	viewCondition func(listID string) (ViewConditionMatcher, error)
 
 	// store answers a condition's `related(...)`, under the request's gate.
 	store store.GraphQueryer
@@ -128,7 +130,7 @@ func newExportHandler(app *App) (*exportHandler, error) {
 		redactor:       redactor,
 		documents:      app.documents,
 		scopedEntities: app.lists.scopedSortedEntities,
-		viewCondition: func(listID string) ViewConditionMatcher {
+		viewCondition: func(listID string) (ViewConditionMatcher, error) {
 			return viewCondition(app.viewConditions, app.State(), viewKindList, listID)
 		},
 		store: app.store,

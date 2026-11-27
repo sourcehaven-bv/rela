@@ -89,8 +89,13 @@ func pageStepDone(
 	if !ok {
 		return false, fmt.Errorf("unknown list %q", tab.List)
 	}
-	m := viewCondition(a.viewConditions, s, viewKindPageDone, dataentryconfig.PageDoneConditionID(pageID, tab.ID))
+	m, err := viewCondition(a.viewConditions, s, viewKindPageDone, dataentryconfig.PageDoneConditionID(pageID, tab.ID))
+	if err != nil {
+		return false, err
+	}
 	if m == nil {
+		// coverage-ignore: invariant: the caller passes only tabs with done_when on a known
+		// list, which viewCondition treats as declared, so it errors instead of returning nil
 		return false, errors.New("done_when is not compiled")
 	}
 	query := navStatusListQuery(listCfg)

@@ -99,10 +99,10 @@ func navStatusInGo(
 		ctx = primeVerdicts(ctx, a.fieldResolver, rows)
 	}
 	for i, rule := range ns.Entry.Status {
-		m := viewCondition(a.viewConditions, s, viewKindNavStatus,
+		m, err := viewCondition(a.viewConditions, s, viewKindNavStatus,
 			dataentryconfig.NavStatusConditionID(ns.Key, i))
-		if rule.Condition != "" && m == nil {
-			return v1.NavStatus{}, false, fmt.Errorf("status[%d]: condition is not compiled", i)
+		if err != nil {
+			return v1.NavStatus{}, false, fmt.Errorf("status[%d]: %w", i, err)
 		}
 		kept, err := applyViewCondition(ctx, rows, m, suggestionRedactor(a.affordances), a.Services().Store)
 		if err != nil {
@@ -141,13 +141,11 @@ func navStatusInStore(
 	if err != nil {
 		return v1.NavStatus{}, false, false, nil //nolint:nilerr // the Go path returns this error
 	}
-	n := listNarrowing{
-		cond:  viewCondition(a.viewConditions, s, viewKindList, ns.List),
-		scope: scope, state: s, fields: a.fieldResolver,
+	cond, err := viewCondition(a.viewConditions, s, viewKindList, ns.List)
+	if err != nil {
+		return v1.NavStatus{}, false, false, nil //nolint:nilerr // the Go path returns this error
 	}
-	if listCfg.Condition != "" && n.cond == nil {
-		return v1.NavStatus{}, false, false, nil
-	}
+	n := listNarrowing{cond: cond, scope: scope, state: s, fields: a.fieldResolver}
 	plan, empty, planned := n.pushdownPlan(ctx, typeName, gated, 1, 1)
 	if !planned {
 		return v1.NavStatus{}, false, false, nil
@@ -159,9 +157,10 @@ func navStatusInStore(
 	for i, rule := range ns.Entry.Status {
 		ruled := plan
 		if rule.Condition != "" {
-			m := viewCondition(a.viewConditions, s, viewKindNavStatus, dataentryconfig.NavStatusConditionID(ns.Key, i))
-			if m == nil {
-				return v1.NavStatus{}, false, false, nil
+			id := dataentryconfig.NavStatusConditionID(ns.Key, i)
+			m, err := viewCondition(a.viewConditions, s, viewKindNavStatus, id)
+			if err != nil || m == nil {
+				return v1.NavStatus{}, false, false, nil //nolint:nilerr // the Go path returns this error
 			}
 			frag, denied, lowered := lowerViewCondition(ctx, s.Meta, m, a.fieldResolver, typeName)
 			if !lowered {
@@ -249,9 +248,9 @@ func configuredListRows(
 	if err != nil {
 		return ctx, nil, err
 	}
-	cond := viewCondition(a.viewConditions, s, viewKindList, listID)
-	if listCfg.Condition != "" && cond == nil {
-		return ctx, nil, fmt.Errorf("list %q: condition is not compiled", listID)
+	cond, err := viewCondition(a.viewConditions, s, viewKindList, listID)
+	if err != nil {
+		return ctx, nil, err
 	}
 	if cond != nil {
 		ctx = primeVerdicts(ctx, a.fieldResolver, rows)

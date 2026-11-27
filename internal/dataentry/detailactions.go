@@ -152,8 +152,9 @@ func (c *detailActionCheck) matcher(id string) ViewConditionMatcher {
 }
 
 // actionConditionLookup compiles the snapshot's conditions for judging an
-// action's when. Nil, logged, when no compiler is wired or a condition does
-// not compile; a caller treats that as "when does not hold".
+// action's when. Nil, logged, when no compiler is wired. An action whose when
+// did not compile is absent from the lookup; a caller treats a missing
+// matcher as "when does not hold".
 func (svc affordanceService) actionConditionLookup(s *Schema, id string) ViewConditionLookup {
 	var compile ViewConditionFunc
 	if svc.actionConditions != nil {
@@ -164,12 +165,7 @@ func (svc affordanceService) actionConditionLookup(s *Schema, id string) ViewCon
 			"action", id)
 		return nil
 	}
-	lookup, problems := compile(s.Cfg, s.Meta)
-	if len(problems) > 0 {
-		slog.Warn("dataentry: conditions did not compile; not offering actions with a when",
-			"problems", problems)
-		return nil
-	}
+	lookup, _ := compile(s.Cfg, s.Meta)
 	return lookup
 }
 
