@@ -15,24 +15,21 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-withDefaults(
-  defineProps<{
-    placeholder?: string
-    submitLabel?: string
-    /** Offer a Cancel button, for a composer the caller can dismiss. */
-    cancellable?: boolean
-    submitting?: boolean
-    /** The shortcut shown in the hint, for a caller that maps a different one. */
-    submitShortcut?: string
-  }>(),
-  {
-    placeholder: undefined,
-    submitLabel: undefined,
-    cancellable: false,
-    submitting: false,
-    submitShortcut: 'Ctrl+Enter',
-  },
-)
+const {
+  placeholder,
+  submitLabel,
+  cancellable = false,
+  submitting = false,
+  submitShortcut = 'Ctrl+Enter',
+} = defineProps<{
+  placeholder?: string
+  submitLabel?: string
+  /** Offer a Cancel button, for a composer the caller can dismiss. */
+  cancellable?: boolean
+  submitting?: boolean
+  /** The shortcut shown in the hint, for a caller that maps a different one. */
+  submitShortcut?: string
+}>()
 
 const emit = defineEmits<{ submit: [body: string]; cancel: [] }>()
 

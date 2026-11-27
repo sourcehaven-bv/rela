@@ -38,7 +38,7 @@ export interface Flow {
   diagram: string
 }
 
-export interface FlowTimer {
+interface FlowTimer {
   name: string
   label?: string
   to: string
@@ -46,7 +46,7 @@ export interface FlowTimer {
   due?: string
 }
 
-export interface FlowBranch {
+interface FlowBranch {
   to: string
   /** The states a fork branch starts at once; `to` is then empty. */
   fork?: string[]
@@ -76,7 +76,7 @@ export interface FlowJob {
   error?: string
 }
 
-export interface FlowPending {
+interface FlowPending {
   failures: number
   next_attempt?: string
   /** Set in a state with a job step whose attempts have begun. */
@@ -119,7 +119,7 @@ export interface FlowEvent {
   branch?: string
 }
 
-export interface FlowActions {
+interface FlowActions {
   complete: boolean
   /**
    * The caller holds the flow's manage permission. The card shows how the
@@ -134,7 +134,7 @@ export interface FlowActions {
  * One parallel branch of a forked run: where it is, why it waits and
  * whether the caller may complete its step.
  */
-export interface FlowPlace {
+interface FlowPlace {
   /** The fork target the branch started in. */
   branch: string
   state: string
@@ -260,7 +260,7 @@ export interface FlowCompleted {
 }
 
 /** A message about one field of a step form. */
-export interface FlowFieldNote {
+interface FlowFieldNote {
   field: string
   message: string
 }

@@ -18,20 +18,21 @@ import RlAvatar from 'rela-components/components/data/RlAvatar.vue'
 import RlIcon from 'rela-components/components/common/RlIcon.vue'
 import type { PresenceViewer } from '@/types'
 
-const props = withDefaults(
-  defineProps<{
-    viewers: PresenceViewer[]
-    /** Viewers past the server's cap; added to the "+N". */
-    more?: number
-    /** Avatars shown before the rest fold into "+N". */
-    max?: number
-  }>(),
-  { more: 0, max: 5 }
-)
+const {
+  viewers,
+  more = 0,
+  max = 5,
+} = defineProps<{
+  viewers: PresenceViewer[]
+  /** Viewers past the server's cap; added to the "+N". */
+  more?: number
+  /** Avatars shown before the rest fold into "+N". */
+  max?: number
+}>()
 
-const shown = computed(() => props.viewers.slice(0, props.max))
+const shown = computed(() => viewers.slice(0, max))
 const { t } = useI18n()
-const overflow = computed(() => Math.max(0, props.viewers.length - props.max) + props.more)
+const overflow = computed(() => Math.max(0, viewers.length - max) + more)
 
 function viewerTitle(v: PresenceViewer): string {
   return v.tool ? `${v.user} (${v.tool})` : v.user
@@ -42,11 +43,11 @@ function viewerTitle(v: PresenceViewer): string {
 // agent is announced as one, and one person in two tools is two entries that
 // a listener can tell apart.
 const description = computed(() => {
-  const names = props.viewers.map(viewerTitle).join(', ')
-  if (!props.more) return t('entity.presence.viewing', { names })
+  const names = viewers.map(viewerTitle).join(', ')
+  if (!more) return t('entity.presence.viewing', { names })
   return names
-    ? t('entity.presence.viewingAndMore', { names, n: props.more })
-    : t('entity.presence.viewingCount', { n: props.more })
+    ? t('entity.presence.viewingAndMore', { names, n: more })
+    : t('entity.presence.viewingCount', { n: more })
 })
 </script>
 

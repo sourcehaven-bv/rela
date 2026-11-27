@@ -23,32 +23,36 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    /** The person, or nothing for the unassigned state. */
-    person?: Person
-    size?: 'xs' | 'sm' | 'md' | 'lg'
-    /**
-     * Drops the name, leaving the avatar. For a dense row or a stack of
-     * avatars where the name is shown elsewhere or on hover.
-     */
-    nameHidden?: boolean
-    /** Second line under the name, such as a role or an email address. */
-    secondary?: string
-    /**
-     * Drops the second line, keeping the name. For a one-line box such as a
-     * picker's closed value, where the person's own `secondary` would make
-     * the row two lines tall and overflow whatever is holding it.
-     */
-    secondaryHidden?: boolean
-    /** Wording for the empty state. */
-    emptyLabel?: string
-  }>(),
-  { size: 'sm', nameHidden: false, secondaryHidden: false, emptyLabel: undefined },
-)
+const {
+  person,
+  size = 'sm',
+  nameHidden = false,
+  secondary,
+  secondaryHidden = false,
+  emptyLabel,
+} = defineProps<{
+  /** The person, or nothing for the unassigned state. */
+  person?: Person
+  size?: 'xs' | 'sm' | 'md' | 'lg'
+  /**
+   * Drops the name, leaving the avatar. For a dense row or a stack of
+   * avatars where the name is shown elsewhere or on hover.
+   */
+  nameHidden?: boolean
+  /** Second line under the name, such as a role or an email address. */
+  secondary?: string
+  /**
+   * Drops the second line, keeping the name. For a one-line box such as a
+   * picker's closed value, where the person's own `secondary` would make
+   * the row two lines tall and overflow whatever is holding it.
+   */
+  secondaryHidden?: boolean
+  /** Wording for the empty state. */
+  emptyLabel?: string
+}>()
 
 const label = computed(
-  () => props.person?.name ?? props.emptyLabel ?? messages.chromeText({ key: 'unassigned' }),
+  () => person?.name ?? emptyLabel ?? messages.chromeText({ key: 'unassigned' }),
 )
 </script>
 

@@ -22,18 +22,15 @@ import type { NavItemStatus } from '../../types'
 import type { ChannelGroupView } from './types'
 import { useMessages } from '../../composables/useMessages'
 
-withDefaults(
-  defineProps<{
-    groups: ChannelGroupView[]
-    /** The key of the open channel. */
-    activeKey?: string
-    /** Which channels the list holds; omit to hide the filter. */
-    filter?: 'open' | 'all'
-    /** The level of the group headings, so the list fits the host page's outline. */
-    headingLevel?: 2 | 3 | 4 | 5 | 6
-  }>(),
-  { activeKey: undefined, filter: undefined, headingLevel: 3 },
-)
+const { activeKey, filter, headingLevel = 3 } = defineProps<{
+  groups: ChannelGroupView[]
+  /** The key of the open channel. */
+  activeKey?: string
+  /** Which channels the list holds; omit to hide the filter. */
+  filter?: 'open' | 'all'
+  /** The level of the group headings, so the list fits the host page's outline. */
+  headingLevel?: 2 | 3 | 4 | 5 | 6
+}>()
 
 const emit = defineEmits<{
   select: [key: string]

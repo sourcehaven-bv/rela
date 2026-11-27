@@ -63,7 +63,6 @@ watch(
 )
 
 export {
-  intlLocale,
   setProjectLanguage,
   setProjectLanguages,
   setUserLanguage,

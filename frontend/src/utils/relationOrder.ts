@@ -26,7 +26,7 @@ export function tabIsRelationOrdered(
  * row whose place comes from one face of its source is named `id@face`, so
  * the move acts on the edge the reader sees; every other row by its id.
  */
-export function orderAddress(order: RelationOrder, id: string): string {
+function orderAddress(order: RelationOrder, id: string): string {
   return order.addresses?.[id] ?? id
 }
 

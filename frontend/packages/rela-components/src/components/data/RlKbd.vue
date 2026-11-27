@@ -11,26 +11,23 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    /** One key, or several joined by the separator, such as `Ctrl+K`. */
-    keys: string
-    separator?: '+' | 'then' | 'or'
-    size?: 'sm' | 'md'
-  }>(),
-  { separator: '+', size: 'md' },
-)
+const { keys, separator = '+', size = 'md' } = defineProps<{
+  /** One key, or several joined by the separator, such as `Ctrl+K`. */
+  keys: string
+  separator?: '+' | 'then' | 'or'
+  size?: 'sm' | 'md'
+}>()
 
-const parts = computed(() => props.keys.split(props.separator).map((part) => part.trim()))
+const parts = computed(() => keys.split(separator).map((part) => part.trim()))
 
 /*
  * The separator is read out, so "G then D" is announced as three tokens
  * rather than as the single unpronounceable string "GthenD".
  */
 const separatorText = computed(() => {
-  if (props.separator === 'then') return messages.chromeText({ key: 'keyThen' })
-  if (props.separator === 'or') return messages.chromeText({ key: 'keyOr' })
-  return props.separator
+  if (separator === 'then') return messages.chromeText({ key: 'keyThen' })
+  if (separator === 'or') return messages.chromeText({ key: 'keyOr' })
+  return separator
 })
 
 const spoken = computed(() => parts.value.join(` ${separatorText.value} `))

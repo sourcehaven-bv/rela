@@ -103,7 +103,7 @@ function writeStored(draft: StoredDraft | null): boolean {
 }
 
 /** The longest start of `text` that fits in `maxBytes` of UTF-8, whole code points only. */
-export function truncateUtf8(text: string, maxBytes: number): string {
+function truncateUtf8(text: string, maxBytes: number): string {
   const encoder = new TextEncoder()
   if (encoder.encode(text).length <= maxBytes) return text
   let out = ''

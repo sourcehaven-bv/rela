@@ -25,19 +25,22 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    comments: AnchoredComment[]
-    /** Anchors a new comment may be attached to. Empty hides the picker. */
-    anchorOptions?: CommentAnchorOption[]
-    title?: string
-    /** Open on mount, for a view where comments are the point. */
-    defaultExpanded?: boolean
-    /** Blocks the composer and shows its pending state. */
-    submitting?: boolean
-  }>(),
-  { anchorOptions: () => [], title: undefined, defaultExpanded: false, submitting: false },
-)
+const {
+  comments,
+  anchorOptions = [],
+  title,
+  defaultExpanded = false,
+  submitting = false,
+} = defineProps<{
+  comments: AnchoredComment[]
+  /** Anchors a new comment may be attached to. Empty hides the picker. */
+  anchorOptions?: CommentAnchorOption[]
+  title?: string
+  /** Open on mount, for a view where comments are the point. */
+  defaultExpanded?: boolean
+  /** Blocks the composer and shows its pending state. */
+  submitting?: boolean
+}>()
 
 const emit = defineEmits<{
   add: [comment: NewComment]
@@ -46,11 +49,11 @@ const emit = defineEmits<{
   remove: [id: string]
 }>()
 
-const expanded = ref(props.defaultExpanded)
+const expanded = ref(defaultExpanded)
 const body = ref('')
 const anchorKey = ref('')
 
-const unresolvedCount = computed(() => props.comments.filter((c) => !c.resolved).length)
+const unresolvedCount = computed(() => comments.filter((c) => !c.resolved).length)
 
 /*
  * Comments with nowhere else to appear. These are the reason the panel exists
@@ -59,15 +62,15 @@ const unresolvedCount = computed(() => props.comments.filter((c) => !c.resolved)
  * field.
  */
 const homelessCount = computed(
-  () => props.comments.filter((c) => c.anchor.kind !== 'property' || c.detached).length,
+  () => comments.filter((c) => c.anchor.kind !== 'property' || c.detached).length,
 )
 
 const selectedAnchor = computed(() =>
-  props.anchorOptions.find((option) => option.key === anchorKey.value),
+  anchorOptions.find((option) => option.key === anchorKey.value),
 )
 
 const canSubmit = computed(
-  () => Boolean(body.value.trim()) && !props.submitting && Boolean(selectedAnchor.value),
+  () => Boolean(body.value.trim()) && !submitting && Boolean(selectedAnchor.value),
 )
 
 /*
@@ -76,7 +79,7 @@ const canSubmit = computed(
  * longer exist.
  */
 watch(
-  () => props.anchorOptions,
+  () => anchorOptions,
   (options) => {
     if (!options.some((option) => option.key === anchorKey.value)) {
       anchorKey.value = options[0]?.key ?? ''

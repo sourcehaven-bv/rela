@@ -2,14 +2,11 @@
 import { computed } from 'vue'
 import type { DotColor } from '../../types'
 
-const props = withDefaults(defineProps<{ color?: DotColor; size?: number }>(), {
-  color: 'grey',
-  size: 8,
-})
+const { color = 'grey', size = 8 } = defineProps<{ color?: DotColor; size?: number }>()
 
 // A palette property paints inline; a named colour uses its class. A
 // property may be a light shade close to the page, so it gets a hairline.
-const custom = computed(() => props.color.startsWith('--rl-'))
+const custom = computed(() => color.startsWith('--rl-'))
 </script>
 
 <template>

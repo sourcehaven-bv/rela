@@ -7,16 +7,13 @@
  * hidden from screen readers: the surrounding region should be marked busy,
  * which is more useful than announcing several grey boxes.
  */
-withDefaults(
-  defineProps<{
-    variant?: 'text' | 'block' | 'circle'
-    width?: string
-    height?: string
-    /** Repeats the shape, for a list of rows. */
-    lines?: number
-  }>(),
-  { variant: 'text', lines: 1 },
-)
+const { variant = 'text', lines = 1 } = defineProps<{
+  variant?: 'text' | 'block' | 'circle'
+  width?: string
+  height?: string
+  /** Repeats the shape, for a list of rows. */
+  lines?: number
+}>()
 </script>
 
 <template>

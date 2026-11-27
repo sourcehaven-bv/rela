@@ -11,21 +11,18 @@
 import { computed } from 'vue'
 import { icons, type IconName } from './icons'
 
-const props = withDefaults(
-  defineProps<{
-    name: IconName
-    size?: number
-    /**
-     * A decorative icon beside a label is hidden from screen readers, which is
-     * the common case. Give a label where the icon is the only thing carrying
-     * the meaning, and it becomes an `img` with that name.
-     */
-    label?: string
-  }>(),
-  { size: 16 },
-)
+const { name, size = 16, label } = defineProps<{
+  name: IconName
+  size?: number
+  /**
+   * A decorative icon beside a label is hidden from screen readers, which is
+   * the common case. Give a label where the icon is the only thing carrying
+   * the meaning, and it becomes an `img` with that name.
+   */
+  label?: string
+}>()
 
-const body = computed(() => icons[props.name] ?? '')
+const body = computed(() => icons[name] ?? '')
 </script>
 
 <template>

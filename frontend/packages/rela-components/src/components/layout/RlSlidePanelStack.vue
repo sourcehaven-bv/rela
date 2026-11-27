@@ -34,38 +34,40 @@ export interface SlidePanel {
   closable?: boolean
 }
 
-const props = withDefaults(
-  defineProps<{
-    /** The open panels, outermost first. An empty array shows the page alone. */
-    panels: SlidePanel[]
-    /**
-     * Whether Escape closes the innermost panel. On by default, because a
-     * panel the user can open from the keyboard has to be closable from it.
-     */
-    closeOnEscape?: boolean
-    /**
-     * Whether a click on the page beside the stack closes it. Off by default:
-     * these panels sit over content the user is meant to keep using, and a
-     * stack that vanished on the first click into the page would undo the
-     * thing that makes it different from a modal.
-     */
-    closeOnClickOutside?: boolean
-    /**
-     * Whether to move focus into each newly opened panel, and back to
-     * whatever had focus before the stack opened once the last one closes.
-     *
-     * Off by default, because these panels are read alongside the page: a
-     * stack that grabbed the keyboard would take it away from work the user
-     * is still doing, which is the thing that separates this from a drawer.
-     * Turn it on where the panel is the task rather than a companion to it.
-     *
-     * Not a focus trap either way. Tab leaves the panel and continues into
-     * the page, because the page is still live.
-     */
-    manageFocus?: boolean
-  }>(),
-  { closeOnEscape: true, closeOnClickOutside: false, manageFocus: false },
-)
+const {
+  closeOnEscape = true,
+  closeOnClickOutside = false,
+  manageFocus = false,
+  panels,
+} = defineProps<{
+  /** The open panels, outermost first. An empty array shows the page alone. */
+  panels: SlidePanel[]
+  /**
+   * Whether Escape closes the innermost panel. On by default, because a
+   * panel the user can open from the keyboard has to be closable from it.
+   */
+  closeOnEscape?: boolean
+  /**
+   * Whether a click on the page beside the stack closes it. Off by default:
+   * these panels sit over content the user is meant to keep using, and a
+   * stack that vanished on the first click into the page would undo the
+   * thing that makes it different from a modal.
+   */
+  closeOnClickOutside?: boolean
+  /**
+   * Whether to move focus into each newly opened panel, and back to
+   * whatever had focus before the stack opened once the last one closes.
+   *
+   * Off by default, because these panels are read alongside the page: a
+   * stack that grabbed the keyboard would take it away from work the user
+   * is still doing, which is the thing that separates this from a drawer.
+   * Turn it on where the panel is the task rather than a companion to it.
+   *
+   * Not a focus trap either way. Tab leaves the panel and continues into
+   * the page, because the page is still live.
+   */
+  manageFocus?: boolean
+}>()
 
 const emit = defineEmits<{
   /** A panel was dismissed. Drop it and everything it opened. */
@@ -88,7 +90,7 @@ const WIDTH_TOKEN = {
 const offsets = computed(() => {
   const result: string[] = []
   const widths: string[] = []
-  for (const panel of props.panels) {
+  for (const panel of panels) {
     result.push(widths.length ? `calc(${widths.join(' + ')})` : '0px')
     widths.push(WIDTH_TOKEN[panel.size ?? 'md'])
   }
@@ -96,7 +98,7 @@ const offsets = computed(() => {
 })
 
 function closeInnermost() {
-  const innermost = props.panels[props.panels.length - 1]
+  const innermost = panels[panels.length - 1]
   if (innermost) emit('close', innermost.id)
 }
 
@@ -118,7 +120,7 @@ function onKeydown(event: KeyboardEvent) {
  * already clicked into it.
  */
 watch(
-  () => props.closeOnEscape && props.panels.length > 0,
+  () => closeOnEscape && panels.length > 0,
   (active) => {
     if (typeof document === 'undefined') return
     if (active) document.addEventListener('keydown', onKeydown)
@@ -133,7 +135,7 @@ onBeforeUnmount(() => {
 })
 
 function onScrimClick() {
-  if (props.closeOnClickOutside) closeInnermost()
+  if (closeOnClickOutside) closeInnermost()
 }
 
 /*
@@ -157,9 +159,9 @@ function focusPanel(index: number) {
 }
 
 watch(
-  () => props.panels.length,
+  () => panels.length,
   async (count, before) => {
-    if (!props.manageFocus || typeof document === 'undefined') return
+    if (!manageFocus || typeof document === 'undefined') return
 
     if (count > (before ?? 0)) {
       if (!before) {

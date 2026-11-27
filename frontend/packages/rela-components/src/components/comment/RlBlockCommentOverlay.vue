@@ -35,25 +35,29 @@ export interface CommentableBlock {
   kind: string
 }
 
-const props = withDefaults(
-  defineProps<{
-    /** The element to scan. Needs a positioning context of its own. */
-    container: HTMLElement | null
-    blocks: CommentableBlock[]
-    /** All comments on the record; matched to a block by anchor ref. */
-    comments?: AnchoredComment[]
-    /** Change this when the content is re-rendered, to force a re-measure. */
-    renderKey?: unknown
-    /**
-     * Selector for scrolling wrappers between a block and the container. A
-     * block inside one moves without the container resizing, so the badge
-     * would drift off it and stay there.
-     */
-    scrollSelector?: string
-    submitting?: boolean
-  }>(),
-  { comments: () => [], renderKey: () => 0, scrollSelector: '', submitting: false },
-)
+const {
+  container,
+  blocks,
+  comments = [],
+  renderKey = 0,
+  scrollSelector = '',
+  submitting = false,
+} = defineProps<{
+  /** The element to scan. Needs a positioning context of its own. */
+  container: HTMLElement | null
+  blocks: CommentableBlock[]
+  /** All comments on the record; matched to a block by anchor ref. */
+  comments?: AnchoredComment[]
+  /** Change this when the content is re-rendered, to force a re-measure. */
+  renderKey?: unknown
+  /**
+   * Selector for scrolling wrappers between a block and the container. A
+   * block inside one moves without the container resizing, so the badge
+   * would drift off it and stay there.
+   */
+  scrollSelector?: string
+  submitting?: boolean
+}>()
 
 const emit = defineEmits<{
   add: [comment: NewComment]
@@ -76,20 +80,20 @@ let scrollers: HTMLElement[] = []
 let lateImages: HTMLImageElement[] = []
 
 function measure() {
-  const host = props.container
+  const host = container
   if (!host) {
     placed.value = []
     return
   }
 
   const hostRect = host.getBoundingClientRect()
-  placed.value = props.blocks.map((block) => {
+  placed.value = blocks.map((block) => {
     const rect = block.el.getBoundingClientRect()
     return {
       ...block,
       top: rect.top - hostRect.top + 6,
       left: rect.left - hostRect.left + 6,
-      comments: props.comments.filter((comment) => comment.anchor.ref === block.key),
+      comments: comments.filter((comment) => comment.anchor.ref === block.key),
     }
   })
 }
@@ -105,7 +109,7 @@ function detachWatchers() {
 
 function attachWatchers() {
   detachWatchers()
-  const host = props.container
+  const host = container
   if (!host || typeof ResizeObserver === 'undefined') return
 
   observer = new ResizeObserver(measure)
@@ -118,8 +122,8 @@ function attachWatchers() {
     }
   }
 
-  if (props.scrollSelector) {
-    scrollers = [...host.querySelectorAll<HTMLElement>(props.scrollSelector)]
+  if (scrollSelector) {
+    scrollers = [...host.querySelectorAll<HTMLElement>(scrollSelector)]
     for (const scroller of scrollers) {
       scroller.addEventListener('scroll', measure, { passive: true })
     }
@@ -127,7 +131,7 @@ function attachWatchers() {
 }
 
 watch(
-  () => [props.container, props.blocks, props.comments, props.renderKey] as const,
+  () => [container, blocks, comments, renderKey] as const,
   async () => {
     // A tick, so the caller's own re-render has landed before anything is
     // measured against it.

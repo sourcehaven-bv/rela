@@ -9,23 +9,20 @@
  */
 import RlIcon from '../common/RlIcon.vue'
 
-withDefaults(
-  defineProps<{
-    name: string
-    /**
-     * Whether the control opens something. Off drops the chevron and the
-     * hover fill, leaving the name as a plain label.
-     *
-     * For the case where there is nothing to switch to: one workspace, or
-     * one space. A chevron that opens a menu listing only where you already
-     * are is a control that does nothing, and the header has to read right
-     * both ways — so the affordance follows whether a choice exists rather
-     * than being painted unconditionally.
-     */
-    menu?: boolean
-  }>(),
-  { menu: true },
-)
+const { menu = true } = defineProps<{
+  name: string
+  /**
+   * Whether the control opens something. Off drops the chevron and the
+   * hover fill, leaving the name as a plain label.
+   *
+   * For the case where there is nothing to switch to: one workspace, or
+   * one space. A chevron that opens a menu listing only where you already
+   * are is a control that does nothing, and the header has to read right
+   * both ways — so the affordance follows whether a choice exists rather
+   * than being painted unconditionally.
+   */
+  menu?: boolean
+}>()
 defineEmits<{ click: [] }>()
 </script>
 

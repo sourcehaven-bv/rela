@@ -72,7 +72,7 @@ export function nodeAddress(node: GanttNode): string {
 
 /** The day a stored date or datetime falls on, as the gantt endpoint draws
  * it: the date part in the value's own offset. */
-export function storedDay(value: unknown): number | null {
+function storedDay(value: unknown): number | null {
   if (value == null || value === '') return null
   const m = DAY_PREFIX.exec(String(value))
   return m ? parseDay(m[1]) : null

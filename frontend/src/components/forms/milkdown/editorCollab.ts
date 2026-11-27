@@ -96,7 +96,7 @@ export function peerCursor(user: { name?: unknown; color?: unknown }): HTMLEleme
 const selectionClass = 'ProseMirror-yjs-selection'
 
 /** A peer's selection. A class only, for the same reason as the caret. */
-export function peerSelection(): { class: string } {
+function peerSelection(): { class: string } {
   return { class: selectionClass }
 }
 

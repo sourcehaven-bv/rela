@@ -14,14 +14,11 @@ import RlTag from '../common/RlTag.vue'
 import type { ChannelAuthorView } from './types'
 import { useMessages } from '../../composables/useMessages'
 
-withDefaults(
-  defineProps<{
-    author: ChannelAuthorView
-    /** Hide the avatar, for a compact line. */
-    compact?: boolean
-  }>(),
-  { compact: false },
-)
+const { compact = false } = defineProps<{
+  author: ChannelAuthorView
+  /** Hide the avatar, for a compact line. */
+  compact?: boolean
+}>()
 
 const messages = useMessages()
 </script>

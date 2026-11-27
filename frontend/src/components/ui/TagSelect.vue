@@ -4,8 +4,9 @@ import { useI18n } from 'vue-i18n'
 import SlimSelect from 'slim-select/vue'
 import 'slim-select/styles'
 
+const model = defineModel<string[]>({ required: true })
+
 const props = defineProps<{
-  modelValue: string[]
   options: string[]
   placeholder?: string
   // disabled mirrors the standard HTML attribute — SlimSelect honors
@@ -23,10 +24,6 @@ const props = defineProps<{
   // option's value (and thus the emitted selection) stays the raw value.
   // Absent keys fall back to showing the value itself.
   optionLabels?: Record<string, string>
-}>()
-
-const emit = defineEmits<{
-  'update:modelValue': [value: string[]]
 }>()
 
 const { t } = useI18n()
@@ -53,20 +50,15 @@ const settings = computed(() => ({
   maxValuesMessage: t('shell.tagSelect.selected', { number: '{number}' }),
   allowDeselect: true,
 }))
-
-function handleUpdate(value: string[]) {
-  emit('update:modelValue', value)
-}
 </script>
 
 <template>
   <SlimSelect
-    :model-value="modelValue"
+    v-model="model"
     :data="data"
     :settings="settings"
     :multiple="true"
     :disabled="disabled"
-    @update:model-value="handleUpdate"
   />
 </template>
 

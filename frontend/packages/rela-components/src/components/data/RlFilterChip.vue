@@ -13,17 +13,14 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-withDefaults(
-  defineProps<{
-    label: string
-    /** The chosen value, shown after the label. */
-    value?: string
-    icon?: IconName
-    removable?: boolean
-    disabled?: boolean
-  }>(),
-  { removable: true, disabled: false },
-)
+const { label, value, icon, removable = true, disabled = false } = defineProps<{
+  label: string
+  /** The chosen value, shown after the label. */
+  value?: string
+  icon?: IconName
+  removable?: boolean
+  disabled?: boolean
+}>()
 
 defineEmits<{ remove: []; click: [] }>()
 </script>

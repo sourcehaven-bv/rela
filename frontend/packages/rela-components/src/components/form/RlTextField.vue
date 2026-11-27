@@ -5,37 +5,32 @@
  */
 import RlFieldShell from './RlFieldShell.vue'
 
-withDefaults(
-  defineProps<{
-    modelValue?: string
-    label: string
-    hint?: string
-    error?: string
-    required?: boolean
-    labelHidden?: boolean
-    disabled?: boolean
-    readonly?: boolean
-    placeholder?: string
-    size?: 'sm' | 'md' | 'lg'
-    /** Native type. Anything that renders as a one-line text box. */
-    type?: 'text' | 'email' | 'url' | 'tel' | 'password' | 'search'
-    /** Passed straight through; `off` for anything sensitive. */
-    autocomplete?: string
-    /** The on-screen keyboard to offer, such as `numeric` for digits typed as text. */
-    inputmode?: 'text' | 'numeric' | 'decimal' | 'tel' | 'email' | 'url' | 'search'
-  }>(),
-  {
-    modelValue: '',
-    required: false,
-    labelHidden: false,
-    disabled: false,
-    readonly: false,
-    size: 'md',
-    type: 'text',
-  },
-)
+const {
+  required = false,
+  labelHidden = false,
+  disabled = false,
+  readonly = false,
+  size = 'md',
+  type = 'text',
+} = defineProps<{
+  label: string
+  hint?: string
+  error?: string
+  required?: boolean
+  labelHidden?: boolean
+  disabled?: boolean
+  readonly?: boolean
+  placeholder?: string
+  size?: 'sm' | 'md' | 'lg'
+  /** Native type. Anything that renders as a one-line text box. */
+  type?: 'text' | 'email' | 'url' | 'tel' | 'password' | 'search'
+  /** Passed straight through; `off` for anything sensitive. */
+  autocomplete?: string
+  /** The on-screen keyboard to offer, such as `numeric` for digits typed as text. */
+  inputmode?: 'text' | 'numeric' | 'decimal' | 'tel' | 'email' | 'url' | 'search'
+}>()
 
-defineEmits<{ 'update:modelValue': [value: string] }>()
+const model = defineModel<string>({ default: '' })
 </script>
 
 <template>
@@ -52,7 +47,7 @@ defineEmits<{ 'update:modelValue': [value: string] }>()
       class="rl-control"
       :class="size !== 'md' && `rl-control--${size}`"
       :type="type"
-      :value="modelValue"
+      :value="model"
       :placeholder="placeholder"
       :disabled="disabled"
       :readonly="readonly"
@@ -61,7 +56,7 @@ defineEmits<{ 'update:modelValue': [value: string] }>()
       :inputmode="inputmode"
       :aria-describedby="control.describedBy"
       :aria-invalid="control.invalid || undefined"
-      @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
+      @input="model = ($event.target as HTMLInputElement).value"
     />
   </RlFieldShell>
 </template>

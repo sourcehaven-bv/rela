@@ -29,7 +29,7 @@ export interface NavEntityRow {
 export type NavEntitiesLookup = (entities: SidebarEntities) => NavEntityRow[] | undefined
 
 /** The cache key for one entry: its whole query definition. */
-export function navEntitiesKey(entities: SidebarEntities): string {
+function navEntitiesKey(entities: SidebarEntities): string {
   return `${entities.type}|${entities.query_scope ?? ''}|${entities.sort ?? ''}`
 }
 

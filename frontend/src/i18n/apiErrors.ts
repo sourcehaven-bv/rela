@@ -19,7 +19,7 @@ import type { MessageSchema } from './index'
 
 type ErrorKey = `errors.${keyof MessageSchema['errors']}`
 
-export const API_ERROR_KEYS: Readonly<Record<string, ErrorKey>> = {
+const API_ERROR_KEYS: Readonly<Record<string, ErrorKey>> = {
   not_found: 'errors.notFound',
   unauthenticated: 'errors.unauthenticated',
   precondition_failed: 'errors.preconditionFailed',

@@ -10,39 +10,41 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    item: NavItem
-    activeId?: string
-    depth?: number
-    /**
-     * What to render each row as. A sidebar that navigates by URL wants a
-     * real link: only an anchor gives the middle click, the modifier click,
-     * the context menu and the status bar a user expects from navigation.
-     *
-     * Pass the router link component itself rather than a name, so this
-     * library does not depend on a router, and pass its `to` or `href`
-     * alongside — they fall through to the rendered element.
-     *
-     * Per item rather than per sidebar on purpose: one list can hold both a
-     * link that goes somewhere and a control that runs an action, and each
-     * should be the element it actually is.
-     */
-    as?: 'button' | 'a' | Component
-    /**
-     * The id of the item whose panel is open, if any. Only an item marked
-     * `opensFlyout` reads it, and only to report its own state.
-     */
-    flyoutId?: string | null
-  }>(),
-  { depth: 0, as: 'button', flyoutId: null },
-)
+const {
+  depth = 0,
+  as = 'button',
+  flyoutId = null,
+  item,
+} = defineProps<{
+  item: NavItem
+  activeId?: string
+  depth?: number
+  /**
+   * What to render each row as. A sidebar that navigates by URL wants a
+   * real link: only an anchor gives the middle click, the modifier click,
+   * the context menu and the status bar a user expects from navigation.
+   *
+   * Pass the router link component itself rather than a name, so this
+   * library does not depend on a router, and pass its `to` or `href`
+   * alongside — they fall through to the rendered element.
+   *
+   * Per item rather than per sidebar on purpose: one list can hold both a
+   * link that goes somewhere and a control that runs an action, and each
+   * should be the element it actually is.
+   */
+  as?: 'button' | 'a' | Component
+  /**
+   * The id of the item whose panel is open, if any. Only an item marked
+   * `opensFlyout` reads it, and only to report its own state.
+   */
+  flyoutId?: string | null
+}>()
 
 /*
  * The item's own choice wins over the list's default, so one sidebar can mix
  * links and buttons without the caller splitting it into two lists.
  */
-const tag = computed(() => props.item.as ?? props.as)
+const tag = computed(() => item.as ?? as)
 
 /*
  * Only a real button takes `type`, and only a real button is a parent whose
@@ -56,7 +58,7 @@ const emit = defineEmits<{ select: [item: NavItem] }>()
 // Named so the template can recurse into itself.
 defineOptions({ name: 'RlSidebarNavItem' })
 
-const expanded = ref(props.item.expanded ?? false)
+const expanded = ref(item.expanded ?? false)
 
 /*
  * A sidebar icon is the one name that comes from project config rather than
@@ -64,9 +66,9 @@ const expanded = ref(props.item.expanded ?? false)
  * than cast. An unrecognised name draws the fallback; `none` draws nothing and
  * keeps the column.
  */
-const icon = computed(() => resolveIcon(props.item.icon))
+const icon = computed(() => resolveIcon(item.icon))
 
-const hasChildren = computed(() => Boolean(props.item.children?.length))
+const hasChildren = computed(() => Boolean(item.children?.length))
 
 /*
  * An item that opens a panel reports whether that panel is the open one, so
@@ -75,7 +77,7 @@ const hasChildren = computed(() => Boolean(props.item.children?.length))
  * parent/child meaning or drops it entirely.
  */
 const flyoutExpanded = computed(() =>
-  props.item.opensFlyout ? props.flyoutId === props.item.id : undefined,
+  item.opensFlyout ? flyoutId === item.id : undefined,
 )
 
 /*
@@ -106,7 +108,7 @@ const rolledUpStatus = computed<NavItemStatus | undefined>(() => {
   /* An open parent shows nothing of its own: the children are saying it. */
   if (expanded.value || !hasChildren.value) return undefined
 
-  const found = collectStatuses(props.item.children ?? [])
+  const found = collectStatuses(item.children ?? [])
   if (!found.length) return undefined
 
   const worst = found.reduce((a, b) => (TONE_RANK[b.tone] > TONE_RANK[a.tone] ? b : a))
@@ -141,7 +143,7 @@ const rolledUpStatus = computed<NavItemStatus | undefined>(() => {
 })
 
 /* The item's own status wins; a parent only speaks for children it hides. */
-const shownStatus = computed(() => props.item.status ?? rolledUpStatus.value)
+const shownStatus = computed(() => item.status ?? rolledUpStatus.value)
 
 /*
  * A button row toggles its own children, because pressing it has no other
@@ -153,7 +155,7 @@ const togglesOnPress = computed(() => hasChildren.value && isButton.value)
 
 function onClick() {
   if (togglesOnPress.value) expanded.value = !expanded.value
-  emit('select', props.item)
+  emit('select', item)
 }
 
 function onCaretClick() {

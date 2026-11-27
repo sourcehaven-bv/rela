@@ -7,25 +7,22 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-withDefaults(
-  defineProps<{
-    title: string
-    statusLabel?: string
-    statusColor?: StatusColor
-    starred?: boolean
-    showStar?: boolean
-    showMenu?: boolean
-    /** Shows the drawer trigger on compact viewports. */
-    showNavToggle?: boolean
-  }>(),
-  {
-    statusColor: 'green',
-    starred: false,
-    showStar: true,
-    showMenu: true,
-    showNavToggle: true,
-  },
-)
+const {
+  statusColor = 'green',
+  starred = false,
+  showStar = true,
+  showMenu = true,
+  showNavToggle = true,
+} = defineProps<{
+  title: string
+  statusLabel?: string
+  statusColor?: StatusColor
+  starred?: boolean
+  showStar?: boolean
+  showMenu?: boolean
+  /** Shows the drawer trigger on compact viewports. */
+  showNavToggle?: boolean
+}>()
 
 const emit = defineEmits<{ toggleStar: []; menu: []; openNav: [] }>()
 </script>

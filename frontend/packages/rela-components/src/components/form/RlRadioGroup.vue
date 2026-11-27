@@ -20,39 +20,34 @@ import RlFieldShell from './RlFieldShell.vue'
 import RlText from '../common/RlText.vue'
 import type { SelectOption } from './types'
 
-const props = withDefaults(
-  defineProps<{
-    modelValue?: string
-    label: string
-    options: SelectOption[]
-    hint?: string
-    error?: string
-    required?: boolean
-    disabled?: boolean
-    labelHidden?: boolean
-    /**
-     * `card` draws each option in its own bordered box, for a choice that
-     * carries a description and deserves the weight. `plain` is a bare list,
-     * for short labels where the boxes would be louder than the question.
-     */
-    variant?: 'plain' | 'card'
-    /**
-     * Lays the options in a row. For two or three short labels only: a row
-     * of described options wraps into something no one can scan.
-     */
-    inline?: boolean
-  }>(),
-  {
-    modelValue: '',
-    required: false,
-    disabled: false,
-    labelHidden: false,
-    variant: 'plain',
-    inline: false,
-  },
-)
+const {
+  required = false,
+  disabled = false,
+  labelHidden = false,
+  variant = 'plain',
+  inline = false,
+} = defineProps<{
+  label: string
+  options: SelectOption[]
+  hint?: string
+  error?: string
+  required?: boolean
+  disabled?: boolean
+  labelHidden?: boolean
+  /**
+   * `card` draws each option in its own bordered box, for a choice that
+   * carries a description and deserves the weight. `plain` is a bare list,
+   * for short labels where the boxes would be louder than the question.
+   */
+  variant?: 'plain' | 'card'
+  /**
+   * Lays the options in a row. For two or three short labels only: a row
+   * of described options wraps into something no one can scan.
+   */
+  inline?: boolean
+}>()
 
-const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
+const model = defineModel<string>({ default: '' })
 
 /*
  * One name for the group, so the browser treats the radios as one control:
@@ -66,7 +61,7 @@ function optionId(value: string) {
 }
 
 function isDisabled(option: SelectOption) {
-  return props.disabled || option.disabled === true
+  return disabled || option.disabled === true
 }
 </script>
 
@@ -107,10 +102,10 @@ function isDisabled(option: SelectOption) {
             class="rl-radio__input"
             :name="name"
             :value="option.value"
-            :checked="modelValue === option.value"
+            :checked="model === option.value"
             :disabled="isDisabled(option)"
             :aria-describedby="option.description ? `${optionId(option.value)}-desc` : undefined"
-            @change="emit('update:modelValue', option.value)"
+            @change="model = option.value"
           />
 
           <span class="rl-radio__marker" aria-hidden="true" />

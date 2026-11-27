@@ -9,7 +9,7 @@ import RlIcon from '../common/RlIcon.vue'
 import RlText from '../common/RlText.vue'
 import type { MessageTone } from './types'
 
-withDefaults(defineProps<{ tone?: MessageTone; title?: string }>(), { tone: 'info' })
+const { tone = 'info' } = defineProps<{ tone?: MessageTone; title?: string }>()
 
 const icons = {
   info: 'info',

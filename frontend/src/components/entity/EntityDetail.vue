@@ -146,38 +146,41 @@ import { useQueryCache } from '@pinia/colada'
 import { useNextAction } from '@/composables/useNextAction'
 import { entityKeys } from '@/queries/entities'
 
-const props = withDefaults(
-  defineProps<{
-    entityType: string
-    entityId: string
-    /**
-     * Hide the header action toolbar (commands, Edit, History, Delete).
-     *
-     * For embedding this component as a READ surface — the calendar's preview
-     * modal — where the host supplies its own actions. Without it the modal
-     * shows two Edit buttons and a destructive Delete one click from a
-     * calendar chip, which is not what a preview is for.
-     *
-     * Suppresses the buttons only. Permission checks, keyboard handlers and
-     * every other behaviour are untouched, so this cannot widen what a
-     * principal may do.
-     */
-    hideActions?: boolean
-    /**
-     * Replace the route with the owner's page when this entity is owned
-     * (TKT-QO14GB). Off for an embedded preview, which shows the owned
-     * entity itself with a link to its owner instead of navigating the host.
-     */
-    followOwner?: boolean
-    /**
-     * Name the browser tab after this entity. Only the entity route sets it;
-     * a panel or preview leaves the tab to the page around it. Read at setup
-     * time and never reactive afterwards, like DynamicForm's `embedded`.
-     */
-    namesTab?: boolean
-  }>(),
-  { hideActions: false, followOwner: true, namesTab: false }
-)
+const {
+  entityType,
+  entityId,
+  hideActions = false,
+  followOwner = true,
+  namesTab = false,
+} = defineProps<{
+  entityType: string
+  entityId: string
+  /**
+   * Hide the header action toolbar (commands, Edit, History, Delete).
+   *
+   * For embedding this component as a READ surface — the calendar's preview
+   * modal — where the host supplies its own actions. Without it the modal
+   * shows two Edit buttons and a destructive Delete one click from a
+   * calendar chip, which is not what a preview is for.
+   *
+   * Suppresses the buttons only. Permission checks, keyboard handlers and
+   * every other behaviour are untouched, so this cannot widen what a
+   * principal may do.
+   */
+  hideActions?: boolean
+  /**
+   * Replace the route with the owner's page when this entity is owned
+   * (TKT-QO14GB). Off for an embedded preview, which shows the owned
+   * entity itself with a link to its owner instead of navigating the host.
+   */
+  followOwner?: boolean
+  /**
+   * Name the browser tab after this entity. Only the entity route sets it;
+   * a panel or preview leaves the tab to the page around it. Read at setup
+   * time and never reactive afterwards, like DynamicForm's `embedded`.
+   */
+  namesTab?: boolean
+}>()
 
 const emit = defineEmits<{
   /**
@@ -250,7 +253,7 @@ const servedFace = computed(() => (servedRef.value === null ? '' : refFace(serve
 // navigation, same-entity copies and the delete prompt's wording. Every
 // sub-resource of the row on screen (comments, documents, export, history,
 // commands, actions) takes servedRef instead (BUG-G2BASF, BUG-FYEEVX).
-const bareEntityId = computed(() => refBareId(props.entityId))
+const bareEntityId = computed(() => refBareId(entityId))
 
 // Scope navigation (prev/next within a list) and back affordance
 // (return_to / from precedence). Two parallel concerns: scope-nav walks
@@ -308,7 +311,7 @@ const viewWorld = ref<string | undefined>(undefined)
 // entity back on screen, and Edit then opened that entity (TKT-7LTLHW3). A
 // view read before the user's own save and answered after it put the older
 // body back, and the next save failed as a conflict (BUG-04V034W).
-const viewTarget = () => `${props.entityType}/${props.entityId}/${worldParam.value ?? ''}`
+const viewTarget = () => `${entityType}/${entityId}/${worldParam.value ?? ''}`
 
 // Reordering the rows of a section table shown in relation order.
 // A move changes one section's row order and nothing else on the page, so
@@ -318,14 +321,11 @@ const sectionReorder = useSectionReorder({
   view: viewData,
   reload: async () => {
     const world = worldParam.value
-    const outcome = await session.read(
-      (signal) => fetchView(props.entityType, props.entityId, world, signal),
-      {
-        quiet: true,
-        shows: viewRow,
-        land: (view) => applyView(view, world),
-      }
-    )
+    const outcome = await session.read((signal) => fetchView(entityType, entityId, world, signal), {
+      quiet: true,
+      shows: viewRow,
+      land: (view) => applyView(view, world),
+    })
     if (outcome.kind === 'failed') throw outcome.error
   },
 })
@@ -381,7 +381,7 @@ const historyTarget = computed<RouteLocationRaw | undefined>(() => {
   const address = servedRef.value
   if (address === null) return undefined
   return {
-    path: `/history/${props.entityType}/${address}`,
+    path: `/history/${entityType}/${address}`,
     query: worldParam.value ? { world: worldParam.value } : {},
   }
 })
@@ -402,16 +402,16 @@ const stickyOffsetStyle = computed(() =>
 )
 
 // Computed
-const typeDef = computed(() => schemaStore.getEntityType(props.entityType))
-const editFormId = computed(() => getEditFormId(schemaStore, props.entityType))
+const typeDef = computed(() => schemaStore.getEntityType(entityType))
+const editFormId = computed(() => getEditFormId(schemaStore, entityType))
 
 const entry = computed(() => viewData.value?.entry || null)
 const entryTitle = computed(() => {
-  if (!entry.value) return props.entityId
+  if (!entry.value) return entityId
   return entityDisplayTitle(entry.value)
 })
 // Until the entity loads the tab shows the app name alone, not the raw id.
-if (props.namesTab) usePageTitle(() => (entry.value ? entryTitle.value : undefined))
+if (namesTab) usePageTitle(() => (entry.value ? entryTitle.value : undefined))
 
 // inaccessibleByName maps each inaccessible field's name to its reason
 // (e.g. 'git-crypt'), letting consumers render per-property tooltips
@@ -456,7 +456,7 @@ const canDelete = computed(() => mayDelete.value)
 const duplicateFormId = computed(() =>
   isInaccessible.value || workspaceReadOnly.value
     ? undefined
-    : schemaStore.inlineCreateFormFor(props.entityType)
+    : schemaStore.inlineCreateFormFor(entityType)
 )
 const canDuplicate = computed(() => !!duplicateFormId.value && !!entry.value)
 const showDuplicateModal = ref(false)
@@ -512,9 +512,7 @@ const commentSectionIds = computed(
 // already returns the whole thread in one call.
 const comments = ref<Comment[]>([])
 
-const commentsEnabled = computed(
-  () => schemaStore.getEntityType(props.entityType)?.commentable === true
-)
+const commentsEnabled = computed(() => schemaStore.getEntityType(entityType)?.commentable === true)
 
 const commentsByProperty = computed(() => {
   const byRef = new Map<string, Comment[]>()
@@ -537,7 +535,7 @@ async function loadComments() {
   const address = servedRef.value
   if (!commentsEnabled.value || address === null) return
   try {
-    const list = await listComments(props.entityType, address)
+    const list = await listComments(entityType, address)
     // The thread of an entity the page has left must not land on the next.
     if (servedRef.value === address) comments.value = list
   } catch {
@@ -553,7 +551,7 @@ async function loadComments() {
 // comment writes raise no store event, so SSE never refreshes the board.
 const queryCache = useQueryCache()
 async function onCommentsChanged() {
-  void queryCache.invalidateQueries({ key: entityKeys.list(props.entityType) })
+  void queryCache.invalidateQueries({ key: entityKeys.list(entityType) })
   await loadComments()
 }
 
@@ -781,7 +779,7 @@ async function acceptSuggestion(c: Comment) {
     if (address === null) return
     // No timeout of its own: a request that never settles holds back every
     // later write of the session (useEntitySession.write).
-    const res = await runSessionWrite(() => acceptComment(props.entityType, address, c.id))
+    const res = await runSessionWrite(() => acceptComment(entityType, address, c.id))
     const view = viewData.value
     if (view?.entry && servedRef.value === address) {
       const nextSections = view.sections.map((s) =>
@@ -1115,7 +1113,7 @@ async function loadCommands() {
   const localAbort = commandsAbort
   try {
     loadedCommands.value = await getCommands(
-      { pageType: 'entity', entityType: props.entityType },
+      { pageType: 'entity', entityType: entityType },
       localAbort.signal
     )
   } catch (err) {
@@ -1229,12 +1227,12 @@ const presence = usePresence(() => {
   if (faced && !refFace(addr)) return null
   // No world: the server refuses a non-default one on _presence
   // (world_unsupported), and the address already names the face.
-  return { type: props.entityType, address: addr }
+  return { type: entityType, address: addr }
 })
 
 useLiveSubscription(
   'entity-detail',
-  () => liveViewPath(props.entityType, props.entityId, worldParam.value),
+  () => liveViewPath(entityType, entityId, worldParam.value),
   () => session.invalidate()
 )
 
@@ -1242,7 +1240,7 @@ useLiveSubscription(
 // not land while autosave is busy (the session reloads once it is idle).
 async function refreshView() {
   const world = worldParam.value
-  await session.read((signal) => fetchView(props.entityType, props.entityId, world, signal), {
+  await session.read((signal) => fetchView(entityType, entityId, world, signal), {
     background: true,
     quiet: true,
     shows: viewRow,
@@ -1348,7 +1346,7 @@ async function loadView(opts: { background?: boolean } = {}) {
     const fetchedWorld = worldParam.value
     let sameRow = false
     const outcome = await session.read(
-      (signal) => fetchView(props.entityType, props.entityId, fetchedWorld, signal),
+      (signal) => fetchView(entityType, entityId, fetchedWorld, signal),
       {
         background: opts.background,
         prepare: async (view) => {
@@ -1363,8 +1361,8 @@ async function loadView(opts: { background?: boolean } = {}) {
           const moved = view?.entry
           if (
             moved &&
-            props.followOwner &&
-            (moved.type !== props.entityType || moved.id !== refBareId(props.entityId))
+            followOwner &&
+            (moved.type !== entityType || moved.id !== refBareId(entityId))
           ) {
             // A successor of the same type stays in the list it was opened
             // from, so its whole query carries over. One of another type is
@@ -1372,7 +1370,7 @@ async function loadView(opts: { background?: boolean } = {}) {
             const world = route.query.world
             await router.replace({
               path: entityDetailHref(moved),
-              query: moved.type === props.entityType ? route.query : world ? { world } : {},
+              query: moved.type === entityType ? route.query : world ? { world } : {},
               hash: route.hash,
             })
             return false
@@ -1381,7 +1379,7 @@ async function loadView(opts: { background?: boolean } = {}) {
           // rendering anything, so the page does not flash this entity's own
           // view.
           const owner = view?.entry?._owner
-          if (owner && props.followOwner) {
+          if (owner && followOwner) {
             // Only the world carries over: a list scope from the owned
             // entity's list would give the owner's page prev/next outside
             // that set.
@@ -1389,7 +1387,7 @@ async function loadView(opts: { background?: boolean } = {}) {
             await router.replace({
               path: entityDetailHref(owner),
               query: world ? { world } : {},
-              hash: `#${encodeURIComponent(props.entityId)}`,
+              hash: `#${encodeURIComponent(entityId)}`,
             })
             return false
           }
@@ -1430,7 +1428,7 @@ async function loadView(opts: { background?: boolean } = {}) {
 // entityRef(entry) here because narrowing on `entry` does not reach into an
 // inline arrow function.
 function exportUrlFor(address: string): (transform: string) => string {
-  return (transform) => entityExportUrl(props.entityType, address, transform, worldParam.value)
+  return (transform) => entityExportUrl(entityType, address, transform, worldParam.value)
 }
 
 // Actions
@@ -1458,9 +1456,7 @@ function anchorId(sectionId: string, id: string): string | undefined {
 // owned entities along. Said in the confirm without a count, which would
 // need a read.
 const ownsEntities = computed(() =>
-  [...schemaStore.relationTypes.values()].some(
-    (rt) => rt.owning && rt.from.includes(props.entityType)
-  )
+  [...schemaStore.relationTypes.values()].some((rt) => rt.owning && rt.from.includes(entityType))
 )
 
 async function requestDelete() {
@@ -1486,7 +1482,7 @@ async function requestDelete() {
         // canonical CRUD path; keep using it.
         const { useEntitiesStore } = await import('@/stores')
         const entitiesStore = useEntitiesStore()
-        await entitiesStore.remove(props.entityType, address)
+        await entitiesStore.remove(entityType, address)
       },
       t('entity.delete.failed'),
       uiStore
@@ -1554,7 +1550,7 @@ const faceOptions = computed<Face[] | undefined>(() => entry.value?._faces)
 // surface (`hideActions`) gets no toggle: a preview must not navigate away
 // from its host, and the detail panel takes the faces as actions.
 const faceToggle = computed(() =>
-  faceOptions.value && !props.hideActions
+  faceOptions.value && !hideActions
     ? faceToggleOptions(
         bareEntityId.value,
         servedFace.value,
@@ -1584,7 +1580,7 @@ function goToFace(f: Face) {
   // A bare address names the implicit face of a faceless type, which every
   // world serves, so the world never has to change.
   const query = { ...route.query }
-  router.push({ path: `/entity/${props.entityType}/${ref}`, query })
+  router.push({ path: `/entity/${entityType}/${ref}`, query })
 }
 
 const copyBusy = ref(false)
@@ -1650,7 +1646,7 @@ async function runCopy(offer: CopyOffer) {
 // and "written" would be this code inventing one.
 async function landAfterCopy(offer: CopyOffer, subject: string, writtenFace: string) {
   const landing = offer.onSuccess?.landing
-  const path = `/entity/${props.entityType}/${subject}`
+  const path = `/entity/${entityType}/${subject}`
   const toFace = (face: string) =>
     router.push({ path: `${path}@${face}`, query: { ...route.query } })
   switch (landing?.mode ?? 'written') {
@@ -1706,7 +1702,7 @@ function faceLabelOf(declared: string): string {
 // A face's display label by its coordinate, for the copy result, which
 // reports what it wrote.
 function faceLabel(stored: string): string {
-  return schemaStore.faceLabel(props.entityType, stored) || stored
+  return schemaStore.faceLabel(entityType, stored) || stored
 }
 
 const textVars = computed<WorldTextVars>(() => ({
@@ -1782,7 +1778,7 @@ const absentNote = computed<string>(() => {
 // a schema reload cannot push the same hop twice.
 const redirectVisited = new Set<string>()
 watch(
-  () => props.entityId,
+  () => entityId,
   () => redirectVisited.clear()
 )
 watch([viewData, worldInfo], ([, info]) => {
@@ -1821,7 +1817,7 @@ const historyOffered = computed(
 )
 const hasHistory = useHasHistory({
   enabled: () => historyOffered.value,
-  entityType: () => props.entityType,
+  entityType: () => entityType,
   address: () => servedRef.value,
   world: () => worldParam.value,
 })
@@ -1911,7 +1907,7 @@ const actions = computed<EntityAction[]>(() => {
       group: 'export',
       icon: 'download',
       // What is on screen (BUG-PLZDPR): the served face, in the page's world.
-      href: entityExportUrl(props.entityType, exportAddress, format.name, worldParam.value),
+      href: entityExportUrl(entityType, exportAddress, format.name, worldParam.value),
     })
   }
   out.push(...pileActions.actions.value)
@@ -1971,7 +1967,7 @@ watch(actions, (list) => emit('actions', list), { immediate: true })
 
 function backTargetAfterDelete(): string {
   if (backTarget.value) return backTarget.value.to
-  const listId = schemaStore.findListIdForEntityType(props.entityType)
+  const listId = schemaStore.findListIdForEntityType(entityType)
   if (listId) return `/list/${listId}`
   return '/'
 }
@@ -2420,7 +2416,7 @@ const { on: onServerEvent, off: offServerEvent } = useEvents()
 let entityChangedTimer: ReturnType<typeof setTimeout> | undefined
 let entityChangedSince: number | undefined
 function onEntityChanged(data: EntityEventData) {
-  if (data.type && data.type !== props.entityType) return
+  if (data.type && data.type !== entityType) return
   const now = Date.now()
   entityChangedSince ??= now
   const delay = Math.max(
@@ -2444,7 +2440,7 @@ onBeforeUnmount(() => {
 // target, so the flush cannot reach the row loaded next. A world change can
 // show another face of the same entity, which is another row.
 watch(
-  () => [props.entityType, props.entityId, worldParam.value],
+  () => [entityType, entityId, worldParam.value],
   () => {
     void contentAutoSave.value?.commitImmediately()
     loadView()
@@ -2717,7 +2713,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
         </div>
         <!-- Desktop actions -->
         <div
-          v-if="!props.hideActions"
+          v-if="!hideActions"
           ref="headerActionsEl"
           class="header-actions desktop-actions"
           :class="{ 'desktop-actions--compact': compactActions }"
@@ -2819,7 +2815,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
         </div>
 
         <!-- Mobile actions: Edit primary, delete icon, overflow menu for commands -->
-        <div v-if="!props.hideActions" class="header-actions mobile-actions">
+        <div v-if="!hideActions" class="header-actions mobile-actions">
           <RlButton v-if="editTarget" :as="RouterLink" :to="editTarget" variant="secondary">
             {{ t('common.edit') }}
           </RlButton>

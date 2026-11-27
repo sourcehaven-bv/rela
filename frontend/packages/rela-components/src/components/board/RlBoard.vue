@@ -22,75 +22,73 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    sections: Section<T>[]
-    showAddSection?: boolean
-    /** Id of the item whose detail is open, marked in the board. */
-    selectedId?: string
-    /** Label for each column's add control, such as `Add task`. */
-    addLabel?: string
-    /**
-     * Whether each column offers its add control. A board whose items have no
-     * create form, or a user without permission to create one, must not be
-     * offered it.
-     */
-    showAdd?: boolean
-    /**
-     * Whether a given card may be moved, answered per item.
-     *
-     * Absent, the board has no drag at all. That is the default because a
-     * board that cannot save a move should not invite one, and because every
-     * caller that predates this keeps the behaviour it had.
-     */
-    canMove?: (item: T) => boolean
-    /**
-     * What a column with no cards says. Set once for the board; columns with
-     * cards ignore it. See `RlBoardColumn` for why an empty column needs it.
-     */
-    emptyLabel?: string
-    /** A line under `emptyLabel`, for what would put a card in the column. */
-    emptyDescription?: string
-    /**
-     * Whether a drop onto a card reports where it landed, for a board whose
-     * card order the reader sets by hand. With it, `move` carries `at`, and a
-     * card dropped among the cards of its own column is reported too.
-     *
-     * The keyboard move still picks a column only.
-     */
-    reorder?: boolean
-    /**
-     * Whether each column heading offers a collapse control. The board does
-     * not fold the column itself: it emits `collapseSection`, and the caller
-     * sets `collapsed` on the section, as it does for `expandSection`.
-     */
-    collapsible?: boolean
-    /**
-     * Whether a card dropped on the middle of another card groups the two.
-     * The drop is reported as `move` with `at.placement` `onto`; what a group
-     * is, and whether it is made, is the caller's.
-     */
-    group?: boolean
-    /**
-     * Which columns can be dragged by a handle to another place among the
-     * movable columns, answered per section. Absent, no column moves. The
-     * board reports the drop as `moveSection` and does not reorder itself.
-     */
-    sectionsMovable?: (section: Section<T>) => boolean
-  }>(),
-  {
-    reorder: false,
-    group: false,
-    sectionsMovable: undefined,
-    collapsible: false,
-    showAddSection: true,
-    addLabel: undefined,
-    showAdd: true,
-    canMove: undefined,
-    emptyLabel: undefined,
-    emptyDescription: undefined,
-  }
-)
+const {
+  sections,
+  showAddSection = true,
+  addLabel,
+  showAdd = true,
+  canMove,
+  emptyLabel,
+  emptyDescription,
+  reorder = false,
+  collapsible = false,
+  group = false,
+  sectionsMovable,
+} = defineProps<{
+  sections: Section<T>[]
+  showAddSection?: boolean
+  /** Id of the item whose detail is open, marked in the board. */
+  selectedId?: string
+  /** Label for each column's add control, such as `Add task`. */
+  addLabel?: string
+  /**
+   * Whether each column offers its add control. A board whose items have no
+   * create form, or a user without permission to create one, must not be
+   * offered it.
+   */
+  showAdd?: boolean
+  /**
+   * Whether a given card may be moved, answered per item.
+   *
+   * Absent, the board has no drag at all. That is the default because a
+   * board that cannot save a move should not invite one, and because every
+   * caller that predates this keeps the behaviour it had.
+   */
+  canMove?: (item: T) => boolean
+  /**
+   * What a column with no cards says. Set once for the board; columns with
+   * cards ignore it. See `RlBoardColumn` for why an empty column needs it.
+   */
+  emptyLabel?: string
+  /** A line under `emptyLabel`, for what would put a card in the column. */
+  emptyDescription?: string
+  /**
+   * Whether a drop onto a card reports where it landed, for a board whose
+   * card order the reader sets by hand. With it, `move` carries `at`, and a
+   * card dropped among the cards of its own column is reported too.
+   *
+   * The keyboard move still picks a column only.
+   */
+  reorder?: boolean
+  /**
+   * Whether each column heading offers a collapse control. The board does
+   * not fold the column itself: it emits `collapseSection`, and the caller
+   * sets `collapsed` on the section, as it does for `expandSection`.
+   */
+  collapsible?: boolean
+  /**
+   * Whether a card dropped on the middle of another card groups the two.
+   * The drop is reported as `move` with `at.placement` `onto`; what a group
+   * is, and whether it is made, is the caller's.
+   */
+  group?: boolean
+  /**
+   * Which columns can be dragged by a handle to another place among the
+   * movable columns, answered per section. Absent, no column moves. The
+   * board reports the drop as `moveSection` and does not reorder itself.
+   */
+  sectionsMovable?: (section: Section<T>) => boolean
+}>()
 
 const emit = defineEmits<{
   add: [section: Section<T>]
@@ -112,7 +110,7 @@ const element = ref<HTMLElement>()
 useBoardAutoScroll(element)
 
 const toggleFocus = useSectionToggleFocus(element, () =>
-  props.sections.map((section) => `${section.id}:${!!section.collapsed}`).join('|')
+  sections.map((section) => `${section.id}:${!!section.collapsed}`).join('|')
 )
 
 function onExpand(section: Section<T>) {
@@ -127,7 +125,7 @@ function onCollapse(section: Section<T>) {
 
 /** Finds the dragged item, which the drag payload carries only by id. */
 function itemById(id: string) {
-  for (const section of props.sections) {
+  for (const section of sections) {
     const found = section.items.find((item) => item.id === id)
     if (found) return found
   }
@@ -161,7 +159,7 @@ const {
   onKeydown,
 } = useBoardKeyboardMove<T>({
   /* A collapsed column is not a place a card can be put down. */
-  targets: () => props.sections.filter((section) => !section.collapsed),
+  targets: () => sections.filter((section) => !section.collapsed),
   onMove: (item, to) => emit('move', { item, to }),
 })
 

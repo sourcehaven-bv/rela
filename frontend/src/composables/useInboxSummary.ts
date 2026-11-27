@@ -55,7 +55,7 @@ async function readSummary(): Promise<InboxSummaryState> {
 }
 
 /** The counts of an inbox first page read with default parameters. */
-export function summaryOfInbox(inbox: Inbox): InboxSummary {
+function summaryOfInbox(inbox: Inbox): InboxSummary {
   return {
     waiting: inbox.count ?? 0,
     waiting_truncated: inbox.truncated ?? false,

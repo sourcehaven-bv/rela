@@ -22,7 +22,7 @@ import type { Entity } from '@/types'
  *   metamodel's `copies:` map), which is not confidential, so it arrives
  *   ungated.
  */
-export interface VersionOrigin {
+interface VersionOrigin {
   /** The mechanism, e.g. 'copy'. Always present when the object is. */
   kind: string
   /** The source coordinate as `ID@face` (`ID` for the default face), when the reader may see it. */

@@ -15,16 +15,13 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    comments: AnchoredComment[]
-    /** Show which anchor each comment is on. Off inside a single-anchor popover. */
-    showAnchor?: boolean
-    /** Compact rows, for a popover rather than a full-width panel. */
-    dense?: boolean
-  }>(),
-  { showAnchor: false, dense: false },
-)
+const { comments, showAnchor = false, dense = false } = defineProps<{
+  comments: AnchoredComment[]
+  /** Show which anchor each comment is on. Off inside a single-anchor popover. */
+  showAnchor?: boolean
+  /** Compact rows, for a popover rather than a full-width panel. */
+  dense?: boolean
+}>()
 
 const emit = defineEmits<{
   edit: [id: string, body: string]
@@ -41,7 +38,7 @@ const draft = ref('')
  * oldest to newest.
  */
 const ordered = computed(() =>
-  [...props.comments].sort((a, b) => Number(a.resolved ?? false) - Number(b.resolved ?? false)),
+  [...comments].sort((a, b) => Number(a.resolved ?? false) - Number(b.resolved ?? false)),
 )
 
 function anchorLabel(comment: AnchoredComment): string {

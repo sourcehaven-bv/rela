@@ -25,37 +25,30 @@
 import { computed } from 'vue'
 import { hasIcon, resolveIcon, NO_ICON } from '@/utils/icons'
 
-const props = withDefaults(
-  defineProps<{
-    /** The icon name from the sidebar payload. */
-    name?: string | null
-    /** Whether the sidebar is collapsed to icons only. */
-    collapsed?: boolean
-    /** The glyph to show for a NO_ICON entry while collapsed. Falls back to the
-     * generic document icon when the item's kind derived nothing. */
-    fallback?: string | null
-  }>(),
-  { name: null, collapsed: false, fallback: null },
-)
+const {
+  name = null,
+  collapsed = false,
+  fallback = null,
+} = defineProps<{
+  /** The icon name from the sidebar payload. */
+  name?: string | null
+  /** Whether the sidebar is collapsed to icons only. */
+  collapsed?: boolean
+  /** The glyph to show for a NO_ICON entry while collapsed. Falls back to the
+   * generic document icon when the item's kind derived nothing. */
+  fallback?: string | null
+}>()
 
 /** showGlyph is false only for a deliberate NO_ICON in an expanded sidebar. */
-const showGlyph = computed(() => hasIcon(props.name) || props.collapsed)
+const showGlyph = computed(() => hasIcon(name) || collapsed)
 
 /** Collapsed NO_ICON rows borrow the kind-derived glyph; everything else uses
  * the name as given. */
-const glyph = computed(() =>
-  resolveIcon(props.name === NO_ICON ? props.fallback : props.name),
-)
+const glyph = computed(() => resolveIcon(name === NO_ICON ? fallback : name))
 </script>
 
 <template>
-  <component
-    :is="glyph"
-    v-if="showGlyph"
-    class="nav-icon"
-    :size="18"
-    aria-hidden="true"
-  />
+  <component :is="glyph" v-if="showGlyph" class="nav-icon" :size="18" aria-hidden="true" />
   <span v-else class="nav-icon-spacer" aria-hidden="true" />
 </template>
 

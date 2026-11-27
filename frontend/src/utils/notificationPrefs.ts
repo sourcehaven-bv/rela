@@ -133,7 +133,7 @@ export function loadPrefs(scope: string): NotificationPrefs {
  * Stores the prefs. Turning notifications on drops the seen set, so the next
  * read is a silent baseline: what is already in the inbox does not notify.
  */
-export function savePrefs(scope: string, prefs: NotificationPrefs): boolean {
+function savePrefs(scope: string, prefs: NotificationPrefs): boolean {
   if (prefs.enabled && !loadPrefs(scope).enabled) clearSeen(scope)
   return writeJSON(prefsKey(scope), prefs)
 }

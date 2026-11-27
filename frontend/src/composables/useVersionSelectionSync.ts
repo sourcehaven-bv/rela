@@ -36,7 +36,7 @@ import { useRoute, useRouter } from 'vue-router'
 export type Side = number | 'current'
 
 /** The sentinel's URL spelling, shared by both views. */
-export const CURRENT = 'current'
+const CURRENT = 'current'
 
 export interface VersionSelection {
   base: Side
@@ -101,7 +101,7 @@ export function serializeSide(s: Side): string {
  * caller — a numeric STRING would match no `<option>` and silently blank the
  * control, since version options bind numbers while the sentinel binds a string.
  */
-export function coerceSide(s: Side): Side {
+function coerceSide(s: Side): Side {
   return s === CURRENT ? CURRENT : Number(s)
 }
 

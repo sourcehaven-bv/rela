@@ -7,7 +7,7 @@ import RlCallout from 'rela-components/components/feedback/RlCallout.vue'
  * changed in the project's files by someone who can run code there, never in
  * the browser.
  */
-withDefaults(defineProps<{ title?: string }>(), { title: 'Shown, not editable here' })
+const { title = 'Shown, not editable here' } = defineProps<{ title?: string }>()
 </script>
 
 <template>

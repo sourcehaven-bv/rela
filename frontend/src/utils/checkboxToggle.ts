@@ -14,7 +14,7 @@
 //   - then exactly one space before the item text (`- [ ]nospace` is NOT a
 //     task item per GFM)
 
-export interface CheckboxLine {
+interface CheckboxLine {
   /** Index into the original line where `[` appears. */
   bracketPos: number
   /** Index into the original line where the state char (space/x/X) appears. */
@@ -28,7 +28,7 @@ export interface CheckboxLine {
  * item. The returned offsets index into the *original* line (not the
  * trimmed view), so callers can mutate the source without losing indentation.
  */
-export function parseCheckboxLine(line: string): CheckboxLine | null {
+function parseCheckboxLine(line: string): CheckboxLine | null {
   // Skip leading whitespace.
   let i = 0
   while (i < line.length && (line[i] === ' ' || line[i] === '\t')) i++

@@ -37,7 +37,7 @@ export function sameMeaning(a: string, b: string): boolean {
 }
 
 /** What `guardWriteBack` decided, so a caller can report or count it. */
-export type WriteBackVerdict =
+type WriteBackVerdict =
   /** The editor's output is byte-identical to what it was given. */
   | 'unchanged'
   /** The user edited the body; the editor's output is what to save. */

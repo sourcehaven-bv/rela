@@ -11,32 +11,25 @@ import RlBoard from '../components/board/RlBoard.vue'
 import RlTaskCard from '../components/board/RlTaskCard.vue'
 import type { BoardDropPosition, BoardSectionDropPosition } from '../composables/useBoardDnd'
 
-withDefaults(
-  defineProps<{
-    sections: Section<Task>[]
-    showAddSection?: boolean
-    selectedId?: string
-    showAdd?: boolean
-    canMove?: (item: Task) => boolean
-    emptyLabel?: string
-    emptyDescription?: string
-    reorder?: boolean
-    collapsible?: boolean
-    group?: boolean
-    sectionsMovable?: (section: Section<Task>) => boolean
-  }>(),
-  {
-    reorder: false,
-    collapsible: false,
-    group: false,
-    sectionsMovable: undefined,
-    showAddSection: true,
-    showAdd: true,
-    canMove: undefined,
-    emptyLabel: undefined,
-    emptyDescription: undefined,
-  },
-)
+const {
+  reorder = false,
+  collapsible = false,
+  group = false,
+  showAddSection = true,
+  showAdd = true,
+} = defineProps<{
+  sections: Section<Task>[]
+  showAddSection?: boolean
+  selectedId?: string
+  showAdd?: boolean
+  canMove?: (item: Task) => boolean
+  emptyLabel?: string
+  emptyDescription?: string
+  reorder?: boolean
+  collapsible?: boolean
+  group?: boolean
+  sectionsMovable?: (section: Section<Task>) => boolean
+}>()
 
 const emit = defineEmits<{
   add: [section: Section<Task>]

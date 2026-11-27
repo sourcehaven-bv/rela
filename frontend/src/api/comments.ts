@@ -11,7 +11,7 @@ import type { Warning } from '@/types/entity'
  * server-side on every read; when that fails it reports as detached rather than
  * silently pointing somewhere wrong.
  */
-export type CommentAnchorKind = 'property' | 'section' | 'text'
+type CommentAnchorKind = 'property' | 'section' | 'text'
 
 export interface CommentAnchor {
   kind: CommentAnchorKind

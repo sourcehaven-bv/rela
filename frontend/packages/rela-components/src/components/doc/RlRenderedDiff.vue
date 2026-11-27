@@ -9,21 +9,18 @@ import { collapseUnchanged, diffBlocks, type DiffBlock } from './renderedDiff'
  * runs of unchanged blocks fold into an expander, and a stepper walks the
  * changes one at a time.
  */
-const props = withDefaults(
-  defineProps<{
-    before: string
-    after: string
-    /** Unchanged blocks kept visible on each side of a change. */
-    context?: number
-  }>(),
-  { context: 1 },
-)
+const { before, after, context = 1 } = defineProps<{
+  before: string
+  after: string
+  /** Unchanged blocks kept visible on each side of a change. */
+  context?: number
+}>()
 
 const messages = useMessages()
 const root = ref<HTMLElement | null>(null)
 
-const blocks = computed(() => diffBlocks(props.before, props.after))
-const segments = computed(() => collapseUnchanged(blocks.value, props.context))
+const blocks = computed(() => diffBlocks(before, after))
+const segments = computed(() => collapseUnchanged(blocks.value, context))
 const expanded = ref(new Set<number>())
 
 /** Adjacent changed blocks (a removal next to its addition) are one change. */
@@ -44,7 +41,7 @@ const groupOf = computed(() => {
 const total = computed(() => new Set(groupOf.value.values()).size)
 const current = ref(0)
 const stepped = ref(false)
-watch([blocks, () => props.context], () => {
+watch([blocks, () => context], () => {
   current.value = 0
   stepped.value = false
   expanded.value = new Set()

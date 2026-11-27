@@ -16,39 +16,37 @@ import RlHeading from '../common/RlHeading.vue'
 import RlSwimlaneColumn from './RlSwimlaneColumn.vue'
 import type { BoardDragData } from '../../composables/useBoardDnd'
 
-const props = withDefaults(
-  defineProps<{
-    lane: Swimlane<T>
-    /**
-     * The board's columns, in order, so every lane renders the same cells in
-     * the same places.
-     *
-     * A lane with no section for a column still gets a cell, empty; without
-     * it the lane would close the gap and every column to its right would sit
-     * under the wrong heading. Absent, the lane's own sections are the
-     * columns, which is what a lane rendered on its own has.
-     */
-    columns?: Pick<Section<T>, 'id' | 'title' | 'color' | 'icon' | 'collapsed'>[]
-    addLabel?: string
-    selectedId?: string
-    /** Whether each column offers an add control for this lane. */
-    showAdd?: boolean
-    /** Whether a given card may be moved. See `RlSwimlaneBoard`. */
-    canMove?: (item: T) => boolean
-    /** The card the keyboard has picked up, if it is in this lane. */
-    grabbedId?: string
-    /** The cell a keyboard move is aimed at, when it is in this lane. */
-    keyboardTargetId?: string
-  }>(),
-  {
-    columns: undefined,
-    addLabel: undefined,
-    showAdd: true,
-    canMove: undefined,
-    grabbedId: undefined,
-    keyboardTargetId: undefined,
-  }
-)
+const {
+  lane,
+  columns,
+  addLabel,
+  showAdd = true,
+  canMove,
+  grabbedId,
+  keyboardTargetId,
+} = defineProps<{
+  lane: Swimlane<T>
+  /**
+   * The board's columns, in order, so every lane renders the same cells in
+   * the same places.
+   *
+   * A lane with no section for a column still gets a cell, empty; without
+   * it the lane would close the gap and every column to its right would sit
+   * under the wrong heading. Absent, the lane's own sections are the
+   * columns, which is what a lane rendered on its own has.
+   */
+  columns?: Pick<Section<T>, 'id' | 'title' | 'color' | 'icon' | 'collapsed'>[]
+  addLabel?: string
+  selectedId?: string
+  /** Whether each column offers an add control for this lane. */
+  showAdd?: boolean
+  /** Whether a given card may be moved. See `RlSwimlaneBoard`. */
+  canMove?: (item: T) => boolean
+  /** The card the keyboard has picked up, if it is in this lane. */
+  grabbedId?: string
+  /** The cell a keyboard move is aimed at, when it is in this lane. */
+  keyboardTargetId?: string
+}>()
 
 const emit = defineEmits<{
   add: [payload: { lane: Swimlane<T>; section: Section<T> }]
@@ -66,15 +64,15 @@ defineSlots<{
 }>()
 
 const total = computed(
-  () => props.lane.count ?? props.lane.sections.reduce((n, s) => n + s.items.length, 0)
+  () => lane.count ?? lane.sections.reduce((n, s) => n + s.items.length, 0)
 )
 
 /** One cell per board column, in the board's order, empty where the lane has none. */
 const cells = computed<Section<T>[]>(() => {
-  if (!props.columns) return props.lane.sections
-  return props.columns.map((column) => ({
+  if (!columns) return lane.sections
+  return columns.map((column) => ({
     ...column,
-    ...(props.lane.sections.find((section) => section.id === column.id) ?? { items: [] }),
+    ...(lane.sections.find((section) => section.id === column.id) ?? { items: [] }),
     /* The board owns the collapse, so a lane's own flag cannot contradict it. */
     collapsed: column.collapsed,
   }))

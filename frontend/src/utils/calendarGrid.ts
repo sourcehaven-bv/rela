@@ -210,7 +210,7 @@ export function windowBounds(
 }
 
 /** Midnight of a day in the display timezone, as a UTC instant. */
-export function startOfDayISO(d: CalendarDay, tz: string): string {
+function startOfDayISO(d: CalendarDay, tz: string): string {
   const local = new TZDate(d.year, d.month - 1, d.day, 0, 0, 0, 0, tz)
   return new Date(local.getTime()).toISOString()
 }

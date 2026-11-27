@@ -29,100 +29,99 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    section: Section<T>
-    columns?: TableColumn[]
-    showHeaderRow?: boolean
-    addLabel?: string
-    /** Id of the item whose detail is open, marked in the list. */
-    selectedId?: string
-    /** Id of the item the keyboard cursor is on. See `RlTable`. */
-    cursorId?: string
-    /**
-     * Rows to show before the rest are held behind a "show more" control.
-     * Zero shows every row.
-     *
-     * A backlog runs to hundreds of rows, and a section that long buries the
-     * sections under it: reaching the next heading means scrolling past every
-     * row of this one. Capping the section keeps all the headings within
-     * reach, and the count on the control says what is being held back.
-     */
-    pageSize?: number
-    /** Header for the flexible first column. */
-    nameLabel?: string
-    /**
-     * The first column as a column, when it needs to sort. Its `header`
-     * overrides `nameLabel`; `key` is what `sort` and `sort-click` carry.
-     */
-    nameColumn?: TableColumn
-    /**
-     * Whether the section's own header shows. A flat list is one unnamed
-     * section, where a heading, a count, a collapse toggle and an "Add to"
-     * button all describe a grouping the caller does not have.
-     */
-    showSectionHeader?: boolean
-    /**
-     * Whether the section offers a way to add a row. Off hides both controls
-     * at once: the "Add to" button in the header and the one at the foot of
-     * the list are the same affordance in two places, so a list that cannot
-     * take a new row must not show either.
-     *
-     * For a list that refuses creation, whether because of a permission or
-     * because the list has no form to create with. A control that emits an
-     * event nothing can act on is worse than no control.
-     */
-    showAdd?: boolean
-    /**
-     * What to say when the section has no rows. Without it an empty section
-     * draws its header and then nothing, which reads as a list that failed
-     * to load rather than one that is genuinely empty.
-     *
-     * A section with rows ignores it, so it can be set once for every
-     * section rather than conditionally.
-     */
-    emptyLabel?: string
-    /** A line under `emptyLabel`, for what would put a row here. */
-    emptyDescription?: string
-    /** Current sort, primary key first. */
-    sort?: TableSort[]
-    /** Ids of the checked rows. Absent means the table has no selection. */
-    selectedIds?: Set<string> | string[]
-    /** Which columns are showing. Absent from the record means visible. */
-    columnVisibility?: ColumnVisibility
-    /** What the row does once the table is too narrow. See `RlTable`. */
-    compact?: TableCompact
-    /**
-     * Extra attributes per row, such as a `data-` hook for tests. The caller
-     * never renders the row itself, so this is the only place to reach it.
-     */
-    rowAttrs?: (item: T) => Record<string, unknown>
-    /** Which rows carry a move handle. See `RlTable`. */
-    reorderable?: (item: T) => boolean
-    /** Which table the rows belong to, so drops stay inside it. */
-    reorderGroup?: string
-  }>(),
-  {
-    columns: () => [],
-    showHeaderRow: true,
-    addLabel: undefined,
-    reorderable: undefined,
-    reorderGroup: '',
-    cursorId: undefined,
-    pageSize: 0,
-    nameLabel: undefined,
-    nameColumn: undefined,
-    showSectionHeader: true,
-    showAdd: true,
-    emptyLabel: undefined,
-    emptyDescription: undefined,
-    sort: () => [],
-    selectedIds: undefined,
-    columnVisibility: () => ({}),
-    rowAttrs: undefined,
-    compact: 'stack',
-  },
-)
+const {
+  section,
+  columns = [],
+  showHeaderRow = true,
+  addLabel,
+  selectedId,
+  cursorId,
+  pageSize = 0,
+  nameLabel,
+  nameColumn,
+  showSectionHeader = true,
+  showAdd = true,
+  emptyLabel,
+  emptyDescription,
+  sort = [],
+  selectedIds,
+  columnVisibility = {},
+  compact = 'stack',
+  rowAttrs,
+  reorderable,
+  reorderGroup = '',
+} = defineProps<{
+  section: Section<T>
+  columns?: TableColumn[]
+  showHeaderRow?: boolean
+  addLabel?: string
+  /** Id of the item whose detail is open, marked in the list. */
+  selectedId?: string
+  /** Id of the item the keyboard cursor is on. See `RlTable`. */
+  cursorId?: string
+  /**
+   * Rows to show before the rest are held behind a "show more" control.
+   * Zero shows every row.
+   *
+   * A backlog runs to hundreds of rows, and a section that long buries the
+   * sections under it: reaching the next heading means scrolling past every
+   * row of this one. Capping the section keeps all the headings within
+   * reach, and the count on the control says what is being held back.
+   */
+  pageSize?: number
+  /** Header for the flexible first column. */
+  nameLabel?: string
+  /**
+   * The first column as a column, when it needs to sort. Its `header`
+   * overrides `nameLabel`; `key` is what `sort` and `sort-click` carry.
+   */
+  nameColumn?: TableColumn
+  /**
+   * Whether the section's own header shows. A flat list is one unnamed
+   * section, where a heading, a count, a collapse toggle and an "Add to"
+   * button all describe a grouping the caller does not have.
+   */
+  showSectionHeader?: boolean
+  /**
+   * Whether the section offers a way to add a row. Off hides both controls
+   * at once: the "Add to" button in the header and the one at the foot of
+   * the list are the same affordance in two places, so a list that cannot
+   * take a new row must not show either.
+   *
+   * For a list that refuses creation, whether because of a permission or
+   * because the list has no form to create with. A control that emits an
+   * event nothing can act on is worse than no control.
+   */
+  showAdd?: boolean
+  /**
+   * What to say when the section has no rows. Without it an empty section
+   * draws its header and then nothing, which reads as a list that failed
+   * to load rather than one that is genuinely empty.
+   *
+   * A section with rows ignores it, so it can be set once for every
+   * section rather than conditionally.
+   */
+  emptyLabel?: string
+  /** A line under `emptyLabel`, for what would put a row here. */
+  emptyDescription?: string
+  /** Current sort, primary key first. */
+  sort?: TableSort[]
+  /** Ids of the checked rows. Absent means the table has no selection. */
+  selectedIds?: Set<string> | string[]
+  /** Which columns are showing. Absent from the record means visible. */
+  columnVisibility?: ColumnVisibility
+  /** What the row does once the table is too narrow. See `RlTable`. */
+  compact?: TableCompact
+  /**
+   * Extra attributes per row, such as a `data-` hook for tests. The caller
+   * never renders the row itself, so this is the only place to reach it.
+   */
+  rowAttrs?: (item: T) => Record<string, unknown>
+  /** Which rows carry a move handle. See `RlTable`. */
+  reorderable?: (item: T) => boolean
+  /** Which table the rows belong to, so drops stay inside it. */
+  reorderGroup?: string
+}>()
 
 const emit = defineEmits<{
   add: [section: Section<T>]
@@ -148,12 +147,12 @@ const emit = defineEmits<{
  * hidden by a stale saved view.
  */
 const anyReorderable = computed(
-  () => !!props.reorderable && props.section.items.some((item) => props.reorderable?.(item)),
+  () => !!reorderable && section.items.some((item) => reorderable?.(item)),
 )
 
 const visibleColumns = computed(() =>
-  props.columns.filter(
-    (column) => column.hideable === false || props.columnVisibility[column.key] !== false,
+  columns.filter(
+    (column) => column.hideable === false || columnVisibility[column.key] !== false,
   ),
 )
 
@@ -176,34 +175,34 @@ const sizeStyle = computed(() => ({
  * open: otherwise a `collapsed` section would render nothing and offer no way
  * back.
  */
-const open = ref(!props.section.collapsed)
+const open = ref(!section.collapsed)
 
 function toggleOpen() {
   open.value = !open.value
-  emit('collapse', props.section, !open.value)
+  emit('collapse', section, !open.value)
 }
-const expanded = computed(() => open.value || !props.showSectionHeader)
-const count = computed(() => props.section.count ?? props.section.items.length)
+const expanded = computed(() => open.value || !showSectionHeader)
+const count = computed(() => section.count ?? section.items.length)
 
 /** How many rows the section is currently willing to show. */
-const shown = ref(props.pageSize || Number.POSITIVE_INFINITY)
+const shown = ref(pageSize || Number.POSITIVE_INFINITY)
 
-const visibleItems = computed(() => props.section.items.slice(0, shown.value))
-const remaining = computed(() => props.section.items.length - visibleItems.value.length)
+const visibleItems = computed(() => section.items.slice(0, shown.value))
+const remaining = computed(() => section.items.length - visibleItems.value.length)
 
 /*
  * One more page per press rather than all of it, so the control cannot drop
  * a thousand rows into the page in a single step.
  */
 function showMore() {
-  shown.value += props.pageSize || props.section.items.length
+  shown.value += pageSize || section.items.length
 }
 
 /*
  * Selection is on only when the caller passes the set. A table without it is
  * the plain list it has always been, with no checkbox column.
  */
-const selectable = computed(() => props.selectedIds !== undefined)
+const selectable = computed(() => selectedIds !== undefined)
 
 const uid = useId()
 
@@ -224,22 +223,22 @@ const rowDomId = (itemId: string) => `${uid}-row-${itemId}`
  * `aria-activedescendant` at an element that is not in the DOM.
  */
 const cursorHere = computed(() =>
-  props.cursorId !== undefined && visibleItems.value.some((item) => item.id === props.cursorId)
-    ? props.cursorId
+  cursorId !== undefined && visibleItems.value.some((item) => item.id === cursorId)
+    ? cursorId
     : undefined,
 )
 
 const selected = computed(() =>
-  Array.isArray(props.selectedIds) ? new Set(props.selectedIds) : props.selectedIds ?? new Set<string>(),
+  Array.isArray(selectedIds) ? new Set(selectedIds) : selectedIds ?? new Set<string>(),
 )
 
 /** Checked rows in this section. Each section counts its own. */
 const selectedHere = computed(
-  () => props.section.items.filter((item) => selected.value.has(item.id)).length,
+  () => section.items.filter((item) => selected.value.has(item.id)).length,
 )
 
 const allSelected = computed(
-  () => selectedHere.value > 0 && selectedHere.value === props.section.items.length,
+  () => selectedHere.value > 0 && selectedHere.value === section.items.length,
 )
 
 /*
@@ -271,21 +270,21 @@ function onSortClick(column: TableColumn, event: MouseEvent | KeyboardEvent) {
  */
 const nameCol = computed<TableColumn>(
   () =>
-    props.nameColumn ?? {
+    nameColumn ?? {
       key: '__name',
-      header: props.nameLabel ?? messages.chromeText({ key: 'name' }),
+      header: nameLabel ?? messages.chromeText({ key: 'name' }),
     },
 )
 
-const addText = computed(() => props.addLabel ?? messages.chromeText({ key: 'add' }))
+const addText = computed(() => addLabel ?? messages.chromeText({ key: 'add' }))
 
 /** Where a column sits in the sort, 1-based, or zero when it is not in it. */
 function sortPosition(column: TableColumn) {
-  return props.sort.findIndex((entry) => entry.key === column.key) + 1
+  return sort.findIndex((entry) => entry.key === column.key) + 1
 }
 
 function sortDir(column: TableColumn) {
-  return props.sort.find((entry) => entry.key === column.key)?.dir
+  return sort.find((entry) => entry.key === column.key)?.dir
 }
 
 /*
@@ -297,7 +296,7 @@ function sortHint(column: TableColumn) {
   const dir = sortDir(column)
   const position = sortPosition(column)
   if (!dir) return `${column.header}, sort by this column`
-  const rank = props.sort.length > 1 ? `, sort key ${position} of ${props.sort.length}` : ''
+  const rank = sort.length > 1 ? `, sort key ${position} of ${sort.length}` : ''
   return `${column.header}, sorted ${dir === 'asc' ? 'ascending' : 'descending'}${rank}`
 }
 </script>

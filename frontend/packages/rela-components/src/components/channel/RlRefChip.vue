@@ -24,22 +24,19 @@ import { computed } from 'vue'
 import type { ChannelReadableRef, ChannelRef } from './types'
 import { useMessages } from '../../composables/useMessages'
 
-const props = withDefaults(
-  defineProps<{
-    value: ChannelRef
-    href?: string
-    /** Render as text with no click behaviour. */
-    plain?: boolean
-  }>(),
-  { plain: false },
-)
+const { value, href, plain = false } = defineProps<{
+  value: ChannelRef
+  href?: string
+  /** Render as text with no click behaviour. */
+  plain?: boolean
+}>()
 
 const emit = defineEmits<{ open: [ref: ChannelReadableRef, event: MouseEvent] }>()
 
 const messages = useMessages()
 
 const readable = computed<ChannelReadableRef | null>(() =>
-  props.value.restricted ? null : props.value,
+  value.restricted ? null : value,
 )
 
 /** Any relative path resolved against this base keeps its origin. */
@@ -51,7 +48,7 @@ const relativeBase = 'http://relative.invalid/'
  * `/\host` as `//host`.
  */
 const safeHref = computed(() => {
-  const h = props.href
+  const h = href
   if (!h || !/^[/#?]/.test(h) || /[\\\s\u0000-\u001f]/.test(h)) return undefined
   try {
     return new URL(h, relativeBase).origin === new URL(relativeBase).origin ? h : undefined
@@ -60,12 +57,12 @@ const safeHref = computed(() => {
   }
 })
 
-const tag = computed(() => (props.plain ? 'span' : safeHref.value ? 'a' : 'button'))
+const tag = computed(() => (plain ? 'span' : safeHref.value ? 'a' : 'button'))
 
 function onClick(event: MouseEvent) {
   if (!readable.value) return
   // A modified click opens a new tab or window; that is the browser's.
-  if (props.plain) return
+  if (plain) return
   if (safeHref.value && (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) return
   emit('open', readable.value, event)
 }

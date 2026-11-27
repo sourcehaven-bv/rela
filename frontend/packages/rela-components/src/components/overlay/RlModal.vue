@@ -29,52 +29,48 @@ const messages = useMessages()
  */
 defineOptions({ inheritAttrs: false })
 
-const props = withDefaults(
-  defineProps<{
-    open: boolean
-    title: string
-    description?: string
-    size?: 'sm' | 'md' | 'lg'
-    /**
-     * `alertdialog` interrupts to report something or ask for a decision that
-     * cannot be deferred; `dialog` is everything else.
-     */
-    role?: 'dialog' | 'alertdialog'
-    /** Hides the title visually; it still names the dialog. */
-    titleHidden?: boolean
-    /**
-     * Blocks the ways out that do not require a decision. For a dialog that
-     * is mid-submit, where closing would leave the work half done.
-     */
-    persistent?: boolean
-    showClose?: boolean
-    /**
-     * Where the panel sits on the vertical axis. A dialog that answers the
-     * page belongs in the middle; one the user types into, such as a command
-     * palette or a picker, belongs on the reading line near the top.
-     */
-    align?: 'center' | 'top'
-    /**
-     * Overrides the z-index of the whole overlay, for the two cases the
-     * modal tier cannot express: sitting under a confirm dialog this modal
-     * itself raises, and sitting over a third-party editor that picks its
-     * own z-index.
-     */
-    layer?: number | string
-    /** Goes on the panel, for a width or a scoped override one caller needs. */
-    panelClass?: string
-  }>(),
-  {
-    size: 'md',
-    role: 'dialog',
-    titleHidden: false,
-    persistent: false,
-    showClose: true,
-    align: 'center',
-    layer: undefined,
-    panelClass: undefined,
-  },
-)
+const {
+  size = 'md',
+  role = 'dialog',
+  titleHidden = false,
+  persistent = false,
+  showClose = true,
+  align = 'center',
+  open,
+} = defineProps<{
+  open: boolean
+  title: string
+  description?: string
+  size?: 'sm' | 'md' | 'lg'
+  /**
+   * `alertdialog` interrupts to report something or ask for a decision that
+   * cannot be deferred; `dialog` is everything else.
+   */
+  role?: 'dialog' | 'alertdialog'
+  /** Hides the title visually; it still names the dialog. */
+  titleHidden?: boolean
+  /**
+   * Blocks the ways out that do not require a decision. For a dialog that
+   * is mid-submit, where closing would leave the work half done.
+   */
+  persistent?: boolean
+  showClose?: boolean
+  /**
+   * Where the panel sits on the vertical axis. A dialog that answers the
+   * page belongs in the middle; one the user types into, such as a command
+   * palette or a picker, belongs on the reading line near the top.
+   */
+  align?: 'center' | 'top'
+  /**
+   * Overrides the z-index of the whole overlay, for the two cases the
+   * modal tier cannot express: sitting under a confirm dialog this modal
+   * itself raises, and sitting over a third-party editor that picks its
+   * own z-index.
+   */
+  layer?: number | string
+  /** Goes on the panel, for a width or a scoped override one caller needs. */
+  panelClass?: string
+}>()
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -83,7 +79,7 @@ const { push, pop, isTop } = useOverlayStack()
 const focus = useFocusRestore()
 
 function close() {
-  if (props.persistent) return
+  if (persistent) return
   emit('close')
 }
 
@@ -99,11 +95,11 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 watch(
-  () => props.open,
-  async (open) => {
+  () => open,
+  async (isOpen) => {
     if (typeof document === 'undefined') return
 
-    if (open) {
+    if (isOpen) {
       focus.capture()
       push()
       document.addEventListener('keydown', onKeydown, true)

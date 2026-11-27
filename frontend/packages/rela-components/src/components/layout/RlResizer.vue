@@ -32,46 +32,43 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    /** Current width of the pane, in pixels. */
-    modelValue: number
-    /** Narrowest the pane may be dragged. */
-    min?: number
-    /** Widest the pane may be dragged. */
-    max?: number
-    /**
-     * Which side of the handle the pane being sized is on. `start` for a
-     * left sidebar, where dragging right widens it; `end` for a right-hand
-     * detail panel, where dragging right narrows it.
-     */
-    side?: 'start' | 'end'
-    /** Names the handle for assistive tech. */
-    label?: string
-    /**
-     * Width to return to on Enter or a double-click. Leave unset for no
-     * reset, which is right where there is no meaningful default.
-     */
-    defaultValue?: number
-    /** Pixels moved per arrow press. */
-    step?: number
-    /** Pixels moved per Page Up or Page Down. */
-    pageStep?: number
-    disabled?: boolean
-  }>(),
-  {
-    min: 180,
-    max: 480,
-    side: 'start',
-    label: undefined,
-    step: 16,
-    pageStep: 64,
-    disabled: false,
-  },
-)
+const {
+  min = 180,
+  max = 480,
+  side = 'start',
+  step = 16,
+  pageStep = 64,
+  disabled = false,
+  defaultValue,
+} = defineProps<{
+  /** Narrowest the pane may be dragged. */
+  min?: number
+  /** Widest the pane may be dragged. */
+  max?: number
+  /**
+   * Which side of the handle the pane being sized is on. `start` for a
+   * left sidebar, where dragging right widens it; `end` for a right-hand
+   * detail panel, where dragging right narrows it.
+   */
+  side?: 'start' | 'end'
+  /** Names the handle for assistive tech. */
+  label?: string
+  /**
+   * Width to return to on Enter or a double-click. Leave unset for no
+   * reset, which is right where there is no meaningful default.
+   */
+  defaultValue?: number
+  /** Pixels moved per arrow press. */
+  step?: number
+  /** Pixels moved per Page Up or Page Down. */
+  pageStep?: number
+  disabled?: boolean
+}>()
+
+/** Current width of the pane, in pixels. */
+const model = defineModel<number>({ required: true })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: number]
   /** A drag began. For a caller that wants to suppress transitions during it. */
   'resize-start': []
   /**
@@ -83,11 +80,10 @@ const emit = defineEmits<{
 
 const dragging = ref(false)
 
-const clamp = (value: number) => Math.min(props.max, Math.max(props.min, Math.round(value)))
+const clamp = (value: number) => Math.min(max, Math.max(min, Math.round(value)))
 
 function set(value: number) {
-  const next = clamp(value)
-  if (next !== props.modelValue) emit('update:modelValue', next)
+  model.value = clamp(value)
 }
 
 /*
@@ -97,7 +93,7 @@ function set(value: number) {
  * covers touch and pen without a second code path.
  */
 function onPointerdown(event: PointerEvent) {
-  if (props.disabled || event.button !== 0) return
+  if (disabled || event.button !== 0) return
   event.preventDefault()
   const handle = event.currentTarget as HTMLElement
   handle.setPointerCapture(event.pointerId)
@@ -116,7 +112,7 @@ function onPointermove(event: PointerEvent) {
    * over a long drag.
    */
   const delta = event.clientX - (rect.left + rect.width / 2)
-  set(props.modelValue + (props.side === 'start' ? delta : -delta))
+  set(model.value + (side === 'start' ? delta : -delta))
 }
 
 function onPointerup(event: PointerEvent) {
@@ -129,47 +125,47 @@ function onPointerup(event: PointerEvent) {
 
 /* Arrows read as "widen" and "narrow", so they follow the side the pane is on. */
 function nudge(towardsEnd: number, amount: number) {
-  set(props.modelValue + (props.side === 'start' ? towardsEnd : -towardsEnd) * amount)
+  set(model.value + (side === 'start' ? towardsEnd : -towardsEnd) * amount)
 }
 
 function onKeydown(event: KeyboardEvent) {
-  if (props.disabled) return
+  if (disabled) return
   switch (event.key) {
     case 'ArrowLeft':
       event.preventDefault()
-      nudge(-1, props.step)
+      nudge(-1, step)
       break
     case 'ArrowRight':
       event.preventDefault()
-      nudge(1, props.step)
+      nudge(1, step)
       break
     case 'PageUp':
       event.preventDefault()
-      nudge(1, props.pageStep)
+      nudge(1, pageStep)
       break
     case 'PageDown':
       event.preventDefault()
-      nudge(-1, props.pageStep)
+      nudge(-1, pageStep)
       break
     case 'Home':
       event.preventDefault()
-      set(props.min)
+      set(min)
       break
     case 'End':
       event.preventDefault()
-      set(props.max)
+      set(max)
       break
     case 'Enter':
-      if (props.defaultValue === undefined) return
+      if (defaultValue === undefined) return
       event.preventDefault()
-      set(props.defaultValue)
+      set(defaultValue)
       break
   }
 }
 
 function reset() {
-  if (props.disabled || props.defaultValue === undefined) return
-  set(props.defaultValue)
+  if (disabled || defaultValue === undefined) return
+  set(defaultValue)
 }
 
 /*
@@ -178,7 +174,7 @@ function reset() {
  * the width in pixels; `aria-valuetext` says so, because "260" on its own
  * could be anything.
  */
-const valueText = computed(() => messages.resizerValue({ pixels: props.modelValue }))
+const valueText = computed(() => messages.resizerValue({ pixels: model.value }))
 </script>
 
 <template>
@@ -189,7 +185,7 @@ const valueText = computed(() => messages.resizerValue({ pixels: props.modelValu
     :tabindex="disabled ? undefined : 0"
     :aria-label="label ?? messages.chromeText({ key: 'resizePanel' })"
     aria-orientation="vertical"
-    :aria-valuenow="modelValue"
+    :aria-valuenow="model"
     :aria-valuemin="min"
     :aria-valuemax="max"
     :aria-valuetext="valueText"

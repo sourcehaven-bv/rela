@@ -30,12 +30,12 @@ export interface DuplicatePrefill {
 }
 
 /** A peer to pre-link. `type` is required to emit a JSON:API resource id. */
-export interface DuplicatePeer {
+interface DuplicatePeer {
   id: string
   type: string
 }
 
-export interface OmittedProperty {
+interface OmittedProperty {
   property: string
   reason:
     | 'redacted'

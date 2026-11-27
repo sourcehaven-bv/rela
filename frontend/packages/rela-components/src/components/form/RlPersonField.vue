@@ -28,57 +28,51 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    /** The chosen person's id, or empty for unassigned. */
-    modelValue?: string
-    label: string
-    people: Person[]
-    hint?: string
-    error?: string
-    required?: boolean
-    disabled?: boolean
-    labelHidden?: boolean
-    placeholder?: string
-    /**
-     * Whether the list can be emptied, shown as a first "Unassigned" row. Off
-     * for a field that must name someone.
-     */
-    clearable?: boolean
-    /** Wording for the empty state and for the clearing row. */
-    emptyLabel?: string
-    /**
-     * Whether the field filters the list itself. Off where the caller is
-     * searching a directory and `people` is already the answer, in which case
-     * listen to `update:query`.
-     */
-    filter?: boolean
-    /** Shown in the panel when nothing matches. */
-    noMatchLabel?: string
-    /**
-     * `inline` renders the value bare and only draws the chrome on hover and
-     * focus, matching `RlOptionSelect` and `RlMultiSelect`. For a person
-     * sitting in a record rather than in a form. It drops the field shell
-     * with it; `label` stays, for assistive tech.
-     */
-    variant?: 'control' | 'inline'
-  }>(),
-  {
-    modelValue: '',
-    required: false,
-    disabled: false,
-    labelHidden: false,
-    placeholder: undefined,
-    clearable: true,
-    emptyLabel: undefined,
-    filter: true,
-    noMatchLabel: undefined,
-    variant: 'control',
-  },
-)
+const {
+  required = false,
+  disabled = false,
+  labelHidden = false,
+  clearable = true,
+  filter = true,
+  variant = 'control',
+  people,
+} = defineProps<{
+  label: string
+  people: Person[]
+  hint?: string
+  error?: string
+  required?: boolean
+  disabled?: boolean
+  labelHidden?: boolean
+  placeholder?: string
+  /**
+   * Whether the list can be emptied, shown as a first "Unassigned" row. Off
+   * for a field that must name someone.
+   */
+  clearable?: boolean
+  /** Wording for the empty state and for the clearing row. */
+  emptyLabel?: string
+  /**
+   * Whether the field filters the list itself. Off where the caller is
+   * searching a directory and `people` is already the answer, in which case
+   * listen to `update:query`.
+   */
+  filter?: boolean
+  /** Shown in the panel when nothing matches. */
+  noMatchLabel?: string
+  /**
+   * `inline` renders the value bare and only draws the chrome on hover and
+   * focus, matching `RlOptionSelect` and `RlMultiSelect`. For a person
+   * sitting in a record rather than in a form. It drops the field shell
+   * with it; `label` stays, for assistive tech.
+   */
+  variant?: 'control' | 'inline'
+}>()
+
+/** The chosen person's id, or empty for unassigned. */
+const model = defineModel<string>({ default: '' })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: string]
   /** The typed filter changed, for a caller searching a directory. */
   'update:query': [value: string]
 }>()
@@ -98,19 +92,19 @@ const uid = useId()
  */
 const { floatingStyles, containsTarget, panelHandlers } = useAnchoredPanel(root, panel, {
   placement: 'bottom-start',
-  matchWidth: props.variant === 'control',
+  matchWidth: variant === 'control',
   keepFocusOnTrigger: true,
 })
 
 const { push, pop } = useOverlayStack({ scrollLock: false })
 
-const selected = computed(() => props.people.find((person) => person.id === props.modelValue))
+const selected = computed(() => people.find((person) => person.id === model.value))
 
 const matches = computed(() => {
-  if (!props.filter) return props.people
+  if (!filter) return people
   const needle = query.value.trim().toLowerCase()
-  if (!needle) return props.people
-  return props.people.filter((person) =>
+  if (!needle) return people
+  return people.filter((person) =>
     `${person.name} ${person.secondary ?? ''}`.toLowerCase().includes(needle),
   )
 })
@@ -121,7 +115,7 @@ const matches = computed(() => {
  * why everything below counts rows and not people.
  */
 const rows = computed<(Person | null)[]>(() =>
-  props.clearable && !query.value.trim() ? [null, ...matches.value] : [...matches.value],
+  clearable && !query.value.trim() ? [null, ...matches.value] : [...matches.value],
 )
 
 const optionId = (index: number) => `${uid}-option-${index}`
@@ -139,9 +133,9 @@ function nextEnabled(from: number, delta: number) {
 }
 
 async function show() {
-  if (props.disabled || open.value) return
+  if (disabled || open.value) return
   query.value = ''
-  const current = rows.value.findIndex((row) => row?.id === props.modelValue)
+  const current = rows.value.findIndex((row) => row?.id === model.value)
   activeIndex.value = current === -1 ? 0 : current
   open.value = true
   push()
@@ -160,7 +154,7 @@ function choose(index: number) {
   if (index < 0 || index >= rows.value.length || isDisabled(index)) return
   const row = rows.value[index]
   hide()
-  emit('update:modelValue', row?.id ?? '')
+  model.value = row?.id ?? ''
 }
 
 function scrollActiveIntoView() {
@@ -325,11 +319,11 @@ defineExpose({ open: show, close: hide, focus: () => input.value?.focus() })
             class="rl-option-select__option"
             :class="{
               'rl-option-select__option--active': index === activeIndex && !isDisabled(index),
-              'rl-option-select__option--selected': (row?.id ?? '') === modelValue,
+              'rl-option-select__option--selected': (row?.id ?? '') === model,
               'rl-option-select__option--disabled': isDisabled(index),
             }"
             role="option"
-            :aria-selected="(row?.id ?? '') === modelValue"
+            :aria-selected="(row?.id ?? '') === model"
             :aria-disabled="isDisabled(index) || undefined"
             @click="choose(index)"
             @mousemove="isDisabled(index) || (activeIndex = index)"

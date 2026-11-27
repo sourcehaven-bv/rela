@@ -76,53 +76,50 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    /** The document, as markdown. */
-    modelValue?: string
-    placeholder?: string
-    /** Hides the toolbar, for a surface that supplies its own or none. */
-    hideToolbar?: boolean
-    /**
-     * Extra Milkdown plugins, added after the built-in presets.
-     *
-     * Ordering matters to Milkdown: a plugin that extends a node must load
-     * after the preset contributing it. These load last for that reason.
-     */
-    plugins?: readonly unknown[]
-    /**
-     * Serializer options, merged over the library defaults.
-     *
-     * Set these when the app's stored markdown follows other conventions;
-     * see `serializerContract.ts`.
-     */
-    stringifyOptions?: RemarkStringifyOptions
-    /**
-     * Extra classes for the editable element.
-     *
-     * The hook for an app that already has a stylesheet for rendered
-     * markdown: naming its marker class here makes the editing surface
-     * inherit it, so WYSIWYG holds by construction rather than by two sets of
-     * prose rules kept in step by hand.
-     */
-    contentClass?: string
-    /**
-     * Renders the document without allowing edits, for showing markdown where
-     * a plain text dump would lose its structure. The toolbar is hidden with
-     * it, since none of its commands can run.
-     */
-    readonly?: boolean
-  }>(),
-  {
-    modelValue: '',
-    placeholder: undefined,
-    hideToolbar: false,
-    plugins: () => [],
-    stringifyOptions: undefined,
-    contentClass: '',
-    readonly: false,
-  },
-)
+const {
+  modelValue = '',
+  placeholder,
+  hideToolbar = false,
+  plugins = [],
+  stringifyOptions,
+  contentClass = '',
+  readonly = false,
+} = defineProps<{
+  /** The document, as markdown. */
+  modelValue?: string
+  placeholder?: string
+  /** Hides the toolbar, for a surface that supplies its own or none. */
+  hideToolbar?: boolean
+  /**
+   * Extra Milkdown plugins, added after the built-in presets.
+   *
+   * Ordering matters to Milkdown: a plugin that extends a node must load
+   * after the preset contributing it. These load last for that reason.
+   */
+  plugins?: readonly unknown[]
+  /**
+   * Serializer options, merged over the library defaults.
+   *
+   * Set these when the app's stored markdown follows other conventions;
+   * see `serializerContract.ts`.
+   */
+  stringifyOptions?: RemarkStringifyOptions
+  /**
+   * Extra classes for the editable element.
+   *
+   * The hook for an app that already has a stylesheet for rendered
+   * markdown: naming its marker class here makes the editing surface
+   * inherit it, so WYSIWYG holds by construction rather than by two sets of
+   * prose rules kept in step by hand.
+   */
+  contentClass?: string
+  /**
+   * Renders the document without allowing edits, for showing markdown where
+   * a plain text dump would lose its structure. The toolbar is hidden with
+   * it, since none of its commands can run.
+   */
+  readonly?: boolean
+}>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
@@ -187,7 +184,7 @@ const ALL_COMMANDS = [...INLINE_COMMANDS, ...BLOCK_COMMANDS, ...TABLE_COMMANDS]
  * loaded, the emit is skipped as "nothing to say", and the parent keeps the
  * intermediate value it was last told about.
  */
-let settledValue = props.modelValue
+let settledValue = modelValue
 
 /** False while a document is loading, when changes are not user edits. */
 let armed = false
@@ -332,24 +329,24 @@ onMounted(async () => {
   editor.value = await Editor.make()
     .config((ctx) => {
       ctx.set(rootCtx, editorRoot.value as HTMLElement)
-      ctx.set(defaultValueCtx, props.modelValue)
+      ctx.set(defaultValueCtx, modelValue)
       ctx.update(editorViewOptionsCtx, (prev) => ({
         ...prev,
         // ProseMirror's own gate, so the document still renders and stays
         // selectable while every edit transaction is refused.
-        editable: () => !props.readonly,
+        editable: () => !readonly,
         attributes: {
           ...(prev.attributes ?? {}),
           class: [
             'rl-markdown-editor__content',
-            props.readonly ? 'rl-markdown-editor__content--readonly' : '',
-            props.contentClass,
+            readonly ? 'rl-markdown-editor__content--readonly' : '',
+            contentClass,
           ]
             .filter(Boolean)
             .join(' '),
         },
       }))
-      configureSerializer(ctx, props.stringifyOptions)
+      configureSerializer(ctx, stringifyOptions)
 
       ctx.get(listenerCtx).markdownUpdated((_ctx, markdown) => {
         emitIfChanged(markdown)
@@ -370,7 +367,7 @@ onMounted(async () => {
     .use(cursor)
     .use(trailing)
     // Last, so an app plugin can extend anything the presets contribute.
-    .use(props.plugins as Parameters<Editor['use']>[0])
+    .use(plugins as Parameters<Editor['use']>[0])
     .create()
 
   // The gutter handle. Built after creation because it needs the editor's ctx.
@@ -398,7 +395,7 @@ onMounted(async () => {
 })
 
 watch(
-  () => props.modelValue,
+  () => modelValue,
   (next) => {
     const e = editor.value
     if (!e) return
@@ -454,9 +451,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="rl-markdown-editor" :class="{ 'rl-markdown-editor--readonly': props.readonly }">
+  <div class="rl-markdown-editor" :class="{ 'rl-markdown-editor--readonly': readonly }">
     <RlEditorToolbar
-      v-if="!props.hideToolbar && !props.readonly"
+      v-if="!hideToolbar && !readonly"
       :inline-commands="INLINE_COMMANDS"
       :block-commands="BLOCK_COMMANDS"
       :active-ids="activeIds"
@@ -479,7 +476,7 @@ onBeforeUnmount(() => {
              `aria-hidden` because ProseMirror's own textbox role already names
              the field; a screen reader announcing both would read it twice. -->
         <div v-if="showPlaceholder" class="rl-markdown-editor__placeholder" aria-hidden="true">
-          {{ props.placeholder ?? messages.chromeText({ key: 'writeSomething' }) }}
+          {{ placeholder ?? messages.chromeText({ key: 'writeSomething' }) }}
         </div>
       </div>
     </div>

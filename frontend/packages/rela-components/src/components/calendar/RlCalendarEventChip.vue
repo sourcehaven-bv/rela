@@ -15,23 +15,20 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    event: CalendarEvent
-    /**
-     * The grid day this chip is being rendered in. A multi-day event is drawn
-     * once per day it spans, and the chip has to know which day it is to show
-     * the right continuation marker.
-     */
-    day: CalendarDay
-    /**
-     * True while any segment of this event is being dragged, so every day of a
-     * span lifts together and the user can see what they picked up.
-     */
-    dragging?: boolean
-  }>(),
-  { dragging: false },
-)
+const { event, day, dragging = false } = defineProps<{
+  event: CalendarEvent
+  /**
+   * The grid day this chip is being rendered in. A multi-day event is drawn
+   * once per day it spans, and the chip has to know which day it is to show
+   * the right continuation marker.
+   */
+  day: CalendarDay
+  /**
+   * True while any segment of this event is being dragged, so every day of a
+   * span lifts together and the user can see what they picked up.
+   */
+  dragging?: boolean
+}>()
 
 const emit = defineEmits<{
   open: [event: CalendarEvent]
@@ -48,10 +45,10 @@ const emit = defineEmits<{
  * say "this continues": `→` it runs on, `←` it began earlier, `↔` both.
  */
 const span = computed<'single' | 'start' | 'middle' | 'end'>(() => {
-  const { startDay, endDay } = props.event
+  const { startDay, endDay } = event
   if (compareDays(startDay, endDay) === 0) return 'single'
-  if (sameDay(props.day, startDay)) return 'start'
-  if (sameDay(props.day, endDay)) return 'end'
+  if (sameDay(day, startDay)) return 'start'
+  if (sameDay(day, endDay)) return 'end'
   return 'middle'
 })
 
@@ -67,7 +64,7 @@ const spanMarker = computed(() => {
   return { marker, description: messages.chromeText({ key }) }
 })
 
-const fields = computed(() => props.event.fields ?? [])
+const fields = computed(() => event.fields ?? [])
 </script>
 
 <template>

@@ -25,7 +25,7 @@ import type { Message } from '@/types/channels'
  */
 
 /** The image types shown as a thumbnail. */
-export const PREVIEW_MIME_TYPES: ReadonlySet<string> = new Set([
+const PREVIEW_MIME_TYPES: ReadonlySet<string> = new Set([
   'image/png',
   'image/jpeg',
   'image/gif',

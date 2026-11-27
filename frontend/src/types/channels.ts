@@ -124,7 +124,7 @@ export interface ChannelSession {
 }
 
 /** A session state's status, after the MCP tasks statuses. */
-export type SessionStatus = 'working' | 'input_required' | 'completed' | 'cancelled' | 'failed'
+type SessionStatus = 'working' | 'input_required' | 'completed' | 'cancelled' | 'failed'
 
 /**
  * One role an input_required state waits for. holders are, for a role read
@@ -132,7 +132,7 @@ export type SessionStatus = 'working' | 'input_required' | 'completed' | 'cancel
  * them: entity data, shown as text and never followed. A creator role has
  * none; the channel's created_by names the creator.
  */
-export interface ChannelSessionWaiting {
+interface ChannelSessionWaiting {
   role: string
   label?: string
   holders?: string[]
@@ -190,7 +190,7 @@ export interface InboxMention {
 }
 
 /** A channel with messages the caller has not read. */
-export interface InboxUnread {
+interface InboxUnread {
   channel: InboxChannel
   seq: number
   last_seq: number
@@ -234,7 +234,7 @@ export interface ChannelStart {
 }
 
 /** The decision fields of ChannelActions for an inbox entry. */
-export interface InboxActions {
+interface InboxActions {
   post: string[]
   transitions: string[]
   entries: ChannelEntryRef[]
@@ -269,7 +269,7 @@ export interface InboxSession {
  * The API paths of an inbox entry's anchor entity and channel, and for a
  * mention the message itself.
  */
-export interface InboxLinks {
+interface InboxLinks {
   entity: string
   channel: string
   message?: string
@@ -281,7 +281,7 @@ export interface InboxLinks {
  * it. due_at is the next reminder, set only on an open channel under a
  * configuration that is not degraded, and not once count reaches max.
  */
-export interface ChannelSessionReminder {
+interface ChannelSessionReminder {
   name: string
   label?: string
   every: string
@@ -294,7 +294,7 @@ export interface ChannelSessionReminder {
  * A timer of the session's current state: after its period, counted from
  * since, the session moves to to. due_at follows ChannelSession.due_at.
  */
-export interface ChannelSessionTimer {
+interface ChannelSessionTimer {
   name: string
   label?: string
   to: string
@@ -346,14 +346,14 @@ export interface ChannelButtonOptions {
  * options already hold the type's `decision_button` for each one it leaves
  * out; a compose button never carries `confirm`.
  */
-export interface ChannelSessionButton extends ChannelButtonOptions {
+interface ChannelSessionButton extends ChannelButtonOptions {
   label: string
   props?: Record<string, MessagePropInput>
   compose?: boolean
 }
 
 /** One transition entry, by message type and its place in the type's list. */
-export interface ChannelEntryRef {
+interface ChannelEntryRef {
   message_type: string
   entry: number
 }
@@ -432,14 +432,14 @@ export interface ReadableRef {
  * A ref the caller may not read. It carries nothing else, and the type has
  * no `id`, so code cannot show what the server withheld.
  */
-export interface RestrictedRef {
+interface RestrictedRef {
   restricted: true
 }
 
 /** The wire RefProp: a ref property value as the caller sees it. */
-export type RefProp = ReadableRef | RestrictedRef
+type RefProp = ReadableRef | RestrictedRef
 
-export interface MessageRemoval {
+interface MessageRemoval {
   at: string
   /** Who removed it: the author (delete) or a moderator (remove). */
   kind: 'author' | 'moderator'
@@ -447,7 +447,7 @@ export interface MessageRemoval {
   reason?: string
 }
 
-export interface MessageAction {
+interface MessageAction {
   name: string
   status: 'pending' | 'done'
   at: string
@@ -458,14 +458,14 @@ export interface MessageAction {
  * The outputs mark of a session notice: the graph writes the move made, as
  * writer, the person whose message moved the session.
  */
-export interface ChannelMessageOutputs {
+interface ChannelMessageOutputs {
   status: 'pending' | 'done' | 'failed'
   writer: ChannelAuthor
   results?: ChannelMessageOutputResult[]
 }
 
 /** What one output, or the on_final close, did. */
-export interface ChannelMessageOutputResult {
+interface ChannelMessageOutputResult {
   /** transition: the one result of a mark whose transition the config no longer declares. */
   kind: 'set' | 'create' | 'close' | 'transition'
   status: 'done' | 'failed' | 'skipped' | 'superseded' | 'started'
@@ -489,7 +489,7 @@ export interface ChannelMessageOutputResult {
  * names. The server reserves these names, so no action takes one.
  * wireFields.test.ts compares them with realtimecfg.MessageOpNames.
  */
-export type MessageOp = 'edit' | 'delete' | 'remove' | 'release'
+type MessageOp = 'edit' | 'delete' | 'remove' | 'release'
 
 /** The MessageOp names, to tell them from action names in `_actions`. */
 export const MESSAGE_OPS: ReadonlySet<string> = new Set<MessageOp>([
@@ -520,7 +520,7 @@ export type MessageObjectItem = Record<string, string | number | boolean | strin
  * the author wrote it, which the renderer matches exactly. A user carries
  * ref; a job or login does not. A user the reader may not read is left out.
  */
-export interface MessageMention {
+interface MessageMention {
   text: string
   kind: 'user' | 'job' | 'login'
   ref?: ReadableRef
@@ -577,7 +577,7 @@ export interface Message {
  * One file of a message: the `file` property that holds it, its display
  * name, the MIME type the server sniffed and its size in bytes.
  */
-export interface MessageFile {
+interface MessageFile {
   id: string
   property: string
   name: string
@@ -617,7 +617,7 @@ export interface EphemeralAccepted {
 /** A prop value as a request sends it: a ref is its entity id. */
 export type MessagePropInput = string | number | boolean | string[] | MessageObjectItem[]
 
-export interface PostMessageRequest {
+interface PostMessageRequest {
   type: string
   props?: Record<string, MessagePropInput>
   reply_to?: number
@@ -628,15 +628,15 @@ export interface PostMessageRequest {
   expect_generation?: number
 }
 
-export interface EditMessageRequest {
+interface EditMessageRequest {
   props: Record<string, MessagePropInput>
 }
 
-export interface RemoveMessageRequest {
+interface RemoveMessageRequest {
   reason?: string
 }
 
-export interface CreateChannelRequest {
+interface CreateChannelRequest {
   title?: string
 }
 
@@ -688,7 +688,7 @@ export interface ChannelSessionStateSchema {
   waiting_for?: string[]
 }
 
-export interface ChannelLifecycleSchema {
+interface ChannelLifecycleSchema {
   name: string
   label: string
 }
@@ -720,7 +720,7 @@ export interface ChannelMessageTypeSchema {
  * is an object list, `label` names the field whose value is the button
  * text and the posted option.
  */
-export interface ChannelChoicesSchema {
+interface ChannelChoicesSchema {
   from: string
   label?: string
   answer: string
@@ -771,7 +771,7 @@ export interface ChannelPropertySchema {
   fields?: ChannelPropertySchema[]
 }
 
-export interface ChannelActionSchema {
+interface ChannelActionSchema {
   name: string
   label: string
   promote_to?: string
@@ -1086,7 +1086,7 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
 }
 
 /** The prefix of triggered_by on a session notice; only the server writes it. */
-export const SESSION_NOTICE_MARKER = 'session:'
+const SESSION_NOTICE_MARKER = 'session:'
 
 /**
  * Whether m is a session notice: the system message the server appends

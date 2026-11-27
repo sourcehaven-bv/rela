@@ -25,7 +25,7 @@ export interface AutoSaveOwner {
 }
 
 // The part of a field the host logic reads.
-export interface AutoSaveField {
+interface AutoSaveField {
   property: string
   label: string
   verdict?: FieldAffordance

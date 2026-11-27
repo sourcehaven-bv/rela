@@ -870,7 +870,7 @@ export function decisionReplyTo(
  * old rev and messages the held-list cap let go. The memo then holds at
  * most one entry per held message and markdown prop (and page world).
  */
-export function pruneMemo(memo: MarkdownMemo, messages: readonly Message[]) {
+function pruneMemo(memo: MarkdownMemo, messages: readonly Message[]) {
   const held = new Set(messages.map((m) => `${m.seq}:${m.rev}`))
   for (const key of memo.keys()) {
     const [seq, rev] = key.split(':', 2)
@@ -906,7 +906,7 @@ export function messageViews(
  * The text after the type label on an ephemeral line, in presentation
  * order: times in the user's zone, enum labels, readable refs by title.
  */
-export function ephemeralText(
+function ephemeralText(
   e: EphemeralMessage,
   mt: ChannelMessageTypeSchema | undefined,
   presentation: ChannelPresentation | undefined,

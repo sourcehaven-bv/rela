@@ -8,10 +8,6 @@ import { carriesAsOf, currentAsOf } from './asOf'
 import { htmlResponseError, isHtmlResponse } from './htmlResponse'
 import { t } from '@/i18n'
 
-// The error types and helpers live in errors.ts; re-export so existing
-// `from '@/api'` / `from '@/api/client'` importers keep working.
-export type { ProblemDetail, ValidationError } from './errors'
-
 class ApiClient {
   private client: AxiosInstance
 

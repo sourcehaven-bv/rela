@@ -5,7 +5,7 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-withDefaults(defineProps<{ open: boolean; label: string; size?: number }>(), { size: 12 })
+const { open, label, size = 12 } = defineProps<{ open: boolean; label: string; size?: number }>()
 
 defineEmits<{ toggle: [] }>()
 </script>

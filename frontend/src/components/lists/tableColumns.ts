@@ -22,6 +22,7 @@ import type { ListColumn } from '@/types/config'
 import type { PropertyDef } from '@/types'
 import type { TableColumn } from 'rela-components/components/table/types'
 import { t } from '@/i18n'
+import { ownLookup } from '@/utils/ownLookup'
 
 /**
  * The stable identifier for a column, naming both the column and its
@@ -63,13 +64,13 @@ export function columnHeader(column: ListColumn): string {
  * The fixed width of a busy column: the dots, a short state label, the time
  * and "+1" ("Planning · 3h +1"). A longer label is cut off with an ellipsis.
  */
-export const BUSY_COLUMN_WIDTH = 160
+const BUSY_COLUMN_WIDTH = 160
 
 /** The width of an image column: the 32px thumbnail plus the cell padding. */
 export const IMAGE_COLUMN_WIDTH = 64
 
 /** True for a `file` property marked `display: {image: true}`. */
-export function isImageProperty(property: PropertyDef | undefined): boolean {
+function isImageProperty(property: PropertyDef | undefined): boolean {
   return property?.type === 'file' && !property.list && property.display?.image === true
 }
 
@@ -94,6 +95,14 @@ export function leadingImageColumns(
   })
 }
 
+const TYPE_COLUMN_SIZES: Partial<Record<string, Pick<TableColumn, 'width' | 'minWidth'>>> = {
+  date: { width: 128, minWidth: 116 },
+  datetime: { width: 168, minWidth: 136 },
+  integer: { width: 104, minWidth: 80 },
+  decimal: { width: 112, minWidth: 88 },
+  boolean: { width: 96, minWidth: 72 },
+}
+
 /**
  * A property column's preferred and minimum width, by the property's type.
  *
@@ -111,20 +120,7 @@ export function propertyColumnSize(
   // thumbnail plus the cell's padding, not the text width.
   if (isImageProperty(property)) return { width: IMAGE_COLUMN_WIDTH, minWidth: IMAGE_COLUMN_WIDTH }
   if (property.type === 'enum' || (property.values?.length ?? 0) > 0) return { width: 128, minWidth: 96 }
-  switch (property.type) {
-    case 'date':
-      return { width: 128, minWidth: 116 }
-    case 'datetime':
-      return { width: 168, minWidth: 136 }
-    case 'integer':
-      return { width: 104, minWidth: 80 }
-    case 'decimal':
-      return { width: 112, minWidth: 88 }
-    case 'boolean':
-      return { width: 96, minWidth: 72 }
-    default:
-      return undefined
-  }
+  return ownLookup(TYPE_COLUMN_SIZES, property.type)
 }
 
 /**

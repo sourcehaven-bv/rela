@@ -1,7 +1,7 @@
 import { api } from './client'
 
 /** SankeyNode is one gated, redacted entity of the diagram. */
-export interface SankeyNode {
+interface SankeyNode {
   id: string
   type: string
   /** The face the node was read at; absent for a faceless type. */
@@ -28,7 +28,7 @@ export interface SankeyPip {
 }
 
 /** SankeyLink is a relation between two nodes of the response. */
-export interface SankeyLink {
+interface SankeyLink {
   source: string
   target: string
   relation: string

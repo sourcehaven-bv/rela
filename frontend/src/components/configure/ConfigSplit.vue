@@ -4,7 +4,7 @@
  * and beside it either a narrow column of settings or a wider preview. Below
  * 900px the columns stack.
  */
-withDefaults(defineProps<{ aside?: 'settings' | 'preview' }>(), { aside: 'settings' })
+const { aside = 'settings' } = defineProps<{ aside?: 'settings' | 'preview' }>()
 </script>
 
 <template>

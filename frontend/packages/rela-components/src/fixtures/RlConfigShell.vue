@@ -21,25 +21,22 @@ import { useToasts } from '../components/feedback/useToasts'
 import RlConfigReview from './RlConfigReview.vue'
 import { configNavGroups } from './config'
 
-const props = withDefaults(
-  defineProps<{
-    activeId: string
-    title: string
-    /** A parent screen to go back to, for a screen that edits one item. */
-    backLabel?: string
-    /** The Storybook story id of that parent screen. */
-    backTo?: string
-    /** Unsaved changes in the draft. */
-    draftCount?: number
-    /** Opens the review step on load, for the story that shows it. */
-    reviewOpen?: boolean
-  }>(),
-  { backLabel: undefined, backTo: undefined, draftCount: 5, reviewOpen: false },
-)
+const { draftCount = 5, reviewOpen = false } = defineProps<{
+  activeId: string
+  title: string
+  /** A parent screen to go back to, for a screen that edits one item. */
+  backLabel?: string
+  /** The Storybook story id of that parent screen. */
+  backTo?: string
+  /** Unsaved changes in the draft. */
+  draftCount?: number
+  /** Opens the review step on load, for the story that shows it. */
+  reviewOpen?: boolean
+}>()
 
 const navOpen = ref(false)
 const sidebarWidth = ref(260)
-const reviewing = ref(props.reviewOpen)
+const reviewing = ref(reviewOpen)
 const { toasts, dismiss, success } = useToasts()
 
 function saved(summary: string) {

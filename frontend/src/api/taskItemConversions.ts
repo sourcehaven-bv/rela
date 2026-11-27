@@ -1,6 +1,6 @@
 import { api } from './client'
 import { ApiError } from './errors'
-import type { TaskItemConversionOffer, Warning } from '@/types'
+import type { Warning } from '@/types'
 
 export interface TaskItemConvertRequest {
   source_id: string
@@ -59,5 +59,3 @@ export function incompleteConversionEntity(err: unknown): string | null {
   if (!problem?.type.endsWith('/errors/conversion_incomplete')) return null
   return typeof problem.entity_id === 'string' && problem.entity_id ? problem.entity_id : null
 }
-
-export type { TaskItemConversionOffer }

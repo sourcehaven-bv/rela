@@ -27,53 +27,50 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    modelValue?: string[]
-    label: string
-    /** Hides the label visually, keeping it for assistive technology. */
-    labelHidden?: boolean
-    options: SelectOption[]
-    hint?: string
-    error?: string
-    required?: boolean
-    disabled?: boolean
-    placeholder?: string
-    /**
-     * Whether a single option cannot be chosen, on top of the option's own
-     * `disabled`. For a rule that is not a property of the choice itself —
-     * a permission, say — and so cannot be baked into the list.
-     *
-     * A disabled option that is already chosen still shows in the trigger,
-     * and its checkbox is disabled while staying ticked: a rule that forbids
-     * picking something forbids unpicking it too.
-     */
-    isOptionDisabled?: (value: string) => boolean
-    /**
-     * `inline` renders the trigger bare, as the chosen values alone, and only
-     * draws the button chrome on hover and focus. For a value in a detail row
-     * or a table cell, where a permanent box reads as a form rather than as a
-     * record.
-     *
-     * It drops the field shell with it: the label, the hint and the error are
-     * a form's furniture, and inline the row already says what the field is.
-     * `label` stays, for assistive tech.
-     */
-    variant?: 'control' | 'inline'
-  }>(),
-  {
-    modelValue: () => [],
-    required: false,
-    labelHidden: false,
-    disabled: false,
-    placeholder: undefined,
-    isOptionDisabled: () => false,
-    variant: 'control',
-  },
-)
+const {
+  required = false,
+  labelHidden = false,
+  disabled = false,
+  placeholder,
+  isOptionDisabled = () => false,
+  variant = 'control',
+  options,
+} = defineProps<{
+  label: string
+  /** Hides the label visually, keeping it for assistive technology. */
+  labelHidden?: boolean
+  options: SelectOption[]
+  hint?: string
+  error?: string
+  required?: boolean
+  disabled?: boolean
+  placeholder?: string
+  /**
+   * Whether a single option cannot be chosen, on top of the option's own
+   * `disabled`. For a rule that is not a property of the choice itself —
+   * a permission, say — and so cannot be baked into the list.
+   *
+   * A disabled option that is already chosen still shows in the trigger,
+   * and its checkbox is disabled while staying ticked: a rule that forbids
+   * picking something forbids unpicking it too.
+   */
+  isOptionDisabled?: (value: string) => boolean
+  /**
+   * `inline` renders the trigger bare, as the chosen values alone, and only
+   * draws the button chrome on hover and focus. For a value in a detail row
+   * or a table cell, where a permanent box reads as a form rather than as a
+   * record.
+   *
+   * It drops the field shell with it: the label, the hint and the error are
+   * a form's furniture, and inline the row already says what the field is.
+   * `label` stays, for assistive tech.
+   */
+  variant?: 'control' | 'inline'
+}>()
+
+const model = defineModel<string[]>({ default: () => [] })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: string[]]
   /**
    * The panel closed. Every toggle has already been emitted through
    * `update:modelValue`; this marks the end of a run of them, for a caller
@@ -102,30 +99,30 @@ const { floatingStyles, containsTarget, panelHandlers } = useAnchoredPanel(root,
   keepFocusOnTrigger: true,
   // A plain read, not a computed: the composable takes this once, and a
   // variant does not change over a component's life.
-  matchWidth: props.variant === 'control',
+  matchWidth: variant === 'control',
 })
 
 const placeholderText = computed(
-  () => props.placeholder ?? messages.chromeText({ key: 'selectOptions' }),
+  () => placeholder ?? messages.chromeText({ key: 'selectOptions' }),
 )
 
 const selected = computed(() =>
-  props.modelValue
-    .map((value) => props.options.find((option) => option.value === value))
+  model.value
+    .map((value) => options.find((option) => option.value === value))
     .filter((option): option is SelectOption => Boolean(option)),
 )
 
 /** Forbidden either by the option itself or by a rule outside the list. */
 const isDisabled = (option: SelectOption) =>
-  Boolean(option.disabled) || props.isOptionDisabled(option.value)
+  Boolean(option.disabled) || isOptionDisabled(option.value)
 
 function toggle(value: string) {
-  const option = props.options.find((entry) => entry.value === value)
+  const option = options.find((entry) => entry.value === value)
   if (option && isDisabled(option)) return
-  const next = props.modelValue.includes(value)
-    ? props.modelValue.filter((entry) => entry !== value)
-    : [...props.modelValue, value]
-  emit('update:modelValue', next)
+  const next = model.value.includes(value)
+    ? model.value.filter((entry) => entry !== value)
+    : [...model.value, value]
+  model.value = next
 }
 
 /*
@@ -252,11 +249,11 @@ function onFocusout(event: FocusEvent) {
       >
         <input
           type="checkbox"
-          :checked="modelValue.includes(option.value)"
+          :checked="model.includes(option.value)"
           :disabled="isDisabled(option)"
           @change="toggle(option.value)"
         />
-        <slot name="option" :value="option.value" :option="option" :selected="modelValue.includes(option.value)" :disabled="isDisabled(option)">
+        <slot name="option" :value="option.value" :option="option" :selected="model.includes(option.value)" :disabled="isDisabled(option)">
           {{ option.label }}
         </slot>
       </label>

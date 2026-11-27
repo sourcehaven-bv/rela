@@ -26,46 +26,42 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    modelValue?: string
-    /** Values in list order. What each one looks like comes from the slot. */
-    options: readonly string[]
-    /** Names the control for assistive tech. */
-    label: string
-    placeholder?: string
-    disabled?: boolean
-    /**
-     * Whether a single option cannot be chosen. A disabled option still
-     * shows, greyed and marked `aria-disabled`, but the arrows skip it and
-     * Enter and click do nothing on it.
-     */
-    isOptionDisabled?: (value: string) => boolean
-    /** Matches the panel's width to the trigger's. */
-    matchWidth?: boolean
-    /**
-     * `inline` renders the trigger bare, as the value alone, and only draws
-     * the button chrome on hover and focus. For a value sitting in a detail
-     * row or a table cell, where a permanent box on every field would read as
-     * a form rather than as a record.
-     *
-     * The control is the same either way. Nothing is swapped in on click,
-     * which is the point: the thing you hover is the thing that opens.
-     */
-    variant?: 'control' | 'inline'
-  }>(),
-  {
-    modelValue: '',
-    placeholder: undefined,
-    disabled: false,
-    isOptionDisabled: () => false,
-    matchWidth: false,
-    variant: 'control',
-  },
-)
+const {
+  disabled = false,
+  isOptionDisabled = () => false,
+  matchWidth = false,
+  variant = 'control',
+  options,
+} = defineProps<{
+  /** Values in list order. What each one looks like comes from the slot. */
+  options: readonly string[]
+  /** Names the control for assistive tech. */
+  label: string
+  placeholder?: string
+  disabled?: boolean
+  /**
+   * Whether a single option cannot be chosen. A disabled option still
+   * shows, greyed and marked `aria-disabled`, but the arrows skip it and
+   * Enter and click do nothing on it.
+   */
+  isOptionDisabled?: (value: string) => boolean
+  /** Matches the panel's width to the trigger's. */
+  matchWidth?: boolean
+  /**
+   * `inline` renders the trigger bare, as the value alone, and only draws
+   * the button chrome on hover and focus. For a value sitting in a detail
+   * row or a table cell, where a permanent box on every field would read as
+   * a form rather than as a record.
+   *
+   * The control is the same either way. Nothing is swapped in on click,
+   * which is the point: the thing you hover is the thing that opens.
+   */
+  variant?: 'control' | 'inline'
+}>()
+
+const model = defineModel<string>({ default: '' })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: string]
   /** Closed without choosing. */
   cancel: []
 }>()
@@ -80,7 +76,7 @@ const activeIndex = ref(0)
 
 const { floatingStyles, containsTarget, panelHandlers } = useAnchoredPanel(root, panel, {
   placement: 'bottom-start',
-  matchWidth: props.matchWidth,
+  matchWidth,
   // Focus stays on the trigger and the options are plain divs, so the panel
   // must not let a press move focus off it.
   keepFocusOnTrigger: true,
@@ -91,13 +87,13 @@ const { push, pop } = useOverlayStack({ scrollLock: false })
 const optionId = (index: number) => `${uid}-option-${index}`
 
 const isDisabled = (index: number) => {
-  const value = props.options[index]
-  return value === undefined || props.isOptionDisabled(value)
+  const value = options[index]
+  return value === undefined || isOptionDisabled(value)
 }
 
 /** The first option that can be chosen, searching outwards from `from`. */
 function nextEnabled(from: number, delta: number) {
-  const count = props.options.length
+  const count = options.length
   for (let step = 0; step < count; step += 1) {
     const index = (from + delta * step + count * count) % count
     if (!isDisabled(index)) return index
@@ -106,9 +102,9 @@ function nextEnabled(from: number, delta: number) {
 }
 
 async function show() {
-  if (props.disabled || open.value) return
+  if (disabled || open.value) return
   // Opens on the current value, so the list starts where the user left it.
-  const current = props.options.indexOf(props.modelValue)
+  const current = options.indexOf(model.value)
   // A forbidden current value can still be the selected one, so the search
   // for somewhere to stand starts there and moves on if it cannot stay.
   const from = current === -1 ? 0 : current
@@ -126,12 +122,12 @@ function hide() {
 }
 
 function choose(index: number) {
-  const value = props.options[index]
+  const value = options[index]
   if (value === undefined || isDisabled(index)) return
   hide()
   // Emitted after closing, so a listener that moves focus is not fighting the
   // panel being torn down.
-  emit('update:modelValue', value)
+  model.value = value
 }
 
 function scrollActiveIntoView() {
@@ -151,7 +147,7 @@ function setActive(index: number) {
 }
 
 function move(delta: number) {
-  if (!props.options.length) return
+  if (!options.length) return
   setActive(nextEnabled(activeIndex.value + delta, delta))
 }
 
@@ -175,7 +171,7 @@ function onKeydown(event: KeyboardEvent) {
     case 'End':
       if (!open.value) return
       event.preventDefault()
-      setActive(nextEnabled(props.options.length - 1, -1))
+      setActive(nextEnabled(options.length - 1, -1))
       break
     case 'Enter':
     case ' ':
@@ -231,7 +227,7 @@ defineExpose({ open: show, close: hide })
       @click="open ? hide() : show()"
     >
       <span class="rl-option-select__value">
-        <slot v-if="modelValue" name="option" :value="modelValue" :active="false" :selected="true" />
+        <slot v-if="model" name="option" :value="model" :active="false" :selected="true" />
         <span v-else class="rl-option-select__placeholder">{{
           placeholder ?? messages.chromeText({ key: 'select' })
         }}</span>
@@ -265,11 +261,11 @@ defineExpose({ open: show, close: hide })
           class="rl-option-select__option"
           :class="{
             'rl-option-select__option--active': index === activeIndex && !isOptionDisabled(option),
-            'rl-option-select__option--selected': option === modelValue,
+            'rl-option-select__option--selected': option === model,
             'rl-option-select__option--disabled': isOptionDisabled(option),
           }"
           role="option"
-          :aria-selected="option === modelValue"
+          :aria-selected="option === model"
           :aria-disabled="isOptionDisabled(option) || undefined"
           @click="choose(index)"
           @mousemove="isOptionDisabled(option) || (activeIndex = index)"
@@ -278,7 +274,7 @@ defineExpose({ open: show, close: hide })
             name="option"
             :value="option"
             :active="index === activeIndex"
-            :selected="option === modelValue"
+            :selected="option === model"
             :disabled="isOptionDisabled(option)"
           />
         </div>

@@ -15,39 +15,35 @@
  */
 import { computed, type Component } from 'vue'
 
-const props = withDefaults(
-  defineProps<{
-    label: string
-    /** Trailing text, such as a time or a day. */
-    meta?: string
-    /** Draws the meta in the accent colour, for something due or overdue. */
-    metaHighlight?: boolean
-    /** Shows a checkbox. Bind `checked` to make it do something. */
-    checkable?: boolean
-    checked?: boolean
-    /** Marks the row whose panel is open beside it. */
-    selected?: boolean
-    /** What the label renders as. See `NavItem.as`. */
-    as?: 'button' | 'a' | Component
-    /** Extra attributes for the rendered label, such as `href` or `to`. */
-    attrs?: Record<string, unknown>
-  }>(),
-  {
-    checkable: false,
-    checked: false,
-    selected: false,
-    metaHighlight: false,
-    as: 'button',
-    attrs: undefined,
-  },
-)
+const {
+  checkable = false,
+  checked = false,
+  selected = false,
+  metaHighlight = false,
+  as = 'button',
+} = defineProps<{
+  label: string
+  /** Trailing text, such as a time or a day. */
+  meta?: string
+  /** Draws the meta in the accent colour, for something due or overdue. */
+  metaHighlight?: boolean
+  /** Shows a checkbox. Bind `checked` to make it do something. */
+  checkable?: boolean
+  checked?: boolean
+  /** Marks the row whose panel is open beside it. */
+  selected?: boolean
+  /** What the label renders as. See `NavItem.as`. */
+  as?: 'button' | 'a' | Component
+  /** Extra attributes for the rendered label, such as `href` or `to`. */
+  attrs?: Record<string, unknown>
+}>()
 
 const emit = defineEmits<{
   select: []
   'update:checked': [value: boolean]
 }>()
 
-const isButton = computed(() => props.as === 'button')
+const isButton = computed(() => as === 'button')
 </script>
 
 <template>

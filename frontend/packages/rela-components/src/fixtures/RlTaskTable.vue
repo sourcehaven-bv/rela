@@ -14,18 +14,15 @@ import RlTag from '../components/common/RlTag.vue'
 import RlTagList from '../components/common/RlTagList.vue'
 import RlMetaItem from '../components/common/RlMetaItem.vue'
 
-withDefaults(
-  defineProps<{
-    sections: Section<Task>[]
-    columns?: TableColumn[]
-    showHeaderRow?: boolean
-    selectedId?: string
-    cursorId?: string
-    pageSize?: number
-    showAdd?: boolean
-  }>(),
-  { columns: () => [], showHeaderRow: true, pageSize: 0, showAdd: true },
-)
+const { columns = [], showHeaderRow = true, pageSize = 0, showAdd = true } = defineProps<{
+  sections: Section<Task>[]
+  columns?: TableColumn[]
+  showHeaderRow?: boolean
+  selectedId?: string
+  cursorId?: string
+  pageSize?: number
+  showAdd?: boolean
+}>()
 
 const emit = defineEmits<{ add: [section: Section<Task>]; select: [item: Task] }>()
 </script>

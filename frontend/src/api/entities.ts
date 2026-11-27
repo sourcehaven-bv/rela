@@ -372,7 +372,7 @@ export interface SearchOptions {
  * The relation context of a search: the hits are candidate SOURCES of an
  * incoming `relation` edge. The server accepts only `incoming`.
  */
-export interface SearchLinkContext {
+interface SearchLinkContext {
   relation: string
   direction: 'incoming'
 }

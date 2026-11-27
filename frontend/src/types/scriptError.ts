@@ -19,27 +19,27 @@ export interface ScriptError {
   captured_output?: string
 }
 
-export interface ScriptIdentity {
+interface ScriptIdentity {
   surface: 'action' | 'document' | 'automation' | 'lua_run' | 'lua_eval' | 'validation'
   path: string
   entity_id?: string
   args?: Record<string, unknown>
 }
 
-export interface ScriptErrorLua {
+interface ScriptErrorLua {
   message: string
   line?: number
   /** File `line` is in when it is not `script.path` (a required lib/ module). */
   file?: string
 }
 
-export interface SourceLine {
+interface SourceLine {
   n: number
   text: string
   highlight?: boolean
 }
 
-export interface StackFrame {
+interface StackFrame {
   path?: string
   line?: number
   func?: string

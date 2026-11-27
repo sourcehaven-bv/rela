@@ -34,14 +34,14 @@ export interface EntityEventData {
  * a file the same reload did put in force: realtime.yaml was applied, and
  * data-entry.yaml then did not load against it.
  */
-export interface ConfigErrorData {
+interface ConfigErrorData {
   file: string
   error: string
   applied?: string
 }
 
 /** The toast text for a config-error frame. */
-export function configErrorMessage(data: Partial<ConfigErrorData>): string {
+function configErrorMessage(data: Partial<ConfigErrorData>): string {
   const error = typeof data.error === 'string' ? data.error : ''
   const file = typeof data.file === 'string' ? data.file : ''
   const detail = error ? ` ${file ? `${file}: ${error}` : error}` : ''

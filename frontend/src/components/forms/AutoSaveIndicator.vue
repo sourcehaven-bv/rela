@@ -19,19 +19,14 @@ const { t } = useI18n()
 //   fades this out (transition on .autosave-indicator).
 // - saving: spinning ring.
 // - error: warning triangle (persists until resolved).
-const tooltip = computed(() => {
-  if (props.error) return props.error
-  switch (props.status) {
-    case 'saving':
-      return t('common.saving')
-    case 'saved':
-      return t('common.saved')
-    case 'error':
-      return t('form.saveFailed')
-    default:
-      return t('form.allChangesSaved')
-  }
-})
+const TOOLTIP_KEYS = {
+  idle: 'form.allChangesSaved',
+  saving: 'common.saving',
+  saved: 'common.saved',
+  error: 'form.saveFailed',
+} satisfies Record<SaveStatus, string>
+
+const tooltip = computed(() => props.error || t(TOOLTIP_KEYS[props.status]))
 
 const renderState = computed(() => {
   if (props.error || props.status === 'error') return 'error'

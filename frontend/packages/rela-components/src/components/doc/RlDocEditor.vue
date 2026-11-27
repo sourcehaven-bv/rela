@@ -3,20 +3,12 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-withDefaults(
-  defineProps<{
-    title?: string
-    body?: string
-    titlePlaceholder?: string
-    bodyPlaceholder?: string
-  }>(),
-  {
-    title: '',
-    body: '',
-    titlePlaceholder: undefined,
-    bodyPlaceholder: undefined,
-  },
-)
+const { title = '', body = '', titlePlaceholder, bodyPlaceholder } = defineProps<{
+  title?: string
+  body?: string
+  titlePlaceholder?: string
+  bodyPlaceholder?: string
+}>()
 
 const emit = defineEmits<{ 'update:title': [value: string]; 'update:body': [value: string] }>()
 

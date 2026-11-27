@@ -11,16 +11,17 @@ import RlMenuSeparator from 'rela-components/components/overlay/RlMenuSeparator.
 import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import { groupEntityActions, type EntityAction } from './entityActions'
 
-const props = withDefaults(
-  defineProps<{
-    actions: EntityAction[]
-    label?: string
-    align?: 'start' | 'end'
-  }>(),
-  { label: undefined, align: 'end' }
-)
+const {
+  actions,
+  label,
+  align = 'end',
+} = defineProps<{
+  actions: EntityAction[]
+  label?: string
+  align?: 'start' | 'end'
+}>()
 
-const sections = computed(() => groupEntityActions(props.actions))
+const sections = computed(() => groupEntityActions(actions))
 const { t } = useI18n()
 </script>
 

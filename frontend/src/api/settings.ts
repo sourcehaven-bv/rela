@@ -94,14 +94,6 @@ export async function saveSettings(userDefaults: UserDefaults): Promise<void> {
   }
 }
 
-export async function getPalette(): Promise<PaletteConfig> {
-  const response = await fetch(apiUrl('/api/v1/_palette'))
-  if (!response.ok) {
-    throw new Error('Failed to load palette')
-  }
-  return response.json()
-}
-
 export async function savePalette(palette: PaletteConfig): Promise<void> {
   const response = await fetch(apiUrl('/api/v1/_palette'), {
     method: 'PUT',

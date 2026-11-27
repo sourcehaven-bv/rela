@@ -35,29 +35,26 @@
 import { computed, useId } from 'vue'
 import RlText from '../common/RlText.vue'
 
-const props = withDefaults(
-  defineProps<{
-    label: string
-    /** Guidance shown under the label, before the user has done anything. */
-    hint?: string
-    /** A validation message. Its presence is what puts the field in error. */
-    error?: string
-    required?: boolean
-    /**
-     * Hides the label visually but keeps it for screen readers. For a field
-     * whose purpose is already obvious from context, such as a search box
-     * under a heading that says Search.
-     */
-    labelHidden?: boolean
-    /**
-     * `wrap` renders a `label` element around the control, for checkboxes
-     * where the whole row should be clickable. `for` renders a separate label
-     * pointing at the control, right for anything with its own focusable box.
-     */
-    labelMode?: 'for' | 'wrap'
-  }>(),
-  { required: false, labelHidden: false, labelMode: 'for' },
-)
+const { required = false, labelHidden = false, labelMode = 'for', error, hint } = defineProps<{
+  label: string
+  /** Guidance shown under the label, before the user has done anything. */
+  hint?: string
+  /** A validation message. Its presence is what puts the field in error. */
+  error?: string
+  required?: boolean
+  /**
+   * Hides the label visually but keeps it for screen readers. For a field
+   * whose purpose is already obvious from context, such as a search box
+   * under a heading that says Search.
+   */
+  labelHidden?: boolean
+  /**
+   * `wrap` renders a `label` element around the control, for checkboxes
+   * where the whole row should be clickable. `for` renders a separate label
+   * pointing at the control, right for anything with its own focusable box.
+   */
+  labelMode?: 'for' | 'wrap'
+}>()
 
 const uid = useId()
 const controlId = computed(() => `${uid}-control`)
@@ -69,15 +66,15 @@ const errorId = computed(() => `${uid}-error`)
  * been told what went wrong should hear that before the original guidance.
  */
 const describedBy = computed(() => {
-  const ids = [props.error ? errorId.value : null, props.hint ? hintId.value : null]
+  const ids = [error ? errorId.value : null, hint ? hintId.value : null]
   return ids.filter(Boolean).join(' ') || undefined
 })
 
 const control = computed(() => ({
   id: controlId.value,
   describedBy: describedBy.value,
-  invalid: Boolean(props.error),
-  required: props.required,
+  invalid: Boolean(error),
+  required,
 }))
 </script>
 

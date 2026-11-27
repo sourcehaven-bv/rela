@@ -11,15 +11,12 @@ import { computed, nextTick, ref } from 'vue'
 import { useOverlayStack } from '../../composables/useOverlayStack'
 import { useAnchoredPanel } from '../../composables/useAnchoredPanel'
 
-const props = withDefaults(
-  defineProps<{
-    /** Which edge of the trigger the panel lines up with. */
-    align?: 'start' | 'end'
-    /** Preferred side. The panel flips to the other one when that has no room. */
-    placement?: 'bottom' | 'top'
-  }>(),
-  { align: 'end', placement: 'bottom' },
-)
+const { align = 'end', placement = 'bottom' } = defineProps<{
+  /** Which edge of the trigger the panel lines up with. */
+  align?: 'start' | 'end'
+  /** Preferred side. The panel flips to the other one when that has no room. */
+  placement?: 'bottom' | 'top'
+}>()
 
 const open = ref(false)
 const root = ref<HTMLElement | null>(null)
@@ -30,7 +27,7 @@ const panel = ref<HTMLElement | null>(null)
  * near an edge flips and shifts to stay on screen.
  */
 const { floatingStyles, containsTarget } = useAnchoredPanel(root, panel, {
-  placement: computed(() => `${props.placement}-${props.align}` as const),
+  placement: computed(() => `${placement}-${align}` as const),
 })
 
 // No scroll lock: a menu should not stop the page behind it scrolling.

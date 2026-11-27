@@ -25,22 +25,19 @@ import type { NavItemStatus } from '../../types'
 import type { InboxMentionRow, InboxUnreadRow, InboxWaitingRow } from './types'
 import { useMessages } from '../../composables/useMessages'
 
-withDefaults(
-  defineProps<{
-    waiting: InboxWaitingRow[]
-    mentions: InboxMentionRow[]
-    unread: InboxUnreadRow[]
-    /** Set when the waiting list holds fewer rows than exist. `total` is preformatted. */
-    waitingMore?: { shown: number; total: string }
-    /** The server could not load every channel setting. */
-    degraded?: boolean
-    /** Row ids whose mark read is in flight. */
-    busy?: Set<string>
-    /** The level of the section headings, so the page keeps its outline. */
-    headingLevel?: 2 | 3 | 4 | 5 | 6
-  }>(),
-  { waitingMore: undefined, degraded: false, busy: () => new Set(), headingLevel: 2 }
-)
+const { waitingMore, degraded = false, busy = new Set(), headingLevel = 2 } = defineProps<{
+  waiting: InboxWaitingRow[]
+  mentions: InboxMentionRow[]
+  unread: InboxUnreadRow[]
+  /** Set when the waiting list holds fewer rows than exist. `total` is preformatted. */
+  waitingMore?: { shown: number; total: string }
+  /** The server could not load every channel setting. */
+  degraded?: boolean
+  /** Row ids whose mark read is in flight. */
+  busy?: Set<string>
+  /** The level of the section headings, so the page keeps its outline. */
+  headingLevel?: 2 | 3 | 4 | 5 | 6
+}>()
 
 const emit = defineEmits<{ markRead: [rowId: string] }>()
 

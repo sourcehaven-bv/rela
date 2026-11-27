@@ -32,18 +32,15 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    toasts: ToastMessage[]
-    placement?: 'top-right' | 'bottom-right' | 'top-center'
-  }>(),
-  { placement: 'bottom-right' },
-)
+const { placement = 'bottom-right', toasts } = defineProps<{
+  toasts: ToastMessage[]
+  placement?: 'top-right' | 'bottom-right' | 'top-center'
+}>()
 
 defineEmits<{ dismiss: [id: string] }>()
 
-const assertive = computed(() => props.toasts.filter((t) => t.tone === 'danger'))
-const polite = computed(() => props.toasts.filter((t) => t.tone !== 'danger'))
+const assertive = computed(() => toasts.filter((t) => t.tone === 'danger'))
+const polite = computed(() => toasts.filter((t) => t.tone !== 'danger'))
 </script>
 
 <template>

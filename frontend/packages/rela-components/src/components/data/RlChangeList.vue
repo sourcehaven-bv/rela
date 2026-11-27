@@ -19,17 +19,14 @@
 import RlHeading from '../common/RlHeading.vue'
 import RlCount from '../common/RlCount.vue'
 
-withDefaults(
-  defineProps<{
-    /** What the changes belong to: `Ticket`, `Ticket form`. */
-    title?: string
-    /** Heading level for the title, which depends on where the list sits. */
-    level?: 2 | 3 | 4
-    /** Shows the number of changes beside the title. */
-    count?: number
-  }>(),
-  { title: undefined, level: 3, count: undefined },
-)
+const { title, level = 3, count } = defineProps<{
+  /** What the changes belong to: `Ticket`, `Ticket form`. */
+  title?: string
+  /** Heading level for the title, which depends on where the list sits. */
+  level?: 2 | 3 | 4
+  /** Shows the number of changes beside the title. */
+  count?: number
+}>()
 
 defineSlots<{ default?: () => unknown; actions?: () => unknown }>()
 </script>

@@ -36,23 +36,20 @@ import RlSectionHeading from '../components/layout/RlSectionHeading.vue'
 import RlText from '../components/common/RlText.vue'
 import { myTaskGroups } from './index'
 
-const props = withDefaults(
-  defineProps<{
-    /**
-     * Width of the sidebar the panels slide out of, in pixels. Pass the same
-     * value given to `RlAppShell`; left unset it falls back to the token,
-     * which is right only while the sidebar is not resizable.
-     */
-    sidebarWidth?: number
-  }>(),
-  {},
-)
+const { sidebarWidth } = defineProps<{
+  /**
+   * Width of the sidebar the panels slide out of, in pixels. Pass the same
+   * value given to `RlAppShell`; left unset it falls back to the token,
+   * which is right only while the sidebar is not resizable.
+   */
+  sidebarWidth?: number
+}>()
 
 const open = defineModel<boolean>('open', { default: false })
 
 const layerStyle = computed(() => ({
   '--rl-my-tasks-inset':
-    props.sidebarWidth === undefined ? 'var(--rl-sidebar-width)' : `${props.sidebarWidth}px`,
+    sidebarWidth === undefined ? 'var(--rl-sidebar-width)' : `${sidebarWidth}px`,
 }))
 
 const openTaskId = ref<string | null>(null)

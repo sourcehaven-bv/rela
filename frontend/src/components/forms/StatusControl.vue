@@ -20,9 +20,10 @@ import type { TransitionOption } from '@/types'
 import { useSchemaStore } from '@/stores/schema'
 import Badge from '@/components/ui/Badge.vue'
 
+/** Current value of the state-machine field (the entity's present state). */
+const model = defineModel<string>({ required: true })
+
 const props = defineProps<{
-  // Current value of the state-machine field (the entity's present state).
-  modelValue: string
   // The property's wire binding, used for label + badge-style lookup.
   property: string
   entityType?: string
@@ -33,17 +34,13 @@ const props = defineProps<{
   disabled?: boolean
 }>()
 
-const emit = defineEmits<{
-  'update:modelValue': [value: string]
-}>()
-
 const schemaStore = useSchemaStore()
 
 // Show only performable moves — the "only allowed" contract. A self-loop (to ==
 // current) is never offered; the server already excludes it, but guard here too.
 const allowedMoves = computed(() =>
   props.transitions
-    .filter((t) => t.allowed && t.to !== props.modelValue)
+    .filter((t) => t.allowed && t.to !== model.value)
     .slice()
     .sort((a, b) => moveLabel(a).localeCompare(moveLabel(b)))
 )
@@ -70,8 +67,8 @@ function toggle() {
 
 function selectMove(t: TransitionOption) {
   open.value = false
-  if (t.to === props.modelValue) return
-  emit('update:modelValue', t.to)
+  if (t.to === model.value) return
+  model.value = t.to
 }
 
 function handleClickOutside(e: MouseEvent) {
@@ -94,7 +91,7 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
       :aria-expanded="open"
       @click.stop="toggle"
     >
-      <Badge :value="modelValue" :property="property">
+      <Badge :value="model" :property="property">
         <span v-if="hasMoves" class="status-caret" aria-hidden="true">&#9662;</span>
       </Badge>
     </button>

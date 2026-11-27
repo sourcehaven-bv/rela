@@ -8,17 +8,14 @@ import RlText from 'rela-components/components/common/RlText.vue'
  * controls to edit. Copied from the mockups' fixture; the library has no
  * component for it yet.
  */
-withDefaults(
-  defineProps<{
-    /** What is previewed, after the word "Preview". */
-    subject: string
-    /** Content runs edge to edge, for a preview that draws its own panel. */
-    flush?: boolean
-    /** Stays in view while the editor beside it scrolls. */
-    sticky?: boolean
-  }>(),
-  { flush: false, sticky: false }
-)
+const { flush = false, sticky = false } = defineProps<{
+  /** What is previewed, after the word "Preview". */
+  subject: string
+  /** Content runs edge to edge, for a preview that draws its own panel. */
+  flush?: boolean
+  /** Stays in view while the editor beside it scrolls. */
+  sticky?: boolean
+}>()
 
 const labelId = useId()
 </script>

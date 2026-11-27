@@ -121,7 +121,7 @@ export const MAX_POST_FILE_BYTES = 16 * 1024 * 1024
  * not a Blob: FormData names every Blob part (`blob`), and the server
  * refuses a message part that carries a file name.
  */
-export function postMessageForm(
+function postMessageForm(
   body: Record<string, unknown>,
   files: readonly MessageFileUpload[]
 ): FormData {
@@ -292,7 +292,7 @@ export async function getChannelSchema(): Promise<ChannelSchema> {
 }
 
 /** The inbox kinds the server accepts in `kinds`. */
-export type InboxKind = 'waiting' | 'unread' | 'mention' | 'reply'
+type InboxKind = 'waiting' | 'unread' | 'mention' | 'reply'
 
 /**
  * The query of an inbox read. Both are optional; the server's defaults are

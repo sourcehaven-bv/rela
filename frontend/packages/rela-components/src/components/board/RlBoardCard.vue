@@ -20,27 +20,32 @@ import type { CollectionItem } from '../../types'
 import { useDraggableCard, useDropTargetCard } from '../../composables/useBoardDnd'
 import { useMessages } from '../../composables/useMessages'
 
-const props = withDefaults(
-  defineProps<{
-    item: T
-    sectionId: string
-    laneId?: string
-    /** Whether this card may be picked up at all. */
-    draggable?: boolean
-    /** Whether this card is the one the keyboard has picked up. */
-    grabbed?: boolean
-    /** Names the column the card is in, for the grab announcement. */
-    sectionTitle?: string
-    /**
-     * Whether another card can be dropped before or after this one. See
-     * `reorder` on `RlBoard`.
-     */
-    reorder?: boolean
-    /** Whether a card dropped on the middle of this one groups. See `group` on `RlBoard`. */
-    group?: boolean
-  }>(),
-  { draggable: false, grabbed: false, reorder: false, group: false },
-)
+const {
+  item,
+  sectionId,
+  laneId,
+  draggable = false,
+  grabbed = false,
+  reorder = false,
+  group = false,
+} = defineProps<{
+  item: T
+  sectionId: string
+  laneId?: string
+  /** Whether this card may be picked up at all. */
+  draggable?: boolean
+  /** Whether this card is the one the keyboard has picked up. */
+  grabbed?: boolean
+  /** Names the column the card is in, for the grab announcement. */
+  sectionTitle?: string
+  /**
+   * Whether another card can be dropped before or after this one. See
+   * `reorder` on `RlBoard`.
+   */
+  reorder?: boolean
+  /** Whether a card dropped on the middle of this one groups. See `group` on `RlBoard`. */
+  group?: boolean
+}>()
 
 const emit = defineEmits<{ grab: [item: T]; release: [] }>()
 
@@ -63,7 +68,7 @@ const element = ref<HTMLElement>()
  * it meant it.
  */
 function releaseNativeDrags() {
-  if (!props.draggable || !element.value) return
+  if (!draggable || !element.value) return
   for (const child of element.value.querySelectorAll('a, img')) {
     if (!child.hasAttribute('draggable')) child.setAttribute('draggable', 'false')
   }
@@ -75,23 +80,23 @@ onUpdated(releaseNativeDrags)
 
 const { dragging } = useDraggableCard({
   element,
-  enabled: toRef(() => props.draggable),
+  enabled: toRef(() => draggable),
   data: computed(() => ({
-    itemId: props.item.id,
-    fromSectionId: props.sectionId,
-    fromLaneId: props.laneId,
+    itemId: item.id,
+    fromSectionId: sectionId,
+    fromLaneId: laneId,
   })),
 })
 
 const { edge } = useDropTargetCard({
   element,
-  enabled: toRef(() => props.reorder || props.group),
-  itemId: toRef(() => props.item.id),
-  group: toRef(() => props.group),
+  enabled: toRef(() => reorder || group),
+  itemId: toRef(() => item.id),
+  group: toRef(() => group),
 })
 
 function onKeydown(event: KeyboardEvent) {
-  if (!props.draggable) return
+  if (!draggable) return
   if (event.key !== 'Enter' && event.key !== ' ') return
 
   /*
@@ -110,11 +115,11 @@ function onKeydown(event: KeyboardEvent) {
    * and one press that both picked a card up and dropped it would leave the
    * board exactly as it was.
    */
-  if (props.grabbed) return
+  if (grabbed) return
 
   event.preventDefault()
   event.stopPropagation()
-  emit('grab', props.item)
+  emit('grab', item)
 }
 </script>
 

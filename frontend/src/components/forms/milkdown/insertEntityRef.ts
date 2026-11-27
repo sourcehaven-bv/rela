@@ -29,7 +29,7 @@ export interface EntityRefInsert {
  * Returns false when the id is not a valid reference, so a caller cannot write
  * a node the serializer would then have to make sense of.
  */
-export function replaceWithEntityRef(
+function replaceWithEntityRef(
   view: EditorView,
   ref: EntityRefInsert,
   from: number,

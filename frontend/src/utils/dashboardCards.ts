@@ -45,7 +45,7 @@ export interface BreakdownItem {
 }
 
 /** One table cell, resolved once per render rather than per template read. */
-export interface TableCell {
+interface TableCell {
   key: string
   /** The detail route when the column links to the row. */
   link?: string

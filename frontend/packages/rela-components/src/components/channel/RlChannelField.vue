@@ -34,71 +34,69 @@ import type { ResolvedChannelField } from './channelFields'
 import type { ChannelEnumOption, ChannelFieldValue, ChannelReadableRef } from './types'
 import { useMessages, type ChannelTextKey } from '../../composables/useMessages'
 
-const props = withDefaults(
-  defineProps<{
-    field: ResolvedChannelField
-    modelValue: ChannelFieldValue
-    error?: string
-    enumOptions?: Record<string, ChannelEnumOption[]>
-    /** The chosen ref, so the chip can show its title. */
-    chosenRef?: ChannelReadableRef
-    /**
-     * Asks the app to pick an entity. Resolve null on cancel; never reject.
-     * A rejection is treated as a cancel.
-     */
-    pickRef?: (to: string[]) => Promise<ChannelReadableRef | null>
-    /** The stored ref is one the user may not read, and has not been replaced. */
-    restricted?: boolean
-    timeZoneLabel?: string
-  }>(),
-  {
-    error: undefined,
-    enumOptions: undefined,
-    chosenRef: undefined,
-    pickRef: undefined,
-    restricted: false,
-    timeZoneLabel: undefined,
-  },
-)
+const {
+  field,
+  error,
+  enumOptions,
+  chosenRef,
+  pickRef,
+  restricted = false,
+  timeZoneLabel,
+} = defineProps<{
+  field: ResolvedChannelField
+  error?: string
+  enumOptions?: Record<string, ChannelEnumOption[]>
+  /** The chosen ref, so the chip can show its title. */
+  chosenRef?: ChannelReadableRef
+  /**
+   * Asks the app to pick an entity. Resolve null on cancel; never reject.
+   * A rejection is treated as a cancel.
+   */
+  pickRef?: (to: string[]) => Promise<ChannelReadableRef | null>
+  /** The stored ref is one the user may not read, and has not been replaced. */
+  restricted?: boolean
+  timeZoneLabel?: string
+}>()
+
+const model = defineModel<ChannelFieldValue>({ required: true })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: ChannelFieldValue]
   pick: [ref: ChannelReadableRef | null]
 }>()
 
 const messages = useMessages()
 const t = (key: ChannelTextKey) => messages.channelText({ key })
 
-const p = computed(() => props.field.property)
-const text = computed(() => (typeof props.modelValue === 'string' ? props.modelValue : ''))
+const p = computed(() => field.property)
+const text = computed(() => (typeof model.value === 'string' ? model.value : ''))
 
 const selectOptions = computed<SelectOption[]>(() => {
-  const known = p.value.enum ? props.enumOptions?.[p.value.enum] : undefined
+  const known = p.value.enum ? enumOptions?.[p.value.enum] : undefined
   const opts = (p.value.values ?? []).map((v) => ({
     value: v,
     label: known?.find((o) => o.value === v)?.label ?? v,
   }))
   // An optional enum needs a way back to "not set", and that choice is its
   // empty state too, so it carries the placeholder.
-  return p.value.required ? opts : [{ value: '', label: props.field.placeholder ?? '—' }, ...opts]
+  return p.value.required ? opts : [{ value: '', label: field.placeholder ?? '—' }, ...opts]
 })
 
 function setText(v: string) {
-  emit('update:modelValue', v === '' ? undefined : v)
+  model.value = v === '' ? undefined : v
 }
 
 function setChecked(v: boolean) {
-  emit('update:modelValue', v || p.value.required ? v : undefined)
+  model.value = v || p.value.required ? v : undefined
 }
 
 const picking = ref(false)
 
 async function choose() {
-  if (!props.pickRef || picking.value) return
+  if (!pickRef || picking.value) return
   picking.value = true
   let picked: ChannelReadableRef | null = null
   try {
-    picked = await props.pickRef(p.value.to ?? [])
+    picked = await pickRef(p.value.to ?? [])
   } catch {
     // The contract is to resolve null on cancel; a rejection is read as one.
     picked = null
@@ -107,17 +105,17 @@ async function choose() {
   }
   if (!picked) return
   emit('pick', picked)
-  emit('update:modelValue', picked.id)
+  model.value = picked.id
 }
 
 function clearRef() {
   emit('pick', null)
-  emit('update:modelValue', undefined)
+  model.value = undefined
 }
 
 const chooseLabel = computed(() => {
-  if (props.restricted) return t('replace')
-  return text.value ? t('change') : (props.field.placeholder ?? t('choose'))
+  if (restricted) return t('replace')
+  return text.value ? t('change') : (field.placeholder ?? t('choose'))
 })
 </script>
 
@@ -136,7 +134,7 @@ const chooseLabel = computed(() => {
   />
   <RlCheckbox
     v-else-if="field.widget === 'checkbox'"
-    :model-value="modelValue === true"
+    :model-value="model === true"
     :label="field.label"
     :hint="field.help"
     :error="error"

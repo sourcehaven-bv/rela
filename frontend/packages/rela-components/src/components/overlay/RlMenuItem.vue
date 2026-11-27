@@ -15,36 +15,33 @@ import { computed } from 'vue'
 import RlIcon from '../common/RlIcon.vue'
 import type { IconName } from '../common/icons'
 
-const props = withDefaults(
-  defineProps<{
-    icon?: IconName
-    tone?: 'default' | 'danger'
-    disabled?: boolean
-    /** Right-aligned hint, usually the keyboard shortcut. */
-    shortcut?: string
-    /** Where this row goes. Present makes the row a link rather than a button. */
-    href?: string
-    /**
-     * Whether this row is the one already in effect: the current space, the
-     * active sort, the view being shown.
-     *
-     * Draws a check in the trailing column and reports `aria-current`, so the
-     * state is not carried by the tick alone. The row stays pressable: a menu
-     * that disables its current entry gives a user who opened the menu by
-     * mistake nothing to confirm, and re-selecting where you already are is
-     * harmless.
-     *
-     * The check sits where `shortcut` would, since a row that is already in
-     * effect is not one you reach for by accelerator.
-     */
-    current?: boolean
-  }>(),
-  { tone: 'default', disabled: false, current: false },
-)
+const { tone = 'default', disabled = false, current = false, href } = defineProps<{
+  icon?: IconName
+  tone?: 'default' | 'danger'
+  disabled?: boolean
+  /** Right-aligned hint, usually the keyboard shortcut. */
+  shortcut?: string
+  /** Where this row goes. Present makes the row a link rather than a button. */
+  href?: string
+  /**
+   * Whether this row is the one already in effect: the current space, the
+   * active sort, the view being shown.
+   *
+   * Draws a check in the trailing column and reports `aria-current`, so the
+   * state is not carried by the tick alone. The row stays pressable: a menu
+   * that disables its current entry gives a user who opened the menu by
+   * mistake nothing to confirm, and re-selecting where you already are is
+   * harmless.
+   *
+   * The check sits where `shortcut` would, since a row that is already in
+   * effect is not one you reach for by accelerator.
+   */
+  current?: boolean
+}>()
 
 defineEmits<{ click: [event: MouseEvent] }>()
 
-const tag = computed(() => (props.href && !props.disabled ? 'a' : 'button'))
+const tag = computed(() => (href && !disabled ? 'a' : 'button'))
 </script>
 
 <template>

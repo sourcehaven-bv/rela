@@ -18,60 +18,59 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    item: T
-    columns: TableColumn[]
-    /** The row whose detail is open. Distinct from `checked` and `cursor`. */
-    selected?: boolean
-    /** Whether the row carries a select box at all. */
-    selectable?: boolean
-    /** Whether this row is in the selection. */
-    checked?: boolean
-    /**
-     * Whether the keyboard cursor is on this row. Distinct from `selected`:
-     * see the note on `cursorId` in `RlTable`.
-     *
-     * Marked with a ring rather than a fill, because the cursor can sit on a
-     * row that is also open or checked and all three have to stay legible at
-     * once.
-     */
-    cursor?: boolean
-    /**
-     * What the row does once the table is too narrow for its fixed columns.
-     * `stack` gives every populated cell its own labelled line; `compress`
-     * stays on one line and keeps only the `primary` columns. See `RlTable`.
-     */
-    compact?: TableCompact
-    /**
-     * DOM id for the row element, so the grid can point
-     * `aria-activedescendant` at it. Set by the section; a caller passing
-     * `cursorId` never supplies this.
-     */
-    rowId?: string
-    /**
-     * Whether the row carries a handle to drag it to another place, or to
-     * move it one place with the arrow keys. See `reorderable` on `RlTable`.
-     */
-    reorderable?: boolean
-    /**
-     * Which table the row belongs to. A row is dropped only on rows of the
-     * same group, so two tables on one page cannot trade rows. Set by the
-     * table.
-     */
-    reorderGroup?: string
-  }>(),
-  {
-    selected: false,
-    reorderable: false,
-    reorderGroup: '',
-    selectable: false,
-    checked: false,
-    cursor: false,
-    rowId: undefined,
-    compact: 'stack',
-  },
-)
+const {
+  item,
+  columns,
+  selected = false,
+  selectable = false,
+  checked = false,
+  cursor = false,
+  compact = 'stack',
+  rowId,
+  reorderable = false,
+  reorderGroup = '',
+} = defineProps<{
+  item: T
+  columns: TableColumn[]
+  /** The row whose detail is open. Distinct from `checked` and `cursor`. */
+  selected?: boolean
+  /** Whether the row carries a select box at all. */
+  selectable?: boolean
+  /** Whether this row is in the selection. */
+  checked?: boolean
+  /**
+   * Whether the keyboard cursor is on this row. Distinct from `selected`:
+   * see the note on `cursorId` in `RlTable`.
+   *
+   * Marked with a ring rather than a fill, because the cursor can sit on a
+   * row that is also open or checked and all three have to stay legible at
+   * once.
+   */
+  cursor?: boolean
+  /**
+   * What the row does once the table is too narrow for its fixed columns.
+   * `stack` gives every populated cell its own labelled line; `compress`
+   * stays on one line and keeps only the `primary` columns. See `RlTable`.
+   */
+  compact?: TableCompact
+  /**
+   * DOM id for the row element, so the grid can point
+   * `aria-activedescendant` at it. Set by the section; a caller passing
+   * `cursorId` never supplies this.
+   */
+  rowId?: string
+  /**
+   * Whether the row carries a handle to drag it to another place, or to
+   * move it one place with the arrow keys. See `reorderable` on `RlTable`.
+   */
+  reorderable?: boolean
+  /**
+   * Which table the row belongs to. A row is dropped only on rows of the
+   * same group, so two tables on one page cannot trade rows. Set by the
+   * table.
+   */
+  reorderGroup?: string
+}>()
 const emit = defineEmits<{ click: [item: T]; toggle: [item: T]; reorder: [move: RowMove] }>()
 
 const rowEl = ref<HTMLElement>()
@@ -79,9 +78,9 @@ const handleEl = ref<HTMLElement>()
 const { dragging, edge } = useReorderableRow({
   element: rowEl,
   handle: handleEl,
-  enabled: computed(() => props.reorderable),
-  itemId: computed(() => props.item.id),
-  group: computed(() => props.reorderGroup),
+  enabled: computed(() => reorderable),
+  itemId: computed(() => item.id),
+  group: computed(() => reorderGroup),
   onDrop: (drop) => emit('reorder', drop),
 })
 
@@ -98,7 +97,7 @@ function onHandleKey(event: KeyboardEvent) {
   if (!step) return
   event.preventDefault()
   event.stopPropagation()
-  emit('reorder', { itemId: props.item.id, step })
+  emit('reorder', { itemId: item.id, step })
   void nextTick(() => handleEl.value?.focus())
 }
 
@@ -122,12 +121,12 @@ function onHandleKey(event: KeyboardEvent) {
 defineSlots<Record<string, (props: { item: T; column?: TableColumn; selected?: boolean }) => unknown>>()
 
 /** The last kept cell of a compressed row, which carries the right gutter. */
-const lastKept = computed(() => lastKeptKey(props.columns))
+const lastKept = computed(() => lastKeptKey(columns))
 
 /** The plain-text default for a column that names a field. */
 function fieldValue(column: TableColumn): unknown {
   if (!column.field) return undefined
-  return (props.item as Record<string, unknown>)[column.field]
+  return (item as Record<string, unknown>)[column.field]
 }
 
 /**
@@ -140,7 +139,7 @@ function fieldValue(column: TableColumn): unknown {
  */
 function hasValue(column: TableColumn) {
   // The column's own answer wins: only it can see inside its slot.
-  if (column.isEmpty) return !column.isEmpty(props.item)
+  if (column.isEmpty) return !column.isEmpty(item)
   if (!column.field) return true
   const value = fieldValue(column)
   return Array.isArray(value) ? value.length > 0 : value !== undefined && value !== null && value !== ''

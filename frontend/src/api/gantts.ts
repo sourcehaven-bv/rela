@@ -1,13 +1,13 @@
 import { api } from './client'
 
 /** GanttSpan is a nullable date interval; "YYYY-MM-DD" strings. */
-export interface GanttSpan {
+interface GanttSpan {
   start?: string
   end?: string
 }
 
 /** GanttBreach flags the rolled span escaping the planned window. */
-export interface GanttBreach {
+interface GanttBreach {
   before?: boolean
   after?: boolean
 }

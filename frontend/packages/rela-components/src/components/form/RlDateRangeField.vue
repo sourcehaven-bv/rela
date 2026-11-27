@@ -28,55 +28,52 @@ export interface DateRange {
   end: string
 }
 
-const props = withDefaults(
-  defineProps<{
-    modelValue?: DateRange
-    label: string
-    hint?: string
-    error?: string
-    required?: boolean
-    labelHidden?: boolean
-    disabled?: boolean
-    withTime?: boolean
-    /** Earliest date either end may take. */
-    min?: string
-    /** Latest date either end may take. */
-    max?: string
-    /** Names each end for a screen reader; the labels are never drawn. */
-    startLabel?: string
-    endLabel?: string
-    timeZoneLabel?: string
-  }>(),
-  {
-    modelValue: () => ({ start: '', end: '' }),
-    required: false,
-    labelHidden: false,
-    disabled: false,
-    withTime: false,
-    startLabel: undefined,
-    endLabel: undefined,
-  },
-)
+const {
+  required = false,
+  labelHidden = false,
+  disabled = false,
+  withTime = false,
+  timeZoneLabel,
+  hint,
+  max,
+  min,
+} = defineProps<{
+  label: string
+  hint?: string
+  error?: string
+  required?: boolean
+  labelHidden?: boolean
+  disabled?: boolean
+  withTime?: boolean
+  /** Earliest date either end may take. */
+  min?: string
+  /** Latest date either end may take. */
+  max?: string
+  /** Names each end for a screen reader; the labels are never drawn. */
+  startLabel?: string
+  endLabel?: string
+  timeZoneLabel?: string
+}>()
 
-const emit = defineEmits<{ 'update:modelValue': [value: DateRange] }>()
+const model = defineModel<DateRange>({ default: () => ({ start: '', end: '' }) })
 
 const group = useId()
 
 const hintText = computed(() =>
-  props.timeZoneLabel && props.withTime
-    ? [props.hint, messages.timeZoneNote({ zone: props.timeZoneLabel })].filter(Boolean).join(' ')
-    : props.hint,
+  timeZoneLabel && withTime
+    ? [hint, messages.timeZoneNote({ zone: timeZoneLabel })].filter(Boolean).join(' ')
+    : hint,
 )
 
 /*
  * Each end narrows the other's allowed span, on top of whatever the caller
  * set. The start cannot pass the end, and the end cannot precede the start.
  */
-const startMax = computed(() => props.modelValue.end || props.max)
-const endMin = computed(() => props.modelValue.start || props.min)
+const startMax = computed(() => model.value.end || max)
+const endMin = computed(() => model.value.start || min)
 
 function update(part: keyof DateRange, value: string) {
-  emit('update:modelValue', { ...props.modelValue, [part]: value })
+  model.value = { ...model.value, [part]: value }
 }
 </script>
 
@@ -108,7 +105,7 @@ function update(part: keyof DateRange, value: string) {
             :id="`${group}-start`"
             class="rl-control rl-date-range__input"
             :type="withTime ? 'datetime-local' : 'date'"
-            :value="modelValue.start"
+            :value="model.start"
             :disabled="disabled"
             :required="isRequired"
             :min="min"
@@ -134,7 +131,7 @@ function update(part: keyof DateRange, value: string) {
             :id="`${group}-end`"
             class="rl-control rl-date-range__input"
             :type="withTime ? 'datetime-local' : 'date'"
-            :value="modelValue.end"
+            :value="model.end"
             :disabled="disabled"
             :required="isRequired"
             :min="endMin"

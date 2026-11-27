@@ -11,19 +11,16 @@ import RlIcon from '../common/RlIcon.vue'
 import RlText from '../common/RlText.vue'
 import type { IconName } from '../common/icons'
 
-withDefaults(
-  defineProps<{
-    /**
-     * The heading. Leave it out when the page heading already says the same,
-     * so the reader does not see it twice.
-     */
-    title?: string
-    description?: string
-    icon?: IconName
-    size?: 'sm' | 'md'
-  }>(),
-  { icon: 'inbox', size: 'md' },
-)
+const { icon = 'inbox', size = 'md' } = defineProps<{
+  /**
+   * The heading. Leave it out when the page heading already says the same,
+   * so the reader does not see it twice.
+   */
+  title?: string
+  description?: string
+  icon?: IconName
+  size?: 'sm' | 'md'
+}>()
 </script>
 
 <template>

@@ -39,7 +39,7 @@ export const OPERATOR_MAP: Record<string, string> = {
  * the explicit override here is redundant but harmless and kept for
  * clarity next to `eq`).
  */
-export const API_TO_UI_OPERATOR: Record<string, string> = {
+const API_TO_UI_OPERATOR: Record<string, string> = {
   ...Object.fromEntries(Object.entries(OPERATOR_MAP).map(([ui, api]) => [api, ui])),
   eq: '=',
   in: 'in',

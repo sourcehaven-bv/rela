@@ -17,7 +17,7 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import { normalizeLinkUrl } from './linkUrl'
 import { canApplyLink, findLinkAt, isWithinOneBlock } from './linkSelection'
 
-export const linkPasteKey = new PluginKey('rela-link-paste')
+const linkPasteKey = new PluginKey('rela-link-paste')
 
 /**
  * Decides whether this paste should become a link, and returns the href.
@@ -26,7 +26,7 @@ export const linkPasteKey = new PluginKey('rela-link-paste')
  * or a mounted editor. Returns `null` for "not ours", which the caller turns
  * into `false` so the normal paste proceeds.
  */
-export function linkPasteHref(view: EditorView, text: string): string | null {
+function linkPasteHref(view: EditorView, text: string): string | null {
   const { state } = view
   const { empty } = state.selection
 
@@ -76,7 +76,7 @@ export function linkPasteHref(view: EditorView, text: string): string | null {
  * Retargeting a link is the dialog's job, where the user can see what is
  * changing.
  */
-export function pasteWouldDamageLink(view: EditorView): boolean {
+function pasteWouldDamageLink(view: EditorView): boolean {
   const { state } = view
   if (state.selection.empty) return false
   const link = findLinkAt(state)

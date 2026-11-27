@@ -21,24 +21,21 @@ import RlIcon from '../common/RlIcon.vue'
 import type { IconName } from '../common/icons'
 import { useMessages } from '../../composables/useMessages'
 
-const props = withDefaults(
-  defineProps<{
-    kind: 'added' | 'changed' | 'removed'
-    /** What changed, in the reader's words: `Field Due`, `Option XXL`. */
-    label: string
-    /** A short qualifier after the label: `Date`, `after Priority`. */
-    detail?: string
-    /** The value before the change. Shown struck through. */
-    before?: string
-    /** The value after the change. */
-    after?: string
-    /** Renders the row as a button, a link, or the given component. */
-    as?: 'button' | 'a' | Component
-    /** Extra attributes for the rendered row, such as `href` or `to`. */
-    attrs?: Record<string, unknown>
-  }>(),
-  { detail: undefined, before: undefined, after: undefined, as: undefined, attrs: undefined },
-)
+const { kind, label, detail, before, after, as, attrs } = defineProps<{
+  kind: 'added' | 'changed' | 'removed'
+  /** What changed, in the reader's words: `Field Due`, `Option XXL`. */
+  label: string
+  /** A short qualifier after the label: `Date`, `after Priority`. */
+  detail?: string
+  /** The value before the change. Shown struck through. */
+  before?: string
+  /** The value after the change. */
+  after?: string
+  /** Renders the row as a button, a link, or the given component. */
+  as?: 'button' | 'a' | Component
+  /** Extra attributes for the rendered row, such as `href` or `to`. */
+  attrs?: Record<string, unknown>
+}>()
 
 defineEmits<{ select: [] }>()
 
@@ -46,10 +43,10 @@ const slots = defineSlots<{ before?: () => unknown; after?: () => unknown }>()
 
 const messages = useMessages()
 
-const icons: Record<typeof props.kind, IconName> = { added: 'plus', changed: 'edit', removed: 'minus' }
+const icons: Record<typeof kind, IconName> = { added: 'plus', changed: 'edit', removed: 'minus' }
 
-const hasBefore = computed(() => props.before !== undefined || Boolean(slots.before))
-const hasAfter = computed(() => props.after !== undefined || Boolean(slots.after))
+const hasBefore = computed(() => before !== undefined || Boolean(slots.before))
+const hasAfter = computed(() => after !== undefined || Boolean(slots.after))
 </script>
 
 <template>

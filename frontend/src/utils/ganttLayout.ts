@@ -36,7 +36,7 @@ export function parseDay(s: string | undefined): number | null {
 }
 
 /** dayToDate converts epoch days back to a Date at UTC midnight. */
-export function dayToDate(day: number): Date {
+function dayToDate(day: number): Date {
   return new Date(day * MS_PER_DAY)
 }
 
@@ -141,7 +141,7 @@ const MONTHS = [
 ] as const
 
 /** isoWeek returns the ISO 8601 week number for an epoch day (UTC). */
-export function isoWeek(day: number): number {
+function isoWeek(day: number): number {
   const d = dayToDate(day)
   // Shift to the Thursday of this week; its year is the ISO year.
   const target = new Date(d)

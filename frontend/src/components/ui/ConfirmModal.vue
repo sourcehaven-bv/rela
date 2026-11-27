@@ -37,24 +37,22 @@ import { useI18n } from 'vue-i18n'
 import { useModalStack } from '@/composables/modalStack'
 import RlConfirmDialog from 'rela-components/components/common/RlConfirmDialog.vue'
 
-const props = withDefaults(
-  defineProps<{
-    open: boolean
-    title: string
-    message?: string
-    confirmLabel?: string
-    cancelLabel?: string
-    busy?: boolean
-    danger?: boolean
-  }>(),
-  {
-    message: '',
-    confirmLabel: undefined,
-    cancelLabel: undefined,
-    busy: false,
-    danger: false,
-  }
-)
+const {
+  open,
+  message = '',
+  confirmLabel,
+  cancelLabel,
+  busy = false,
+  danger = false,
+} = defineProps<{
+  open: boolean
+  title: string
+  message?: string
+  confirmLabel?: string
+  cancelLabel?: string
+  busy?: boolean
+  danger?: boolean
+}>()
 
 const emit = defineEmits<{
   confirm: []
@@ -66,10 +64,10 @@ const { t } = useI18n()
 // rela's stack is a separate registry from the library's: `isAnyModalOpen()`
 // suppresses global keyboard shortcuts, and a dialog registered only with the
 // library's overlay stack is invisible to it.
-useModalStack(computed(() => props.open))
+useModalStack(computed(() => open))
 
 // `danger` is rela's word for the same thing the library calls a tone.
-const tone = computed(() => (props.danger ? 'danger' : 'default'))
+const tone = computed(() => (danger ? 'danger' : 'default'))
 </script>
 
 <template>

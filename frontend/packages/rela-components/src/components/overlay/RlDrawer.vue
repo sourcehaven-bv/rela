@@ -20,22 +20,19 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    open: boolean
-    title: string
-    side?: 'left' | 'right'
-    size?: 'sm' | 'md' | 'lg'
-    modal?: boolean
-    titleHidden?: boolean
-  }>(),
-  { side: 'right', size: 'md', modal: true, titleHidden: false },
-)
+const { side = 'right', size = 'md', modal = true, titleHidden = false, open } = defineProps<{
+  open: boolean
+  title: string
+  side?: 'left' | 'right'
+  size?: 'sm' | 'md' | 'lg'
+  modal?: boolean
+  titleHidden?: boolean
+}>()
 
 const emit = defineEmits<{ close: [] }>()
 
 const panel = ref<HTMLElement | null>(null)
-const { push, pop, isTop } = useOverlayStack({ scrollLock: props.modal })
+const { push, pop, isTop } = useOverlayStack({ scrollLock: modal })
 const focus = useFocusRestore()
 
 function onKeydown(event: KeyboardEvent) {
@@ -43,17 +40,17 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') {
     event.stopPropagation()
     emit('close')
-  } else if (event.key === 'Tab' && props.modal) {
+  } else if (event.key === 'Tab' && modal) {
     trapTab(panel.value, event)
   }
 }
 
 watch(
-  () => props.open,
-  async (open) => {
+  () => open,
+  async (isOpen) => {
     if (typeof document === 'undefined') return
 
-    if (open) {
+    if (isOpen) {
       focus.capture()
       push()
       document.addEventListener('keydown', onKeydown, true)

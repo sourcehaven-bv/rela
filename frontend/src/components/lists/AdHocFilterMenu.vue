@@ -30,31 +30,30 @@ interface FilterOption {
   propertyDef?: PropertyDef
 }
 
-const props = withDefaults(
-  defineProps<{
-    /**
-     * `list`: only the properties of the bound `entityType` are offered.
-     *   Required when this prop is set.
-     * `search`: properties unioned across all entity types in the schema,
-     *   plus a synthetic `type` option.
-     *
-     * Made explicit (rather than implicit-on-`entityType`) because the list
-     * mode's `entityType` ref can transiently be undefined while the schema
-     * store loads — falling through to the all-types union would offer
-     * properties that don't exist on the actual list type, producing
-     * silent zero-result pages once the user applies them.
-     */
-    mode: 'list' | 'search'
-    entityType?: EntityType
-    lockedProperties?: Set<string>
-    buttonLabel?: string
-    buttonHotkey?: string
-  }>(),
-  {
-    lockedProperties: () => new Set<string>(),
-    buttonHotkey: 'F',
-  }
-)
+const {
+  mode,
+  entityType,
+  lockedProperties = new Set<string>(),
+  buttonHotkey = 'F',
+} = defineProps<{
+  /**
+   * `list`: only the properties of the bound `entityType` are offered.
+   *   Required when this prop is set.
+   * `search`: properties unioned across all entity types in the schema,
+   *   plus a synthetic `type` option.
+   *
+   * Made explicit (rather than implicit-on-`entityType`) because the list
+   * mode's `entityType` ref can transiently be undefined while the schema
+   * store loads — falling through to the all-types union would offer
+   * properties that don't exist on the actual list type, producing
+   * silent zero-result pages once the user applies them.
+   */
+  mode: 'list' | 'search'
+  entityType?: EntityType
+  lockedProperties?: Set<string>
+  buttonLabel?: string
+  buttonHotkey?: string
+}>()
 
 const emit = defineEmits<{
   apply: [property: string, value: string]
@@ -82,7 +81,7 @@ const allOptions = computed((): FilterOption[] => {
   const out: FilterOption[] = []
   const seen = new Set<string>()
 
-  if (props.mode === 'search') {
+  if (mode === 'search') {
     out.push({ category: 'type', property: 'type', label: t('list.adhoc.entityType') })
     for (const [, typeDef] of schemaStore.entityTypes) {
       for (const [name, def] of Object.entries(typeDef.properties)) {
@@ -100,8 +99,8 @@ const allOptions = computed((): FilterOption[] => {
     // List mode. Without entityType (schema still loading, or list config
     // points at an unknown type) we render an empty list rather than fall
     // back to the all-types union — see the `mode` prop docstring above.
-    if (!props.entityType) return []
-    for (const [name, def] of Object.entries(props.entityType.properties)) {
+    if (!entityType) return []
+    for (const [name, def] of Object.entries(entityType.properties)) {
       out.push({
         category: 'property',
         property: name,
@@ -112,7 +111,7 @@ const allOptions = computed((): FilterOption[] => {
   }
 
   // Hide options already covered by active or static filters.
-  return out.filter((o) => !props.lockedProperties.has(o.property))
+  return out.filter((o) => !lockedProperties.has(o.property))
 })
 
 const filteredOptions = computed(() => {
@@ -133,7 +132,7 @@ const valueOptions = computed((): string[] => {
   }
 
   // Property mode: prefer the propertyDef's own enum values, regardless of
-  // mode (list mode's selected.value already comes from props.entityType,
+  // mode (list mode's selected.value already comes from entityType,
   // search mode's from the cross-type seen-set).
   const propDef = selected.value.propertyDef
   if (propDef?.values?.length) return propDef.values
@@ -143,7 +142,7 @@ const valueOptions = computed((): string[] => {
   // silently hides the fact that some types accept arbitrary strings for
   // the same property name — acceptable for v1, deferred to a follow-up
   // ticket if it surfaces as a UX problem.
-  if (props.mode === 'search') {
+  if (mode === 'search') {
     const all = new Set<string>()
     for (const [, typeDef] of schemaStore.entityTypes) {
       const p = typeDef.properties[selected.value.property]
@@ -294,7 +293,9 @@ defineExpose({ open: openMenu, close })
             <span class="option-category">{{ t(CATEGORY_LABELS[option.category]) }}</span>
             <span class="option-label">{{ option.label }}</span>
           </div>
-          <div v-if="filteredOptions.length === 0" class="filter-empty">{{ t('list.adhoc.noMatches') }}</div>
+          <div v-if="filteredOptions.length === 0" class="filter-empty">
+            {{ t('list.adhoc.noMatches') }}
+          </div>
         </div>
       </template>
 
@@ -325,12 +326,7 @@ defineExpose({ open: openMenu, close })
             class="filter-search"
             @keydown.enter="commit(valueInput)"
           />
-          <RlButton
-            variant="primary"
-            size="sm"
-            :disabled="!valueInput"
-            @click="commit(valueInput)"
-          >
+          <RlButton variant="primary" size="sm" :disabled="!valueInput" @click="commit(valueInput)">
             {{ t('common.apply') }}
           </RlButton>
         </div>

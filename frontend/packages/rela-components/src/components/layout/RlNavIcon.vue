@@ -24,28 +24,31 @@ import { computed } from 'vue'
 import RlIcon from '../common/RlIcon.vue'
 import type { IconName } from '../common/icons'
 
-const props = withDefaults(
-  defineProps<{
-    /** The icon to draw. Leave unset for an item that has none. */
-    name?: IconName | null
-    /**
-     * Keep the icon's space when there is no name, so this item's label lines
-     * up with its siblings'.
-     */
-    reserve?: boolean
-    /** Whether the sidebar is collapsed to icons only. */
-    collapsed?: boolean
-    /** The glyph a reserved slot shows while collapsed, where no label helps. */
-    fallback?: IconName | null
-    size?: number
-  }>(),
-  { name: null, reserve: false, collapsed: false, fallback: null, size: 16 },
-)
+const {
+  name = null,
+  reserve = false,
+  collapsed = false,
+  fallback = null,
+  size = 16,
+} = defineProps<{
+  /** The icon to draw. Leave unset for an item that has none. */
+  name?: IconName | null
+  /**
+   * Keep the icon's space when there is no name, so this item's label lines
+   * up with its siblings'.
+   */
+  reserve?: boolean
+  /** Whether the sidebar is collapsed to icons only. */
+  collapsed?: boolean
+  /** The glyph a reserved slot shows while collapsed, where no label helps. */
+  fallback?: IconName | null
+  size?: number
+}>()
 
 /** The name to draw, or null to draw no glyph at all. */
 const glyph = computed<IconName | null>(() => {
-  if (props.name) return props.name
-  if (props.collapsed) return props.fallback
+  if (name) return name
+  if (collapsed) return fallback
   return null
 })
 </script>

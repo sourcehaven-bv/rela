@@ -16,33 +16,36 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    modelValue?: string
-    label: string
-    hint?: string
-    error?: string
-    required?: boolean
-    labelHidden?: boolean
-    disabled?: boolean
-    withTime?: boolean
-    min?: string
-    max?: string
-    /**
-     * Named so the stored instant is unambiguous. A datetime without a stated
-     * zone is read differently by every reader, so it is shown, not implied.
-     */
-    timeZoneLabel?: string
-  }>(),
-  { modelValue: '', required: false, labelHidden: false, disabled: false, withTime: false },
-)
+const {
+  required = false,
+  labelHidden = false,
+  disabled = false,
+  withTime = false,
+  timeZoneLabel,
+  hint,
+} = defineProps<{
+  label: string
+  hint?: string
+  error?: string
+  required?: boolean
+  labelHidden?: boolean
+  disabled?: boolean
+  withTime?: boolean
+  min?: string
+  max?: string
+  /**
+   * Named so the stored instant is unambiguous. A datetime without a stated
+   * zone is read differently by every reader, so it is shown, not implied.
+   */
+  timeZoneLabel?: string
+}>()
 
-defineEmits<{ 'update:modelValue': [value: string] }>()
+const model = defineModel<string>({ default: '' })
 
 const hintText = computed(() =>
-  props.timeZoneLabel && props.withTime
-    ? [props.hint, messages.timeZoneNote({ zone: props.timeZoneLabel })].filter(Boolean).join(' ')
-    : props.hint,
+  timeZoneLabel && withTime
+    ? [hint, messages.timeZoneNote({ zone: timeZoneLabel })].filter(Boolean).join(' ')
+    : hint,
 )
 </script>
 
@@ -60,14 +63,14 @@ const hintText = computed(() =>
         :id="control.id"
         class="rl-control rl-date__input"
         :type="withTime ? 'datetime-local' : 'date'"
-        :value="modelValue"
+        :value="model"
         :disabled="disabled"
         :required="control.required"
         :min="min"
         :max="max"
         :aria-describedby="control.describedBy"
         :aria-invalid="control.invalid || undefined"
-        @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
+        @input="model = ($event.target as HTMLInputElement).value"
       />
       <RlIcon
         :name="withTime ? 'clock' : 'calendar'"

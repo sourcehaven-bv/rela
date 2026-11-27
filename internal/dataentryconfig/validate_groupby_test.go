@@ -273,7 +273,7 @@ func TestNormalizeListGroupBy(t *testing.T) {
 func TestColorNamesMatchSPA(t *testing.T) {
 	src, err := os.ReadFile("../../frontend/src/utils/styleColors.ts")
 	require.NoError(t, err)
-	block := regexp.MustCompile(`(?s)export const NAMED_COLORS[^=]*= \{(.*?)\n\}`).FindSubmatch(src)
+	block := regexp.MustCompile(`(?s)(?:export )?const NAMED_COLORS[^=]*= \{(.*?)\n\}`).FindSubmatch(src)
 	require.NotNil(t, block, "NAMED_COLORS not found")
 	var spa []string
 	for _, m := range regexp.MustCompile(`(?m)^\s*([a-z]+):`).FindAllSubmatch(block[1], -1) {

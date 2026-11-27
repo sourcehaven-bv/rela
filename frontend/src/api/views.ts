@@ -135,7 +135,7 @@ export interface SectionTotal {
 }
 
 // Group of rows/entities
-export interface ViewGroup {
+interface ViewGroup {
   groupName: string
   rows?: ViewRow[]
   entities?: ViewEntity[]
@@ -242,13 +242,6 @@ export interface ViewSectionCreateTarget {
   template?: string
 }
 
-// Mention is the resolved target of an entity-ID code span found inside
-// any markdown body the response carries (entry content + section
-// content). Re-exported from `@/types`, where it now lives beside `Entity`:
-// the single-entity GET carries the same map so an edit form can resolve the
-// refs in a body it is about to render. Kept exported here so the existing
-// `from '@/api/views'` imports keep working.
-export type { Mention } from '@/types'
 
 // Full view API response
 export interface ViewResponse {

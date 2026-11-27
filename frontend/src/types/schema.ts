@@ -28,7 +28,7 @@ export interface Schema {
 
 // AbstractType mirrors v1.AbstractType: the shared shape its variants
 // inherit, and the variants' names.
-export interface AbstractType {
+interface AbstractType {
   label?: string
   description?: string
   variants: string[]
@@ -126,7 +126,7 @@ export interface EntityType {
 // No face is addressed by the bare id (BUG-HC6I2T): a face's declared name IS
 // its stored coordinate, so a type declaring faces has no unsuffixed row and
 // every address names a face.
-export interface FaceInfo {
+interface FaceInfo {
   // The operator's display text for this face ("Nederlands" for `nl`).
   // Absent means fall back to the face name, which is itself
   // operator-authored config and so an honest, if terse, display string.
@@ -144,7 +144,7 @@ export interface FaceInfo {
 }
 
 // WorldMessages mirrors v1.WorldMessages. See WorldInfo.messages.
-export interface WorldMessages {
+interface WorldMessages {
   // Detail-page note for an entity with no face in the world.
   absent?: string
   // List/board note for a type that declares faces.
@@ -154,7 +154,7 @@ export interface WorldMessages {
 }
 
 // A property's display format. More formats may join; at most one applies.
-export interface PropertyDisplay {
+interface PropertyDisplay {
   // ISO 4217 code: the integer or decimal renders as money in the reader's
   // locale.
   currency?: string
@@ -232,7 +232,7 @@ export interface RelationType {
   scope_owners?: Record<string, string>
 }
 
-export interface RelationOrderable {
+interface RelationOrderable {
   outgoing?: boolean
   incoming?: boolean
 }
@@ -243,7 +243,7 @@ export interface RelationOrderable {
 export const ORDER_PROPERTY_OUT = '_order_out'
 export const ORDER_PROPERTY_IN = '_order_in'
 
-export interface InverseDef {
+interface InverseDef {
   id: string
   label?: string
 }
@@ -270,7 +270,7 @@ export interface Template {
   relations: TemplateRelation[]
 }
 
-export interface TemplateRelation {
+interface TemplateRelation {
   relation: string
   target: string
 }

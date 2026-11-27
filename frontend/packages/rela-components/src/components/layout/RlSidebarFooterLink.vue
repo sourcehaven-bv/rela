@@ -3,7 +3,7 @@
 import RlIcon from '../common/RlIcon.vue'
 import type { IconName } from '../common/icons'
 
-withDefaults(defineProps<{ label: string; icon?: IconName }>(), { icon: 'help' })
+const { icon = 'help' } = defineProps<{ label: string; icon?: IconName }>()
 defineEmits<{ click: [] }>()
 </script>
 

@@ -31,7 +31,7 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(defineProps<{ toast: ToastMessage }>(), {})
+const { toast } = defineProps<{ toast: ToastMessage }>()
 
 const emit = defineEmits<{ dismiss: [id: string] }>()
 
@@ -41,8 +41,8 @@ const emit = defineEmits<{ dismiss: [id: string] }>()
  * true, with a control that would run twice.
  */
 function onAction() {
-  props.toast.action?.onAction()
-  emit('dismiss', props.toast.id)
+  toast.action?.onAction()
+  emit('dismiss', toast.id)
 }
 
 const icons = {
@@ -52,14 +52,14 @@ const icons = {
   danger: 'alert',
 } as const
 
-const remaining = ref(props.toast.duration ?? 5000)
+const remaining = ref(toast.duration ?? 5000)
 let timer: ReturnType<typeof setTimeout> | undefined
 let startedAt = 0
 
 function start() {
   if (remaining.value <= 0) return
   startedAt = Date.now()
-  timer = setTimeout(() => emit('dismiss', props.toast.id), remaining.value)
+  timer = setTimeout(() => emit('dismiss', toast.id), remaining.value)
 }
 
 function pause() {

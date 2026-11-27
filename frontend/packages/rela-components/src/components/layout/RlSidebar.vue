@@ -12,77 +12,73 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    workspaceName: string
-    /**
-     * Whether the default switcher offers a menu. Off leaves the workspace
-     * name as a plain label, for an app with one workspace or one space and
-     * so nothing to switch to.
-     *
-     * Ignored when the `switcher` slot is filled, since the control is then
-     * the consumer's.
-     */
-    workspaceMenu?: boolean
-    groups: NavGroup[]
-    activeId?: string
-    /**
-     * The id of the nav item whose panel is open, if any.
-     *
-     * Separate from `activeId` on purpose: `activeId` says where you are, and
-     * a panel opened over the page is not somewhere you went. An item marked
-     * `opensFlyout` reads this to report `aria-expanded` and to show that it
-     * is the row the open panel came from.
-     */
-    flyoutId?: string | null
-    footerLabel?: string
-    /**
-     * Count of items on screen past which the filter appears. A short sidebar
-     * is read at a glance and a search box above it is one more thing in the
-     * way, so the control earns its place only once scanning stops working.
-     *
-     * Set to 0 to always show it, or Infinity to never.
-     */
-    filterThreshold?: number
-    /**
-     * Items in one group past which it splits under its own subheadings.
-     * Matched to `filterThreshold`, so a list that grows long gains the
-     * filter and the subheadings together rather than one at a time.
-     */
-    groupThreshold?: number
-    /**
-     * Heading for the leftover items once a group splits under subheadings.
-     * Settable because `groupThreshold` is: a consumer who lowers the
-     * threshold summons this heading, and otherwise could not name or
-     * translate the group it creates.
-     */
-    fallbackLabel?: string
-    /**
-     * Whether the footer carries the theme picker. On by default: the library
-     * defines the three theme states, so an app that imports the sidebar gets
-     * a working way to reach them without wiring one.
-     *
-     * Turn it off for an app that puts theme switching elsewhere, or replace
-     * the whole band through the `footer` slot.
-     */
-    themeToggle?: boolean
-    /**
-     * The chosen theme, when the app stores the preference. Left unbound the
-     * picker keeps the choice itself for the page.
-     */
-    theme?: ThemeChoice
-  }>(),
-  {
-    workspaceMenu: true,
-    flyoutId: null,
-    footerLabel: undefined,
-    filterThreshold: 25,
-    groupThreshold: 20,
-    fallbackLabel: undefined,
-    themeToggle: true,
-    theme: undefined,
-  },
-)
+const {
+  workspaceMenu = true,
+  flyoutId = null,
+  filterThreshold = 25,
+  groupThreshold = 20,
+  themeToggle = true,
+  activeId,
+  groups,
+} = defineProps<{
+  workspaceName: string
+  /**
+   * Whether the default switcher offers a menu. Off leaves the workspace
+   * name as a plain label, for an app with one workspace or one space and
+   * so nothing to switch to.
+   *
+   * Ignored when the `switcher` slot is filled, since the control is then
+   * the consumer's.
+   */
+  workspaceMenu?: boolean
+  groups: NavGroup[]
+  activeId?: string
+  /**
+   * The id of the nav item whose panel is open, if any.
+   *
+   * Separate from `activeId` on purpose: `activeId` says where you are, and
+   * a panel opened over the page is not somewhere you went. An item marked
+   * `opensFlyout` reads this to report `aria-expanded` and to show that it
+   * is the row the open panel came from.
+   */
+  flyoutId?: string | null
+  footerLabel?: string
+  /**
+   * Count of items on screen past which the filter appears. A short sidebar
+   * is read at a glance and a search box above it is one more thing in the
+   * way, so the control earns its place only once scanning stops working.
+   *
+   * Set to 0 to always show it, or Infinity to never.
+   */
+  filterThreshold?: number
+  /**
+   * Items in one group past which it splits under its own subheadings.
+   * Matched to `filterThreshold`, so a list that grows long gains the
+   * filter and the subheadings together rather than one at a time.
+   */
+  groupThreshold?: number
+  /**
+   * Heading for the leftover items once a group splits under subheadings.
+   * Settable because `groupThreshold` is: a consumer who lowers the
+   * threshold summons this heading, and otherwise could not name or
+   * translate the group it creates.
+   */
+  fallbackLabel?: string
+  /**
+   * Whether the footer carries the theme picker. On by default: the library
+   * defines the three theme states, so an app that imports the sidebar gets
+   * a working way to reach them without wiring one.
+   *
+   * Turn it off for an app that puts theme switching elsewhere, or replace
+   * the whole band through the `footer` slot.
+   */
+  themeToggle?: boolean
+  /**
+   * The chosen theme, when the app stores the preference. Left unbound the
+   * picker keeps the choice itself for the page.
+   */
+  theme?: ThemeChoice
+}>()
 
 const emit = defineEmits<{
   select: [item: NavItem]
@@ -125,9 +121,9 @@ function countVisible(items: NavItem[]): number {
   )
 }
 
-const total = computed(() => countItems(props.groups.flatMap((group) => group.items)))
-const visibleCount = computed(() => countVisible(props.groups.flatMap((group) => group.items)))
-const filterable = computed(() => visibleCount.value > props.filterThreshold)
+const total = computed(() => countItems(groups.flatMap((group) => group.items)))
+const visibleCount = computed(() => countVisible(groups.flatMap((group) => group.items)))
+const filterable = computed(() => visibleCount.value > filterThreshold)
 
 const query = ref('')
 
@@ -148,8 +144,8 @@ function filterItems(items: NavItem[], needle: string): NavItem[] {
 
 const visibleGroups = computed(() => {
   const needle = query.value.trim().toLowerCase()
-  if (!needle) return props.groups
-  return props.groups
+  if (!needle) return groups
+  return groups
     .map((group) => ({ ...group, items: filterItems(group.items, needle) }))
     .filter((group) => group.items.length > 0)
 })
@@ -169,13 +165,13 @@ const nav = ref<HTMLElement | null>(null)
  * rather than yanking the list on every navigation.
  */
 function revealActive() {
-  if (!props.activeId || !nav.value) return
+  if (!activeId || !nav.value) return
   const active = nav.value.querySelector('.rl-nav-item--active')
   active?.scrollIntoView({ block: 'nearest' })
 }
 
 onMounted(() => nextTick(revealActive))
-watch(() => props.activeId, () => nextTick(revealActive))
+watch(() => activeId, () => nextTick(revealActive))
 </script>
 
 <template>

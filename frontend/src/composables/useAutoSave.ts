@@ -55,7 +55,7 @@ export const MAX_CONFLICT_ATTEMPTS = 3
 // shown when the conflict happens.
 export const conflictMessage = (): string => t('form.autosave.fieldConflict')
 export const contentConflictMessage = (): string => t('form.autosave.contentConflict')
-export const relationsConflictMessage = (): string => t('form.autosave.relationsConflict')
+const relationsConflictMessage = (): string => t('form.autosave.relationsConflict')
 
 // A merge base: the server value the local state derives from, and the
 // version token the server issued for it. `token` is undefined when the
@@ -231,7 +231,7 @@ export interface AutoSaveOptions {
   onContentSaved?: (stored: string, token: string | undefined, sent: string) => void
 }
 
-export type ServerContentCause = 'stored' | 'merged' | 'reverted'
+type ServerContentCause = 'stored' | 'merged' | 'reverted'
 
 export interface AutoSaveErrorInfo {
   status?: number
@@ -239,7 +239,7 @@ export interface AutoSaveErrorInfo {
   channel?: 'property' | 'content' | 'relations'
 }
 
-export class AutoSaveChannelDisabledError extends Error {
+class AutoSaveChannelDisabledError extends Error {
   constructor(channel: 'property' | 'content' | 'relations') {
     super(`useAutoSave: ${channel} channel is disabled on this instance`)
     this.name = 'AutoSaveChannelDisabledError'

@@ -16,16 +16,13 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    attachment: Attachment
-    /** Shows a remove button. */
-    removable?: boolean
-    /** Disables the remove button, for example while a write is running. */
-    busy?: boolean
-  }>(),
-  { removable: false, busy: false },
-)
+const { attachment, removable = false, busy = false } = defineProps<{
+  attachment: Attachment
+  /** Shows a remove button. */
+  removable?: boolean
+  /** Disables the remove button, for example while a write is running. */
+  busy?: boolean
+}>()
 const emit = defineEmits<{ click: [attachment: Attachment]; remove: [attachment: Attachment] }>()
 
 const kindLabel = computed<Record<AttachmentKind, string>>(() => ({
@@ -45,7 +42,7 @@ const kindIcon: Record<AttachmentKind, IconName> = {
 }
 
 const action = computed(
-  () => props.attachment.action ?? (props.attachment.href ? messages.chromeText({ key: 'download' }) : undefined),
+  () => attachment.action ?? (attachment.href ? messages.chromeText({ key: 'download' }) : undefined),
 )
 </script>
 

@@ -10,23 +10,20 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-withDefaults(
-  defineProps<{
-    title: string
-    color?: DotColor
-    /**
-     * A glyph before the title, taken as a component so an app's own icon
-     * registry can supply it. See `Section.icon`.
-     */
-    icon?: Component
-    count?: number
-    size?: 'sm' | 'md'
-    level?: 1 | 2 | 3 | 4 | 5 | 6
-    /** Whether the heading offers a control that folds its section away. */
-    collapsible?: boolean
-  }>(),
-  { size: 'md', level: 2, collapsible: false },
-)
+const { size = 'md', level = 2, collapsible = false } = defineProps<{
+  title: string
+  color?: DotColor
+  /**
+   * A glyph before the title, taken as a component so an app's own icon
+   * registry can supply it. See `Section.icon`.
+   */
+  icon?: Component
+  count?: number
+  size?: 'sm' | 'md'
+  level?: 1 | 2 | 3 | 4 | 5 | 6
+  /** Whether the heading offers a control that folds its section away. */
+  collapsible?: boolean
+}>()
 
 defineEmits<{ collapse: [] }>()
 </script>

@@ -19,25 +19,30 @@
 import RlIcon from '../common/RlIcon.vue'
 import RlCount from '../common/RlCount.vue'
 
-withDefaults(
-  defineProps<{
-    title: string
-    /** Starts expanded. Not two-way: `details` owns its own state. */
-    open?: boolean
-    /** Shown after the title, such as the number of rows inside. */
-    count?: number
-    /** Secondary text on the right of the row, such as a status summary. */
-    meta?: string
-    level?: 2 | 3 | 4
-    disabled?: boolean
-    /**
-     * Draws the line under the section. Turn it off when the container
-     * already separates its items, such as a sortable list.
-     */
-    divider?: boolean
-  }>(),
-  { open: false, level: 3, disabled: false, divider: true },
-)
+const {
+  title,
+  open = false,
+  count,
+  meta,
+  level = 3,
+  disabled = false,
+  divider = true,
+} = defineProps<{
+  title: string
+  /** Starts expanded. Not two-way: `details` owns its own state. */
+  open?: boolean
+  /** Shown after the title, such as the number of rows inside. */
+  count?: number
+  /** Secondary text on the right of the row, such as a status summary. */
+  meta?: string
+  level?: 2 | 3 | 4
+  disabled?: boolean
+  /**
+   * Draws the line under the section. Turn it off when the container
+   * already separates its items, such as a sortable list.
+   */
+  divider?: boolean
+}>()
 
 defineEmits<{ toggle: [open: boolean] }>()
 </script>

@@ -42,22 +42,19 @@ import type { CollectionItem } from '../../types'
 
 type Edge = 'top' | 'bottom'
 
-const props = withDefaults(
-  defineProps<{
-    items: T[]
-    /** Names the list for a screen reader: `Form fields`. */
-    label: string
-    /** Turns the handles off, for a reader who may see the order but not change it. */
-    disabled?: boolean
-    /**
-     * Vetoes one move. Returns the reason a move of `item` to `toIndex` is
-     * not allowed, or undefined to allow it. A refused move puts the row back,
-     * announces the reason instead of the drop, and emits `refuse`.
-     */
-    refuseMove?: (item: T, toIndex: number) => string | undefined
-  }>(),
-  { disabled: false },
-)
+const { items, label, disabled = false, refuseMove } = defineProps<{
+  items: T[]
+  /** Names the list for a screen reader: `Form fields`. */
+  label: string
+  /** Turns the handles off, for a reader who may see the order but not change it. */
+  disabled?: boolean
+  /**
+   * Vetoes one move. Returns the reason a move of `item` to `toIndex` is
+   * not allowed, or undefined to allow it. A refused move puts the row back,
+   * announces the reason instead of the drop, and emits `refuse`.
+   */
+  refuseMove?: (item: T, toIndex: number) => string | undefined
+}>()
 
 const emit = defineEmits<{
   /** A row was put down somewhere new. `toIndex` is its index in the reordered list. */
@@ -100,10 +97,10 @@ const announcement = ref('')
 
 /** The items as shown: the caller's order, with a held row at its previewed place. */
 const shown = computed<T[]>(() => {
-  if (heldId.value === undefined) return props.items
-  const rest = props.items.filter((item) => item.id !== heldId.value)
-  const held = props.items.find((item) => item.id === heldId.value)
-  if (!held) return props.items
+  if (heldId.value === undefined) return items
+  const rest = items.filter((item) => item.id !== heldId.value)
+  const held = items.find((item) => item.id === heldId.value)
+  if (!held) return items
   rest.splice(heldAt.value, 0, held)
   return rest
 })
@@ -111,16 +108,16 @@ const shown = computed<T[]>(() => {
 // A row removed from under the keyboard ends the hold rather than leaving a
 // preview of something that no longer exists.
 watch(
-  () => props.items,
-  (items) => {
-    if (heldId.value !== undefined && !items.some((item) => item.id === heldId.value)) {
+  () => items,
+  (current) => {
+    if (heldId.value !== undefined && !current.some((item) => item.id === heldId.value)) {
       heldId.value = undefined
     }
   },
 )
 
 function describe(item: T, index: number) {
-  return { title: item.title, position: index + 1, count: props.items.length }
+  return { title: item.title, position: index + 1, count: items.length }
 }
 
 /**
@@ -141,7 +138,7 @@ function grab(item: T, index: number) {
 
 /** The reason `refuseMove` gives for moving `item` to `to`, if it refuses. */
 function refusal(item: T, to: number): string | undefined {
-  return props.refuseMove?.(item, to)
+  return refuseMove?.(item, to)
 }
 
 /**
@@ -176,7 +173,7 @@ function cancel(item: T) {
 }
 
 function shift(item: T, to: number) {
-  const clamped = Math.max(0, Math.min(props.items.length - 1, to))
+  const clamped = Math.max(0, Math.min(items.length - 1, to))
   if (clamped === heldAt.value) return
   heldAt.value = clamped
   announcement.value = messages.sortGrabbed(describe(item, clamped))
@@ -184,7 +181,7 @@ function shift(item: T, to: number) {
 }
 
 function onHandleKeydown(event: KeyboardEvent, item: T, index: number) {
-  if (props.disabled) return
+  if (disabled) return
   const held = heldId.value === item.id
 
   if (event.key === 'Enter' || event.key === ' ') {
@@ -199,7 +196,7 @@ function onHandleKeydown(event: KeyboardEvent, item: T, index: number) {
     ArrowUp: heldAt.value - 1,
     ArrowDown: heldAt.value + 1,
     Home: 0,
-    End: props.items.length - 1,
+    End: items.length - 1,
   }
   if (event.key in moves) {
     event.preventDefault()
@@ -220,7 +217,7 @@ function onFocusOut(event: FocusEvent) {
   const next = event.relatedTarget
   if (!(next instanceof Node)) return
   if ((event.currentTarget as HTMLElement).contains(next)) return
-  const item = props.items.find((entry) => entry.id === heldId.value)
+  const item = items.find((entry) => entry.id === heldId.value)
   if (item) cancel(item)
 }
 
@@ -253,11 +250,11 @@ function dropIndex(fromIndex: number, targetIndex: number, edge: Edge) {
 }
 
 watch(
-  [() => props.items.map((item) => item.id), () => props.disabled],
+  [() => items.map((item) => item.id), () => disabled],
   (_, _prev, onCleanup) => {
     void nextTick(() => {
-      if (props.disabled) return
-      const cleanups = props.items.flatMap((item) => {
+      if (disabled) return
+      const cleanups = items.flatMap((item) => {
         const row = rowEls.get(item.id)
         const handle = handleEls.get(item.id)
         if (!row || !handle) return []
@@ -281,12 +278,12 @@ watch(
               getData: ({ input, element }) => ({ itemId: item.id, edge: edgeOf(element, input.clientY) }),
               onDrag: ({ self, source }) => {
                 const edge = self.data.edge as Edge
-                const from = props.items.findIndex((entry) => entry.id === (source.data as unknown as RowDragData).itemId)
-                const target = props.items.findIndex((entry) => entry.id === item.id)
+                const from = items.findIndex((entry) => entry.id === (source.data as unknown as RowDragData).itemId)
+                const target = items.findIndex((entry) => entry.id === item.id)
                 // An indicator that would put the row back where it is, or at a
                 // place `refuseMove` vetoes, promises nothing.
                 const to = dropIndex(from, target, edge)
-                const dragged = props.items[from]
+                const dragged = items[from]
                 const shows = to !== from && dragged !== undefined && refusal(dragged, to) === undefined
                 indicator.value = shows ? { id: item.id, edge } : undefined
               },
@@ -296,9 +293,9 @@ watch(
               onDrop: ({ self, source }) => {
                 indicator.value = undefined
                 const id = (source.data as unknown as RowDragData).itemId
-                const from = props.items.findIndex((entry) => entry.id === id)
-                const target = props.items.findIndex((entry) => entry.id === item.id)
-                const dragged = props.items[from]
+                const from = items.findIndex((entry) => entry.id === id)
+                const target = items.findIndex((entry) => entry.id === item.id)
+                const dragged = items[from]
                 if (!dragged || target < 0) return
                 settle(dragged, from, dropIndex(from, target, self.data.edge as Edge))
               },

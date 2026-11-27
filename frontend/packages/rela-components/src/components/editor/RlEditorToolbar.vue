@@ -18,28 +18,25 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    inlineCommands?: readonly EditorCommand[]
-    blockCommands?: readonly EditorCommand[]
-    /** Ids of the commands whose formatting is active at the cursor. */
-    activeIds?: ReadonlySet<string>
-    /** Ids of the commands that would do nothing here, so their buttons disable. */
-    unavailableIds?: ReadonlySet<string>
-    /** Row and column operations, shown only inside a table. */
-    tableCommands?: readonly EditorCommand[]
-    /** Whether the cursor is in a table, which is when the group appears. */
-    showTableGroup?: boolean
-  }>(),
-  {
-    inlineCommands: () => [],
-    blockCommands: () => [],
-    activeIds: () => new Set<string>(),
-    unavailableIds: () => new Set<string>(),
-    tableCommands: () => [],
-    showTableGroup: false,
-  },
-)
+const {
+  inlineCommands = [],
+  blockCommands = [],
+  activeIds = new Set<string>(),
+  unavailableIds = new Set<string>(),
+  tableCommands = [],
+  showTableGroup = false,
+} = defineProps<{
+  inlineCommands?: readonly EditorCommand[]
+  blockCommands?: readonly EditorCommand[]
+  /** Ids of the commands whose formatting is active at the cursor. */
+  activeIds?: ReadonlySet<string>
+  /** Ids of the commands that would do nothing here, so their buttons disable. */
+  unavailableIds?: ReadonlySet<string>
+  /** Row and column operations, shown only inside a table. */
+  tableCommands?: readonly EditorCommand[]
+  /** Whether the cursor is in a table, which is when the group appears. */
+  showTableGroup?: boolean
+}>()
 
 const emit = defineEmits<{ run: [command: EditorCommand] }>()
 
@@ -53,7 +50,7 @@ const emit = defineEmits<{ run: [command: EditorCommand] }>()
  * activation, both this handler and the editor's `runCommand` refuse.
  */
 function onActivate(cmd: EditorCommand): void {
-  if (props.unavailableIds.has(cmd.id)) return
+  if (unavailableIds.has(cmd.id)) return
   emit('run', cmd)
 }
 
@@ -63,26 +60,26 @@ function labelFor(cmd: EditorCommand): string {
 
 function titleFor(cmd: EditorCommand): string {
   const label = labelFor(cmd)
-  return props.unavailableIds.has(cmd.id) ? messages.commandUnavailable({ label }) : label
+  return unavailableIds.has(cmd.id) ? messages.commandUnavailable({ label }) : label
 }
 </script>
 
 <template>
   <div class="rl-editor-toolbar" role="toolbar" :aria-label="messages.chromeText({ key: 'formatting' })">
-    <div v-if="props.inlineCommands.length" class="rl-editor-toolbar__group">
+    <div v-if="inlineCommands.length" class="rl-editor-toolbar__group">
       <button
-        v-for="cmd in props.inlineCommands"
+        v-for="cmd in inlineCommands"
         :key="cmd.id"
         type="button"
         class="rl-editor-toolbar__button"
         :class="{
-          'is-active': props.activeIds.has(cmd.id),
-          'is-unavailable': props.unavailableIds.has(cmd.id),
+          'is-active': activeIds.has(cmd.id),
+          'is-unavailable': unavailableIds.has(cmd.id),
         }"
         :title="titleFor(cmd)"
         :aria-label="labelFor(cmd)"
-        :aria-pressed="props.activeIds.has(cmd.id)"
-        :aria-disabled="props.unavailableIds.has(cmd.id)"
+        :aria-pressed="activeIds.has(cmd.id)"
+        :aria-disabled="unavailableIds.has(cmd.id)"
         @mousedown.prevent
         @click="onActivate(cmd)"
       >
@@ -91,25 +88,25 @@ function titleFor(cmd: EditorCommand): string {
     </div>
 
     <span
-      v-if="props.inlineCommands.length && props.blockCommands.length"
+      v-if="inlineCommands.length && blockCommands.length"
       class="rl-editor-toolbar__divider"
       role="separator"
     />
 
-    <div v-if="props.blockCommands.length" class="rl-editor-toolbar__group">
+    <div v-if="blockCommands.length" class="rl-editor-toolbar__group">
       <button
-        v-for="cmd in props.blockCommands"
+        v-for="cmd in blockCommands"
         :key="cmd.id"
         type="button"
         class="rl-editor-toolbar__button"
         :class="{
-          'is-active': props.activeIds.has(cmd.id),
-          'is-unavailable': props.unavailableIds.has(cmd.id),
+          'is-active': activeIds.has(cmd.id),
+          'is-unavailable': unavailableIds.has(cmd.id),
         }"
         :title="titleFor(cmd)"
         :aria-label="labelFor(cmd)"
-        :aria-pressed="props.activeIds.has(cmd.id)"
-        :aria-disabled="props.unavailableIds.has(cmd.id)"
+        :aria-pressed="activeIds.has(cmd.id)"
+        :aria-disabled="unavailableIds.has(cmd.id)"
         @mousedown.prevent
         @click="onActivate(cmd)"
       >
@@ -120,19 +117,19 @@ function titleFor(cmd: EditorCommand): string {
     <!-- Only while the cursor is in a table. Seven permanently-disabled
          buttons would be a lot of dead chrome to carry on every paragraph,
          and unlike the block commands these have no meaning outside one. -->
-    <template v-if="props.showTableGroup && props.tableCommands.length">
+    <template v-if="showTableGroup && tableCommands.length">
       <span class="rl-editor-toolbar__divider" role="separator" />
 
       <div class="rl-editor-toolbar__group" :aria-label="messages.chromeText({ key: 'table' })">
         <button
-          v-for="cmd in props.tableCommands"
+          v-for="cmd in tableCommands"
           :key="cmd.id"
           type="button"
           class="rl-editor-toolbar__button"
-          :class="{ 'is-unavailable': props.unavailableIds.has(cmd.id) }"
+          :class="{ 'is-unavailable': unavailableIds.has(cmd.id) }"
           :title="titleFor(cmd)"
           :aria-label="labelFor(cmd)"
-          :aria-disabled="props.unavailableIds.has(cmd.id)"
+          :aria-disabled="unavailableIds.has(cmd.id)"
           @mousedown.prevent
           @click="onActivate(cmd)"
         >
@@ -150,8 +147,8 @@ function titleFor(cmd: EditorCommand): string {
       <div class="rl-editor-toolbar__group">
         <slot
           name="extra"
-          :active-ids="props.activeIds"
-          :unavailable-ids="props.unavailableIds"
+          :active-ids="activeIds"
+          :unavailable-ids="unavailableIds"
         />
       </div>
     </template>

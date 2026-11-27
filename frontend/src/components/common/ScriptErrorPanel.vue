@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ownLookup } from '@/utils/ownLookup'
 
 import type { ScriptError } from '../../types/scriptError'
 import RlButton from 'rela-components/components/common/RlButton.vue'
@@ -13,23 +14,19 @@ const stackOpen = ref(false)
 const outputOpen = ref(false)
 const argsOpen = ref(false)
 
+const SURFACE_KEYS = {
+  action: 'scriptError.surface.action',
+  document: 'scriptError.surface.document',
+  automation: 'scriptError.surface.automation',
+  lua_run: 'scriptError.surface.luaRun',
+  lua_eval: 'scriptError.surface.luaEval',
+  validation: 'scriptError.surface.validation',
+} satisfies Record<ScriptError['script']['surface'], string>
+
 const surfaceLabel = computed((): string => {
-  switch (props.error.script.surface) {
-    case 'action':
-      return t('scriptError.surface.action')
-    case 'document':
-      return t('scriptError.surface.document')
-    case 'automation':
-      return t('scriptError.surface.automation')
-    case 'lua_run':
-      return t('scriptError.surface.luaRun')
-    case 'lua_eval':
-      return t('scriptError.surface.luaEval')
-    case 'validation':
-      return t('scriptError.surface.validation')
-    default:
-      return props.error.script.surface
-  }
+  const surface = props.error.script.surface
+  const key = ownLookup(SURFACE_KEYS, surface)
+  return key ? t(key) : surface
 })
 
 const argsEntries = computed((): [string, unknown][] => {

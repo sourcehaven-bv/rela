@@ -55,10 +55,11 @@ export interface ViewTab {
   attrs?: Record<string, unknown>
 }
 
-const props = withDefaults(
-  defineProps<{ tabs: ViewTab[]; modelValue: string; showAdd?: boolean }>(),
-  { showAdd: true },
-)
+const { showAdd = true, modelValue, tabs } = defineProps<{
+  tabs: ViewTab[]
+  modelValue: string
+  showAdd?: boolean
+}>()
 
 const emit = defineEmits<{ 'update:modelValue': [id: string]; add: [] }>()
 
@@ -83,9 +84,9 @@ function isButton(tab: ViewTab) {
  * tab they just reached.
  */
 function move(event: KeyboardEvent, delta: number) {
-  const index = props.tabs.findIndex((t) => t.id === props.modelValue)
+  const index = tabs.findIndex((t) => t.id === modelValue)
   if (index === -1) return
-  const next = props.tabs[(index + delta + props.tabs.length) % props.tabs.length]
+  const next = tabs[(index + delta + tabs.length) % tabs.length]
   emit('update:modelValue', next.id)
 
   const list = (event.currentTarget as HTMLElement).parentElement

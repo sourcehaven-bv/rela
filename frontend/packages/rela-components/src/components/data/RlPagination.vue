@@ -13,18 +13,15 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    page: number
-    pageCount: number
-    /** How many numbers to show around the current page. */
-    siblings?: number
-    /** Summary such as `1-25 of 340`, shown beside the controls. */
-    summary?: string
-    disabled?: boolean
-  }>(),
-  { siblings: 1, disabled: false },
-)
+const { page, pageCount, siblings = 1, summary, disabled = false } = defineProps<{
+  page: number
+  pageCount: number
+  /** How many numbers to show around the current page. */
+  siblings?: number
+  /** Summary such as `1-25 of 340`, shown beside the controls. */
+  summary?: string
+  disabled?: boolean
+}>()
 
 defineEmits<{ 'update:page': [page: number] }>()
 
@@ -34,7 +31,6 @@ defineEmits<{ 'update:page': [page: number] }>()
  * the template never confuses one with a real page.
  */
 const items = computed<Array<number | 'gap'>>(() => {
-  const { page, pageCount, siblings } = props
   const total = siblings * 2 + 5
 
   if (pageCount <= total) {

@@ -29,30 +29,27 @@ import RlSpinner from '../common/RlSpinner.vue'
 import RlText from '../common/RlText.vue'
 import type { IconName } from '../common/icons'
 
-const props = withDefaults(
-  defineProps<{
-    /**
-     * `pending` is a pane that has not loaded, `error` one that failed, and
-     * `info` a pane that is unavailable for a reason that is neither: no
-     * workspace selected, a feature switched off.
-     */
-    tone?: 'pending' | 'error' | 'info'
-    /**
-     * Replaces the tone's own mark. `pending` shows a spinner and the other
-     * tones an icon, so naming an icon here also turns the spinner off.
-     */
-    icon?: IconName
-    /** `sm` for a side panel, `md` for a whole view. */
-    size?: 'sm' | 'md'
-    /**
-     * What the spinner announces while the tone is `pending`. The message in
-     * the slot is prose rather than a name, so a wait for something other than
-     * a load says so here: "Analysing", "Saving".
-     */
-    pendingLabel?: string
-  }>(),
-  { tone: 'pending', size: 'md', pendingLabel: undefined },
-)
+const { tone = 'pending', size = 'md', icon } = defineProps<{
+  /**
+   * `pending` is a pane that has not loaded, `error` one that failed, and
+   * `info` a pane that is unavailable for a reason that is neither: no
+   * workspace selected, a feature switched off.
+   */
+  tone?: 'pending' | 'error' | 'info'
+  /**
+   * Replaces the tone's own mark. `pending` shows a spinner and the other
+   * tones an icon, so naming an icon here also turns the spinner off.
+   */
+  icon?: IconName
+  /** `sm` for a side panel, `md` for a whole view. */
+  size?: 'sm' | 'md'
+  /**
+   * What the spinner announces while the tone is `pending`. The message in
+   * the slot is prose rather than a name, so a wait for something other than
+   * a load says so here: "Analysing", "Saving".
+   */
+  pendingLabel?: string
+}>()
 
 const toneIcons = { error: 'alert', info: 'info' } as const
 
@@ -64,10 +61,10 @@ const toneIcons = { error: 'alert', info: 'info' } as const
  * Computed rather than read once, because the tone changing in place is the
  * normal case: the same region is the wait and then the failure.
  */
-const spinning = computed(() => props.tone === 'pending' && !props.icon)
+const spinning = computed(() => tone === 'pending' && !icon)
 
 const mark = computed<IconName | null>(
-  () => props.icon ?? (props.tone === 'pending' ? null : toneIcons[props.tone]),
+  () => icon ?? (tone === 'pending' ? null : toneIcons[tone]),
 )
 
 /*
@@ -77,8 +74,8 @@ const mark = computed<IconName | null>(
  * region as well would announce the same wait twice.
  */
 const role = computed(() => {
-  if (props.tone === 'error') return 'alert'
-  if (props.tone === 'pending' && !spinning.value) return 'status'
+  if (tone === 'error') return 'alert'
+  if (tone === 'pending' && !spinning.value) return 'status'
   return undefined
 })
 </script>

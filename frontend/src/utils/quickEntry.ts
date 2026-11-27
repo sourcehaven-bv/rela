@@ -31,7 +31,7 @@ export function isQuickEntryPopup(
 }
 
 /** Popup width; matches quickEntryWidth in cmd/rela-desktop/quickentry.go. */
-export const QUICK_ENTRY_POPUP_WIDTH = 480
+const QUICK_ENTRY_POPUP_WIDTH = 480
 /** Tallest popup; a taller form scrolls inside the window. */
 export const QUICK_ENTRY_POPUP_MAX_HEIGHT = 720
 

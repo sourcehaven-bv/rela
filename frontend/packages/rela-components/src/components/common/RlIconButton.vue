@@ -3,24 +3,29 @@
 import RlIcon from './RlIcon.vue'
 import type { IconName } from './icons'
 
-withDefaults(
-  defineProps<{
-    icon: IconName
-    label: string
-    size?: number
-    active?: boolean
-    pressed?: boolean
-    /** `danger` marks a destructive action, such as delete. */
-    tone?: 'default' | 'danger'
-    /**
-     * Gives the button an opaque raised surface, for a button that floats
-     * over content as it scrolls. Without one, the content under it shows
-     * through the icon.
-     */
-    raised?: boolean
-  }>(),
-  { size: 18, active: false, tone: 'default', raised: false },
-)
+const {
+  icon,
+  label,
+  size = 18,
+  active = false,
+  pressed,
+  tone = 'default',
+  raised = false,
+} = defineProps<{
+  icon: IconName
+  label: string
+  size?: number
+  active?: boolean
+  pressed?: boolean
+  /** `danger` marks a destructive action, such as delete. */
+  tone?: 'default' | 'danger'
+  /**
+   * Gives the button an opaque raised surface, for a button that floats
+   * over content as it scrolls. Without one, the content under it shows
+   * through the icon.
+   */
+  raised?: boolean
+}>()
 
 defineEmits<{ click: [event: MouseEvent] }>()
 </script>

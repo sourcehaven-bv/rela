@@ -31,101 +31,100 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    /**
-     * Names the value for assistive tech. The read button announces as
-     * "Owner, Rita Bloem, edit", so the label is not repeated on screen.
-     */
-    label: string
-    /** Shown in the read view when there is nothing to show. Defaults to the `emptyValue` chrome text. */
-    placeholder?: string
-    /** Renders the value as static text, with no affordance to edit it. */
-    disabled?: boolean
-    /**
-     * Commits as soon as a native control reports a change, instead of
-     * waiting for Enter or blur. Right for a plain `select` or checkbox,
-     * where the choice is the whole edit and confirming it again is friction.
-     *
-     * Only native `change` events reach this. A control that is a component
-     * emits its own events, so it should call the slot's `commit` instead.
-     */
-    commitOnChange?: boolean
-    /**
-     * Whether the read view has a value. Used only to pick between the value
-     * and the placeholder, because the value itself lives in the slot.
-     */
-    empty?: boolean
-    /**
-     * Opens the control's own picker as soon as it appears, so a date takes
-     * one click rather than two: one to reveal the input and another to open
-     * the calendar.
-     *
-     * Only for a control that has a picker to open. It is not the default
-     * because for a text box there is nothing to open, and for a `select` it
-     * would mean a list appearing without being asked for.
-     */
-    autoOpenPicker?: boolean
-    /**
-     * Lays the value out as a block that fills its container, rather than
-     * hugging its own text. For prose and anything else whose width is the
-     * column it sits in: sizing those to their content makes the box jump
-     * between the read and edit views.
-     */
-    block?: boolean
-    /**
-     * A number: tabular figures and right-aligned, in both halves, so the
-     * digits line up down a column and do not jump when the edit opens.
-     */
-    numeric?: boolean
-    /**
-     * What starts the edit.
-     *
-     * `value` wraps the read view in a button: the whole value is the target.
-     * Right for a value, which has nothing inside it to click.
-     *
-     * `explicit` renders the read view in a plain div and puts a small edit
-     * button in its top-right corner, revealed on hover and focus-within but
-     * always in the tab order. The button is the only way in: a click on the
-     * content is left to the content, so reading gestures work as on any
-     * page. A click clears a selection, a double-click selects a word and a
-     * triple-click a paragraph; none of them opens the editor, whose first
-     * click would otherwise have swallowed the rest. The one exception is
-     * the placeholder of an empty value, which has nothing to select.
-     *
-     * The button is sticky, so on content taller than the viewport it stays
-     * in view while the content scrolls under it. Set
-     * `--rl-inline-edit-sticky-top` to move it below a sticky bar above it.
-     *
-     * For rendered content: links, task checkboxes, comment markers, a
-     * diagram.
-     */
-    trigger?: 'value' | 'explicit'
-    /**
-     * Extra elements that count as inside the editor for the purpose of
-     * leaving it. A control with a floating toolbar or a mention menu renders
-     * those outside its own element, often at the end of the body, so focus
-     * moving into one looks like focus leaving the edit and would commit in
-     * the middle of using the toolbar.
-     *
-     * Called each time the edit might be ending, so it can return whatever is
-     * mounted at that moment.
-     */
-    keepOpenWithin?: () => Element[]
-  }>(),
-  {
-    disabled: false,
-    commitOnChange: false,
-    empty: false,
-    autoOpenPicker: false,
-    block: false,
-    numeric: false,
-    trigger: 'value',
-    keepOpenWithin: () => [],
-  },
-)
+const {
+  label,
+  placeholder,
+  disabled = false,
+  commitOnChange = false,
+  empty = false,
+  autoOpenPicker = false,
+  block = false,
+  numeric = false,
+  trigger = 'value',
+  keepOpenWithin = () => [],
+} = defineProps<{
+  /**
+   * Names the value for assistive tech. The read button announces as
+   * "Owner, Rita Bloem, edit", so the label is not repeated on screen.
+   */
+  label: string
+  /** Shown in the read view when there is nothing to show. Defaults to the `emptyValue` chrome text. */
+  placeholder?: string
+  /** Renders the value as static text, with no affordance to edit it. */
+  disabled?: boolean
+  /**
+   * Commits as soon as a native control reports a change, instead of
+   * waiting for Enter or blur. Right for a plain `select` or checkbox,
+   * where the choice is the whole edit and confirming it again is friction.
+   *
+   * Only native `change` events reach this. A control that is a component
+   * emits its own events, so it should call the slot's `commit` instead.
+   */
+  commitOnChange?: boolean
+  /**
+   * Whether the read view has a value. Used only to pick between the value
+   * and the placeholder, because the value itself lives in the slot.
+   */
+  empty?: boolean
+  /**
+   * Opens the control's own picker as soon as it appears, so a date takes
+   * one click rather than two: one to reveal the input and another to open
+   * the calendar.
+   *
+   * Only for a control that has a picker to open. It is not the default
+   * because for a text box there is nothing to open, and for a `select` it
+   * would mean a list appearing without being asked for.
+   */
+  autoOpenPicker?: boolean
+  /**
+   * Lays the value out as a block that fills its container, rather than
+   * hugging its own text. For prose and anything else whose width is the
+   * column it sits in: sizing those to their content makes the box jump
+   * between the read and edit views.
+   */
+  block?: boolean
+  /**
+   * A number: tabular figures and right-aligned, in both halves, so the
+   * digits line up down a column and do not jump when the edit opens.
+   */
+  numeric?: boolean
+  /**
+   * What starts the edit.
+   *
+   * `value` wraps the read view in a button: the whole value is the target.
+   * Right for a value, which has nothing inside it to click.
+   *
+   * `explicit` renders the read view in a plain div and puts a small edit
+   * button in its top-right corner, revealed on hover and focus-within but
+   * always in the tab order. The button is the only way in: a click on the
+   * content is left to the content, so reading gestures work as on any
+   * page. A click clears a selection, a double-click selects a word and a
+   * triple-click a paragraph; none of them opens the editor, whose first
+   * click would otherwise have swallowed the rest. The one exception is
+   * the placeholder of an empty value, which has nothing to select.
+   *
+   * The button is sticky, so on content taller than the viewport it stays
+   * in view while the content scrolls under it. Set
+   * `--rl-inline-edit-sticky-top` to move it below a sticky bar above it.
+   *
+   * For rendered content: links, task checkboxes, comment markers, a
+   * diagram.
+   */
+  trigger?: 'value' | 'explicit'
+  /**
+   * Extra elements that count as inside the editor for the purpose of
+   * leaving it. A control with a floating toolbar or a mention menu renders
+   * those outside its own element, often at the end of the body, so focus
+   * moving into one looks like focus leaving the edit and would commit in
+   * the middle of using the toolbar.
+   *
+   * Called each time the edit might be ending, so it can return whatever is
+   * mounted at that moment.
+   */
+  keepOpenWithin?: () => Element[]
+}>()
 
-const placeholderText = computed(() => props.placeholder ?? messages.chromeText({ key: 'emptyValue' }))
+const placeholderText = computed(() => placeholder ?? messages.chromeText({ key: 'emptyValue' }))
 
 const emit = defineEmits<{
   /** The user kept the edit. */
@@ -149,7 +148,7 @@ function focusControl() {
   )
   control?.focus()
 
-  if (props.autoOpenPicker && control instanceof HTMLInputElement) {
+  if (autoOpenPicker && control instanceof HTMLInputElement) {
     /*
      * `showPicker` needs a user gesture, and the click that started the edit
      * is one. It throws where that does not hold, or where the browser has no
@@ -170,7 +169,7 @@ function focusControl() {
 }
 
 async function start() {
-  if (props.disabled || editing.value) return
+  if (disabled || editing.value) return
   editing.value = true
   emit('edit')
   await nextTick()
@@ -222,7 +221,7 @@ function keepsEnter(target: EventTarget | null) {
 function isInside(node: Node | null) {
   if (!node) return false
   if (editor.value?.contains(node)) return true
-  return props.keepOpenWithin().some((element) => element.contains(node))
+  return keepOpenWithin().some((element) => element.contains(node))
 }
 
 /**
@@ -264,7 +263,7 @@ onBeforeUnmount(() => {
 })
 
 function onChange() {
-  if (props.commitOnChange) stop('commit')
+  if (commitOnChange) stop('commit')
 }
 
 defineExpose({ start, cancel: () => stop('cancel') })

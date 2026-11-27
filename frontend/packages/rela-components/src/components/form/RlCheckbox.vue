@@ -11,35 +11,30 @@ import { computed } from 'vue'
 import RlFieldShell from './RlFieldShell.vue'
 import RlIcon from '../common/RlIcon.vue'
 
-const props = withDefaults(
-  defineProps<{
-    modelValue?: boolean
-    label: string
-    hint?: string
-    error?: string
-    required?: boolean
-    disabled?: boolean
-    /** A parent whose children are only partly checked. */
-    indeterminate?: boolean
-    /**
-     * Keeps the label as the accessible name but takes it off screen, for a
-     * box whose meaning the surrounding layout already carries: a row's
-     * select box under a column of them, for one.
-     */
-    labelHidden?: boolean
-  }>(),
-  {
-    modelValue: false,
-    required: false,
-    disabled: false,
-    indeterminate: false,
-    labelHidden: false,
-  },
-)
+const {
+  required = false,
+  disabled = false,
+  indeterminate = false,
+  labelHidden = false,
+} = defineProps<{
+  label: string
+  hint?: string
+  error?: string
+  required?: boolean
+  disabled?: boolean
+  /** A parent whose children are only partly checked. */
+  indeterminate?: boolean
+  /**
+   * Keeps the label as the accessible name but takes it off screen, for a
+   * box whose meaning the surrounding layout already carries: a row's
+   * select box under a column of them, for one.
+   */
+  labelHidden?: boolean
+}>()
 
-defineEmits<{ 'update:modelValue': [value: boolean] }>()
+const model = defineModel<boolean>({ default: false })
 
-const glyph = computed(() => (props.indeterminate ? 'minus' : 'check'))
+const glyph = computed(() => (indeterminate ? 'minus' : 'check'))
 </script>
 
 <template>
@@ -57,20 +52,20 @@ const glyph = computed(() => (props.indeterminate ? 'minus' : 'check'))
         :id="control.id"
         class="rl-checkbox__input"
         type="checkbox"
-        :checked="modelValue"
+        :checked="model"
         :disabled="disabled"
         :required="control.required"
         :indeterminate="indeterminate"
         :aria-describedby="control.describedBy"
         :aria-invalid="control.invalid || undefined"
-        @change="$emit('update:modelValue', ($event.target as HTMLInputElement).checked)"
+        @change="model = ($event.target as HTMLInputElement).checked"
       />
       <span
         class="rl-checkbox__box"
-        :class="{ 'rl-checkbox__box--on': modelValue || indeterminate }"
+        :class="{ 'rl-checkbox__box--on': model || indeterminate }"
         aria-hidden="true"
       >
-        <RlIcon v-if="modelValue || indeterminate" :name="glyph" :size="14" />
+        <RlIcon v-if="model || indeterminate" :name="glyph" :size="14" />
       </span>
     </span>
   </RlFieldShell>
