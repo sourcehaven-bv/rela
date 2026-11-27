@@ -185,7 +185,7 @@ func (q *memQueue) Start(ctx context.Context) error {
 	q.started = true
 	// The workers keep the values of ctx but not its cancellation: the queue
 	// lives until Close, not until whatever call happened to start it.
-	base, cancel := context.WithCancel(context.WithoutCancel(ctx)) //nolint:gosec // G118: Close calls cancel
+	base, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	q.cancel = cancel
 	q.workers.Add(q.concurrency)
 	for range q.concurrency {
