@@ -135,6 +135,8 @@ func (r *Rollups) Values(
 			results = bodyColumn(col, rows, bodies)
 		case col.Records != "":
 			results, err = r.recordColumn(ctx, col, ids)
+		case col.Along != nil:
+			results, err = r.alongColumn(ctx, col, ids, world)
 		default:
 			results, err = r.column(ctx, col, ids, world)
 		}

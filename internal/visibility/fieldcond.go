@@ -212,16 +212,57 @@ func guard(s store.Cond, prop string, v store.Cond) (store.Cond, error) {
 	if err != nil {
 		return store.Cond{}, fmt.Errorf("property %q: %w", prop, err)
 	}
+	return guardWith(s, s0, v), nil
+}
+
+// guardWith is `(v and s) or (not v and s0)`, folded.
+func guardWith(s store.Cond, s0 bool, v store.Cond) store.Cond {
 	if known, isConst := v.Constant(); isConst {
 		if known {
-			return s, nil
+			return s
 		}
-		return constCond(s0), nil
+		return constCond(s0)
 	}
 	if s0 {
-		return store.OrCond(store.NotCond(v), s), nil
+		return store.OrCond(store.NotCond(v), s)
 	}
-	return store.AndCond(v, s), nil
+	return store.AndCond(v, s)
+}
+
+// guardFilledTree is [guardTree] for a condition whose comparisons read a
+// declared default where the row holds no value. fill rewrites a subtree
+// for the default. A hidden property reads as unset, never as its default,
+// so s0 is taken from the subtree before fill.
+func guardFilledTree(
+	c store.Cond, conds map[string]store.Cond, fill func(store.Cond) (store.Cond, error),
+) (store.Cond, error) {
+	if p, only := soleProperty(c); only {
+		s, err := fill(c)
+		if err != nil {
+			return store.Cond{}, err
+		}
+		v, hidden := conds[p]
+		if !hidden {
+			return s, nil
+		}
+		s0, err := absentValue(c)
+		if err != nil {
+			return store.Cond{}, fmt.Errorf("property %q: %w", p, err)
+		}
+		return guardWith(s, s0, v), nil
+	}
+	if len(c.Args) == 0 {
+		return fill(c)
+	}
+	out := store.Cond{Op: c.Op, Args: make([]store.Cond, 0, len(c.Args))}
+	for _, a := range c.Args {
+		ga, err := guardFilledTree(a, conds, fill)
+		if err != nil {
+			return store.Cond{}, err
+		}
+		out.Args = append(out.Args, ga)
+	}
+	return out, nil
 }
 
 func constCond(v bool) store.Cond {
