@@ -176,7 +176,7 @@ recovery mechanism, so a step that finds nothing left to do does nothing.
 | Step | Effect |
 |---|---|
 | `rename_property: {entity, from, to}` | moves the value to the new key (only where the old key exists) |
-| `rename_entity_type: {from, to}` | rewrites `type:` on every entity of the old type (IDs are unchanged) |
+| `rename_entity_type: {from, to, where?, ids?}` | rewrites `type:` on every entity of the old type (IDs are unchanged); with `where` or `ids` only on a subset, see [Splitting a type](#splitting-a-type) |
 | `rename_relation_type: {from, to}` | recreates each relation under the new type, then deletes the old (relation history starts a new lifetime); refused when the two types differ in `scope` |
 | `reverse_relation: {type}` | swaps `from` and `to` on every stored edge of a relation type, after you swap the endpoints in `schema.yaml` |
 | `rename_face: {entity, from, to}` | moves every row stored at one content state to another (IDs are unchanged) |
@@ -200,6 +200,69 @@ the operator consent — but the generator only ever emits them commented out.
 Adding or changing a computed property emits one active
 `recompute_computed` step per affected entity type. The step refreshes the
 whole graph, so dependent computed properties cannot retain stale values.
+
+### Splitting a type
+
+A `rename_entity_type` step with `where:` or `ids:` renames only some
+entities of a type. Use it to split one type over several, for example when
+a type becomes an abstract type with variants. Every entity keeps its id, so
+relations, comments and version history stay attached.
+
+```yaml
+steps:
+  - rename_entity_type:
+      from: taak
+      to: projecten.taak
+      where: {soort: [ontwikkeling, onderhoud]}
+  - rename_entity_type: {from: taak, to: isms.taak}   # the rest
+```
+
+- `where:` maps a property to one value or a list of values. An entity is
+  selected when every listed property holds one of its values. An entity
+  without the property is not selected. The property must be a scalar
+  `string`, enum, `boolean` or `integer` property of the old type in the
+  from-schema, and an enum value must be one the schema declares. This is the
+  mapping form of a roll-up `where:`, not the list of filter strings that
+  validations and schedules use.
+- `ids:` lists the entities to rename. Use it for entities that no property
+  value tells apart, or that hold a value the schema does not declare. An id
+  that is not of the old type is reported in the step's notes.
+- One step takes `where:` or `ids:`, not both. Write a separate step for each.
+
+A split is checked as a whole when the file is parsed:
+
+- A filtered rename after an unfiltered rename of the same type is refused,
+  because the unfiltered step already moved every entity.
+- When the to-schema no longer declares the old type, the file must end the
+  split with an unfiltered `rename_entity_type` of that type. Without it the
+  rest would become orphaned data, which garbage collection deletes after the
+  grace period. A `drop_entities` step does not count.
+
+When it runs, each step of a split:
+
+- decides per entity, not per content state. When the content states of one
+  entity disagree on the `where:` properties, the step fails and names them;
+  move those entities with an earlier `ids:` step.
+- checks the relations of every entity it moves. When the to-schema does not
+  allow the new type at that end of a relation, the step fails before it
+  writes anything and lists the relations. This applies to the unfiltered
+  rest of a split as well.
+- lists every id it selected in its notes, or notes that it matched nothing. Matching nothing
+  is not an error: a re-run finds nothing left to move.
+- in a dry run, leaves out the ids an earlier step of the split selected, so
+  every count is what the step would do on apply.
+
+Two things to keep in mind when you write the file. `where:` reads property
+names as they are before the file runs, so put the split before any
+`rename_property` on the old type. And a later step that names the old type,
+such as `map_values` or `set_default`, sees only the entities the split left
+there.
+
+A split renames no type as a whole, so the
+[classification overlay](classification.md) does not follow it: entries keyed
+by the old type are reported as stale, and you assign them to the new types
+by hand. To undo a split, write a migration with an unfiltered
+`rename_entity_type` from each new type back to one type.
 
 ### Renaming a content state
 

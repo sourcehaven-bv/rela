@@ -115,6 +115,9 @@ func ParseFile(name string, data []byte) (*File, error) {
 	if err := validateStepOrder(name, f.Steps); err != nil {
 		return nil, err
 	}
+	if err := validateSplits(name, f); err != nil {
+		return nil, err
+	}
 	if err := validateDeltasResolved(name, f); err != nil {
 		return nil, err
 	}
