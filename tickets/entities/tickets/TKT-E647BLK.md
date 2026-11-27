@@ -1,7 +1,7 @@
 ---
 id: TKT-E647BLK
 type: ticket
-title: Date properties in derived index specs
+title: Range predicates on date properties in pushdown and derived indexes
 kind: enhancement
 priority: medium
 effort: s
@@ -10,17 +10,21 @@ status: backlog
 
 ## Description
 
-Accept date and datetime properties in derived-index specs. Part of the
+Push range predicates (`gte`/`lte`, and `gt`/`lt`) on date and datetime
+properties to the store, and take them into derived-index specs. Part of the
 smart-lists feature (RES-7SH71TW). Range filters such as Today and Upcoming need
 them.
 
-The derivation accepts only string-shaped properties (`metamodel.StringShaped`,
-used by `queryplan.listIndexSpec`).
+Date and datetime are already string-shaped (`metamodel.StringShaped`), so
+`queryplan.listIndexSpec` accepts them for sort keys and `=` filters. The gap is
+the operators: `listIndexSpec` takes only `=` filters, and `planListPushdown`
+(`internal/dataentry/listpushdown.go`) pushes only `eq` and `ne`.
 
 ## Scope
 
-- Index date properties with an expression that matches the comparison the
-store query uses, so the planner can use it.
+- Push `gte`/`lte`/`gt`/`lt` on date properties in `planListPushdown`.
+- Take range filters into `listIndexSpec`, with an index expression that matches
+the comparison the store query uses, so the planner can use it.
 - Cover both list indexes and per-control indexes.
 - `storetest.RunGraphDifferential` cases for date ranges.
 
