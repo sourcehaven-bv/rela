@@ -717,15 +717,22 @@ install-tools:
     go install github.com/fe3dback/go-arch-lint@{{go_arch_lint_version}}
     @echo "Done!"
 
-# Install git hooks
+# Install git hooks. Each hook is a stub that runs scripts/<hook> from the
+# checked-out tree, so edits to the scripts take effect without a reinstall and
+# every worktree runs its own branch's version.
 install-hooks:
-    @echo "Installing git hooks..."
-    @mkdir -p .git/hooks
-    @cp scripts/pre-commit .git/hooks/pre-commit
-    @chmod +x .git/hooks/pre-commit
-    @cp scripts/pre-push .git/hooks/pre-push
-    @chmod +x .git/hooks/pre-push
-    @echo "Git hooks installed (pre-commit + pre-push)!"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Installing git hooks..."
+    hooks_dir=$(git rev-parse --git-path hooks)
+    mkdir -p "$hooks_dir"
+    for hook in pre-commit pre-push; do
+        printf '#!/bin/sh\nscript="$(git rev-parse --show-toplevel)/scripts/%s"\n%s\nexec "$script" "$@"\n' \
+            "$hook" '[ -x "$script" ] || { echo "$script is missing or not executable; skip with --no-verify" >&2; exit 1; }' \
+            > "$hooks_dir/$hook"
+        chmod +x "$hooks_dir/$hook"
+    done
+    echo "Git hooks installed in $hooks_dir (pre-commit + pre-push)!"
 
 # Tidy go modules
 tidy:

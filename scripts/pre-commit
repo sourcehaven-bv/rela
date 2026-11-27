@@ -29,9 +29,21 @@ else
 fi
 echo ""
 
+# Only staged .go files, go.mod/go.sum and .golangci.yml trigger the lint and
+# test steps. A commit without them (tickets, docs, SQL, testdata, Lua) skips
+# both; CI runs the full set.
+staged() {
+    git -c core.quotePath=false diff --cached --name-only --no-renames --diff-filter=ACMRD -- "$@"
+}
+STAGED_GO=$(staged '*.go' | grep -vE '^frontend/node_modules/|(^|/)testdata/' || true)
+STAGED_MOD=$(staged go.mod go.sum || true)
+STAGED_LINTCFG=$(staged .golangci.yml || true)
+
 # Check 2: Run linter
 echo "2️⃣  Running linter..."
-if ! golangci-lint run --timeout=5m; then
+if [ -z "$STAGED_GO$STAGED_MOD$STAGED_LINTCFG" ]; then
+    echo "⏭️  No .go, go.mod or .golangci.yml staged, skipping linter"
+elif ! golangci-lint run --timeout=5m; then
     echo -e "${RED}❌ Linter found issues${NC}"
     echo "Run 'just lint-fix' to auto-fix some issues"
     FAILED=1
@@ -40,14 +52,58 @@ else
 fi
 echo ""
 
-# Check 3: Run tests
+# Check 3: Run tests for the packages that contain staged .go files. The full
+# race suite is CI's job: on a loaded machine it outruns any sane timeout in
+# packages the commit did not touch (BUG-5CS40M2). Dependents of a changed
+# package are not tested here either; CI covers them.
+TEST_TIMEOUT="${RELA_PRECOMMIT_TEST_TIMEOUT:-5m}"
 echo "3️⃣  Running tests..."
-if ! go test -race ./... > /dev/null 2>&1; then
-    echo -e "${RED}❌ Tests failed${NC}"
-    echo "Run 'just test' to see details"
-    FAILED=1
+PACKAGES=""
+if [ -n "$STAGED_GO" ]; then
+    DIRS=()
+    while IFS= read -r dir; do
+        if [ -d "$dir" ]; then
+            DIRS+=("./$dir")
+        fi
+    done < <(echo "$STAGED_GO" | sed 's|/[^/]*$||; s|^[^/]*\.go$|.|' | sort -u)
+    if [ ${#DIRS[@]} -gt 0 ]; then
+        # -e keeps a package with a syntax error in the list so go test reports it.
+        # A directory whose files are all excluded by build tags (for example
+        # postgres-only code) has no files in the default build; skip it.
+        PACKAGES=$(go list -e -f '{{if or .GoFiles .CgoFiles .TestGoFiles .XTestGoFiles .InvalidGoFiles}}{{.ImportPath}}{{end}}' \
+            "${DIRS[@]}" 2>/dev/null | tr '\n' ' ' || true)
+    fi
+fi
+if [ -n "$STAGED_MOD" ] && [ -z "$PACKAGES" ]; then
+    echo "⏭️  go.mod/go.sum changed but no package staged; the full suite runs in CI ('just test' locally)"
+elif [ -z "$PACKAGES" ]; then
+    echo "⏭️  No Go packages staged, skipping tests"
 else
-    echo -e "${GREEN}✅ Tests passed${NC}"
+    echo "Testing (-race, timeout $TEST_TIMEOUT per package): $PACKAGES"
+    TEST_LOG=$(mktemp)
+    # shellcheck disable=SC2086 # PACKAGES is a space-separated list.
+    if go test -race -timeout "$TEST_TIMEOUT" $PACKAGES > "$TEST_LOG" 2>&1; then
+        echo -e "${GREEN}✅ Tests passed${NC}"
+        rm -f "$TEST_LOG"
+    else
+        echo -e "${RED}❌ Tests failed${NC}"
+        echo "Failing packages:"
+        grep -E '^FAIL[[:space:]]' "$TEST_LOG" | sed 's/^/    /' || true
+        if grep -q '^panic: test timed out after' "$TEST_LOG"; then
+            # The goroutine dump after a timeout is noise here; the panic line
+            # and the "running tests:" list under it name the stuck test.
+            echo -e "${YELLOW}⏱️  Timed out. Raise the limit with RELA_PRECOMMIT_TEST_TIMEOUT=15m" \
+                "if the machine is loaded. Stuck tests:${NC}"
+            awk '/^panic: test timed out after/ {p=1} p && /^$/ {p=0} p' "$TEST_LOG" | sed 's/^/    /'
+        fi
+        # Failure lines, wherever they sit in the log: with several packages
+        # the end of the log can be all "ok" lines.
+        echo "Failures (first 60 lines):"
+        grep -E '^[[:space:]]*--- FAIL|^panic:|WARNING: DATA RACE|_test\.go:[0-9]+:|\.go:[0-9]+:[0-9]+:|^# ' \
+            "$TEST_LOG" | head -n 60 | sed 's/^/    /' || true
+        echo "Full output: $TEST_LOG"
+        FAILED=1
+    fi
 fi
 echo ""
 
