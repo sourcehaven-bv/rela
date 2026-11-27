@@ -625,6 +625,12 @@ const (
 	// which is how yaml.v3 decodes an unquoted date in a file backend. The
 	// SQL backends hold JSON, where that type cannot occur.
 	PropIsDate
+	// PropEqualOrEmpty matches when the property equals Value, as
+	// [PropEqual] reads it, or is empty (see [PropPredicate]). It is the
+	// lowering of a comparison against a property's schema default: a row
+	// that never had the property written holds the default. Value must
+	// not be empty. [PropPredicate.Scalar] applies to the equality arm only.
+	PropEqualOrEmpty
 )
 
 // OrderKind says how an ordered [PropPredicate] reads the stored value. It
@@ -674,15 +680,20 @@ func UnknownPropOpError(p PropPredicate) error {
 
 // ValidatePropPredicates refuses an unknown operator, a malformed
 // [PropKeyEqual] use (a Key on another operator, or a PropKeyEqual with an
-// empty Key or Value, or a Key outside [a-z0-9_]), and a malformed
+// empty Key or Value, or a Key outside [a-z0-9_]), a malformed
 // [OrderKind] use (a kind on a non-ordered operator, an unknown kind, or an
-// [OrderInteger] Value that is not an int64). Every backend runs it
+// [OrderInteger] Value that is not an int64), and a [PropEqualOrEmpty]
+// with an empty Value. Every backend runs it
 // (through the naive shape check) so they refuse the same shapes.
 func ValidatePropPredicates(props []PropPredicate) error {
 	for _, p := range props {
 		switch p.Op {
 		case PropEqual, PropNotEqual, PropNotEqualOrEmpty, PropGreaterEqual, PropLessEqual, PropKeyEqual,
 			PropLess, PropGreater:
+		case PropEqualOrEmpty:
+			if p.Value == "" {
+				return fmt.Errorf("%w: property %q: PropEqualOrEmpty needs a Value", ErrInvalidQuery, p.Property)
+			}
 		case PropIsDate:
 			if p.Value != "" || p.Key != "" || p.Scalar {
 				return fmt.Errorf("%w: property %q: PropIsDate takes no Value, Key or Scalar", ErrInvalidQuery, p.Property)

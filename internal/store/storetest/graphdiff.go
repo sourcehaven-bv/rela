@@ -55,14 +55,68 @@ func RunGraphDifferential(t *testing.T, f Factory) {
 	for i := range graphDiffQueries {
 		rng := rand.New(rand.NewPCG(uint64(i), 0xB51C))
 		q := genGraphQuery(rng)
-		if msg := diffGraphQuery(c, ref, s, q, ids); msg != "" {
-			fails++
-			t.Errorf("query %d: %s\nquery: %+v", i, msg, q)
-			if fails >= 100 {
-				t.Fatal("too many differences; stopping")
+		for _, variant := range []store.GraphQuery{q, widenToEmpty(q)} {
+			if msg := diffGraphQuery(c, ref, s, variant, ids); msg != "" {
+				fails++
+				t.Errorf("query %d: %s\nquery: %+v", i, msg, variant)
+				if fails >= 100 {
+					t.Fatal("too many differences; stopping")
+				}
 			}
 		}
 	}
+}
+
+// widenToEmpty is q with every non-empty [store.PropEqual] turned into
+// [store.PropEqualOrEmpty]. It is derived from q rather than drawn, so adding
+// the operator leaves the generators' random streams, and the coverage floors
+// other differentials assert over them, unchanged.
+func widenToEmpty(q store.GraphQuery) store.GraphQuery {
+	q.Props = widenProps(q.Props)
+	q.Narrowing = slices.Clone(q.Narrowing)
+	for i := range q.Narrowing {
+		q.Narrowing[i].Props = widenProps(q.Narrowing[i].Props)
+	}
+	q.Related = slices.Clone(q.Related)
+	for i := range q.Related {
+		q.Related[i].Pred.EdgeProps = widenProps(q.Related[i].Pred.EdgeProps)
+		if m := q.Related[i].Pred.EndpointMatch; m != nil {
+			widened := *m
+			widened.Props = widenProps(m.Props)
+			q.Related[i].Pred.EndpointMatch = &widened
+		}
+	}
+	if q.Where != nil {
+		w := widenCond(*q.Where)
+		q.Where = &w
+	}
+	return q
+}
+
+func widenProps(props []store.PropPredicate) []store.PropPredicate {
+	if props == nil {
+		return nil
+	}
+	out := slices.Clone(props)
+	for i, p := range out {
+		if p.Op == store.PropEqual && p.Value != "" {
+			out[i].Op = store.PropEqualOrEmpty
+		}
+	}
+	return out
+}
+
+func widenCond(c store.Cond) store.Cond {
+	if c.Op == store.CondProp {
+		c.Prop = widenProps([]store.PropPredicate{c.Prop})[0]
+		return c
+	}
+	args := make([]store.Cond, len(c.Args))
+	for i, a := range c.Args {
+		args[i] = widenCond(a)
+	}
+	c.Args = args
+	return c
 }
 
 // diffGraphQuery returns a description of the first disagreement between s

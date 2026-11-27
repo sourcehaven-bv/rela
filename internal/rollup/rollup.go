@@ -353,7 +353,8 @@ func isoDate(pd metamodel.PropertyDef) bool {
 }
 
 // wherePredicate is the store equality for one where entry, or why the
-// value cannot equal the property.
+// value cannot equal the property. A value that is the property's schema
+// default also matches a row without the property, which holds the default.
 func wherePredicate(
 	meta *metamodel.Metamodel, key, value string, rp metamodel.PropertyDef,
 ) (pred store.PropPredicate, problem string) {
@@ -376,6 +377,9 @@ func wherePredicate(
 		pred.Scalar = true
 	default:
 		return pred, fmt.Sprintf("type %q cannot be compared in a where", rp.Type)
+	}
+	if metamodel.IsDeclaredDefault(rp, meta, pred.Value) {
+		pred.Op = store.PropEqualOrEmpty
 	}
 	return pred, ""
 }

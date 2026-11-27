@@ -3,6 +3,7 @@ package metamodel
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -135,6 +136,31 @@ func DeclaredDefault(prop PropertyDef, m *Metamodel) string {
 		return customType.Default
 	}
 	return ""
+}
+
+// IsDeclaredDefault reports whether value is the [DeclaredDefault] of prop,
+// so an entity without the property holds it. Integers and booleans compare
+// by value ("+05" is 5, "TRUE" is true); every other type compares the text.
+// A property with no declared default has no value that is its default.
+//
+// Nil: m is accepted, as for [DeclaredDefault].
+func IsDeclaredDefault(prop PropertyDef, m *Metamodel, value string) bool {
+	declared := DeclaredDefault(prop, m)
+	if declared == "" {
+		return false
+	}
+	switch prop.Type {
+	case PropertyTypeInteger:
+		want, err := strconv.ParseInt(strings.TrimSpace(declared), 10, 64)
+		got, gotErr := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		return err == nil && gotErr == nil && want == got
+	case PropertyTypeBoolean:
+		want, err := strconv.ParseBool(strings.TrimSpace(declared))
+		got, gotErr := strconv.ParseBool(strings.TrimSpace(value))
+		return err == nil && gotErr == nil && want == got
+	default:
+		return declared == value
+	}
 }
 
 // EnumValues returns the values an enum property allows: its own `values:`,

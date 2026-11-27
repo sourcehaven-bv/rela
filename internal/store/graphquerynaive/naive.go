@@ -692,6 +692,13 @@ func matchesProp(props map[string]any, p store.PropPredicate) (bool, error) {
 		// so the empty case is decided here rather than by adding a second
 		// meaning to propmatch.Decide, which internal/filter also depends on.
 		return propmatch.IsEmpty(raw) || propmatch.Decide(raw, propmatch.OpNotEqual, p.Value) == propmatch.Match, nil
+	case store.PropEqualOrEmpty:
+		if propmatch.IsEmpty(raw) {
+			return true, nil
+		}
+		equal := p
+		equal.Op = store.PropEqual
+		return matchesProp(props, equal)
 	case store.PropGreaterEqual, store.PropLessEqual, store.PropGreater, store.PropLess:
 		return matchesOrderedKind(raw, p)
 	case store.PropIsDate:

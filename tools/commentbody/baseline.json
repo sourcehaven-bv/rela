@@ -707,7 +707,7 @@
   "internal/records/mutate.go": 3,
   "internal/records/recordstest/recordstest.go": 3,
   "internal/records/service.go": 8,
-  "internal/relresolve/relresolve.go": 3,
+  "internal/relresolve/relresolve.go": 2,
   "internal/remotesync/config.go": 2,
   "internal/remotesync/conflicts.go": 4,
   "internal/remotesync/deletes.go": 1,

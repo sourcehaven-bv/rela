@@ -517,6 +517,11 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 		return fmt.Sprintf("(NOT %s AND NOT %s)", isEmpty, equalsCond(b, txt, jsn, p.Value))
 	case store.PropNotEqualOrEmpty:
 		return fmt.Sprintf("(%s OR NOT %s)", isEmpty, equalsCond(b, txt, jsn, p.Value))
+	case store.PropEqualOrEmpty:
+		if p.Scalar {
+			return fmt.Sprintf("(%s OR (jsonb_typeof(%s) = 'string' AND %s = %s))", isEmpty, jsn, txt, b.arg(p.Value))
+		}
+		return fmt.Sprintf("(%s OR %s)", isEmpty, equalsCond(b, txt, jsn, p.Value))
 	case store.PropGreaterEqual, store.PropLessEqual, store.PropGreater, store.PropLess:
 		switch p.Kind {
 		case store.OrderText:
