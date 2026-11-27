@@ -145,9 +145,13 @@ step "Seeding the perf project at scale $SCALE"
 rm -rf "$WORK/project"
 cp -R "$SRC/prototypes/perf/project" "$WORK/project"
 if [[ ${SEQTRACE_SUITE:-} == routes ]]; then
-    # The perf project has no command, action or transform. The routes suite
-    # needs one of each, so their permission gates run in the trace.
+    # The perf project has no command, action, transform or sankey. The routes
+    # suite needs one of each, so their permission gates run in the trace.
     cat >>"$WORK/project/data-entry.yaml" <<'YAML'
+sankeys:
+  seqtrace-assignees:
+    columns: [[task], [person]]
+    edges: [assigned-to]
 commands:
   seqtrace-echo:
     label: "Echo"
@@ -385,6 +389,8 @@ if [[ ${SEQTRACE_SUITE:-} == routes ]]; then
     req "route DELETE attachment as reader, denied" "$CAROL" DELETE "/api/v1/tasks/$TASK/_attachments/file/x.txt"
     req "route GET gantt as reader" "$CAROL" GET "/api/v1/_gantts/delivery"
     req "route GET analyze as reader" "$CAROL" GET "/api/v1/_analyze"
+    EXPECT=200 req "route GET sankey as reader" "$CAROL" GET "/api/v1/_sankeys/seqtrace-assignees"
+    EXPECT=200 req "route GET schema types as reader" "$CAROL" GET "/api/v1/_schema/types"
     req "route POST conflict resolve as reader, denied" "$CAROL" POST "/api/v1/_conflicts/resolve" '{}'
     EXPECT=403 req "route GET conflict detail as editor, denied" "$BOB" GET "/api/v1/_conflicts/$CONFLICT"
     EXPECT=200 req "route GET conflict detail as manager" "$ALICE" GET "/api/v1/_conflicts/$CONFLICT"
