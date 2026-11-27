@@ -39,8 +39,9 @@ type exportHandler struct {
 	// called the shared read path emitted rows the list excludes.
 	//
 	// Nil means no condition is ever applied, which is the pre-condition
-	// behavior: the ACL-scoped superset of the view, never more.
-	viewCondition func(listID string) ViewConditionMatcher
+	// behavior: the ACL-scoped superset of the view, never more. An error
+	// is a declared condition that did not compile; the export fails.
+	viewCondition func(listID string) (ViewConditionMatcher, error)
 
 	// store answers a condition's `related(...)`, under the request's gate.
 	store store.GraphQueryer
@@ -128,7 +129,7 @@ func newExportHandler(app *App) (*exportHandler, error) {
 		redactor:       redactor,
 		documents:      app.documents,
 		scopedEntities: app.lists.scopedSortedEntities,
-		viewCondition: func(listID string) ViewConditionMatcher {
+		viewCondition: func(listID string) (ViewConditionMatcher, error) {
 			return viewCondition(app.viewConditions, app.State(), viewKindList, listID)
 		},
 		store: app.store,

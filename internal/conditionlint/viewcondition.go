@@ -341,19 +341,18 @@ func (m *ViewConditionMatcher) EntityType() string { return m.entityType }
 // keyed by (kind, id) — the pair the config uses, since a list and a kanban
 // may share an id.
 //
-// Returns nil when any condition fails to compile: the same config was
-// already refused by validation, so a partial set would only be reachable in
-// a deployment that skipped it, and evaluating SOME conditions while silently
-// ignoring others is worse than evaluating none.
+// The lookup holds every condition that compiled, even when others did not,
+// and the problems name the ones that did not. A surface whose condition
+// failed is absent, so a caller must not read absence as "no constraint"
+// for a surface its config gives a condition: it fails closed instead. One
+// broken condition then disables only its own surface. Nil when nothing
+// compiled.
 func ViewConditionMatchers(
 	cfg *dataentryconfig.Config, meta *metamodel.Metamodel,
 ) (lookup func(kind, id string) (*ViewConditionMatcher, bool), problems []string) {
 	programs, problems := CompileViewConditions(cfg, meta)
-	if len(problems) > 0 {
-		return nil, problems
-	}
 	if len(programs) == 0 {
-		return nil, nil
+		return nil, problems
 	}
 	ev := predicatefns.NewEvaluator(meta).LoweringSemantics()
 	matchers := make(map[ViewConditionKey]*ViewConditionMatcher, len(programs))
@@ -363,7 +362,7 @@ func ViewConditionMatchers(
 	return func(kind, id string) (*ViewConditionMatcher, bool) {
 		m, ok := matchers[ViewConditionKey{ViewConditionKind(kind), id}]
 		return m, ok
-	}, nil
+	}, problems
 }
 
 // entityTypeFor reads back the entity type a key's view declares. Compilation

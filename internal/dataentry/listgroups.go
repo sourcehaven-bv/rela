@@ -19,6 +19,8 @@ const viewKindListGroup = "list_groups"
 //
 // It runs on the served, redacted page: one batched [matchPage] per group,
 // never cached. A failed evaluation fails the list rather than misreport it.
+// A group whose condition did not compile leaves every row ungrouped; the
+// compile problem is logged once per config load.
 func serveListGroups(
 	w http.ResponseWriter, r *http.Request, a *App, query map[string][]string,
 	rows []*entityPkg.Entity, data []v1.Entity,
@@ -36,11 +38,7 @@ func serveListGroups(
 	if a.viewConditions == nil {
 		return true
 	}
-	lookup, problems := a.viewConditions(s.Cfg, s.Meta)
-	if len(problems) > 0 {
-		slog.WarnContext(ctx, "dataentry: list groups not compiled; rows left ungrouped", "list", listID)
-		return true
-	}
+	lookup, _ := a.viewConditions(s.Cfg, s.Meta)
 	candidates := redactAll(ctx, rows, suggestionRedactor(a.affordances))
 	placed := make([]bool, len(rows))
 	for _, g := range gb.Groups {
@@ -50,9 +48,6 @@ func serveListGroups(
 		}
 		m := viewConditionFor(lookup, viewKindListGroup, dataentryconfig.ListGroupConditionID(listID, g.ID))
 		if m == nil {
-			// coverage-ignore: invariant: validation compiled every group condition
-			slog.WarnContext(ctx, "dataentry: list group has no compiled condition; rows left ungrouped",
-				"list", listID, "group", g.ID)
 			clearGroups(data)
 			return true
 		}

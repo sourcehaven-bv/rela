@@ -89,7 +89,10 @@ func pageStepDone(
 	if !ok {
 		return false, fmt.Errorf("unknown list %q", tab.List)
 	}
-	m := viewCondition(a.viewConditions, s, viewKindPageDone, dataentryconfig.PageDoneConditionID(pageID, tab.ID))
+	m, err := viewCondition(a.viewConditions, s, viewKindPageDone, dataentryconfig.PageDoneConditionID(pageID, tab.ID))
+	if err != nil {
+		return false, err
+	}
 	if m == nil {
 		return false, errors.New("done_when is not compiled")
 	}

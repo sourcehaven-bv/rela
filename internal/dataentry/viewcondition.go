@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
@@ -52,7 +53,9 @@ type ViewConditionLookup func(kind, id string) (ViewConditionMatcher, bool)
 
 // ViewConditionFunc compiles every configured view `condition:` against the
 // current config and metamodel, returning the lookup plus one message per
-// problem.
+// problem. The lookup holds every condition that compiled, even when others
+// did not; a caller fails a surface closed when its declared condition is
+// absent.
 //
 // The consumer-side seam for the predicate compiler, mirroring
 // [NextActionMatcherFunc]: arch-lint keeps the condition engine above this
@@ -95,6 +98,12 @@ const (
 // the caller a view it did not ask for.
 var errBadViewID = errors.New("invalid view parameter: give list_id or kanban_id, not both")
 
+// errViewConditionNotCompiled reports a view whose config declares a
+// `condition:` that did not compile. The view fails closed: serving its rows
+// unfiltered would show rows the operator's view excludes. The compile
+// problem itself is logged once per config load (logViewConditionProblems).
+var errViewConditionNotCompiled = errors.New("view condition does not compile")
+
 // requestViewCondition resolves the condition of the list or kanban a
 // collection read names, or nil when it names neither.
 func requestViewCondition(
@@ -105,9 +114,9 @@ func requestViewCondition(
 	case listID != "" && kanbanID != "":
 		return nil, errBadViewID
 	case kanbanID != "":
-		return viewCondition(fn, s, viewKindKanban, kanbanID), nil
+		return viewCondition(fn, s, viewKindKanban, kanbanID)
 	default:
-		return viewCondition(fn, s, viewKindList, listID), nil
+		return viewCondition(fn, s, viewKindList, listID)
 	}
 }
 
@@ -178,27 +187,74 @@ func (a *App) SetViewConditions(fn ViewConditionFunc) error {
 		return errors.New("dataentry.SetViewConditions: func must be non-nil")
 	}
 	a.viewConditions = fn
+	logViewConditionProblems(fn, a.State())
 	return nil
 }
 
 // viewCondition resolves the matcher for one view against the CURRENT config
-// and metamodel.
+// and metamodel. It compiles per call, because both reload at runtime; the
+// Evaluator memoizes programs, so this is cheap next to the store read.
 //
-// Compiles per call rather than caching: config and metamodel reload at
-// runtime, so a lookup captured at boot would evaluate an expression the
-// operator has since edited — the trap the nextActionHandler.matchers field
-// documents.
-// Compilation is a parse of one short expression and the Evaluator memoizes
-// programs, so this is cheap next to the store read it gates.
-func viewCondition(fn ViewConditionFunc, s *Schema, kind, id string) ViewConditionMatcher {
-	if fn == nil || id == "" || s == nil {
-		return nil
+// Nil with no error means the view declares no condition. A view whose
+// declared condition did not compile returns [errViewConditionNotCompiled],
+// so a broken condition fails its own view closed and leaves the others
+// filtering.
+func viewCondition(fn ViewConditionFunc, s *Schema, kind, id string) (ViewConditionMatcher, error) {
+	if id == "" || s == nil {
+		return nil, nil //nolint:nilnil // nil is the documented "no condition"
 	}
-	lookup, problems := fn(s.Cfg, s.Meta)
-	if len(problems) > 0 {
-		return nil
+	var lookup ViewConditionLookup
+	if fn != nil {
+		lookup, _ = fn(s.Cfg, s.Meta)
 	}
-	return viewConditionFor(lookup, kind, id)
+	m := viewConditionFor(lookup, kind, id)
+	if m == nil && declaresViewCondition(s.Cfg, kind, id) {
+		return nil, fmt.Errorf("%s[%q]: %w", kind, id, errViewConditionNotCompiled)
+	}
+	return m, nil
+}
+
+// declaresViewCondition reports whether cfg gives the (kind, id) surface a
+// condition. It reads the config the compiler compiled and covers the kinds
+// [viewCondition] serves.
+func declaresViewCondition(cfg *dataentryconfig.Config, kind, id string) bool {
+	if cfg == nil {
+		return false
+	}
+	switch kind {
+	case viewKindList:
+		return cfg.Lists[id].Condition != ""
+	case viewKindKanban:
+		return cfg.Kanbans[id].Condition != ""
+	case viewKindNavStatus:
+		for _, ns := range dataentryconfig.NavStatusEntries(cfg) {
+			for i, rule := range ns.Entry.Status {
+				if rule.Condition != "" && dataentryconfig.NavStatusConditionID(ns.Key, i) == id {
+					return true
+				}
+			}
+		}
+	case viewKindPageDone:
+		for _, pd := range dataentryconfig.PageDoneEntries(cfg) {
+			if dataentryconfig.PageDoneConditionID(pd.Page, pd.Tab.ID) == id {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// logViewConditionProblems logs every condition in s's config that does not
+// compile. Called when the compiler is installed and on each config reload,
+// never per request.
+func logViewConditionProblems(fn ViewConditionFunc, s *Schema) {
+	if fn == nil || s == nil {
+		return
+	}
+	_, problems := fn(s.Cfg, s.Meta)
+	for _, p := range problems {
+		slog.Error("dataentry: condition does not compile; its view fails closed", "problem", p)
+	}
 }
 
 // applyViewCondition filters rows by a view's condition, preserving order.

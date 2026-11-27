@@ -636,6 +636,8 @@ func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 			"path", r.URL.Path, "method", r.Method)
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_view",
 			"Invalid view parameter", err.Error())
+	case errors.Is(err, errViewConditionNotCompiled):
+		writeInternalError(w, r, "view_condition_not_compiled", "View condition does not compile", err)
 	case errors.Is(err, errBadQueryScope):
 		slog.Warn("dataentry: rejected invalid query_scope",
 			"err", err, "path", r.URL.Path, "method", r.Method)

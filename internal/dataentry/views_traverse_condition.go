@@ -51,7 +51,7 @@ func newTraverseFilter(h *viewsHandler, view ViewConfig) (*traverseFilter, error
 		return nil, errTraverseConditionUnavailable
 	}
 	lookup, problems := fn(f.schema.Cfg, f.schema.Meta)
-	if len(problems) > 0 || lookup == nil {
+	if lookup == nil {
 		return nil, fmt.Errorf("%w: %s", errTraverseConditionUnavailable, strings.Join(problems, "; "))
 	}
 	f.lookup = lookup

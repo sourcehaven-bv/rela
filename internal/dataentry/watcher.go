@@ -346,7 +346,7 @@ func publishConfig(a *App, cfg *Config) {
 	meta := a.Meta()
 	warnListVisibilityConflicts(cfg, meta, a.acl)
 
-	a.schema.Reload(cfg, meta, true)
+	logViewConditionProblems(a.viewConditions, a.schema.Reload(cfg, meta, true))
 
 	if err := a.palette.Reresolve(cfg.Palette); err != nil {
 		slog.Warn("watcher: keeping previous user palette",

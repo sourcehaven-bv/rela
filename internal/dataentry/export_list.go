@@ -64,11 +64,15 @@ func (h *exportHandler) listExportRenderer(
 	effListID, effList, haveList := h.resolveEffectiveList(q.Get("list"), typeName)
 	columns := withSchemaLabels(h.meta(), []string{typeName}, listColumnsOf(effList, haveList))
 
+	cond, err := h.listCondition(effListID)
+	if err != nil {
+		return nil, err
+	}
 	entities, err := h.scopedEntities(ctx, typeName, query)
 	if err != nil {
 		return nil, err
 	}
-	if cond := h.listCondition(effListID); cond != nil {
+	if cond != nil {
 		if ctx, err = h.bindConditionIdentity(ctx, typeName, query); err != nil {
 			return nil, err
 		}
@@ -489,9 +493,9 @@ func columnLabel(c dataentryconfig.ListColumn) string {
 // Nil-safe on the seam because a deployment that never wired the compiler
 // keeps pre-condition behavior: the ACL-scoped superset of the view, never
 // more.
-func (h *exportHandler) listCondition(listID string) ViewConditionMatcher {
+func (h *exportHandler) listCondition(listID string) (ViewConditionMatcher, error) {
 	if h.viewCondition == nil {
-		return nil
+		return nil, nil //nolint:nilnil // nil is the documented "no condition"
 	}
 	return h.viewCondition(listID)
 }
