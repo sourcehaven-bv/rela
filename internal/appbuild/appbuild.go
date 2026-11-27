@@ -1563,6 +1563,27 @@ func buildFieldPolicy(
 	return fieldPolicy{redactor: redactor, gate: gate, flowEdits: ceiling}, nil
 }
 
+// BuildFieldWriteGate builds the field write gate buildFieldPolicy builds
+// for production, without a flow edit ceiling. It is for test fixtures only
+// (BUG-VUNO11): production builds the gate in assemble, with the flows.yaml
+// outside_edits ceiling, and a production caller of this function would
+// silently drop that ceiling. resolvedACL is type-asserted like
+// [BuildTransitionWiring]'s, so the gate follows the same input as the
+// transition guard.
+//
+// Nil: accepted. A nil or non-Declarative ACL yields AllowAllFieldGate, as
+// production does without acl.yaml.
+func BuildFieldWriteGate(
+	meta *metamodel.Metamodel, st store.Store, resolvedACL acl.ACL,
+) (entitymanager.FieldWriteGate, error) {
+	declarative, _ := resolvedACL.(*acl.Declarative)
+	fp, err := buildFieldPolicy(meta, st, declarative, nil)
+	if err != nil {
+		return nil, err
+	}
+	return fp.gate, nil
+}
+
 // buildAutomation wires the trigger engine + cascade runner from the
 // flows.yaml rules. Returns (nil, nil, nil) when there are no rules — Manager treats that as "automation disabled".
 //

@@ -251,6 +251,10 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: compile transitions: %v", err))
 	}
+	fieldGate, err := appbuild.BuildFieldWriteGate(meta, st, aclImpl)
+	if err != nil {
+		panic(fmt.Sprintf("appbuildtest.New: build field write gate: %v", err))
+	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store:       st,
 		Meta:        meta,
@@ -282,7 +286,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 			},
 		),
 		Transitions:     tw.Enforcer,
-		FieldGate:       entitymanager.AllowAllFieldGate{},
+		FieldGate:       fieldGate,
 		TransitionGuard: tw.Guard,
 		TransitionGraph: tw.Graph,
 		// The copy deps (TKT-WRLDAPI item 5), all three taken from the same

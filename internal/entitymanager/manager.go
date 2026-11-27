@@ -354,8 +354,8 @@ type Deps struct {
 	// identity (the write-side analog of the read-side AllowAllReader,
 	// DEC-ZBI39P). Operator-trust-boundary entry points (CLI) wire
 	// AllowAllFieldGate because they have full access by design;
-	// request-scoped surfaces are where a policy-backed implementation
-	// belongs — none is wired yet (TKT-0XL8MF); see [FieldWriteGate].
+	// request-scoped surfaces get the policy-backed implementation
+	// (TKT-0XL8MF); see [FieldWriteGate].
 	//
 	// Required rather than optional-nil on purpose: a silently-nil authz
 	// gate is the "forgotten wiring must not become an ACL bypass" failure
