@@ -390,9 +390,9 @@ the library component should carry it, and reconcile both surfaces together.
 
 **The operator palette still speaks the retired token names.** Carried over
 from the single-theme work above: `dataentryconfig.deriveTheme` and
-`applyPalette` in `stores/ui.ts` both need porting to `--rl-*`.
-`TestPaletteCarriesEveryDefaultToken` is skipped naming this ticket until they
-are.
+`applyPalette` in `stores/ui.ts` both need porting to `--rl-*`. That port is
+TKT-XG8E00N. `TestPaletteCarriesEveryDefaultToken` is skipped naming that
+ticket until it is done.
 
 ## Outcome: rela's global component CSS is gone (50db1a07)
 
