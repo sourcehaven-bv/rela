@@ -1,7 +1,9 @@
 // Command commentbody fails when Go code carries comments that a better name
 // or a smaller function would make unnecessary (TKT-GL18KOA).
 //
-// It reports two things in non-test, non-generated files:
+// It reports two things in non-test, non-generated files outside
+// third_party, which holds forked upstream code that rela re-syncs rather
+// than restyles:
 //
 //   - a comment inside a function body, closures included;
 //   - a function doc comment longer than docCap prose lines.

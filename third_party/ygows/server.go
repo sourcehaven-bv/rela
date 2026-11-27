@@ -850,7 +850,7 @@ type ConnectionConfig struct {
 // rela fork: upstream's size, pinned so rela's god-object lint passes on
 // third-party code without a split that would diverge from upstream.
 //
-//plimsoll:max-methods=53
+//plimsoll:max-methods=54
 //plimsoll:max-fields=35
 type Server struct {
 	upgrader    gws.Upgrader

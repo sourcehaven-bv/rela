@@ -26,7 +26,7 @@ var generatedMarker = regexp.MustCompile(`(?m)^// Code generated .* DO NOT EDIT\
 
 var skippedDirs = map[string]bool{
 	".git": true, ".claude": true, ".ignored": true, "node_modules": true,
-	"vendor": true, "frontend": true, "testdata": true,
+	"vendor": true, "frontend": true, "testdata": true, "third_party": true,
 }
 
 func scanTree(root string) (map[string][]finding, error) {
