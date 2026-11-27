@@ -1083,7 +1083,7 @@ entities:
 | ----------- | --------------------------------------------------------------------------------------------- |
 | `via`       | One relation, or a list of up to three. A name walks from → to; an `inverse` walks to → from |
 | `type`      | The related type, when the last relation's far side names several                             |
-| `where`     | Keep only related entities whose properties equal these values (enum, string, boolean, integer). On a path, it filters the far end only |
+| `where`     | Keep only related entities whose properties equal these values (enum, string, boolean, integer). A value equal to the property's schema default (its `default:`, or its custom type's `initial:` or `default:`) also keeps entities on which the property is unset or empty (missing, null, an empty string or an empty list). On a path, it filters the far end only |
 | `count`     | The number of related entities. The property must be `integer`                               |
 | `exists`    | Whether there is at least one. The property must be `boolean`                                 |
 | `min`/`max` | The lowest or highest value of an `integer` or `date` property; same type. Not yet `decimal`  |
@@ -2024,8 +2024,19 @@ The arguments are:
 - `constraints`, an optional table. `type = 'ticket'` picks one type where the
   relation allows several. `id = 'PERS-001'` matches the final entity by its
   id. Every other key compares a property of the final entity with a string,
-  for equality. A value may also be `current_user.id`, as described under
+  for equality. A boolean property compares with `true` or `false`, written
+  without quotes. A value may also be `current_user.id`, as described under
   [Matching the current user](#matching-the-current-user).
+
+A constraint whose value is the property's schema default also matches an
+entity on which the property is unset or empty: missing, null, an empty
+string or an empty list. The default is the property's `default:`, or else its
+custom type's `initial:` or `default:`. With
+`blocked: { type: boolean, default: false }` on `action`,
+`related(entity, 'has', { blocked = false })` matches a project with an
+action that never had `blocked` written. The negation narrows to match:
+`not related(entity, 'has', { blocked = false })` no longer matches that
+project.
 
 An entity the reader may not see does not count. It neither makes a row match
 `related(...)` nor stops a row matching `not related(...)`. The result can
@@ -2037,11 +2048,12 @@ The following limits apply:
   endpoint's named face, is ignored.
 - A relation declared `symmetric: true` is refused, because it has no
   direction to walk.
-- The constraint compares for equality with a non-empty string or with
-  `current_user.id`. The property must be string-shaped: a string, enum, date,
-  datetime or declared custom type, and not a list. For an enum, the value
-  must be one of its declared values, so `current_user.id` is refused on an
-  enum.
+- The constraint compares for equality with a non-empty string, with
+  `current_user.id`, or, for a boolean property, with `true` or `false`. A
+  boolean refuses a quoted string and `current_user.id`. Any other property
+  must be string-shaped: a string, enum, date, datetime or declared custom
+  type, and not a list. For an enum, the value must be one of its declared
+  values, so `current_user.id` is refused on an enum.
 - A property that some role cannot see unconditionally, through `visible:`, is
   refused at startup. Matching on it would reveal its value to readers who
   cannot see it. After a live reload of `schema.yaml` or `acl.yaml`, the same

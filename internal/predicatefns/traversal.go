@@ -278,6 +278,17 @@ func resolveHopTarget(name string, far []string, last bool, ascribed string) (st
 	}
 }
 
+// validateBooleanConstraint checks a constraint on a boolean property is a
+// true or false literal. The store compares it by text form, which a stored
+// boolean renders the same way on every backend.
+func validateBooleanConstraint(spec predicate.TraversalSpec, name, targetType string) error {
+	if _, ok := spec.Props[name].(predicate.Bool); ok {
+		return nil
+	}
+	return fmt.Errorf("related: property %q on %q is a boolean and must be compared against true or false",
+		name, targetType)
+}
+
 // validateTraversalProps checks each constrained property is declared on the
 // resolved target type and is pushdown-eligible. The `id` key is not a
 // property: the engine has already required a non-empty string for it, and
@@ -308,9 +319,15 @@ func validateTraversalProps(meta *metamodel.Metamodel, targetType string, spec p
 			return fmt.Errorf("related: property %q on %q is a list and cannot be filtered in a traversal",
 				name, targetType)
 		}
+		if pd.Type == metamodel.PropertyTypeBoolean {
+			if err := validateBooleanConstraint(spec, name, targetType); err != nil {
+				return err
+			}
+			continue
+		}
 		if !metamodel.StringShaped(meta, pd) {
 			// The store compares as a string (and the derived index is a
-			// string index); an integer or boolean would silently never
+			// string index); an integer would silently never
 			// match in SQL while matching in Go.
 			return fmt.Errorf("related: property %q on %q has type %q, which cannot be compared in a traversal",
 				name, targetType, pd.Type)

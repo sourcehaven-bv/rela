@@ -393,6 +393,32 @@ func RunRollupTests(t *testing.T, f Factory) {
 		}
 	})
 
+	t.Run("where_on_a_default_counts_the_unset_rows", func(t *testing.T) {
+		s := f(t)
+		seedGraphQueryEntities(t, s, "risk", "RSK-1")
+		for id, p := range map[string]map[string]any{
+			"EV-1": {"open": false},
+			"EV-2": {"open": true},
+			"EV-3": nil,
+			"EV-4": {"open": ""},
+		} {
+			seedEntityWithProps(t, s, "evidence", id, p)
+			mustRel(t, s, "RSK-1", "evidenced-by", id)
+		}
+		for _, tc := range []struct {
+			value string
+			want  int
+		}{
+			{"false", 3},
+			{"true", 3},
+		} {
+			requireRollup(t, s, store.RollupQuery{
+				Related:  evidence(store.PropPredicate{Property: "open", Op: store.PropEqualOrEmpty, Value: tc.value}),
+				Relation: "evidenced-by", Sources: []string{"RSK-1"},
+			}, map[string]store.RollupResult{"RSK-1": {Count: tc.want}})
+		}
+	})
+
 	t.Run("sum_outside_int64_has_no_value", func(t *testing.T) {
 		s := f(t)
 		seedGraphQueryEntities(t, s, "risk", "RSK-1", "RSK-2")

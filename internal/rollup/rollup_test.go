@@ -103,6 +103,74 @@ func TestCompile_BriefExamples(t *testing.T) {
 	}
 }
 
+// TestCompile_WhereDefault pins that a where value equal to the related
+// property's schema default also matches a row without the property.
+func TestCompile_WhereDefault(t *testing.T) {
+	t.Parallel()
+	const schema = `version: "1.0"
+types:
+  flow:
+    values: [new, active, closed]
+    initial: new
+entities:
+  project:
+    label: Project
+    id_prefix: "PRJ-"
+    properties:
+      n: {type: integer, rollup: {via: has, count: true, where: {WHERE}}}
+  action:
+    label: Action
+    id_prefix: "ACT-"
+    properties:
+      blocked: {type: boolean, default: false}
+      flagged: {type: boolean}
+      status: {type: enum, values: [open, done], default: open}
+      phase: {type: flow}
+      size: {type: integer, default: "5"}
+      title: {type: string}
+relations:
+  has:
+    from: [project]
+    to: [action]
+`
+	tests := []struct {
+		name  string
+		where string
+		want  store.PropOp
+	}{
+		{"boolean default", `blocked: "false"`, store.PropEqualOrEmpty},
+		{"boolean other value", `blocked: "true"`, store.PropEqual},
+		{"boolean without default", `flagged: "false"`, store.PropEqual},
+		{"enum default", `status: open`, store.PropEqualOrEmpty},
+		{"enum other value", `status: done`, store.PropEqual},
+		{"type initial", `phase: new`, store.PropEqualOrEmpty},
+		{"type other value", `phase: active`, store.PropEqual},
+		{"integer default by value", `size: "+05"`, store.PropEqualOrEmpty},
+		{"integer other value", `size: "6"`, store.PropEqual},
+		{"string without default", `title: x`, store.PropEqual},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			meta, err := metamodel.Parse([]byte(strings.Replace(schema, "WHERE", tc.where, 1)))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			set, err := rollup.Compile(meta)
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			cols := set.For("project")
+			if len(cols) != 1 || len(cols[0].Where) != 1 {
+				t.Fatalf("project roll-ups = %+v", cols)
+			}
+			if got := cols[0].Where[0].Op; got != tc.want {
+				t.Errorf("where %s: op = %d, want %d", tc.where, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCompile_Rejects(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

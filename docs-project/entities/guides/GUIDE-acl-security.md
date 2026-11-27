@@ -1845,7 +1845,9 @@ field. A condition may be an AND of:
 
 - property equalities: `entity.status == 'open'`,
   `entity.assignee == current_user.id`, `is_current_user(entity.assignee)`;
-- `related(...)` terms.
+- `related(...)` terms. A constraint whose value is the target property's
+  schema default also matches a target on which the property is unset or empty,
+  as described under [`related(...)` in a grant's `when:`](#related-in-a-grants-when).
 
 Refused in `visible:`: `or`, `not`, ordered comparisons, `~=`,
 `has_role`, `has_global_role`, `has_relation`, `count_relations` and
@@ -1955,6 +1957,26 @@ reveals one bit to a principal who cannot read the related entities: whether
 the grant applies. Keep such conditions to facts you are willing to disclose
 that way. A traversal that compares a property some role cannot see through
 `visible:` earns a startup warning naming the grant.
+
+A constraint whose value is the target property's schema default also matches
+a target on which the property is unset or empty: missing, null, an empty
+string or an empty list. The schema says such a target holds the default, so
+the grant follows the value the schema defines. A boolean compares with
+`true` or `false`, written without quotes. When the target type or the
+property is not declared, there is no default and the constraint matches only
+a value that is written. On PostgreSQL, a boolean constraint gets no derived
+index, so it reads every target of its type. Prefer a string or enum property
+on a large type.
+
+**Upgrading.** Before this change, a constraint on a default matched only
+targets that had the value written. Existing grants, `visible:` rules, query
+scopes and list conditions that compare with a default now also match
+targets on which the property is unset or empty. A grant can therefore apply
+to more entities than before. A negated term narrows instead:
+`not related(..., { p = default })` now matches fewer rows, so a grant or a
+`visible:` rule built on it applies to fewer entities than before. Review any
+`when:` that compares with a default and, if the old behaviour was intended,
+write the value on the targets or remove the `default:` from the schema.
 
 A state-machine transition's `when:` works the same way. Whether a transition
 is performable is served to principals in `_transitions`, so it carries the

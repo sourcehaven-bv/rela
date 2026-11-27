@@ -34,6 +34,12 @@ const (
 	DerivedUnique DerivedObjectKind = "unique"
 	// DerivedQueryIndex accelerates one static scalar-equality query shape.
 	DerivedQueryIndex DerivedObjectKind = "query-index"
+	// DerivedEmptyIndex accelerates the empty arm of a [PropEqualOrEmpty]
+	// on one property, per entity type: the rows where Properties[0] is
+	// empty. Paired with the [DerivedQueryIndex] that serves the equality
+	// arm, the two let the whole predicate be answered from indexes. A
+	// backend that has no use for it ignores it.
+	DerivedEmptyIndex DerivedObjectKind = "empty-index"
 	// DerivedListIndex accelerates one list page shape (TKT-1U8XYN): the
 	// list's static equality filters followed by its sort keys, so a pushed
 	// page (listpushdown) is an index range scan instead of a sort over the

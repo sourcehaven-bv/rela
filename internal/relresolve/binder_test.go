@@ -6,11 +6,13 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
 func meta() *metamodel.Metamodel {
@@ -296,5 +298,106 @@ func TestAnswer_BindsCurrentUserFromTheRequest(t *testing.T) {
 	}
 	if _, err := answers.For("TKT-1")(row("TKT-1"), other); err == nil {
 		t.Fatal("an answer computed for alice must not serve bob")
+	}
+}
+
+func defaultsMeta() *metamodel.Metamodel {
+	return &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"project": {},
+			"action": {Properties: map[string]metamodel.PropertyDef{
+				"blocked": {Type: metamodel.PropertyTypeBoolean, Default: "false"},
+				"flagged": {Type: metamodel.PropertyTypeBoolean},
+				"status":  {Type: metamodel.PropertyTypeEnum, Values: []string{"open", "done"}, Default: "open"},
+			}},
+		},
+		Relations: map[string]metamodel.RelationDef{
+			"has": {From: []string{"project"}, To: []string{"action"}},
+		},
+	}
+}
+
+// A constraint on the target property's schema default also matches an
+// endpoint without the property; a boolean compares by its text form.
+func TestHop_Props(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want store.PropPredicate
+	}{
+		{"string on its default", `related(entity, 'has', { status = 'open' })`,
+			store.PropPredicate{Property: "status", Op: store.PropEqualOrEmpty, Value: "open", Scalar: true}},
+		{"string on another value", `related(entity, 'has', { status = 'done' })`,
+			store.PropPredicate{Property: "status", Op: store.PropEqual, Value: "done", Scalar: true}},
+		{"boolean on its default", `related(entity, 'has', { blocked = false })`,
+			store.PropPredicate{Property: "blocked", Op: store.PropEqualOrEmpty, Value: "false"}},
+		{"boolean on another value", `related(entity, 'has', { blocked = true })`,
+			store.PropPredicate{Property: "blocked", Op: store.PropEqual, Value: "true"}},
+		{"boolean without a default", `related(entity, 'has', { flagged = false })`,
+			store.PropPredicate{Property: "flagged", Op: store.PropEqual, Value: "false"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			hop, err := relresolve.Hop(defaultsMeta(), "project", compile(t, tc.src).Traversals()[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(hop.Props) != 1 || hop.Props[0] != tc.want {
+				t.Fatalf("props = %+v, want [%+v]", hop.Props, tc.want)
+			}
+		})
+	}
+}
+
+// End to end on a store: an action that never had blocked or status written
+// holds their defaults, so it satisfies a traversal on them.
+func TestBinder_DefaultMatchesUnsetEndpoint(t *testing.T) {
+	ctx := context.Background()
+	st := memstore.New()
+	for _, e := range []*entity.Entity{
+		{ID: "PRJ-unset", Type: "project"}, {ID: "PRJ-set", Type: "project"}, {ID: "PRJ-none", Type: "project"},
+		{ID: "ACT-unset", Type: "action"},
+		{ID: "ACT-set", Type: "action", Properties: map[string]any{"blocked": true, "status": "done"}},
+	} {
+		if err := st.CreateEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for src, dst := range map[string]string{"PRJ-unset": "ACT-unset", "PRJ-set": "ACT-set"} {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: src, Type: "has", To: dst}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	binder, err := relresolve.NewStoreBinder(defaultsMeta(), relresolve.Ungated, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := []string{"PRJ-none", "PRJ-set", "PRJ-unset"}
+	tests := []struct {
+		src  string
+		want map[string]bool
+	}{
+		{`related(entity, 'has', { blocked = false })`, map[string]bool{"PRJ-unset": true}},
+		{`related(entity, 'has', { blocked = true })`, map[string]bool{"PRJ-set": true}},
+		{`related(entity, 'has', { status = 'open' })`, map[string]bool{"PRJ-unset": true}},
+		{`related(entity, 'has', { status = 'done' })`, map[string]bool{"PRJ-set": true}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.src, func(t *testing.T) {
+			prog := compile(t, tc.src)
+			resolve, err := binder.Bind(ctx, "project", ids, prog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, id := range ids {
+				got, err := resolve(id)(row(id), prog.Traversals()[0])
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got != tc.want[id] {
+					t.Errorf("%s: got %v, want %v", id, got, tc.want[id])
+				}
+			}
+		})
 	}
 }

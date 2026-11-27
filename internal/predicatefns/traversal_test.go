@@ -24,6 +24,7 @@ func traversalMeta() *metamodel.Metamodel {
 				"status":   {Type: "ticket_status"},
 				"tags":     {Type: metamodel.PropertyTypeString, List: true},
 				"estimate": {Type: metamodel.PropertyTypeInteger},
+				"blocked":  {Type: metamodel.PropertyTypeBoolean},
 			}},
 			"concept": {Properties: map[string]metamodel.PropertyDef{
 				"status": {Type: "concept_status"},
@@ -124,6 +125,29 @@ func TestValidateTraversals(t *testing.T) {
 			name:    "non-string-shaped property is refused",
 			src:     `related(entity, 'caused-by', { type = 'ticket', estimate = '3' })`,
 			wantErr: "cannot be compared in a traversal",
+		},
+		{
+			name: "boolean property against false",
+			src:  `related(entity, 'caused-by', { type = 'ticket', blocked = false })`,
+		},
+		{
+			name: "boolean property against true",
+			src:  `related(entity, 'caused-by', { type = 'ticket', blocked = true })`,
+		},
+		{
+			name:    "boolean property against a string is refused",
+			src:     `related(entity, 'caused-by', { type = 'ticket', blocked = 'false' })`,
+			wantErr: "must be compared against true or false",
+		},
+		{
+			name:    "boolean property against current_user.id is refused",
+			src:     `related(entity, 'caused-by', { type = 'ticket', blocked = current_user.id })`,
+			wantErr: "must be compared against true or false",
+		},
+		{
+			name:    "string property against a boolean is refused",
+			src:     `related(entity, 'owned-by', { name = true })`,
+			wantErr: "must be compared against a string literal",
 		},
 		{
 			name: "id literal",

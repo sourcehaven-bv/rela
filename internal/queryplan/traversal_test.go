@@ -287,3 +287,71 @@ relations:
 		}
 	}
 }
+
+// A constraint on the schema default lowers to PropEqualOrEmpty, so it also
+// derives the empty-value index its empty arm needs. Another value, a
+// property without a default and a boolean derive none.
+func TestTraversalIndexSpecs_DefaultDerivesEmptyIndex(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {},
+			"feature": {Properties: map[string]metamodel.PropertyDef{
+				"stage":   {Type: metamodel.PropertyTypeString, Default: "draft"},
+				"owner":   {Type: metamodel.PropertyTypeString},
+				"blocked": {Type: metamodel.PropertyTypeBoolean, Default: "false"},
+			}},
+		},
+		Relations: map[string]metamodel.RelationDef{"implements": {From: []string{"ticket"}, To: []string{"feature"}}},
+	}
+	query := func(props ...string) store.DerivedObjectSpec {
+		return store.DerivedObjectSpec{Kind: store.DerivedQueryIndex, Type: "feature", Properties: props}
+	}
+	empty := func(prop string) store.DerivedObjectSpec {
+		return store.DerivedObjectSpec{Kind: store.DerivedEmptyIndex, Type: "feature", Properties: []string{prop}}
+	}
+	tests := []struct {
+		src  string
+		want []store.DerivedObjectSpec
+	}{
+		{`related(entity, 'implements', { stage = 'draft' })`, []store.DerivedObjectSpec{query("stage"), empty("stage")}},
+		{`related(entity, 'implements', { stage = 'live' })`, []store.DerivedObjectSpec{query("stage")}},
+		{`related(entity, 'implements', { owner = 'bob' })`, []store.DerivedObjectSpec{query("owner")}},
+		{`related(entity, 'implements', { stage = 'draft', owner = 'bob' })`,
+			[]store.DerivedObjectSpec{query("owner", "stage"), empty("stage")}},
+		{`related(entity, 'implements', { blocked = false })`, []store.DerivedObjectSpec{}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.src, func(t *testing.T) {
+			got := TraversalIndexSpecs(progFor(t, tc.src), meta, "ticket")
+			same := func(a, b store.DerivedObjectSpec) bool {
+				return a.Kind == b.Kind && a.Type == b.Type && slices.Equal(a.Properties, b.Properties)
+			}
+			if !slices.EqualFunc(got, tc.want, same) {
+				t.Errorf("specs = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// StaticIndexSpecs keeps a traversal's empty-value spec beside the query
+// index on the same type and property instead of collapsing the two.
+func TestStaticIndexSpecs_KeepsEmptyIndexBesideQueryIndex(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {QueryScopes: map[string]string{"drafts": "related(entity, 'implements', { stage = 'draft' })"}},
+			"feature": {Properties: map[string]metamodel.PropertyDef{
+				"stage": {Type: metamodel.PropertyTypeString, Default: "draft"},
+			}},
+		},
+		Relations: map[string]metamodel.RelationDef{"implements": {From: []string{"ticket"}, To: []string{"feature"}}},
+	}
+	got := StaticIndexSpecs(&dataentryconfig.Config{}, meta)
+	for _, kind := range []store.DerivedObjectKind{store.DerivedQueryIndex, store.DerivedEmptyIndex} {
+		matches := func(s store.DerivedObjectSpec) bool {
+			return s.Kind == kind && s.Type == "feature" && slices.Equal(s.Properties, []string{"stage"})
+		}
+		if !slices.ContainsFunc(got, matches) {
+			t.Errorf("no %s on feature.stage among %+v", kind, got)
+		}
+	}
+}

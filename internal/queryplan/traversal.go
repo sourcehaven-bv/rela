@@ -36,6 +36,10 @@ import (
 // Only the FINAL hop's properties are indexable: intermediate hops are
 // resolved by relation-type lookups (served by relations_type_from/to_idx),
 // not by property comparison.
+//
+// A constraint on a property's schema default also gets a
+// [store.DerivedEmptyIndex] spec per property, for the empty arm of the
+// [store.PropEqualOrEmpty] it lowers to.
 func TraversalIndexSpecs(
 	prog *predicate.Program, meta *metamodel.Metamodel, fromType string,
 ) []store.DerivedObjectSpec {
@@ -43,12 +47,14 @@ func TraversalIndexSpecs(
 		return nil
 	}
 	byType := map[string][]string{}
+	emptyByType := map[string][]string{}
 	for _, spec := range prog.Traversals() {
-		target, props := traversalIndexTarget(meta, fromType, spec)
+		target, props, empties := traversalIndexTarget(meta, fromType, spec)
 		if target == "" || len(props) == 0 {
 			continue
 		}
 		byType[target] = append(byType[target], props...)
+		emptyByType[target] = append(emptyByType[target], empties...)
 	}
 
 	out := make([]store.DerivedObjectSpec, 0, len(byType))
@@ -57,34 +63,49 @@ func TraversalIndexSpecs(
 		out = append(out, store.DerivedObjectSpec{
 			Kind: store.DerivedQueryIndex, Type: target, Properties: slices.Compact(props),
 		})
+		empties := emptyByType[target]
+		slices.Sort(empties)
+		for _, prop := range slices.Compact(empties) {
+			out = append(out, store.DerivedObjectSpec{
+				Kind: store.DerivedEmptyIndex, Type: target, Properties: []string{prop},
+			})
+		}
 	}
 	// Deterministic order: the reconciler treats an absent desired object as
 	// permission to DROP, so an unstable set would churn indexes between runs.
-	slices.SortFunc(out, func(a, b store.DerivedObjectSpec) int {
+	slices.SortStableFunc(out, func(a, b store.DerivedObjectSpec) int {
 		return strings.Compare(a.Type, b.Type)
 	})
 	return out
 }
 
-// traversalIndexTarget resolves the final hop's entity type and returns the
-// constrained properties that are pushdown-eligible on it.
-//
-// Resolution is delegated to [predicatefns.ResolveTraversalTarget] — the same
-// walk validation uses — rather than reimplemented. A second copy would drift,
-// and the drift shows up as: the condition loads fine, the index is silently
-// never derived, and the query scans every row of the target type.
-//
-// It returns ("", nil) for anything unresolvable, or a property that is not
-// string-shaped. That is the same answer as "derives no index", which is the
-// safe direction: a missing index costs a scan, whereas an index derived for
-// the wrong shape would be reconciled and never used.
+// traversalSpecKey is the dedupe key of a traversal spec in
+// [StaticIndexSpecs]. A query index keeps the key a static query's index
+// has, so the two collapse into one; any other kind is told apart by its kind.
+func traversalSpecKey(spec store.DerivedObjectSpec) string {
+	key := spec.Type + "\x00" + strings.Join(spec.Properties, "\x00")
+	if spec.Kind != store.DerivedQueryIndex {
+		key = string(spec.Kind) + "\x00" + key
+	}
+	return key
+}
+
+// traversalIndexTarget resolves the final hop's entity type through
+// [predicatefns.ResolveTraversalTarget], the walk validation uses, and returns
+// the constrained properties that are pushdown-eligible on it. empties are
+// those whose literal is the schema default ([metamodel.IsDeclaredDefault], as
+// relresolve.Hop decides it). Anything unresolvable or not string-shaped
+// derives no index, the safe direction: a missing index costs a scan, a
+// wrong-shaped one is never used. A boolean constraint lowers to a non-scalar
+// equality, which the string-guarded index cannot serve, so it derives none.
 func traversalIndexTarget(
 	meta *metamodel.Metamodel, fromType string, spec predicate.TraversalSpec,
-) (targetType string, props []string) {
+) (targetType string, props, empties []string) {
 	current, err := predicatefns.ResolveTraversalTarget(meta, fromType, spec)
 	if err != nil || current == "" {
-		return "", nil
+		return "", nil, nil
 	}
+	def, known := meta.GetEntityDef(current)
 
 	// PropNames leaves out an `id` constraint, which is answered by the
 	// relation's own endpoint column and needs no property index. A property
@@ -94,17 +115,20 @@ func traversalIndexTarget(
 		if !stringComparableOnEveryType(meta, []string{current}, name) {
 			continue
 		}
-		_, isLiteral := spec.Props[name].(predicate.String)
+		lit, isLiteral := spec.Props[name].(predicate.String)
 		_, isRef := spec.Refs[name]
 		if !isLiteral && !isRef {
 			continue
 		}
 		props = append(props, name)
+		if known && isLiteral && metamodel.IsDeclaredDefault(def.Properties[name], meta, lit.String()) {
+			empties = append(empties, name)
+		}
 	}
 	if len(props) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
-	return current, props
+	return current, props, empties
 }
 
 // scopeTraversalSpecs returns the traversal index specs of EVERY declared

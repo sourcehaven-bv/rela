@@ -66,6 +66,9 @@ const derivedQueryPrefix = "rela_derived_query__"
 
 const derivedListPrefix = "rela_derived_list__"
 
+// derivedEmptyPrefix is owned exclusively by the empty-value index rule.
+const derivedEmptyPrefix = "rela_derived_empty__"
+
 // derivedIndexShape is hashed into every derived index name. Changing an
 // index's column layout must change its name, or the reconciler keeps the
 // old index under the name it still computes. "face-key" is TKT-7IZHP0 A9:
@@ -333,11 +336,27 @@ func (s *Store) Reconcile(
 		outcomes = append(outcomes, createUniqueIndex(ctx, conn, spec, name, opts.ShowValues))
 	}
 
-	queryOutcomes, err := reconcileQueryIndexes(ctx, conn, desired, opts)
+	indexOutcomes, err := reconcileIndexes(ctx, conn, desired, opts)
 	if err != nil {
 		return nil, err
 	}
-	outcomes = append(outcomes, queryOutcomes...)
+	return append(outcomes, indexOutcomes...), nil
+}
+
+// reconcileIndexes reconciles every non-unique derived index family: query,
+// empty-value, list and external-ref. Each owns its own name prefix, so none
+// drops another's indexes.
+func reconcileIndexes(
+	ctx context.Context, conn *pgxpool.Conn, desired []store.DerivedObjectSpec, opts store.ReconcileOptions,
+) ([]store.DerivedObjectOutcome, error) {
+	var outcomes []store.DerivedObjectOutcome
+	for _, family := range []indexFamily{queryIndexFamily, emptyIndexFamily} {
+		familyOutcomes, err := reconcileQueryIndexes(ctx, conn, desired, opts, family)
+		if err != nil {
+			return nil, err
+		}
+		outcomes = append(outcomes, familyOutcomes...)
+	}
 	listOutcomes, err := reconcileListIndexes(ctx, conn, desired, opts)
 	if err != nil {
 		return nil, err
@@ -420,19 +439,48 @@ func reconcileListIndexes(
 	return outcomes, nil
 }
 
+// indexFamily is one rule that owns the indexes under prefix: the specs of
+// kind, each named by name and created by ddl. single restricts a spec to
+// exactly one property.
+type indexFamily struct {
+	kind   store.DerivedObjectKind
+	prefix string
+	single bool
+	name   func(spec store.DerivedObjectSpec) string
+	ddl    func(name string, spec store.DerivedObjectSpec) string
+}
+
+var queryIndexFamily = indexFamily{
+	kind:   store.DerivedQueryIndex,
+	prefix: derivedQueryPrefix,
+	name:   func(spec store.DerivedObjectSpec) string { return queryIndexName(spec.Type, spec.Properties) },
+	ddl:    createQueryIndexDDL,
+}
+
+var emptyIndexFamily = indexFamily{
+	kind:   store.DerivedEmptyIndex,
+	prefix: derivedEmptyPrefix,
+	single: true,
+	name:   func(spec store.DerivedObjectSpec) string { return emptyIndexName(spec.Type, spec.Properties[0]) },
+	ddl:    createEmptyIndexDDL,
+}
+
+// reconcileQueryIndexes converges the indexes of family: it drops the owned
+// indexes no spec names any more and creates the missing ones.
 func reconcileQueryIndexes(
 	ctx context.Context, conn *pgxpool.Conn, desired []store.DerivedObjectSpec, opts store.ReconcileOptions,
+	family indexFamily,
 ) ([]store.DerivedObjectOutcome, error) {
 	desiredByName := make(map[string]store.DerivedObjectSpec)
 	var outcomes []store.DerivedObjectOutcome
 	for _, spec := range desired {
-		if spec.Kind != store.DerivedQueryIndex {
+		if spec.Kind != family.kind {
 			continue
 		}
 		spec.Properties = slices.Clone(spec.Properties)
 		slices.Sort(spec.Properties)
 		spec.Properties = slices.Compact(spec.Properties)
-		if !safeDDLName(spec.Type) || len(spec.Properties) == 0 {
+		if !safeDDLName(spec.Type) || len(spec.Properties) == 0 || (family.single && len(spec.Properties) != 1) {
 			outcomes = append(outcomes, unenforced(spec, "invalid static query index shape"))
 			continue
 		}
@@ -447,19 +495,19 @@ func reconcileQueryIndexes(
 			outcomes = append(outcomes, unenforced(spec, "unsafe property name for DDL"))
 			continue
 		}
-		desiredByName[queryIndexName(spec.Type, spec.Properties)] = spec
+		desiredByName[family.name(spec)] = spec
 	}
 
-	actual, err := listOwnedIndexes(ctx, conn, derivedQueryPrefix)
+	actual, err := listOwnedIndexes(ctx, conn, family.prefix)
 	if err != nil {
-		return nil, fmt.Errorf("pgstore: reconcile: list query indexes: %w", err)
+		return nil, fmt.Errorf("pgstore: reconcile: list %s indexes: %w", family.kind, err)
 	}
 	for name := range actual {
 		if _, ok := desiredByName[name]; ok {
 			continue
 		}
 		out := store.DerivedObjectOutcome{
-			Spec: store.DerivedObjectSpec{Kind: store.DerivedQueryIndex}, State: store.DerivedDropped,
+			Spec: store.DerivedObjectSpec{Kind: family.kind}, State: store.DerivedDropped,
 			Reason: "index " + name + " no longer declared", WouldChange: opts.DryRun,
 		}
 		if !opts.DryRun {
@@ -481,7 +529,7 @@ func reconcileQueryIndexes(
 			})
 			continue
 		}
-		if _, createErr := conn.Exec(ctx, createQueryIndexDDL(name, spec)); createErr != nil {
+		if _, createErr := conn.Exec(ctx, family.ddl(name, spec)); createErr != nil {
 			outcomes = append(outcomes, unenforced(spec, "index could not be created: "+createErr.Error()))
 			continue
 		}
@@ -524,6 +572,29 @@ func createQueryIndexDDL(name string, spec store.DerivedObjectSpec) string {
 	}
 	return "CREATE INDEX IF NOT EXISTS " + quoteIdent(name) + " ON entities (face, " +
 		strings.Join(expressions, ", ") + ", id) WHERE " + strings.Join(guards, " AND ")
+}
+
+// emptyIndexName is the deterministic name of the empty-value index on one
+// property of entityType.
+func emptyIndexName(entityType, property string) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(derivedIndexShape))
+	_, _ = h.Write([]byte{'\x00'})
+	_, _ = h.Write([]byte(entityType))
+	_, _ = h.Write([]byte{'\x00'})
+	_, _ = h.Write([]byte(property))
+	return derivedEmptyPrefix + hex.EncodeToString(h.Sum(nil)[:16])
+}
+
+// createEmptyIndexDDL indexes the rows of spec's type whose one property is
+// empty, keyed like createQueryIndexDDL on face then id. Its predicate is
+// emptyCond, the empty arm [store.PropEqualOrEmpty] renders, so a BitmapOr
+// of this index and the query index answers the whole predicate.
+func createEmptyIndexDDL(name string, spec store.DerivedObjectSpec) string {
+	property := quoteLiteral(spec.Properties[0])
+	empty := emptyCond("(properties->>"+property+")", "(properties->"+property+")")
+	return "CREATE INDEX IF NOT EXISTS " + quoteIdent(name) + " ON entities (face, id) WHERE type = " +
+		quoteLiteral(spec.Type) + " AND " + empty
 }
 
 // listOwnedUniqueIndexes returns the set of this schema's unique-rule indexes.

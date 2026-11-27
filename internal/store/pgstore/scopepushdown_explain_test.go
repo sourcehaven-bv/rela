@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -33,7 +34,26 @@ import (
 // [queryplan.StaticIndexSpecs], as in production. The hop is lowered with
 // [acl.UngatedTraversal] rather than a principal's gate, which adds a row
 // gate to the endpoint but does not change the join shape planned here.
+//
+// The endpoint filter runs both as a plain equality and, with 'rare' as the
+// schema default, as the [store.PropEqualOrEmpty] that relresolve.Hop
+// lowers it to. Some features leave status unset, so the empty arm has rows
+// to find, and a traversal-only page must read them from the derived
+// empty-value index rather than every feature.
 func TestExplainPushedTraversalScopeListUsesDerivedIndexes(t *testing.T) {
+	for _, tc := range []struct {
+		name, status string
+		op           store.PropOp
+	}{
+		{"equal", "{type: string}", store.PropEqual},
+		{"equal_or_empty", "{type: string, default: rare}", store.PropEqualOrEmpty},
+	} {
+		t.Run(tc.name, func(t *testing.T) { explainPushedTraversalScope(t, tc.status, tc.op) })
+	}
+}
+
+func explainPushedTraversalScope(t *testing.T, featureStatus string, op store.PropOp) {
+	t.Helper()
 	const tickets, features = 5000, 500
 	pool := newScopedPool(t)
 	s, err := pgstore.New(pool)
@@ -49,7 +69,7 @@ entities:
     properties: {title: {type: string}, status: {type: string}}
     query_scopes:
       open-rare: "entity.status == 'open' and related(entity, 'implements', { status = 'rare' })"
-  feature: {label: Feature, id_prefix: FEAT, properties: {status: {type: string}}}
+  feature: {label: Feature, id_prefix: FEAT, properties: {status: ` + featureStatus + `}}
 relations:
   implements: {label: implements, from: [ticket], to: [feature]}
 `))
@@ -66,12 +86,13 @@ relations:
 	// One ticket in a thousand is open and one feature in 500 is rare, so a
 	// scan of either type stands out from an index probe.
 	for i := range features {
-		status := "common"
-		if i == features-1 {
-			status = "rare"
-		}
 		e := entity.New(fmt.Sprintf("FEAT-%06d", i), "feature")
-		e.Properties["status"] = status
+		switch {
+		case i == features-1:
+			e.Properties["status"] = "rare"
+		case i%100 != 0:
+			e.Properties["status"] = "common"
+		}
 		require.NoError(t, s.CreateEntity(ctx, e))
 	}
 	for i := range tickets {
@@ -107,33 +128,53 @@ relations:
 	}
 	for _, name := range spec.PropNames() {
 		hop.Props = append(hop.Props, store.PropPredicate{
-			Property: name, Op: store.PropEqual, Value: spec.Props[name].(predicate.String).String(), Scalar: true,
+			Property: name, Op: op, Value: spec.Props[name].(predicate.String).String(), Scalar: true,
 		})
 	}
 	pred, err := acl.UngatedTraversal(hop)
 	require.NoError(t, err)
 
-	q := store.GraphQuery{
-		EntityType: "ticket",
-		Props:      lowered.Props,
-		Related:    []store.DirectedRelation{{Incoming: hop.Incoming, Pred: *pred}},
-		OrderBy:    []store.OrderSpec{{Property: "title"}},
-		Limit:      50,
-		Faces:      store.InWorld(store.TrivialScope()),
+	for _, withEquality := range []bool{true, false} {
+		q := store.GraphQuery{
+			EntityType: "ticket",
+			Related:    []store.DirectedRelation{{Incoming: hop.Incoming, Pred: *pred}},
+			OrderBy:    []store.OrderSpec{{Property: "title"}},
+			Limit:      50,
+			Faces:      store.InWorld(store.TrivialScope()),
+		}
+		if withEquality {
+			q.Props = lowered.Props
+		}
+		requireIndexedPlans(ctx, t, pool, q)
+		if !withEquality && op == store.PropEqualOrEmpty {
+			sqlText, args := pgstore.BuildGraphQuerySQLForTest(q, false)
+			plan := explainPlan(ctx, t, pool, sqlText, args)
+			require.Contains(t, plan, "rela_derived_empty__",
+				"the empty arm must be read from the derived empty-value index")
+		}
 	}
+}
+
+func explainPlan(ctx context.Context, t *testing.T, pool *pgxpool.Pool, sqlText string, args []any) string {
+	t.Helper()
+	rows, err := pool.Query(ctx, "EXPLAIN "+sqlText, args...)
+	require.NoError(t, err)
+	defer rows.Close()
+	var lines []string
+	for rows.Next() {
+		var line string
+		require.NoError(t, rows.Scan(&line))
+		lines = append(lines, line)
+	}
+	require.NoError(t, rows.Err())
+	return strings.Join(lines, "\n")
+}
+
+func requireIndexedPlans(ctx context.Context, t *testing.T, pool *pgxpool.Pool, q store.GraphQuery) {
+	t.Helper()
 	for _, countOnly := range []bool{false, true} {
 		sqlText, args := pgstore.BuildGraphQuerySQLForTest(q, countOnly)
-		rows, err := pool.Query(ctx, "EXPLAIN "+sqlText, args...)
-		require.NoError(t, err)
-		var lines []string
-		for rows.Next() {
-			var line string
-			require.NoError(t, rows.Scan(&line))
-			lines = append(lines, line)
-		}
-		rows.Close()
-		require.NoError(t, rows.Err())
-		plan := strings.Join(lines, "\n")
+		plan := explainPlan(ctx, t, pool, sqlText, args)
 		t.Logf("countOnly=%v plan:\n%s", countOnly, plan)
 		for _, table := range []string{"entities", "relations"} {
 			if strings.Contains(plan, "Seq Scan on "+table) {
