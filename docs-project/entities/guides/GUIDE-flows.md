@@ -1723,9 +1723,11 @@ writer's own permission to update the source. A permission to make the
 relation, including one from `relation_grants:`, does not cover it. For a
 relation from the entity as a whole, the writer needs that permission for
 every state the rule writes. Without it the relation write is refused with a
-403, as an update of the source would be. A `set` that is refused for
-another reason, for example because it breaks a state machine or a
-`unique:` property, also fails the relation write.
+403, as an update of the source would be. A `set` runs the same checks as
+an update of the source. A `set` that is refused for another reason also
+fails the relation write. Examples are a `set` that breaks a state machine, a
+`unique:` property or a validation rule with `enforce: write`, and, in
+strict validation mode, a `set` that leaves the source invalid.
 
 This holds for a relation that a person, script or sync writes. A relation
 that another rule's `relate` or `create` output makes is a cascade write,
