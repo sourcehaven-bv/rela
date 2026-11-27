@@ -2,7 +2,7 @@ package acl_test
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
@@ -232,7 +232,7 @@ func (w *World) Visible(actor, entityType string) []string {
 			ids = append(ids, e.ID)
 		}
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	return ids
 }
 
@@ -313,7 +313,7 @@ func (w *World) AssertDeny(actor string, op acl.Op, subject acl.Subject) {
 func (w *World) AssertVisible(actor, entityType string, want ...string) {
 	w.t.Helper()
 	got := w.Visible(actor, entityType)
-	sort.Strings(want)
+	slices.Sort(want)
 	if !slicesEqual(got, want) {
 		w.t.Errorf("AssertVisible(%q, %q):\n  got:  %v\n  want: %v", actor, entityType, got, want)
 	}
@@ -399,8 +399,8 @@ func (w *World) AssertAttribution(actor, entityID, role string, want ...acl.Sour
 	for i, s := range want {
 		wantStrs[i] = s.String()
 	}
-	sort.Strings(gotStrs)
-	sort.Strings(wantStrs)
+	slices.Sort(gotStrs)
+	slices.Sort(wantStrs)
 
 	if !slicesEqual(gotStrs, wantStrs) {
 		w.t.Errorf("AssertAttribution(%q, %q, %q):\n  got:  %v\n  want: %v",

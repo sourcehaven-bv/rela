@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -8,7 +9,6 @@ import (
 	"maps"
 	"net/http"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
@@ -210,7 +210,7 @@ func fileViews(mt *realtimecfg.MessageType, files []channels.File) []channels.Fi
 			out = append(out, f)
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Property < out[j].Property })
+	slices.SortStableFunc(out, func(a, b channels.File) int { return cmp.Compare(a.Property, b.Property) })
 	return out
 }
 

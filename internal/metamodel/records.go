@@ -3,7 +3,6 @@ package metamodel
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -87,7 +86,7 @@ func (m *Metamodel) RecordKeys() []string {
 	for k := range m.Records {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 
@@ -97,7 +96,7 @@ func (d RecordTypeDef) FieldNames() []string {
 	for k := range d.Fields {
 		names = append(names, k)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -408,7 +408,7 @@ func oracleHeaders(h map[string][]string) string {
 			parts = append(parts, name+"="+strings.Join(v, ","))
 		}
 	}
-	sort.Strings(parts)
+	slices.Sort(parts)
 	return strings.Join(parts, "; ")
 }
 

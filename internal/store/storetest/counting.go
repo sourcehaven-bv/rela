@@ -4,7 +4,7 @@ import (
 	"context"
 	"iter"
 	"maps"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -136,7 +136,7 @@ func (c *Counting) String() string {
 	for k := range calls {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	var b strings.Builder
 	for i, k := range keys {
 		if i > 0 {

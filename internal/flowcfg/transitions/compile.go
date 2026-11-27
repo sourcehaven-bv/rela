@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/flow"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -95,7 +94,7 @@ func CompileTransitions(meta *metamodel.Metamodel, opts ...TransitionOption) (*T
 	}
 
 	if len(problems) > 0 {
-		sort.Strings(problems)
+		slices.Sort(problems)
 		return nil, fmt.Errorf("transitions: invalid transitions:\n  %s", joinLines(problems))
 	}
 	return set, nil

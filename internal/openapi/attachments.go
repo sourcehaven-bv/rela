@@ -1,7 +1,7 @@
 package openapi
 
 import (
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -104,6 +104,6 @@ func fileProperties(def metamodel.EntityDef) []string {
 			names = append(names, name)
 		}
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }

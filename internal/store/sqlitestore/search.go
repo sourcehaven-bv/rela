@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -294,14 +294,14 @@ func titleSQL(b *sqlBuilder, titles SearchTitles) string {
 	for prop := range byProp {
 		props = append(props, prop)
 	}
-	sort.Strings(props) // deterministic SQL
+	slices.Sort(props) // deterministic SQL
 	if len(props) == 0 {
 		return `lower(p.id)`
 	}
 	var arms strings.Builder
 	for _, prop := range props {
 		types := byProp[prop]
-		sort.Strings(types)
+		slices.Sort(types)
 		in := make([]string, len(types))
 		for i, typ := range types {
 			in[i] = b.arg(typ)

@@ -2,7 +2,7 @@ package docs
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -197,6 +197,6 @@ func regionNames() []string {
 	for _, r := range regions {
 		out = append(out, r.Name)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

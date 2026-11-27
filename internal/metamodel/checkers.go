@@ -3,7 +3,7 @@ package metamodel
 import (
 	"fmt"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 )
@@ -82,7 +82,7 @@ func validateCheckers(m *Metamodel) []string {
 	for name := range m.Checkers {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	for _, name := range names {
 		def := m.Checkers[name]
@@ -125,7 +125,7 @@ func validateCheckers(m *Metamodel) []string {
 	for name := range m.Entities {
 		types = append(types, name)
 	}
-	sort.Strings(types)
+	slices.Sort(types)
 	for _, name := range types {
 		if !CheckableTypeName.MatchString(name) {
 			errs = append(errs, fmt.Sprintf(

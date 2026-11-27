@@ -1,6 +1,7 @@
 package fsstore
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,7 +10,7 @@ import (
 	"maps"
 	"os"
 	"path"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -198,11 +199,11 @@ func (d softDeleter) ListMarked(_ context.Context) ([]store.MarkedEntity, error)
 		}
 		out = append(out, me)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if !out[i].DeletedAt.Equal(out[j].DeletedAt) {
-			return out[i].DeletedAt.Before(out[j].DeletedAt)
-		}
-		return out[i].ID < out[j].ID
+	slices.SortFunc(out, func(a, b store.MarkedEntity) int {
+		return cmp.Or(
+			a.DeletedAt.Compare(b.DeletedAt),
+			cmp.Compare(a.ID, b.ID),
+		)
 	})
 	return out, nil
 }
@@ -277,7 +278,7 @@ func applyPendingDeletes(s *FSStore) error {
 	if err != nil || len(entries) == 0 {
 		return err
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].DeletedAt.Before(entries[j].DeletedAt) })
+	slices.SortFunc(entries, func(a, b pendingDelete) int { return a.DeletedAt.Compare(b.DeletedAt) })
 	s.marked = map[string]*fsMarked{}
 	for _, pd := range entries {
 		family, related := s.stateFamily(pd.ID)
@@ -327,7 +328,7 @@ func writePendingDeletes(s *FSStore, marked map[string]*fsMarked) error {
 	for id, fam := range marked {
 		entries = append(entries, pendingDelete{ID: id, DeletedAt: fam.at, DeletedBy: fam.by})
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].ID < entries[j].ID })
+	slices.SortFunc(entries, func(a, b pendingDelete) int { return cmp.Compare(a.ID, b.ID) })
 	data, err := json.Marshal(entries)
 	if err != nil {
 		return err
@@ -508,7 +509,7 @@ func sortedRelMetas(in map[string]relationMeta) []relationMeta {
 	for _, rm := range in {
 		out = append(out, rm)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].key() < out[j].key() })
+	slices.SortFunc(out, func(a, b relationMeta) int { return cmp.Compare(a.key(), b.key()) })
 	return out
 }
 

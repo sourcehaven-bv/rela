@@ -3,7 +3,7 @@ package fsstore_test
 import (
 	"context"
 	"io/fs"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -64,7 +64,7 @@ func TestFsFaceDeleteTouchesOnlyItsOwnFiles(t *testing.T) {
 			out = append(out, p)
 			return nil
 		}))
-		sort.Strings(out)
+		slices.Sort(out)
 		return out
 	}
 	before := files()
@@ -86,7 +86,7 @@ func TestFsFaceDeleteTouchesOnlyItsOwnFiles(t *testing.T) {
 	for f := range gone {
 		removed = append(removed, f)
 	}
-	sort.Strings(removed)
+	slices.Sort(removed)
 	t.Logf("REMOVED: %v", removed)
 
 	var keptDefault bool

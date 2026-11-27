@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
@@ -275,7 +274,7 @@ func declaredBySome(meta *metamodel.Metamodel, types []string, prop string) bool
 // mention any other.
 func allEntityTypes(meta *metamodel.Metamodel) []string {
 	types := meta.EntityTypes()
-	sort.Strings(types)
+	slices.Sort(types)
 	return types
 }
 

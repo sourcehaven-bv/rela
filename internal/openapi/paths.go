@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -391,7 +390,7 @@ func (g *Generator) addRelationTypePaths(spec *Spec, typeName string, def metamo
 	for name := range validRelations {
 		relNames = append(relNames, name)
 	}
-	sort.Strings(relNames)
+	slices.Sort(relNames)
 
 	for _, relName := range relNames {
 		relDef := validRelations[relName]

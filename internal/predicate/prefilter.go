@@ -1,6 +1,9 @@
 package predicate
 
-import "sort"
+import (
+	"cmp"
+	"slices"
+)
 
 // PrefilterSpec names the variables and host functions
 // [Program.ConstEqualities] recognizes as request-constant comparisons.
@@ -87,7 +90,7 @@ func (p *Program) ConstEqualities(spec PrefilterSpec) []ConstEquality {
 	for _, eq := range seen {
 		out = append(out, eq)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Attribute < out[j].Attribute })
+	slices.SortFunc(out, func(a, b ConstEquality) int { return cmp.Compare(a.Attribute, b.Attribute) })
 	return out
 }
 

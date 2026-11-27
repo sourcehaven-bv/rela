@@ -69,7 +69,7 @@ func New(r Reader) (*Graph, error) {
 func isTypedNil(v any) bool {
 	rv := reflect.ValueOf(v)
 	switch rv.Kind() {
-	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.UnsafePointer:
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.UnsafePointer:
 		return rv.IsNil()
 	default:
 		return false

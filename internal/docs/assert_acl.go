@@ -3,7 +3,6 @@ package docs
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -233,7 +232,7 @@ func sortedAssignments(a map[string]string) []string {
 	for k := range a {
 		out = append(out, k)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

@@ -9,7 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -335,7 +335,7 @@ func writeRecordTable(rows []records.Record) {
 		for k := range rec.Fields {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys)
+		slices.Sort(keys)
 		parts := make([]string, len(keys))
 		for i, k := range keys {
 			parts[i] = fmt.Sprintf("%s=%v", k, rec.Fields[k])

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -8,7 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -100,9 +101,7 @@ func (c *ExportCmd) exportEntities(ctx context.Context, svc *readServices, entit
 		entities = append(entities, e)
 	}
 
-	sort.Slice(entities, func(i, j int) bool {
-		return natsort.Less(entities[i].ID, entities[j].ID)
-	})
+	slices.SortFunc(entities, func(a, b *entity.Entity) int { return natsort.Compare(a.ID, b.ID) })
 
 	if len(entities) == 0 {
 		switch c.Format {
@@ -147,21 +146,19 @@ func (c *ExportCmd) exportAllData(ctx context.Context, svc *readServices) error 
 		allEdges = append(allEdges, r)
 	}
 
-	sort.Slice(allEntities, func(i, j int) bool {
-		if allEntities[i].Type != allEntities[j].Type {
-			return natsort.Less(allEntities[i].Type, allEntities[j].Type)
-		}
-		return natsort.Less(allEntities[i].ID, allEntities[j].ID)
+	slices.SortFunc(allEntities, func(a, b *entity.Entity) int {
+		return cmp.Or(
+			natsort.Compare(a.Type, b.Type),
+			natsort.Compare(a.ID, b.ID),
+		)
 	})
 
-	sort.Slice(allEdges, func(i, j int) bool {
-		if allEdges[i].From != allEdges[j].From {
-			return natsort.Less(allEdges[i].From, allEdges[j].From)
-		}
-		if allEdges[i].Type != allEdges[j].Type {
-			return natsort.Less(allEdges[i].Type, allEdges[j].Type)
-		}
-		return natsort.Less(allEdges[i].To, allEdges[j].To)
+	slices.SortFunc(allEdges, func(a, b *entity.Relation) int {
+		return cmp.Or(
+			natsort.Compare(a.From, b.From),
+			natsort.Compare(a.Type, b.Type),
+			natsort.Compare(a.To, b.To),
+		)
 	})
 
 	exportEntities := make([]ExportEntity, 0, len(allEntities))

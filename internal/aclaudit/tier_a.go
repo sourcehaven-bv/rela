@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 )
@@ -313,7 +312,7 @@ func checkDeadPermissions(p *acl.Policy, perms PermissionConsumer) []Finding {
 	var f []Finding
 	for _, name := range sortedRoleNames(p) {
 		rolePerms := append([]string(nil), p.Roles[name].Permissions...)
-		sort.Strings(rolePerms)
+		slices.Sort(rolePerms)
 		for _, perm := range rolePerms {
 			// tag:<ns> guards version tags in namespace ns (TKT-VO6VG9). The
 			// namespace is chosen by whoever writes the tag, so the name cannot
@@ -403,7 +402,7 @@ func sortedRelTypes(p *acl.Policy) []string {
 	for r := range p.RoleRelations {
 		out = append(out, r)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -412,7 +411,7 @@ func sortedAssignmentKeys(p *acl.Policy) []string {
 	for k := range p.Assignments {
 		out = append(out, k)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

@@ -1,8 +1,9 @@
 package configedit
 
 import (
+	"cmp"
 	"reflect"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -725,7 +726,7 @@ type Violation struct {
 func CheckEdit(file File, before, after any) []Violation {
 	c := checker{file: file}
 	c.diff(nil, nil, before, after)
-	sort.Slice(c.out, func(i, j int) bool { return c.out[i].Path < c.out[j].Path })
+	slices.SortFunc(c.out, func(a, b Violation) int { return cmp.Compare(a.Path, b.Path) })
 	return c.out
 }
 

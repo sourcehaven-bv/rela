@@ -48,10 +48,14 @@ func TestParseConfig_empty(t *testing.T) {
 	}
 }
 
-func TestParseConfig_duplicateName(t *testing.T) {
+func TestParseConfig_errors(t *testing.T) {
 	t.Parallel()
 
-	data := []byte(`
+	for _, tc := range []struct {
+		name string
+		data string
+	}{
+		{"duplicateName", `
 tasks:
   - name: foo
     script: a.lua
@@ -59,76 +63,36 @@ tasks:
   - name: foo
     script: b.lua
     every: day
-`)
-	_, err := ParseConfig(data)
-	if err == nil {
-		t.Fatal("expected error for duplicate name")
-	}
-}
-
-func TestParseConfig_missingName(t *testing.T) {
-	t.Parallel()
-
-	data := []byte(`
+`},
+		{"missingName", `
 tasks:
   - script: a.lua
     every: day
-`)
-	_, err := ParseConfig(data)
-	if err == nil {
-		t.Fatal("expected error for missing name")
-	}
-}
-
-func TestParseConfig_missingScript(t *testing.T) {
-	t.Parallel()
-
-	data := []byte(`
+`},
+		{"missingScript", `
 tasks:
   - name: foo
     every: day
-`)
-	_, err := ParseConfig(data)
-	if err == nil {
-		t.Fatal("expected error for missing script")
-	}
-}
-
-func TestParseConfig_missingEvery(t *testing.T) {
-	t.Parallel()
-
-	data := []byte(`
+`},
+		{"missingEvery", `
 tasks:
   - name: foo
     script: a.lua
-`)
-	_, err := ParseConfig(data)
-	if err == nil {
-		t.Fatal("expected error for missing every")
-	}
-}
-
-func TestParseConfig_invalidSchedule(t *testing.T) {
-	t.Parallel()
-
-	data := []byte(`
+`},
+		{"invalidSchedule", `
 tasks:
   - name: foo
     script: a.lua
     every: "not-valid"
-`)
-	_, err := ParseConfig(data)
-	if err == nil {
-		t.Fatal("expected error for invalid schedule")
-	}
-}
-
-func TestParseConfig_invalidYAML(t *testing.T) {
-	t.Parallel()
-
-	_, err := ParseConfig([]byte("{{{{not yaml"))
-	if err == nil {
-		t.Fatal("expected error for invalid YAML")
+`},
+		{"invalidYAML", "{{{{not yaml"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := ParseConfig([]byte(tc.data)); err == nil {
+				t.Fatalf("expected error for %s", tc.name)
+			}
+		})
 	}
 }
 
@@ -188,91 +152,52 @@ func TestScheduleOccurrence(t *testing.T) {
 	}
 }
 
-func TestParseSchedule_day(t *testing.T) {
-	t.Parallel()
-	s, err := parseSchedule("day")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.kind != dayKind {
-		t.Errorf("kind = %v, want dayKind", s.kind)
-	}
-}
-
-func TestParseSchedule_week(t *testing.T) {
-	t.Parallel()
-	s, err := parseSchedule("week")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.kind != weekdayKind || s.weekday != time.Monday {
-		t.Errorf("kind = %v weekday = %v, want weekdayKind Monday", s.kind, s.weekday)
-	}
-}
-
-func TestParseSchedule_weekdayNames(t *testing.T) {
+func TestParseSchedule(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		input   string
-		weekday time.Weekday
+	for _, tc := range []struct {
+		name  string
+		input string
+		want  Schedule
 	}{
-		{"monday", time.Monday},
-		{"tuesday", time.Tuesday},
-		{"wednesday", time.Wednesday},
-		{"thursday", time.Thursday},
-		{"friday", time.Friday},
-		{"saturday", time.Saturday},
-		{"sunday", time.Sunday},
-	}
-	for _, tt := range tests {
-		s, err := parseSchedule(tt.input)
-		if err != nil {
-			t.Errorf("parseSchedule(%q): %v", tt.input, err)
-			continue
-		}
-		if s.kind != weekdayKind || s.weekday != tt.weekday {
-			t.Errorf("parseSchedule(%q): got %v %v, want weekdayKind %v",
-				tt.input, s.kind, s.weekday, tt.weekday)
-		}
-	}
-}
-
-func TestParseSchedule_duration(t *testing.T) {
-	t.Parallel()
-	s, err := parseSchedule("2h30m")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.kind != intervalKind || s.interval != 2*time.Hour+30*time.Minute {
-		t.Errorf("got %v, want 2h30m interval", s)
+		{"day", "day", Schedule{kind: dayKind}},
+		{"week", "week", Schedule{kind: weekdayKind, weekday: time.Monday}},
+		{"monday", "monday", Schedule{kind: weekdayKind, weekday: time.Monday}},
+		{"tuesday", "tuesday", Schedule{kind: weekdayKind, weekday: time.Tuesday}},
+		{"wednesday", "wednesday", Schedule{kind: weekdayKind, weekday: time.Wednesday}},
+		{"thursday", "thursday", Schedule{kind: weekdayKind, weekday: time.Thursday}},
+		{"friday", "friday", Schedule{kind: weekdayKind, weekday: time.Friday}},
+		{"saturday", "saturday", Schedule{kind: weekdayKind, weekday: time.Saturday}},
+		{"sunday", "sunday", Schedule{kind: weekdayKind, weekday: time.Sunday}},
+		{"duration", "2h30m", Schedule{kind: intervalKind, interval: 2*time.Hour + 30*time.Minute}},
+		{"bareMinutes", "15", Schedule{kind: intervalKind, interval: 15 * time.Minute}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, err := parseSchedule(tc.input)
+			if err != nil {
+				t.Fatalf("parseSchedule(%q): %v", tc.input, err)
+			}
+			if s.kind != tc.want.kind || s.weekday != tc.want.weekday || s.interval != tc.want.interval {
+				t.Errorf("parseSchedule(%q) = %+v, want %+v", tc.input, s, tc.want)
+			}
+		})
 	}
 }
 
-func TestParseSchedule_bareMinutes(t *testing.T) {
+func TestParseSchedule_invalid(t *testing.T) {
 	t.Parallel()
-	s, err := parseSchedule("15")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.interval != 15*time.Minute {
-		t.Errorf("got %v, want 15m", s.interval)
-	}
-}
 
-func TestParseSchedule_negativeInterval(t *testing.T) {
-	t.Parallel()
-	_, err := parseSchedule("-5m")
-	if err == nil {
-		t.Fatal("expected error for negative interval")
-	}
-}
-
-func TestParseSchedule_zeroInterval(t *testing.T) {
-	t.Parallel()
-	_, err := parseSchedule("0")
-	if err == nil {
-		t.Fatal("expected error for zero interval")
+	for _, tc := range []struct{ name, input string }{
+		{"negativeInterval", "-5m"},
+		{"zeroInterval", "0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := parseSchedule(tc.input); err == nil {
+				t.Fatalf("expected error for %s", tc.name)
+			}
+		})
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -319,7 +318,7 @@ func channelFieldKeyErrors(prefix string, field map[string]any) []string {
 				prefix, key, strings.Join(channelFieldKeys, ", ")))
 		}
 	}
-	sort.Strings(errs)
+	slices.Sort(errs)
 	return errs
 }
 

@@ -5,7 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -228,7 +228,7 @@ func TestRootedFS_MkdirAll_ReadDir(t *testing.T) {
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	if len(names) != 1 || names[0] != "c" {
 		t.Fatalf("ReadDir entries = %v, want [c]", names)
 	}
@@ -285,7 +285,7 @@ func TestRootedFS_Walk_ReturnsKeys(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
-	sort.Strings(seen)
+	slices.Sort(seen)
 	want := []string{"sub", "sub/a.txt", "sub/b.txt", "sub/nested", "sub/nested/c.txt"}
 	if !stringSliceEqual(seen, want) {
 		t.Fatalf("seen = %v, want %v", seen, want)
@@ -317,7 +317,7 @@ func TestRootedFS_WalkAll_FromRoot(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("WalkAll: %v", err)
 	}
-	sort.Strings(seen)
+	slices.Sort(seen)
 	want := []string{".", "a.txt", "sub", "sub/b.txt"}
 	if !stringSliceEqual(seen, want) {
 		t.Fatalf("seen = %v, want %v", seen, want)

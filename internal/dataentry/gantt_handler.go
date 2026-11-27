@@ -1,11 +1,12 @@
 package dataentry
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -242,7 +243,7 @@ func finishGanttForest(
 		multiParent = kept
 	}
 	if g.MultiParent == "error" && len(multiParent) > 0 {
-		sort.Strings(multiParent)
+		slices.Sort(multiParent)
 		return nil, &ganttError{http.StatusUnprocessableEntity, "multi_parent",
 			"Entity has multiple parents",
 			"multi_parent is \"error\" and these entities are contained by more than one parent: " +
@@ -260,7 +261,7 @@ func finishGanttForest(
 			f.roots = append(f.roots, id)
 		}
 	}
-	sort.Strings(f.roots)
+	slices.Sort(f.roots)
 
 	markCycles := g.OnCycle == "mark"
 	for _, rootID := range f.roots {
@@ -282,7 +283,7 @@ func finishGanttForest(
 			f.roots = append(f.roots, entry)
 			foldGantt(f, entry, true)
 		}
-		sort.Strings(f.roots)
+		slices.Sort(f.roots)
 		return f, nil
 	}
 
@@ -295,7 +296,7 @@ func finishGanttForest(
 			cyclic = append(cyclic, id)
 		}
 	}
-	sort.Strings(cyclic)
+	slices.Sort(cyclic)
 	return nil, &ganttError{http.StatusUnprocessableEntity, "containment_cycle",
 		"Containment cycle detected",
 		"these entities form a containment loop no root can reach: " + strings.Join(cyclic, ", ")}
@@ -823,11 +824,11 @@ func linkGanttParents(
 	allParents = map[string][]string{}
 	for _, relType := range g.Hierarchy {
 		edges := edgesByType[relType]
-		sort.Slice(edges, func(i, j int) bool {
-			if edges[i][0] != edges[j][0] {
-				return edges[i][0] < edges[j][0]
-			}
-			return edges[i][1] < edges[j][1]
+		slices.SortFunc(edges, func(a, b [2]string) int {
+			return cmp.Or(
+				cmp.Compare(a[0], b[0]),
+				cmp.Compare(a[1], b[1]),
+			)
 		})
 		for _, e := range edges {
 			allParents[e[1]] = append(allParents[e[1]], e[0])
@@ -951,7 +952,7 @@ func (h *ganttHandler) ganttEdges(
 	for id := range nodes {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	for _, relType := range g.Hierarchy {
 		q := store.RelationQuery{Type: relType, Direction: store.DirectionOutgoing, EntityIDs: ids, PeerIDs: ids}
 		for rel, err := range h.store.ListRelations(ctx, q) {
@@ -987,7 +988,7 @@ func foldGantt(f *ganttForest, rootID string, markCycles bool) {
 	}
 	stack := []frame{{id: rootID}}
 	f.reachable[rootID] = true
-	sort.Strings(f.nodes[rootID].children)
+	slices.Sort(f.nodes[rootID].children)
 
 	var onStack map[string]bool
 	if markCycles {
@@ -1009,7 +1010,7 @@ func foldGantt(f *ganttForest, rootID string, markCycles bool) {
 				onStack[childID] = true
 			}
 			f.reachable[childID] = true
-			sort.Strings(f.nodes[childID].children)
+			slices.Sort(f.nodes[childID].children)
 			stack = append(stack, frame{id: childID})
 			continue
 		}
@@ -1162,7 +1163,7 @@ func ganttSortedKeys[V any](m map[string]V) []string {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 

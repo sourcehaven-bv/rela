@@ -9,7 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -185,7 +185,7 @@ func treeHash(t *testing.T, root string) []string {
 		return nil
 	})
 	require.NoError(t, err)
-	sort.Strings(lines)
+	slices.Sort(lines)
 	return lines
 }
 

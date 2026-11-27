@@ -1,7 +1,7 @@
 package acl
 
 import (
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -40,8 +40,8 @@ func (r *Request) LocalRolePredicates(role string) (preds []store.RelationPredic
 			plain = append(plain, relType)
 		}
 	}
-	sort.Strings(plain)
-	sort.Strings(conditional)
+	slices.Sort(plain)
+	slices.Sort(conditional)
 	if len(plain) > 0 {
 		p, ok := conferredEdge(r.d.policy, r.Globals().Members, plain)
 		if !ok {

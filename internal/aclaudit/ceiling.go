@@ -2,7 +2,7 @@ package aclaudit
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -162,7 +162,7 @@ func unreachableTargets(p *acl.Policy, g acl.ScopeGrant) []string {
 		}
 	}
 
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -346,7 +346,7 @@ func sortedBaselineNames(p *acl.Policy) []string {
 	for k := range p.ClientBaselines {
 		out = append(out, k)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -355,7 +355,7 @@ func sortedScopeGrantNames(p *acl.Policy) []string {
 	for k := range p.ScopeGrants {
 		out = append(out, k)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -364,7 +364,7 @@ func sortedFieldMapKeys(m map[string][]string) []string {
 	for k := range m {
 		out = append(out, k)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

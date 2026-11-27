@@ -1,10 +1,10 @@
 package flowcfg
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -304,7 +304,7 @@ func (l *loader) timers(key string, n *yaml.Node, f *Flow) []Timer {
 		}
 		out = append(out, t)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	slices.SortFunc(out, func(a, b Timer) int { return cmp.Compare(a.Name, b.Name) })
 	return out
 }
 

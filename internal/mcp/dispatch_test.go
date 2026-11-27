@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -267,7 +267,7 @@ func TestDispatch_ToolInventoryMatches(t *testing.T) {
 			missing = append(missing, name)
 		}
 	}
-	sort.Strings(missing)
+	slices.Sort(missing)
 	for _, name := range missing {
 		t.Errorf("tool %q is registered but has no dispatch test case — add it to toolCalls", name)
 	}
@@ -336,7 +336,7 @@ func TestDispatch_EveryToolDecodesAndRuns(t *testing.T) {
 	for name := range toolCalls {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	for _, name := range names {
 		tc := toolCalls[name]

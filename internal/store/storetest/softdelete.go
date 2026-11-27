@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"sort"
+	"slices"
 	"testing"
 	"time"
 
@@ -64,7 +64,7 @@ func entityIDs(t *testing.T, it func(func(*entity.Entity, error) bool)) []string
 		require.NoError(t, err)
 		ids = append(ids, e.ID)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	return ids
 }
 
@@ -75,7 +75,7 @@ func relationKeys(t *testing.T, it func(func(*entity.Relation, error) bool)) []s
 		require.NoError(t, err)
 		keys = append(keys, r.From+"--"+r.Type+"--"+r.To)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 
@@ -113,7 +113,7 @@ func assertMarkedHidden(t *testing.T, s store.Store, attachments bool) {
 		require.NoError(t, herr)
 		headerIDs = append(headerIDs, h.ID)
 	}
-	sort.Strings(headerIDs)
+	slices.Sort(headerIDs)
 	assert.Equal(t, live, headerIDs, "ListEntityHeaders")
 
 	high, err := s.HighestID(c, "FEAT")

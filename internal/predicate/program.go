@@ -2,7 +2,7 @@ package predicate
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 )
 
 // Program is a compiled predicate, ready for repeated evaluation.
@@ -36,7 +36,7 @@ func (p *Program) Attributes(recordVar string) []string {
 	for name := range set {
 		out = append(out, name)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -76,7 +76,7 @@ func (p *Program) Functions() []string {
 	for name := range p.funcs {
 		out = append(out, name)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

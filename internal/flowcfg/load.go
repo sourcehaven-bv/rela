@@ -2,13 +2,13 @@ package flowcfg
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"slices"
-	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -190,7 +190,7 @@ func hasAlias(n *yaml.Node) bool {
 }
 
 func sortProblems(ps []Problem) {
-	sort.SliceStable(ps, func(i, j int) bool { return ps[i].Key < ps[j].Key })
+	slices.SortStableFunc(ps, func(a, b Problem) int { return cmp.Compare(a.Key, b.Key) })
 }
 
 // strictDecode decodes YAML into out, refusing unknown keys.

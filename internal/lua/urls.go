@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
-	"sort"
+	"slices"
 	"strings"
 
 	glua "github.com/yuin/gopher-lua"
@@ -467,7 +467,7 @@ func buildURL(base string, query map[string]string, fragment string) string {
 		for k := range query {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys)
+		slices.Sort(keys)
 		b.WriteByte('?')
 		for i, k := range keys {
 			if i > 0 {

@@ -37,11 +37,12 @@
 package mail
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -229,6 +230,6 @@ func encodedForms(sec string) []string {
 		base64.StdEncoding.EncodeToString([]byte(sec)),
 		sec,
 	}
-	sort.Slice(forms, func(i, j int) bool { return len(forms[i]) > len(forms[j]) })
+	slices.SortFunc(forms, func(a, b string) int { return cmp.Compare(len(b), len(a)) })
 	return forms
 }

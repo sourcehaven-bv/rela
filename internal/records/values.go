@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -23,7 +23,7 @@ func normalizeFields(meta *metamodel.Metamodel, def metamodel.RecordTypeDef,
 	for k := range in {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	out := make(map[string]any, len(in))
 	bad := map[string]bool{}
 	for _, k := range keys {

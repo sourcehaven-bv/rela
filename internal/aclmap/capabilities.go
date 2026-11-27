@@ -1,9 +1,9 @@
 package aclmap
 
 import (
+	"cmp"
 	"context"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -164,7 +164,7 @@ var relationOps = []struct {
 // for every edge of that shape.
 func (e *Engine) writableRelations(ctx context.Context, req *acl.Request, rels []RelationType) []RelationAccess {
 	sorted := slices.Clone(rels)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+	slices.SortFunc(sorted, func(a, b RelationType) int { return cmp.Compare(a.Name, b.Name) })
 
 	var out []RelationAccess
 	for _, rt := range sorted {
@@ -196,7 +196,7 @@ func dedupeSorted(in []string) []string {
 			out = append(out, v)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return slices.Compact(out)
 }
 

@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -206,7 +206,7 @@ func TestCompat_PaddingOnlyOnTableCells(t *testing.T) {
 			offenders = append(offenders, fmt.Sprintf("<%s> %s: %s", el.tag, prop, val))
 		}
 	}
-	sort.Strings(offenders)
+	slices.Sort(offenders)
 
 	require.Empty(t, offenders,
 		"padding on a non-cell element is dropped by Outlook Windows "+
@@ -404,8 +404,8 @@ func TestCompat_NoUnsupportedPropertyOnAnyElement(t *testing.T) {
 			}
 		}
 	}
-	sort.Strings(dead)
-	sort.Strings(untracked)
+	slices.Sort(dead)
+	slices.Sort(untracked)
 	t.Logf("scored %d properties against the dataset; %d untracked (%s)",
 		len(seen)-len(untracked), len(untracked), strings.Join(untracked, ", "))
 

@@ -22,8 +22,8 @@
 package aclaudit
 
 import (
+	"cmp"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -221,14 +221,12 @@ func Audit(p *acl.Policy, meta MetamodelReader, perms PermissionConsumer) []Find
 // relative order of ties, and returns f. A caller that adds findings from
 // another source sorts the merged list with it.
 func Sort(f []Finding) []Finding {
-	sort.SliceStable(f, func(i, j int) bool {
-		if f[i].Severity != f[j].Severity {
-			return f[i].Severity < f[j].Severity
-		}
-		if f[i].Rule != f[j].Rule {
-			return f[i].Rule < f[j].Rule
-		}
-		return f[i].Subject < f[j].Subject
+	slices.SortStableFunc(f, func(a, b Finding) int {
+		return cmp.Or(
+			cmp.Compare(a.Severity, b.Severity),
+			cmp.Compare(a.Rule, b.Rule),
+			cmp.Compare(a.Subject, b.Subject),
+		)
 	})
 	return f
 }
@@ -351,7 +349,7 @@ func affordanceTypeKeys(r acl.RoleDef) []string {
 			out = append(out, k)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -361,7 +359,7 @@ func sortedRoleNames(p *acl.Policy) []string {
 	for n := range p.Roles {
 		names = append(names, n)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 

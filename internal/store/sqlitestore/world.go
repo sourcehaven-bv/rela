@@ -2,7 +2,7 @@ package sqlitestore
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -67,7 +67,7 @@ func worldSQL(b *sqlBuilder, w store.WorldScope, alias string) (rank, candidate 
 		return alias + "." + name
 	}
 	types := w.Types()
-	sort.Strings(types)
+	slices.Sort(types)
 
 	var rankArms, candArms, typeTests []string
 	for _, typ := range types {

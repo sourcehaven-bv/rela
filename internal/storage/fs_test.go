@@ -3,7 +3,7 @@ package storage_test
 import (
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -206,7 +206,7 @@ func fsTestSuite(t *testing.T, name string, setup func(t *testing.T) (storage.FS
 		for _, e := range entries {
 			names = append(names, e.Name())
 		}
-		sort.Strings(names)
+		slices.Sort(names)
 
 		expected := []string{"a.txt", "b.txt", "c.txt", "subdir"}
 		if len(names) != len(expected) {

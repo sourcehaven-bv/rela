@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
-	"sort"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -365,7 +365,7 @@ func LoadDir(fsys fs.FS) ([]*File, error) {
 		// is where the message is; listing it here is what gets it there.
 		names = append(names, e.Name())
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	var files []*File
 	for _, n := range names {

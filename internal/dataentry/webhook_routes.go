@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -119,7 +119,7 @@ func registerDeclarativeWebhookRoutes(mux *http.ServeMux, hooks *webhookRouter) 
 	for id := range cfg.Webhooks {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 
 	for _, id := range ids {
 		hookID := id

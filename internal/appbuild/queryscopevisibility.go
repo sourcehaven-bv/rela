@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -104,7 +103,7 @@ func QueryScopeVisibilityConflicts(
 				key.EntityType, key.Name, attr, quotedRoleList(roles)))
 		}
 	})
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -216,6 +215,6 @@ func QueryScopeTraversalFieldErrors(
 			}
 		}
 	})
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

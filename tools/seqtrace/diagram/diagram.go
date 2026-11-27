@@ -15,10 +15,11 @@ package diagram
 
 import (
 	"bufio"
+	"cmp"
 	"encoding/json"
 	"io"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -138,7 +139,7 @@ func Read(r io.Reader) ([]*Call, error) {
 		}
 	}
 	for _, c := range order {
-		sort.SliceStable(c.Children, func(i, j int) bool { return c.Children[i].T < c.Children[j].T })
+		slices.SortStableFunc(c.Children, func(a, b *Call) int { return cmp.Compare(a.T, b.T) })
 	}
 	return roots, nil
 }

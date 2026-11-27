@@ -1,9 +1,10 @@
 package acl
 
 import (
+	"cmp"
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -133,11 +134,11 @@ func (d *Declarative) AssertedGrants(verb Verb, entityType string) []AssertedGra
 			}
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Claim != out[j].Claim {
-			return out[i].Claim < out[j].Claim
-		}
-		return out[i].Role < out[j].Role
+	slices.SortFunc(out, func(a, b AssertedGrant) int {
+		return cmp.Or(
+			cmp.Compare(a.Claim, b.Claim),
+			cmp.Compare(a.Role, b.Role),
+		)
 	})
 	return out
 }

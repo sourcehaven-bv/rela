@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
@@ -395,7 +395,7 @@ func (h *exportHandler) entityRelationGroups(
 	for l := range byLabel {
 		labels = append(labels, l)
 	}
-	sort.Strings(labels)
+	slices.Sort(labels)
 
 	groups := make([]transform.RelationGroup, 0, len(labels))
 	for _, l := range labels {

@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -14,7 +15,6 @@ import (
 	"net/url"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -380,11 +380,11 @@ func (h attachmentHandler) handleListAttachments(
 			SHA256: info.SHA256,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Property != out[j].Property {
-			return out[i].Property < out[j].Property
-		}
-		return out[i].FileName < out[j].FileName
+	slices.SortFunc(out, func(a, b attachmentListing) int {
+		return cmp.Or(
+			cmp.Compare(a.Property, b.Property),
+			cmp.Compare(a.FileName, b.FileName),
+		)
 	})
 
 	text, err := json.MarshalIndent(out, "", "  ")

@@ -3,7 +3,6 @@ package metamodel
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -102,7 +101,7 @@ func (p CommentPolicy) CommentableTypes() []string {
 			out = append(out, name)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -172,7 +171,7 @@ func validateComments(m *Metamodel) []string {
 		errs = append(errs, `comments: `+"`on`"+` mixes "*" with named types — "*" already covers every type`)
 	}
 
-	sort.Strings(errs)
+	slices.Sort(errs)
 	m.Comments.On = cleaned
 	return errs
 }
@@ -193,7 +192,7 @@ func didYouMeanEntity(m *Metamodel, name string) string {
 	for candidate := range m.Entities {
 		candidates = append(candidates, candidate)
 	}
-	sort.Strings(candidates)
+	slices.Sort(candidates)
 
 	for _, candidate := range candidates {
 		lowerCandidate := strings.ToLower(candidate)

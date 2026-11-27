@@ -1,11 +1,12 @@
 package ai
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"time"
 )
 
@@ -125,9 +126,7 @@ func decodeEmbedResponse(respBody []byte, apiKey string, expectedCount int) (*Em
 	}
 
 	// Sort by index to handle out-of-order responses.
-	sort.Slice(parsed.Data, func(i, j int) bool {
-		return parsed.Data[i].Index < parsed.Data[j].Index
-	})
+	slices.SortFunc(parsed.Data, func(a, b embedDataWire) int { return cmp.Compare(a.Index, b.Index) })
 
 	embeddings := make([][]float64, len(parsed.Data))
 	for i, d := range parsed.Data {

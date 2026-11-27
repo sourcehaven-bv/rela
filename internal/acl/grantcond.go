@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -175,7 +174,7 @@ func (c *GrantCondition) Properties() []string {
 			out = append(out, t.Property)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

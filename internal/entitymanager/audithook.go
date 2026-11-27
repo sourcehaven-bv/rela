@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -193,6 +193,6 @@ func changedPropertyNames(oldProps, newProps map[string]any) string {
 			changed = append(changed, k)
 		}
 	}
-	sort.Strings(changed)
+	slices.Sort(changed)
 	return strings.Join(changed, ",")
 }

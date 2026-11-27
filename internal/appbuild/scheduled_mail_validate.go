@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	stdmail "net/mail"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
@@ -65,7 +65,7 @@ func (w *SchedulerWorkspace) ValidateScheduledMailRecipients(ctx context.Context
 			}
 		}
 		if len(invalid) > 0 {
-			sort.Strings(invalid)
+			slices.Sort(invalid)
 			findings = append(findings, fmt.Sprintf("task %q property %q invalid on %s",
 				task.Name, tmpl.AddressProperty, strings.Join(invalid, ", ")))
 		}

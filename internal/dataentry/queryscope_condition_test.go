@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
@@ -55,7 +55,7 @@ func totalFromListBody(t *testing.T, rec *httptest.ResponseRecorder) int {
 
 func sortedIDs(ids []string) []string {
 	out := append([]string(nil), ids...)
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -138,7 +138,7 @@ func (er EntityRenderer) propertyRows() [][2]string {
 	for name := range er.Entity.Properties {
 		extra = append(extra, name)
 	}
-	sort.Strings(extra)
+	slices.Sort(extra)
 	for _, name := range extra {
 		add(name)
 	}

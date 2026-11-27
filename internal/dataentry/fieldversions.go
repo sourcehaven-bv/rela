@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
@@ -78,11 +77,11 @@ func relationsToken(id, typeName string, rels map[string][]string) string {
 			types = append(types, t)
 		}
 	}
-	sort.Strings(types)
+	slices.Sort(types)
 	var b strings.Builder
 	for _, t := range types {
 		targets := slices.Clone(rels[t])
-		sort.Strings(targets)
+		slices.Sort(targets)
 		b.WriteString(t)
 		for _, to := range targets {
 			b.WriteByte(0)

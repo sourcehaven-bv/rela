@@ -3,7 +3,6 @@ package acl
 import (
 	"context"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -168,7 +167,7 @@ func (r *Request) conferringRelations() []string {
 		}
 		relTypes = append(relTypes, relType)
 	}
-	sort.Strings(relTypes)
+	slices.Sort(relTypes)
 	return relTypes
 }
 

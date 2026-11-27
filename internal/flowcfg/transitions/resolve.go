@@ -1,8 +1,9 @@
 package transitions
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
@@ -106,7 +107,7 @@ func (s *Transitions) Performable(
 			Reason:  reasonFor(res.gate),
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].To < out[j].To })
+	slices.SortFunc(out, func(a, b TransitionVerdict) int { return cmp.Compare(a.To, b.To) })
 	return out
 }
 
@@ -126,7 +127,7 @@ func (s *Transitions) MachineProps(entityType string) []string {
 	for name := range props {
 		out = append(out, name)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

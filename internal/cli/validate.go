@@ -7,7 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -513,7 +513,7 @@ func outputValidationViolations(
 	for ruleName := range ruleViolations {
 		ruleNames = append(ruleNames, ruleName)
 	}
-	sort.Strings(ruleNames)
+	slices.Sort(ruleNames)
 	for _, ruleName := range ruleNames {
 		vs := ruleViolations[ruleName]
 		if ruleSeverities[ruleName] == "error" {

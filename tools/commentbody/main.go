@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"sort"
+	"slices"
 )
 
 const baselinePath = "tools/commentbody/baseline.json"
@@ -90,7 +90,7 @@ func sortedKeys(m map[string]int) []string {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 

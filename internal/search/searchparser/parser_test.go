@@ -1,6 +1,7 @@
 package searchparser
 
 import (
+	"slices"
 	"testing"
 )
 
@@ -53,68 +54,50 @@ func TestParseQuery_QuotedPhrase(t *testing.T) {
 	}
 }
 
-func TestParseQuery_TypeFilter(t *testing.T) {
-	sq := ParseQuery("type:requirement")
-	if len(sq.EntityTypes) != 1 {
-		t.Errorf("Expected 1 entity type, got %d", len(sq.EntityTypes))
+func TestParseQuery_TypeFilters(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{"TypeFilter", "type:requirement", []string{"requirement"}},
+		{"MultipleTypes", "type:requirement,decision,solution", []string{"requirement", "decision", "solution"}},
 	}
-	if sq.EntityTypes[0] != "requirement" {
-		t.Errorf("Expected type 'requirement', got %s", sq.EntityTypes[0])
-	}
-}
-
-func TestParseQuery_MultipleTypes(t *testing.T) {
-	sq := ParseQuery("type:requirement,decision,solution")
-	if len(sq.EntityTypes) != 3 {
-		t.Errorf("Expected 3 entity types, got %d", len(sq.EntityTypes))
-	}
-	expected := []string{"requirement", "decision", "solution"}
-	for i, typ := range expected {
-		if sq.EntityTypes[i] != typ {
-			t.Errorf("Expected type %d to be %s, got %s", i, typ, sq.EntityTypes[i])
-		}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sq := ParseQuery(tc.query)
+			if !slices.Equal(sq.EntityTypes, tc.want) {
+				t.Errorf("Expected entity types %v, got %v", tc.want, sq.EntityTypes)
+			}
+		})
 	}
 }
 
-func TestParseQuery_PropertyFilter(t *testing.T) {
-	sq := ParseQuery("prop:status=published")
-	if len(sq.PropertyFilters) != 1 {
-		t.Errorf("Expected 1 property filter, got %d", len(sq.PropertyFilters))
+func TestParseQuery_SinglePropertyFilter(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantProp  string
+		wantValue string
+	}{
+		{"PropertyFilter", "prop:status=published", "status", "published"},
+		{"PropertyFilterGreaterThan", "prop:priority>3", "priority", "3"},
+		{"StatusShortcut", "status:draft", "status", "draft"},
 	}
-	f := sq.PropertyFilters[0]
-	if f.Property != "status" {
-		t.Errorf("Expected property 'status', got %s", f.Property)
-	}
-	if f.Value != "published" {
-		t.Errorf("Expected value 'published', got %s", f.Value)
-	}
-}
-
-func TestParseQuery_PropertyFilterGreaterThan(t *testing.T) {
-	sq := ParseQuery("prop:priority>3")
-	if len(sq.PropertyFilters) != 1 {
-		t.Errorf("Expected 1 property filter, got %d", len(sq.PropertyFilters))
-	}
-	f := sq.PropertyFilters[0]
-	if f.Property != "priority" {
-		t.Errorf("Expected property 'priority', got %s", f.Property)
-	}
-	if f.Value != "3" {
-		t.Errorf("Expected value '3', got %s", f.Value)
-	}
-}
-
-func TestParseQuery_StatusShortcut(t *testing.T) {
-	sq := ParseQuery("status:draft")
-	if len(sq.PropertyFilters) != 1 {
-		t.Errorf("Expected 1 property filter, got %d", len(sq.PropertyFilters))
-	}
-	f := sq.PropertyFilters[0]
-	if f.Property != "status" {
-		t.Errorf("Expected property 'status', got %s", f.Property)
-	}
-	if f.Value != "draft" {
-		t.Errorf("Expected value 'draft', got %s", f.Value)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sq := ParseQuery(tc.query)
+			if len(sq.PropertyFilters) != 1 {
+				t.Fatalf("Expected 1 property filter, got %d", len(sq.PropertyFilters))
+			}
+			f := sq.PropertyFilters[0]
+			if f.Property != tc.wantProp {
+				t.Errorf("Expected property %q, got %s", tc.wantProp, f.Property)
+			}
+			if f.Value != tc.wantValue {
+				t.Errorf("Expected value %q, got %s", tc.wantValue, f.Value)
+			}
+		})
 	}
 }
 
@@ -142,24 +125,19 @@ func TestParseQuery_Combined(t *testing.T) {
 	}
 }
 
-func TestParseQuery_InvalidPropertyFilter(t *testing.T) {
-	sq := ParseQuery("prop:status")
-	if len(sq.ParseErrors) == 0 {
-		t.Error("Expected parse error for invalid property filter")
+func TestParseQuery_ParseErrors(t *testing.T) {
+	tests := []struct{ name, query string }{
+		{"InvalidPropertyFilter", "prop:status"},
+		{"EmptyType", "type:"},
+		{"EmptyStatus", "status:"},
+		{"SortEmpty", "sort:"},
 	}
-}
-
-func TestParseQuery_EmptyType(t *testing.T) {
-	sq := ParseQuery("type:")
-	if len(sq.ParseErrors) == 0 {
-		t.Error("Expected parse error for empty type filter")
-	}
-}
-
-func TestParseQuery_EmptyStatus(t *testing.T) {
-	sq := ParseQuery("status:")
-	if len(sq.ParseErrors) == 0 {
-		t.Error("Expected parse error for empty status filter")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if sq := ParseQuery(tc.query); len(sq.ParseErrors) == 0 {
+				t.Errorf("Expected parse error for %q", tc.query)
+			}
+		})
 	}
 }
 
@@ -198,38 +176,29 @@ func TestTokenize(t *testing.T) {
 }
 
 func TestParseQuery_SortClause(t *testing.T) {
-	sq := ParseQuery("sort:priority")
-	if len(sq.SortClauses) != 1 {
-		t.Fatalf("Expected 1 sort clause, got %d", len(sq.SortClauses))
+	tests := []struct {
+		name     string
+		query    string
+		wantProp string
+		wantDir  string
+	}{
+		{"Default", "sort:priority", "priority", "asc"},
+		{"Desc", "sort:priority:desc", "priority", "desc"},
+		{"AscExplicit", "sort:title:asc", "title", "asc"},
 	}
-	if sq.SortClauses[0].Property != "priority" {
-		t.Errorf("Expected property 'priority', got %s", sq.SortClauses[0].Property)
-	}
-	if sq.SortClauses[0].Direction != "asc" {
-		t.Errorf("Expected direction 'asc', got %s", sq.SortClauses[0].Direction)
-	}
-}
-
-func TestParseQuery_SortClauseDesc(t *testing.T) {
-	sq := ParseQuery("sort:priority:desc")
-	if len(sq.SortClauses) != 1 {
-		t.Fatalf("Expected 1 sort clause, got %d", len(sq.SortClauses))
-	}
-	if sq.SortClauses[0].Property != "priority" {
-		t.Errorf("Expected property 'priority', got %s", sq.SortClauses[0].Property)
-	}
-	if sq.SortClauses[0].Direction != "desc" {
-		t.Errorf("Expected direction 'desc', got %s", sq.SortClauses[0].Direction)
-	}
-}
-
-func TestParseQuery_SortClauseAscExplicit(t *testing.T) {
-	sq := ParseQuery("sort:title:asc")
-	if len(sq.SortClauses) != 1 {
-		t.Fatalf("Expected 1 sort clause, got %d", len(sq.SortClauses))
-	}
-	if sq.SortClauses[0].Direction != "asc" {
-		t.Errorf("Expected direction 'asc', got %s", sq.SortClauses[0].Direction)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sq := ParseQuery(tc.query)
+			if len(sq.SortClauses) != 1 {
+				t.Fatalf("Expected 1 sort clause, got %d", len(sq.SortClauses))
+			}
+			if sq.SortClauses[0].Property != tc.wantProp {
+				t.Errorf("Expected property %q, got %s", tc.wantProp, sq.SortClauses[0].Property)
+			}
+			if sq.SortClauses[0].Direction != tc.wantDir {
+				t.Errorf("Expected direction %q, got %s", tc.wantDir, sq.SortClauses[0].Direction)
+			}
+		})
 	}
 }
 
@@ -259,13 +228,6 @@ func TestParseQuery_MultipleSortClauses(t *testing.T) {
 	}
 	if sq.SortClauses[1].Property != "title" || sq.SortClauses[1].Direction != "asc" {
 		t.Errorf("Second sort clause wrong: %+v", sq.SortClauses[1])
-	}
-}
-
-func TestParseQuery_SortEmpty(t *testing.T) {
-	sq := ParseQuery("sort:")
-	if len(sq.ParseErrors) == 0 {
-		t.Error("Expected parse error for empty sort")
 	}
 }
 
@@ -314,43 +276,12 @@ func TestParseQuery_SortNotAFilter(t *testing.T) {
 }
 
 func TestAutocompleteContext_Sort(t *testing.T) {
-	ctx := GetAutocompleteContext("sort:", 5)
-	if ctx.Type != "sort" {
-		t.Errorf("Expected type 'sort', got %s", ctx.Type)
-	}
-	if ctx.Prefix != "" {
-		t.Errorf("Expected empty prefix, got %s", ctx.Prefix)
-	}
-}
-
-func TestAutocompleteContext_SortWithPrefix(t *testing.T) {
-	ctx := GetAutocompleteContext("sort:pri", 8)
-	if ctx.Type != "sort" {
-		t.Errorf("Expected type 'sort', got %s", ctx.Type)
-	}
-	if ctx.Prefix != "pri" {
-		t.Errorf("Expected prefix 'pri', got %s", ctx.Prefix)
-	}
-}
-
-func TestAutocompleteContext_SortDir(t *testing.T) {
-	ctx := GetAutocompleteContext("sort:priority:", 14)
-	if ctx.Type != "sortdir" {
-		t.Errorf("Expected type 'sortdir', got %s", ctx.Type)
-	}
-	if ctx.Prefix != "" {
-		t.Errorf("Expected empty prefix, got %s", ctx.Prefix)
-	}
-}
-
-func TestAutocompleteContext_SortDirWithPrefix(t *testing.T) {
-	ctx := GetAutocompleteContext("sort:priority:de", 16)
-	if ctx.Type != "sortdir" {
-		t.Errorf("Expected type 'sortdir', got %s", ctx.Type)
-	}
-	if ctx.Prefix != "de" {
-		t.Errorf("Expected prefix 'de', got %s", ctx.Prefix)
-	}
+	runAutocompleteCases(t, []autocompleteCase{
+		{name: "Sort", query: "sort:", cursorPos: 5, wantType: "sort"},
+		{name: "SortWithPrefix", query: "sort:pri", cursorPos: 8, wantType: "sort", wantPrefix: "pri"},
+		{name: "SortDir", query: "sort:priority:", cursorPos: 14, wantType: "sortdir"},
+		{name: "SortDirWithPrefix", query: "sort:priority:de", cursorPos: 16, wantType: "sortdir", wantPrefix: "de"},
+	})
 }
 
 func TestErrorString(t *testing.T) {

@@ -4,21 +4,37 @@ import (
 	"testing"
 )
 
-func TestGetAutocompleteContext_Empty(t *testing.T) {
-	ctx := GetAutocompleteContext("", 0)
-	if ctx.Type != "" {
-		t.Errorf("Expected empty type for empty query, got %s", ctx.Type)
+// autocompleteCase is one GetAutocompleteContext expectation. An unset
+// want field expects the empty value.
+type autocompleteCase struct {
+	name         string
+	query        string
+	cursorPos    int
+	wantType     string
+	wantPrefix   string
+	wantProperty string
+}
+
+func runAutocompleteCases(t *testing.T, tests []autocompleteCase) {
+	t.Helper()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := GetAutocompleteContext(tt.query, tt.cursorPos)
+			if ctx.Type != tt.wantType {
+				t.Errorf("Expected type %q, got %q", tt.wantType, ctx.Type)
+			}
+			if ctx.Prefix != tt.wantPrefix {
+				t.Errorf("Expected prefix %q, got %q", tt.wantPrefix, ctx.Prefix)
+			}
+			if ctx.PropertyName != tt.wantProperty {
+				t.Errorf("Expected property name %q, got %q", tt.wantProperty, ctx.PropertyName)
+			}
+		})
 	}
 }
 
 func TestGetAutocompleteContext_Type(t *testing.T) {
-	tests := []struct {
-		name       string
-		query      string
-		cursorPos  int
-		wantType   string
-		wantPrefix string
-	}{
+	runAutocompleteCases(t, []autocompleteCase{
 		{
 			name:       "type: with empty prefix",
 			query:      "type:",
@@ -54,29 +70,11 @@ func TestGetAutocompleteContext_Type(t *testing.T) {
 			wantType:   "type",
 			wantPrefix: "req",
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := GetAutocompleteContext(tt.query, tt.cursorPos)
-			if ctx.Type != tt.wantType {
-				t.Errorf("Expected type %q, got %q", tt.wantType, ctx.Type)
-			}
-			if ctx.Prefix != tt.wantPrefix {
-				t.Errorf("Expected prefix %q, got %q", tt.wantPrefix, ctx.Prefix)
-			}
-		})
-	}
+	})
 }
 
 func TestGetAutocompleteContext_Prop(t *testing.T) {
-	tests := []struct {
-		name       string
-		query      string
-		cursorPos  int
-		wantType   string
-		wantPrefix string
-	}{
+	runAutocompleteCases(t, []autocompleteCase{
 		{
 			name:       "prop: with empty prefix",
 			query:      "prop:",
@@ -98,30 +96,11 @@ func TestGetAutocompleteContext_Prop(t *testing.T) {
 			wantType:   "prop",
 			wantPrefix: "status",
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := GetAutocompleteContext(tt.query, tt.cursorPos)
-			if ctx.Type != tt.wantType {
-				t.Errorf("Expected type %q, got %q", tt.wantType, ctx.Type)
-			}
-			if ctx.Prefix != tt.wantPrefix {
-				t.Errorf("Expected prefix %q, got %q", tt.wantPrefix, ctx.Prefix)
-			}
-		})
-	}
+	})
 }
 
 func TestGetAutocompleteContext_PropValue(t *testing.T) {
-	tests := []struct {
-		name         string
-		query        string
-		cursorPos    int
-		wantType     string
-		wantPrefix   string
-		wantProperty string
-	}{
+	runAutocompleteCases(t, []autocompleteCase{
 		{
 			name:         "prop:status= with empty prefix",
 			query:        "prop:status=",
@@ -194,32 +173,11 @@ func TestGetAutocompleteContext_PropValue(t *testing.T) {
 			wantPrefix:   "",
 			wantProperty: "status",
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := GetAutocompleteContext(tt.query, tt.cursorPos)
-			if ctx.Type != tt.wantType {
-				t.Errorf("Expected type %q, got %q", tt.wantType, ctx.Type)
-			}
-			if ctx.Prefix != tt.wantPrefix {
-				t.Errorf("Expected prefix %q, got %q", tt.wantPrefix, ctx.Prefix)
-			}
-			if ctx.PropertyName != tt.wantProperty {
-				t.Errorf("Expected property name %q, got %q", tt.wantProperty, ctx.PropertyName)
-			}
-		})
-	}
+	})
 }
 
 func TestGetAutocompleteContext_Status(t *testing.T) {
-	tests := []struct {
-		name       string
-		query      string
-		cursorPos  int
-		wantType   string
-		wantPrefix string
-	}{
+	runAutocompleteCases(t, []autocompleteCase{
 		{
 			name:       "status: with empty prefix",
 			query:      "status:",
@@ -241,19 +199,7 @@ func TestGetAutocompleteContext_Status(t *testing.T) {
 			wantType:   "status",
 			wantPrefix: "draft",
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := GetAutocompleteContext(tt.query, tt.cursorPos)
-			if ctx.Type != tt.wantType {
-				t.Errorf("Expected type %q, got %q", tt.wantType, ctx.Type)
-			}
-			if ctx.Prefix != tt.wantPrefix {
-				t.Errorf("Expected prefix %q, got %q", tt.wantPrefix, ctx.Prefix)
-			}
-		})
-	}
+	})
 }
 
 func TestGetAutocompleteContext_CursorPositions(t *testing.T) {
@@ -306,14 +252,7 @@ func TestGetAutocompleteContext_CursorPositions(t *testing.T) {
 }
 
 func TestGetAutocompleteContext_MultipleTokens(t *testing.T) {
-	tests := []struct {
-		name         string
-		query        string
-		cursorPos    int
-		wantType     string
-		wantPrefix   string
-		wantProperty string
-	}{
+	runAutocompleteCases(t, []autocompleteCase{
 		{
 			name:       "cursor in second token",
 			query:      "type:req status:dr",
@@ -336,19 +275,7 @@ func TestGetAutocompleteContext_MultipleTokens(t *testing.T) {
 			wantPrefix:   "draft",
 			wantProperty: "status",
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := GetAutocompleteContext(tt.query, tt.cursorPos)
-			if ctx.Type != tt.wantType {
-				t.Errorf("Expected type %q, got %q", tt.wantType, ctx.Type)
-			}
-			if ctx.Prefix != tt.wantPrefix {
-				t.Errorf("Expected prefix %q, got %q", tt.wantPrefix, ctx.Prefix)
-			}
-		})
-	}
+	})
 }
 
 func TestGetAutocompleteContext_NoAutocomplete(t *testing.T) {
@@ -357,6 +284,11 @@ func TestGetAutocompleteContext_NoAutocomplete(t *testing.T) {
 		query     string
 		cursorPos int
 	}{
+		{
+			name:      "Empty",
+			query:     "",
+			cursorPos: 0,
+		},
 		{
 			name:      "plain text",
 			query:     "hello world",

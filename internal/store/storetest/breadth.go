@@ -3,7 +3,7 @@ package storetest
 import (
 	"context"
 	"iter"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -95,7 +95,7 @@ func (b *Breadth) String() string {
 	for k := range b.ids {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	var sb strings.Builder
 	for i, k := range keys {
 		if i > 0 {

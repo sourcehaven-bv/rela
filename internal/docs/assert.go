@@ -3,7 +3,6 @@ package docs
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -178,7 +177,7 @@ func declaredTypes(m *metamodel.Metamodel) []string {
 	for name := range m.Entities {
 		out = append(out, name)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -227,7 +226,7 @@ func (dr *docRuntime) entityIDs(typ string, scope store.WorldScope) ([]string, e
 		}
 		ids = append(ids, e.ID)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	return ids, nil
 }
 
@@ -333,9 +332,9 @@ func rejectUnknownKeys(dr luaFailer, ls *lua.LState, verb string, tbl *lua.LTabl
 	if len(unknown) == 0 {
 		return false
 	}
-	sort.Strings(unknown)
+	slices.Sort(unknown)
 	sortedKnown := append([]string(nil), known...)
-	sort.Strings(sortedKnown)
+	slices.Sort(sortedKnown)
 	dr.luaFail(ls, "%s: unknown %s %s — a misspelled claim would be silently "+
 		"dropped, so it is refused. Known keys: %s",
 		verb, pluralize("key", len(unknown)), strings.Join(unknown, ", "),

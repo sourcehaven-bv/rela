@@ -1,8 +1,9 @@
 package analysis
 
 import (
+	"cmp"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -98,7 +99,7 @@ func (s *Service) CheckRelationFilenames() []RelationFilenameIssue {
 		}
 	}
 
-	sort.Slice(issues, func(i, j int) bool { return issues[i].File < issues[j].File })
+	slices.SortFunc(issues, func(a, b RelationFilenameIssue) int { return cmp.Compare(a.File, b.File) })
 	return issues
 }
 

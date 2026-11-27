@@ -8,7 +8,7 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -249,7 +249,7 @@ func jsonlFiles(paths []string) ([]string, error) {
 		if err != nil { // coverage-ignore: the pattern is fixed and valid
 			return nil, err
 		}
-		sort.Strings(matches)
+		slices.Sort(matches)
 		files = append(files, matches...)
 	}
 	return files, nil

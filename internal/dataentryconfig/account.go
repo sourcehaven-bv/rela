@@ -6,7 +6,6 @@ import (
 	"net/mail"
 	"net/url"
 	"slices"
-	"sort"
 	"strings"
 	"unicode"
 
@@ -172,7 +171,7 @@ func unknownKeysIn(prefix string, m map[string]any, valid []string) []string {
 				prefix, key, strings.Join(valid, ", ")))
 		}
 	}
-	sort.Strings(errs)
+	slices.Sort(errs)
 	return errs
 }
 

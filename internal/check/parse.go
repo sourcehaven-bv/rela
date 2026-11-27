@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -53,7 +53,7 @@ func parseVale(out []byte) ([]rawFinding, error) {
 	for k := range files {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 
 	var fs []rawFinding
 	for _, k := range keys {

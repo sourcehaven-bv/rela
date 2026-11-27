@@ -1,11 +1,12 @@
 package storetest_test
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -65,7 +66,7 @@ func collectEntities(it func(func(*entity.Entity, error) bool)) ([]*entity.Entit
 		}
 		out = append(out, e)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	slices.SortFunc(out, func(a, b *entity.Entity) int { return cmp.Compare(a.ID, b.ID) })
 	return out, retErr
 }
 
@@ -80,7 +81,7 @@ func collectRelations(it func(func(*entity.Relation, error) bool)) ([]*entity.Re
 		}
 		out = append(out, r)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Key() < out[j].Key() })
+	slices.SortFunc(out, func(a, b *entity.Relation) int { return cmp.Compare(a.Key(), b.Key()) })
 	return out, retErr
 }
 

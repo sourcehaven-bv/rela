@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
-	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -166,7 +165,7 @@ func maybeRenumberSide(
 			values = append(values, v)
 		}
 	}
-	sort.Float64s(values)
+	slices.Sort(values)
 	if !NeedsRenumber(values) {
 		return nil, nil
 	}
@@ -250,7 +249,7 @@ func (m *Manager) runRenumberAfterUpdate(ctx context.Context, key entity.Relatio
 			if err != nil {
 				return err
 			}
-			sort.Float64s(vals)
+			slices.Sort(vals)
 			if !NeedsRenumber(vals) {
 				return nil
 			}

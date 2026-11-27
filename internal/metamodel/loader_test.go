@@ -1057,8 +1057,15 @@ validations:
 	}
 }
 
-func TestParse_UnknownPropertyType(t *testing.T) {
-	yaml := `
+func TestParse_Errors(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want []string
+	}{
+		{
+			name: "UnknownPropertyType",
+			yaml: `
 version: "1.0"
 entities:
   requirement:
@@ -1073,15 +1080,225 @@ entities:
         type: mypriority
 types: {}
 relations: {}
-`
-	_, err := Parse([]byte(yaml))
-	assertError(t, err)
-
-	if !strings.Contains(err.Error(), "unknown type") {
-		t.Errorf("expected 'unknown type' in error, got: %v", err)
+`,
+			want: []string{"unknown type", "mypriority"},
+		},
+		{
+			name: "EnumWithoutValues",
+			yaml: `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+        required: true
+      priority:
+        type: enum
+types: {}
+relations: {}
+`,
+			want: []string{"enum", "values"},
+		},
+		{
+			name: "RelationReferencesUnknownEntityType",
+			yaml: `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+types: {}
+relations:
+  addresses:
+    label: addresses
+    from: [nonexistent]
+    to: [requirement]
+`,
+			want: []string{"unknown entity type", "nonexistent"},
+		},
+		{
+			name: "EmptyEntities",
+			yaml: `
+version: "1.0"
+entities: {}
+types: {}
+relations: {}
+`,
+			want: []string{"no entity types defined"},
+		},
+		{
+			name: "MissingEntityLabel",
+			yaml: `
+version: "1.0"
+entities:
+  requirement:
+    id_prefix: "REQ-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+types: {}
+relations: {}
+`,
+			want: []string{"missing 'label'"},
+		},
+		{
+			name: "MissingEntityProperties",
+			yaml: `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    id_type: sequential
+types: {}
+relations: {}
+`,
+			want: []string{"no properties defined"},
+		},
+		{
+			name: "MissingIDPrefix",
+			yaml: `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    properties:
+      title:
+        type: string
+types: {}
+relations: {}
+`,
+			want: []string{"no ID prefix defined"},
+		},
+		{
+			name: "EmptyPropertyType",
+			yaml: `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+      notes:
+        type:
+types: {}
+relations: {}
+`,
+			want: []string{"no type specified"},
+		},
+		{
+			name: "CustomTypeWithInvalidRegex",
+			yaml: `
+version: "1.0"
+namespace: "https://example.org/"
+types:
+  bad_type:
+    validations:
+      - pattern: '[invalid(regex'
+        error: "This won't work"
+entities:
+  item:
+    label: Item
+    id_prefix: "ITEM-"
+    properties:
+      name:
+        type: string
+        required: true
+`,
+			want: []string{"invalid regex pattern"},
+		},
+		{
+			name: "CustomTypeWithEmptyPattern",
+			yaml: `
+version: "1.0"
+namespace: "https://example.org/"
+types:
+  bad_type:
+    validations:
+      - pattern: ""
+        error: "Empty pattern"
+entities:
+  item:
+    label: Item
+    id_prefix: "ITEM-"
+    properties:
+      name:
+        type: string
+        required: true
+`,
+			want: []string{"empty pattern"},
+		},
+		{
+			name: "CustomTypeWithEmptyError",
+			yaml: `
+version: "1.0"
+namespace: "https://example.org/"
+types:
+  bad_type:
+    validations:
+      - pattern: "^test$"
+        error: ""
+entities:
+  item:
+    label: Item
+    id_prefix: "ITEM-"
+    properties:
+      name:
+        type: string
+        required: true
+`,
+			want: []string{"empty error message"},
+		},
+		// E5: orderable on a symmetric relation has no meaningful semantics — a
+		// symmetric edge has no canonical direction to order, so the engine
+		// refuses the combination at load time.
+		{
+			name: "RelationOrderable_RejectsSymmetric",
+			yaml: `
+version: "1.0"
+entities:
+  task:
+    label: Task
+    id_prefix: "TASK-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+relations:
+  related-to:
+    label: related to
+    from: [task]
+    to: [task]
+    symmetric: true
+    orderable: outgoing
+`,
+			want: []string{"symmetric"},
+		},
 	}
-	if !strings.Contains(err.Error(), "mypriority") {
-		t.Errorf("expected 'mypriority' in error, got: %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.yaml))
+			if err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %v, want it to contain %q", err, want)
+				}
+			}
+		})
 	}
 }
 
@@ -1122,138 +1339,6 @@ relations: {}
 	}
 }
 
-func TestParse_EnumWithoutValues(t *testing.T) {
-	yaml := `
-version: "1.0"
-entities:
-  requirement:
-    label: Requirement
-    id_prefix: "REQ-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-        required: true
-      priority:
-        type: enum
-types: {}
-relations: {}
-`
-	_, err := Parse([]byte(yaml))
-	assertError(t, err)
-
-	if !strings.Contains(err.Error(), "enum") {
-		t.Errorf("expected 'enum' in error, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "values") {
-		t.Errorf("expected 'values' in error, got: %v", err)
-	}
-}
-
-func TestParse_RelationReferencesUnknownEntityType(t *testing.T) {
-	yaml := `
-version: "1.0"
-entities:
-  requirement:
-    label: Requirement
-    id_prefix: "REQ-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-types: {}
-relations:
-  addresses:
-    label: addresses
-    from: [nonexistent]
-    to: [requirement]
-`
-	_, err := Parse([]byte(yaml))
-	assertError(t, err)
-
-	if !strings.Contains(err.Error(), "unknown entity type") {
-		t.Errorf("expected 'unknown entity type' in error, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "nonexistent") {
-		t.Errorf("expected 'nonexistent' in error, got: %v", err)
-	}
-}
-
-func TestParse_EmptyEntities(t *testing.T) {
-	yaml := `
-version: "1.0"
-entities: {}
-types: {}
-relations: {}
-`
-	_, err := Parse([]byte(yaml))
-	assertError(t, err)
-
-	if !strings.Contains(err.Error(), "no entity types defined") {
-		t.Errorf("expected 'no entity types defined' in error, got: %v", err)
-	}
-}
-
-func TestParse_MissingEntityLabel(t *testing.T) {
-	yaml := `
-version: "1.0"
-entities:
-  requirement:
-    id_prefix: "REQ-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-types: {}
-relations: {}
-`
-	_, err := Parse([]byte(yaml))
-	assertError(t, err)
-
-	if !strings.Contains(err.Error(), "missing 'label'") {
-		t.Errorf("expected \"missing 'label'\" in error, got: %v", err)
-	}
-}
-
-func TestParse_MissingEntityProperties(t *testing.T) {
-	yaml := `
-version: "1.0"
-entities:
-  requirement:
-    label: Requirement
-    id_prefix: "REQ-"
-    id_type: sequential
-types: {}
-relations: {}
-`
-	_, err := Parse([]byte(yaml))
-	assertError(t, err)
-
-	if !strings.Contains(err.Error(), "no properties defined") {
-		t.Errorf("expected 'no properties defined' in error, got: %v", err)
-	}
-}
-
-func TestParse_MissingIDPrefix(t *testing.T) {
-	yaml := `
-version: "1.0"
-entities:
-  requirement:
-    label: Requirement
-    properties:
-      title:
-        type: string
-types: {}
-relations: {}
-`
-	_, err := Parse([]byte(yaml))
-	assertError(t, err)
-
-	if !strings.Contains(err.Error(), "no ID prefix defined") {
-		t.Errorf("expected 'no ID prefix defined' in error, got: %v", err)
-	}
-}
-
 func TestParse_MissingIDPrefixManualIDTypeOK(t *testing.T) {
 	yaml := `
 version: "1.0"
@@ -1269,30 +1354,6 @@ relations: {}
 `
 	_, err := Parse([]byte(yaml))
 	assertNoError(t, err)
-}
-
-func TestParse_EmptyPropertyType(t *testing.T) {
-	yaml := `
-version: "1.0"
-entities:
-  requirement:
-    label: Requirement
-    id_prefix: "REQ-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-      notes:
-        type:
-types: {}
-relations: {}
-`
-	_, err := Parse([]byte(yaml))
-	assertError(t, err)
-
-	if !strings.Contains(err.Error(), "no type specified") {
-		t.Errorf("expected 'no type specified' in error, got: %v", err)
-	}
 }
 
 func TestParse_MultipleValidationErrors(t *testing.T) {
@@ -1425,87 +1486,6 @@ entities:
 	}
 	if semver.Validations[0].Error != "Must be valid semver (e.g., 1.2.3)" {
 		t.Errorf("unexpected error message: %s", semver.Validations[0].Error)
-	}
-}
-
-func TestParse_CustomTypeWithInvalidRegex(t *testing.T) {
-	yaml := `
-version: "1.0"
-namespace: "https://example.org/"
-types:
-  bad_type:
-    validations:
-      - pattern: '[invalid(regex'
-        error: "This won't work"
-entities:
-  item:
-    label: Item
-    id_prefix: "ITEM-"
-    properties:
-      name:
-        type: string
-        required: true
-`
-	_, err := Parse([]byte(yaml))
-	if err == nil {
-		t.Fatal("expected error for invalid regex pattern")
-	}
-	if !strings.Contains(err.Error(), "invalid regex pattern") {
-		t.Errorf("expected 'invalid regex pattern' in error, got: %v", err)
-	}
-}
-
-func TestParse_CustomTypeWithEmptyPattern(t *testing.T) {
-	yaml := `
-version: "1.0"
-namespace: "https://example.org/"
-types:
-  bad_type:
-    validations:
-      - pattern: ""
-        error: "Empty pattern"
-entities:
-  item:
-    label: Item
-    id_prefix: "ITEM-"
-    properties:
-      name:
-        type: string
-        required: true
-`
-	_, err := Parse([]byte(yaml))
-	if err == nil {
-		t.Fatal("expected error for empty pattern")
-	}
-	if !strings.Contains(err.Error(), "empty pattern") {
-		t.Errorf("expected 'empty pattern' in error, got: %v", err)
-	}
-}
-
-func TestParse_CustomTypeWithEmptyError(t *testing.T) {
-	yaml := `
-version: "1.0"
-namespace: "https://example.org/"
-types:
-  bad_type:
-    validations:
-      - pattern: "^test$"
-        error: ""
-entities:
-  item:
-    label: Item
-    id_prefix: "ITEM-"
-    properties:
-      name:
-        type: string
-        required: true
-`
-	_, err := Parse([]byte(yaml))
-	if err == nil {
-		t.Fatal("expected error for empty error message")
-	}
-	if !strings.Contains(err.Error(), "empty error message") {
-		t.Errorf("expected 'empty error message' in error, got: %v", err)
 	}
 }
 
@@ -2452,37 +2432,6 @@ relations:
 				t.Errorf("error %q does not mention managed property %q", err.Error(), tt.prop)
 			}
 		})
-	}
-}
-
-// E5: orderable on a symmetric relation has no meaningful semantics — a
-// symmetric edge has no canonical direction to order, so the engine
-// refuses the combination at load time.
-func TestParse_RelationOrderable_RejectsSymmetric(t *testing.T) {
-	yaml := `
-version: "1.0"
-entities:
-  task:
-    label: Task
-    id_prefix: "TASK-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-relations:
-  related-to:
-    label: related to
-    from: [task]
-    to: [task]
-    symmetric: true
-    orderable: outgoing
-`
-	_, err := Parse([]byte(yaml))
-	if err == nil {
-		t.Fatal("expected error for orderable + symmetric combination")
-	}
-	if !strings.Contains(err.Error(), "symmetric") {
-		t.Errorf("error %q does not mention the symmetric conflict", err.Error())
 	}
 }
 

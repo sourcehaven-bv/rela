@@ -26,7 +26,7 @@ package conditionlint
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -47,7 +47,7 @@ func Lint(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []string {
 		}
 		lintForm(formID, form, env, &errs)
 	}
-	sort.Strings(errs)
+	slices.Sort(errs)
 	return errs
 }
 

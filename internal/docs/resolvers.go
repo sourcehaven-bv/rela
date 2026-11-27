@@ -3,7 +3,6 @@ package docs
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -36,7 +35,7 @@ func propertyNames(def *metamodel.EntityDef) []string {
 	for n := range def.Properties {
 		names = append(names, n)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 
@@ -168,7 +167,7 @@ func (dr *docRuntime) luaRelations(ls *lua.LState) int {
 	for name := range dr.meta.Relations {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	var b strings.Builder
 	for _, name := range names {
@@ -220,7 +219,7 @@ func (dr *docRuntime) luaEntity(ls *lua.LState) int {
 		for k := range e.Properties {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys)
+		slices.Sort(keys)
 		for _, k := range keys {
 			emitField(k)
 		}

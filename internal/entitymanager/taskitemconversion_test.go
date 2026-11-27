@@ -5,7 +5,7 @@ import (
 	"errors"
 	"maps"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -500,7 +500,7 @@ func TestTaskItemConvert_RefusesToCopyAnUnreadableField(t *testing.T) {
 		require.NotNil(t, r.Subject)
 		probed = append(probed, r.Subject.Type+":"+r.Subject.ID)
 	}
-	sort.Strings(probed)
+	slices.Sort(probed)
 	if want := []string{"ticket:TKT-1", "ticket:TKT-2"}; !reflect.DeepEqual(probed, want) {
 		t.Fatalf("denied-write subjects = %v, want %v", probed, want)
 	}

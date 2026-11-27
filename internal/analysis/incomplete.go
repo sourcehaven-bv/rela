@@ -3,7 +3,7 @@ package analysis
 import (
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -68,7 +68,7 @@ func IncompleteScanFiles(err error) []string {
 	for p := range seen {
 		out = append(out, p)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

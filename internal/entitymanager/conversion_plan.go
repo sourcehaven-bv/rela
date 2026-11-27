@@ -1,6 +1,7 @@
 package entitymanager
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -9,7 +10,6 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
-	"sort"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -218,7 +218,7 @@ func conversionInputs(d metamodel.ConversionDef) (fields []string, usesContent b
 			fields = append(fields, match[1])
 		}
 	}
-	sort.Strings(fields)
+	slices.Sort(fields)
 	return slices.Compact(fields), usesContent
 }
 
@@ -332,7 +332,7 @@ func relationProblemTexts(problems []relationProblem) []string {
 			hidden = true
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	if hidden {
 		out = append(out, hiddenRelationProblem)
 	}
@@ -388,7 +388,7 @@ func (p *conversionPlan) faceMoves() []ConversionMove {
 	for src, dst := range p.faceMap {
 		moves = append(moves, ConversionMove{SourceFace: src.String(), TargetFace: dst.String()})
 	}
-	sort.Slice(moves, func(i, j int) bool { return moves[i].SourceFace < moves[j].SourceFace })
+	slices.SortFunc(moves, func(a, b ConversionMove) int { return cmp.Compare(a.SourceFace, b.SourceFace) })
 	return moves
 }
 

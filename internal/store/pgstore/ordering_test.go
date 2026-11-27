@@ -2,7 +2,7 @@ package pgstore_test
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -40,7 +40,7 @@ func TestListOrderIsByteWise(t *testing.T) {
 
 	// Expected = Go's own byte-wise sort, the canonical cross-backend order.
 	want := append([]string(nil), ids...)
-	sort.Strings(want)
+	slices.Sort(want)
 
 	var got []string
 	for e, err := range s.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {

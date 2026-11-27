@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
@@ -169,7 +169,7 @@ func (h *schemaHandler) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Requ
 		for name := range s.Meta.Entities {
 			names = append(names, name)
 		}
-		sort.Strings(names)
+		slices.Sort(names)
 		writeV1JSON(w, http.StatusOK, names)
 
 	case strings.HasPrefix(path, "types/"):

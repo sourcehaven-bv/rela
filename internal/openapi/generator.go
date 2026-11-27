@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -220,7 +220,7 @@ func (g *Generator) generate(rt *realtimecfg.Compiled) *Spec {
 
 	// Add entity paths (dynamic from metamodel)
 	entityTypes := g.meta.EntityTypes()
-	sort.Strings(entityTypes) // Deterministic order
+	slices.Sort(entityTypes) // Deterministic order
 	for _, typeName := range entityTypes {
 		def := g.meta.Entities[typeName]
 		g.addEntityPaths(spec, typeName, def)
@@ -244,7 +244,7 @@ func (g *Generator) computeMetamodelHash() string {
 
 	// Hash entity types (sorted for determinism)
 	entityTypes := g.meta.EntityTypes()
-	sort.Strings(entityTypes)
+	slices.Sort(entityTypes)
 	for _, typeName := range entityTypes {
 		h.Write([]byte("entity:" + typeName))
 		def := g.meta.Entities[typeName]
@@ -259,7 +259,7 @@ func (g *Generator) computeMetamodelHash() string {
 		for name := range def.Properties {
 			propNames = append(propNames, name)
 		}
-		sort.Strings(propNames)
+		slices.Sort(propNames)
 		for _, name := range propNames {
 			prop := def.Properties[name]
 			h.Write([]byte("prop:" + name))
@@ -281,7 +281,7 @@ func (g *Generator) computeMetamodelHash() string {
 	for name := range g.meta.Relations {
 		relNames = append(relNames, name)
 	}
-	sort.Strings(relNames)
+	slices.Sort(relNames)
 	for _, name := range relNames {
 		rel := g.meta.Relations[name]
 		h.Write([]byte("relation:" + name))
@@ -299,7 +299,7 @@ func (g *Generator) computeMetamodelHash() string {
 	for name := range g.meta.Types {
 		typeNames = append(typeNames, name)
 	}
-	sort.Strings(typeNames)
+	slices.Sort(typeNames)
 	for _, name := range typeNames {
 		ct := g.meta.Types[name]
 		h.Write([]byte("type:" + name))

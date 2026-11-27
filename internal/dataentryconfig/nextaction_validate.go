@@ -2,7 +2,7 @@ package dataentryconfig
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -66,7 +66,7 @@ func sortedNextActionIDs(m map[string]NextActionSource) []string {
 	for id := range m {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	return ids
 }
 

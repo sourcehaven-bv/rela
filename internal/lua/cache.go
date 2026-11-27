@@ -6,7 +6,7 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"math"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -405,7 +405,7 @@ func allowedOptionList(allowed map[string]bool) string {
 	for k := range allowed {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return strings.Join(keys, ", ")
 }
 

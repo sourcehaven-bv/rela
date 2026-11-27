@@ -1,9 +1,11 @@
 package browser
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -74,7 +76,7 @@ func ParseSourceMap(b []byte) (*SourceMap, error) {
 				segs = append(segs, segment{col: col, src: -1})
 			}
 		}
-		sort.Slice(segs, func(i, j int) bool { return segs[i].col < segs[j].col })
+		slices.SortFunc(segs, func(a, b segment) int { return cmp.Compare(a.col, b.col) })
 		m.lines = append(m.lines, segs)
 	}
 	return m, nil

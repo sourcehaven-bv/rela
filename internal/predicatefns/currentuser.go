@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 )
@@ -288,7 +288,7 @@ func sortedFuncNames(m map[string]predicate.FuncSig) []string {
 	for name := range m {
 		out = append(out, name)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

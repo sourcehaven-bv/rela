@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -90,7 +89,7 @@ func CompileWithClock(meta *metamodel.Metamodel, now func() time.Time) (*Set, er
 		}
 	}
 	if len(problems) > 0 {
-		sort.Strings(problems)
+		slices.Sort(problems)
 		return nil, fmt.Errorf("computed: invalid definitions:\n  %s", joinLines(problems))
 	}
 	return set, nil
@@ -255,7 +254,7 @@ func topo(entityType string, compiled map[string]compiledProperty) ([]string, er
 		state[name] = 1
 		stack = append(stack, name)
 		deps := append([]string(nil), compiled[name].dependencies...)
-		sort.Strings(deps)
+		slices.Sort(deps)
 		for _, dep := range deps {
 			if _, computedDep := compiled[dep]; computedDep {
 				if err := visit(dep); err != nil {

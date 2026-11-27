@@ -12,7 +12,6 @@ import (
 	"math"
 	"net/url"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -882,7 +881,7 @@ func suggestIcon(name string) string {
 	// `None` — a spelling authors reach for by reflex — scored closest to
 	// "done" and the message confidently recommended a green check mark.
 	candidates := append(slices.Sorted(maps.Keys(ValidIconNames)), NoIcon)
-	sort.Strings(candidates)
+	slices.Sort(candidates)
 
 	best, bestDist := "", maxDistance+1
 	for _, candidate := range candidates {
@@ -1251,7 +1250,7 @@ func (c *Config) filterControlSources() []filterControlSource {
 	for id := range c.Kanbans {
 		kanbanIDs = append(kanbanIDs, id)
 	}
-	sort.Strings(kanbanIDs)
+	slices.Sort(kanbanIDs)
 	for _, id := range kanbanIDs {
 		kanban := c.Kanbans[id]
 		sources = append(sources, filterControlSource{

@@ -331,32 +331,148 @@ func (s *mockSearcher) Search(ctx context.Context, q search.Query) iter.Seq2[sea
 	}
 }
 
-func TestRunFile_BasicOutput(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	// Create a temp script
-	script := `rela.output({status = "ok"})`
+// runScriptFile writes script to a temp .lua file and runs it with RunFile.
+func runScriptFile(t *testing.T, r *Runtime, script string) error {
+	t.Helper()
 	tmpFile := filepath.Join(t.TempDir(), "test.lua")
 	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
 		t.Fatal(err)
 	}
+	return r.RunFile(tmpFile, nil)
+}
 
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
+// TestRunFile_OutputFields runs a script file against the mock workspace and
+// checks top-level fields of the JSON object it passes to rela.output.
+func TestRunFile_OutputFields(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		script string
+		want   map[string]any
+	}{
+		{name: "BasicOutput", script: `rela.output({status = "ok"})`, want: map[string]any{"status": "ok"}},
+		{name: "GetEntity_NotFound", want: map[string]any{"found": false}, script: `
+local e = rela.get_entity("NONEXISTENT")
+if e == nil then
+    rela.output({found = false})
+else
+    rela.output({found = true})
+end
+`},
+		{name: "ListEntities", want: map[string]any{"count": float64(2)}, script: `
+local tickets = rela.list_entities("ticket")
+rela.output({count = #tickets})
+`},
+		{name: "ListEntities_WithFilter", want: map[string]any{"count": float64(1)}, script: `
+local tickets = rela.list_entities("ticket", "status=done")
+rela.output({count = #tickets})
+`},
+		// Should return all relations (we have 1 in test workspace).
+		{name: "GetRelations_NoFilters", want: map[string]any{"count": float64(1)}, script: `
+local rels = rela.get_relations()
+rela.output({count = #rels})
+`},
+		// For non-existent entity, trace_from returns nil.
+		{name: "TraceFrom_NonExistent", want: map[string]any{"found": false}, script: `
+local trace = rela.trace_from("NONEXISTENT", 0)
+if trace == nil then
+    rela.output({found = false})
+else
+    rela.output({found = true})
+end
+`},
+		{
+			name: "CreateEntity",
+			want: map[string]any{"type": "ticket", "title": "New Ticket", "status": "open"},
+			script: `
+local entity = rela.create_entity("ticket", {title = "New Ticket", status = "open"}, "Content here")
+rela.output({
+    id = entity.id,
+    type = entity.type,
+    title = entity.properties.title,
+    status = entity.properties.status
+})
+`,
+		},
+		{name: "UpdateEntity", want: map[string]any{"id": "TKT-001", "status": "closed"}, script: `
+local entity = rela.update_entity("TKT-001", {status = "closed"})
+rela.output({
+    id = entity.id,
+    status = entity.properties.status
+})
+`},
+		// TKT-002 doesn't have a relation to FEAT-001 yet.
+		{
+			name: "CreateRelation",
+			want: map[string]any{"from": "TKT-002", "type": "implements", "to": "FEAT-001"},
+			script: `
+local rel = rela.create_relation("TKT-002", "implements", "FEAT-001")
+rela.output({
+    from = rel.from,
+    type = rel.type,
+    to = rel.to
+})
+`,
+		},
+		{name: "DeleteRelation", want: map[string]any{"success": true}, script: `
+local success = rela.delete_relation("TKT-001", "implements", "FEAT-001")
+rela.output({success = success})
+`},
+		// Path should have 2 steps: TKT-001 -> FEAT-001.
+		{name: "FindPath", want: map[string]any{"found": true, "length": float64(2)}, script: `
+local path = rela.find_path("TKT-001", "FEAT-001")
+if path then
+    rela.output({found = true, length = #path})
+else
+    rela.output({found = false})
+end
+`},
+		{name: "FindPath_NoPath", want: map[string]any{"found": false}, script: `
+local path = rela.find_path("TKT-001", "NONEXISTENT")
+if path then
+    rela.output({found = true})
+else
+    rela.output({found = false})
+end
+`},
+		{name: "TraceFrom", want: map[string]any{"id": "TKT-001", "has_children": true}, script: `
+local trace = rela.trace_from("TKT-001", 0)
+rela.output({
+    id = trace.id,
+    has_children = #trace.children > 0
+})
+`},
+		// TKT-001 -> FEAT-001 makes FEAT-001 have a child in the upstream trace.
+		{name: "TraceTo", want: map[string]any{"id": "FEAT-001", "has_children": true}, script: `
+local trace = rela.trace_to("FEAT-001", 0)
+rela.output({
+    id = trace.id,
+    has_children = #trace.children > 0
+})
+`},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ws := newMockWorkspace(t)
+			var buf bytes.Buffer
+			r := NewWriter(ws.services(t.TempDir()), &buf)
+			defer r.Close()
 
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
+			if err := runScriptFile(t, r, tc.script); err != nil {
+				t.Fatalf("RunFile failed: %v", err)
+			}
 
-	if result["status"] != "ok" {
-		t.Errorf("Expected status=ok, got %v", result["status"])
+			var result map[string]any
+			if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+				t.Fatalf("Failed to parse output: %v", err)
+			}
+			for key, want := range tc.want {
+				if result[key] != want {
+					t.Errorf("Expected %s=%v, got %v", key, want, result[key])
+				}
+			}
+		})
 	}
 }
 
@@ -436,103 +552,6 @@ rela.output({
 	}
 }
 
-func TestGetEntity_NotFound(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `
-local e = rela.get_entity("NONEXISTENT")
-if e == nil then
-    rela.output({found = false})
-else
-    rela.output({found = true})
-end
-`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["found"] != false {
-		t.Errorf("Expected found=false, got %v", result["found"])
-	}
-}
-
-func TestListEntities(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `
-local tickets = rela.list_entities("ticket")
-rela.output({count = #tickets})
-`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["count"] != float64(2) {
-		t.Errorf("Expected count=2, got %v", result["count"])
-	}
-}
-
-func TestListEntities_WithFilter(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `
-local tickets = rela.list_entities("ticket", "status=done")
-rela.output({count = #tickets})
-`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["count"] != float64(1) {
-		t.Errorf("Expected count=1, got %v", result["count"])
-	}
-}
-
 func TestGetRelations(t *testing.T) {
 	t.Parallel()
 	ws := newMockWorkspace(t)
@@ -591,71 +610,107 @@ rela.output({
 	}
 }
 
+// TestWriteFile checks that rela.write_file writes into the output/
+// directory, with and without the ensure_newline option.
 func TestWriteFile(t *testing.T) {
 	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
-	defer r.Close()
-
-	// Files are written to output/ directory
-	script := `rela.write_file("result.txt", "hello world")`
-	err := r.RunString(script)
-	if err != nil {
-		t.Fatalf("RunString failed: %v", err)
+	tests := []struct {
+		name   string
+		script string
+		file   string
+		want   string
+	}{
+		{
+			name:   "Basic",
+			script: `rela.write_file("result.txt", "hello world")`,
+			file:   "result.txt",
+			want:   "hello world",
+		},
+		{name: "InOutputDir", script: `rela.write_file("result.txt", "allowed")`, file: "result.txt", want: "allowed"},
+		// Write without trailing newline, but with ensure_newline option.
+		{
+			name:   "EnsureNewline",
+			script: `rela.write_file("test.txt", "no newline", {ensure_newline = true})`,
+			file:   "test.txt",
+			want:   "no newline\n",
+		},
+		// Write with trailing newline and ensure_newline option - should not double.
+		{
+			name:   "EnsureNewline_AlreadyHasNewline",
+			script: `rela.write_file("test.txt", "has newline\n", {ensure_newline = true})`,
+			file:   "test.txt",
+			want:   "has newline\n",
+		},
+		// Empty content should stay empty even with ensure_newline.
+		{
+			name:   "EnsureNewline_EmptyContent",
+			script: `rela.write_file("empty.txt", "", {ensure_newline = true})`,
+			file:   "empty.txt",
+			want:   "",
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ws := newMockWorkspace(t)
+			var buf bytes.Buffer
+			projectRoot := t.TempDir()
+			r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
+			defer r.Close()
 
-	// File should be in output/ subdirectory
-	outFile := filepath.Join(projectRoot, "output", "result.txt")
-	content, err := os.ReadFile(outFile)
-	if err != nil {
-		t.Fatalf("Failed to read output file: %v", err)
-	}
+			if err := r.RunString(tc.script); err != nil {
+				t.Fatalf("RunString failed: %v", err)
+			}
 
-	if string(content) != "hello world" {
-		t.Errorf("Expected 'hello world', got %q", string(content))
+			content, err := os.ReadFile(filepath.Join(projectRoot, "output", tc.file))
+			if err != nil {
+				t.Fatalf("Failed to read output file: %v", err)
+			}
+			if string(content) != tc.want {
+				t.Errorf("Expected %q, got %q", tc.want, string(content))
+			}
+		})
 	}
 }
 
-func TestScriptError_Syntax(t *testing.T) {
+func TestRunFile_ScriptErrors(t *testing.T) {
 	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `print(`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name    string
+		script  string
+		wantErr string
+	}{
+		{name: "ScriptError_Syntax", script: `print(`},
+		{name: "ScriptError_Runtime", script: `error("boom")`},
+		{name: "ListEntities_EmptyType", script: `rela.list_entities("")`},
+		{name: "ListEntities_InvalidFilter", script: `rela.list_entities("ticket", "invalid[filter")`},
+		{name: "Search_EmptyQuery", script: `rela.search("")`},
+		{name: "CreateEntity_EmptyType", script: `rela.create_entity("", {title = "Test"})`},
+		{
+			name:    "UpdateEntity_NotFound",
+			script:  `rela.update_entity("NONEXISTENT", {status = "closed"})`,
+			wantErr: "entity not found",
+		},
+		{name: "DeleteEntity_NotFound", script: `rela.delete_entity("NONEXISTENT")`},
+		{name: "CreateRelation_MissingArgs", script: `rela.create_relation("", "implements", "FEAT-001")`},
+		{name: "FindPath_MissingArgs", script: `rela.find_path("", "FEAT-001")`},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ws := newMockWorkspace(t)
+			var buf bytes.Buffer
+			r := NewWriter(ws.services("/tmp"), &buf)
+			defer r.Close()
 
-	err := r.RunFile(tmpFile, nil)
-	if err == nil {
-		t.Fatal("Expected error for syntax error")
-	}
-}
-
-func TestScriptError_Runtime(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `error("boom")`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := r.RunFile(tmpFile, nil)
-	if err == nil {
-		t.Fatal("Expected error for runtime error")
+			err := runScriptFile(t, r, tc.script)
+			if err == nil {
+				t.Fatal("Expected error")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("Expected %q error, got: %v", tc.wantErr, err)
+			}
+		})
 	}
 }
 
@@ -703,142 +758,6 @@ func TestWriteFile_AbsolutePathOutside(t *testing.T) {
 	}
 }
 
-func TestWriteFile_InOutputDir(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
-	defer r.Close()
-
-	// Write to output directory
-	script := `rela.write_file("result.txt", "allowed")`
-	err := r.RunString(script)
-	if err != nil {
-		t.Fatalf("RunString failed: %v", err)
-	}
-
-	// File should be in output/ subdirectory
-	outFile := filepath.Join(projectRoot, "output", "result.txt")
-	content, err := os.ReadFile(outFile)
-	if err != nil {
-		t.Fatalf("Failed to read output file: %v", err)
-	}
-
-	if string(content) != "allowed" {
-		t.Errorf("Expected 'allowed', got %q", string(content))
-	}
-}
-
-func TestListEntities_EmptyType(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `rela.list_entities("")`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := r.RunFile(tmpFile, nil)
-	if err == nil {
-		t.Fatal("Expected error for empty entity type")
-	}
-}
-
-func TestListEntities_InvalidFilter(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `rela.list_entities("ticket", "invalid[filter")`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := r.RunFile(tmpFile, nil)
-	if err == nil {
-		t.Fatal("Expected error for invalid filter")
-	}
-}
-
-func TestGetRelations_NoFilters(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `
-local rels = rela.get_relations()
-rela.output({count = #rels})
-`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	// Should return all relations (we have 1 in test workspace)
-	if result["count"] != float64(1) {
-		t.Errorf("Expected count=1, got %v", result["count"])
-	}
-}
-
-func TestTraceFrom_NonExistent(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `
-local trace = rela.trace_from("NONEXISTENT", 0)
-if trace == nil then
-    rela.output({found = false})
-else
-    rela.output({found = true})
-end
-`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	// For non-existent entity, trace_from returns nil
-	if result["found"] != false {
-		t.Errorf("Expected found=false, got %v", result["found"])
-	}
-}
-
 func TestSearch(t *testing.T) {
 	t.Parallel()
 	ws := newMockWorkspace(t)
@@ -869,152 +788,6 @@ rela.output({count = #results})
 	count := result["count"].(float64)
 	if count < 1 {
 		t.Errorf("Expected at least 1 result, got %v", count)
-	}
-}
-
-func TestSearch_EmptyQuery(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `rela.search("")`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := r.RunFile(tmpFile, nil)
-	if err == nil {
-		t.Fatal("Expected error for empty search query")
-	}
-}
-
-func TestCreateEntity(t *testing.T) {
-	t.Parallel()
-	ws, root := newMockWorkspace(t), t.TempDir()
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services(root), &buf)
-	defer r.Close()
-
-	script := `
-local entity = rela.create_entity("ticket", {title = "New Ticket", status = "open"}, "Content here")
-rela.output({
-    id = entity.id,
-    type = entity.type,
-    title = entity.properties.title,
-    status = entity.properties.status
-})
-`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["type"] != "ticket" {
-		t.Errorf("Expected type=ticket, got %v", result["type"])
-	}
-	if result["title"] != "New Ticket" {
-		t.Errorf("Expected title=New Ticket, got %v", result["title"])
-	}
-	if result["status"] != "open" {
-		t.Errorf("Expected status=open, got %v", result["status"])
-	}
-}
-
-func TestCreateEntity_EmptyType(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `rela.create_entity("", {title = "Test"})`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := r.RunFile(tmpFile, nil)
-	if err == nil {
-		t.Fatal("Expected error for empty entity type")
-	}
-}
-
-func TestUpdateEntity(t *testing.T) {
-	t.Parallel()
-	ws, root := newMockWorkspace(t), t.TempDir()
-	var buf bytes.Buffer
-
-	// Get reference entity for assertions
-	entity, _ := ws.GetEntity("TKT-001")
-	entityID := entity.ID
-
-	r := NewWriter(ws.services(root), &buf)
-	defer r.Close()
-
-	script := `
-local entity = rela.update_entity("TKT-001", {status = "closed"})
-rela.output({
-    id = entity.id,
-    status = entity.properties.status
-})
-`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["id"] != entityID {
-		t.Errorf("Expected id=%s, got %v", entityID, result["id"])
-	}
-	if result["status"] != "closed" {
-		t.Errorf("Expected status=closed, got %v", result["status"])
-	}
-}
-
-func TestUpdateEntity_NotFound(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `rela.update_entity("NONEXISTENT", {status = "closed"})`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := r.RunFile(tmpFile, nil)
-	if err == nil {
-		t.Fatal("Expected error for non-existent entity")
-	}
-	if !strings.Contains(err.Error(), "entity not found") {
-		t.Errorf("Expected 'entity not found' error, got: %v", err)
 	}
 }
 
@@ -1052,298 +825,6 @@ rela.output({success = success})
 	_, found := ws.GetEntity("TKT-002")
 	if found {
 		t.Error("Entity TKT-002 should have been deleted")
-	}
-}
-
-func TestDeleteEntity_NotFound(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `rela.delete_entity("NONEXISTENT")`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := r.RunFile(tmpFile, nil)
-	if err == nil {
-		t.Fatal("Expected error for non-existent entity")
-	}
-}
-
-func TestCreateRelation(t *testing.T) {
-	t.Parallel()
-	ws, root := newMockWorkspace(t), t.TempDir()
-	var buf bytes.Buffer
-
-	// Get reference entities for assertions
-	fromEntity, _ := ws.GetEntity("TKT-002")
-	toEntity, _ := ws.GetEntity("FEAT-001")
-	relType := "implements"
-
-	r := NewWriter(ws.services(root), &buf)
-	defer r.Close()
-
-	// TKT-002 doesn't have a relation to FEAT-001 yet
-	script := `
-local rel = rela.create_relation("TKT-002", "implements", "FEAT-001")
-rela.output({
-    from = rel.from,
-    type = rel.type,
-    to = rel.to
-})
-`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["from"] != fromEntity.ID {
-		t.Errorf("Expected from=%s, got %v", fromEntity.ID, result["from"])
-	}
-	if result["type"] != relType {
-		t.Errorf("Expected type=%s, got %v", relType, result["type"])
-	}
-	if result["to"] != toEntity.ID {
-		t.Errorf("Expected to=%s, got %v", toEntity.ID, result["to"])
-	}
-}
-
-func TestCreateRelation_MissingArgs(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `rela.create_relation("", "implements", "FEAT-001")`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := r.RunFile(tmpFile, nil)
-	if err == nil {
-		t.Fatal("Expected error for missing from argument")
-	}
-}
-
-func TestDeleteRelation(t *testing.T) {
-	t.Parallel()
-	ws, root := newMockWorkspace(t), t.TempDir()
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services(root), &buf)
-	defer r.Close()
-
-	script := `
-local success = rela.delete_relation("TKT-001", "implements", "FEAT-001")
-rela.output({success = success})
-`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["success"] != true {
-		t.Errorf("Expected success=true, got %v", result["success"])
-	}
-}
-
-func TestFindPath(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `
-local path = rela.find_path("TKT-001", "FEAT-001")
-if path then
-    rela.output({found = true, length = #path})
-else
-    rela.output({found = false})
-end
-`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["found"] != true {
-		t.Errorf("Expected found=true, got %v", result["found"])
-	}
-	// Path should have 2 steps: TKT-001 -> FEAT-001
-	if result["length"] != float64(2) {
-		t.Errorf("Expected length=2, got %v", result["length"])
-	}
-}
-
-func TestFindPath_NoPath(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `
-local path = rela.find_path("TKT-001", "NONEXISTENT")
-if path then
-    rela.output({found = true})
-else
-    rela.output({found = false})
-end
-`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["found"] != false {
-		t.Errorf("Expected found=false, got %v", result["found"])
-	}
-}
-
-func TestFindPath_MissingArgs(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `rela.find_path("", "FEAT-001")`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := r.RunFile(tmpFile, nil)
-	if err == nil {
-		t.Fatal("Expected error for empty from argument")
-	}
-}
-
-func TestTraceFrom(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	// Get reference entity for assertions
-	entity, _ := ws.GetEntity("TKT-001")
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `
-local trace = rela.trace_from("TKT-001", 0)
-rela.output({
-    id = trace.id,
-    has_children = #trace.children > 0
-})
-`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["id"] != entity.ID {
-		t.Errorf("Expected id=%s, got %v", entity.ID, result["id"])
-	}
-	if result["has_children"] != true {
-		t.Errorf("Expected has_children=true, got %v", result["has_children"])
-	}
-}
-
-func TestTraceTo(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	// Get reference entity for assertions
-	entity, _ := ws.GetEntity("FEAT-001")
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `
-local trace = rela.trace_to("FEAT-001", 0)
-rela.output({
-    id = trace.id,
-    has_children = #trace.children > 0
-})
-`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["id"] != entity.ID {
-		t.Errorf("Expected id=%s, got %v", entity.ID, result["id"])
-	}
-	if result["has_children"] != true {
-		t.Errorf("Expected has_children=true (TKT-001 -> FEAT-001), got %v", result["has_children"])
 	}
 }
 
@@ -1507,43 +988,10 @@ func TestSetArgs(t *testing.T) {
 	}
 }
 
-func TestSortEntities_ByStringProperty(t *testing.T) {
-	t.Parallel()
-	ws := testWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	// Tickets have statuses "open" and "done" - sort by status
-	script := `
-local tickets = rela.list_entities("ticket")
-local sorted = rela.sort_entities(tickets, "status")
-local result = {}
-for i, e in ipairs(sorted) do
-    result[i] = e.properties.status
-end
-rela.output(result)
-`
-	err := r.RunString(script)
-	if err != nil {
-		t.Fatalf("RunString failed: %v", err)
-	}
-
-	var result []any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	// "done" < "open" alphabetically
-	if len(result) != 2 || result[0] != "done" || result[1] != "open" {
-		t.Errorf("Expected [done, open], got %v", result)
-	}
-}
-
-func TestSortEntities_ByNumericProperty(t *testing.T) {
-	t.Parallel()
-	// Create workspace with entities that have numeric-like order property
+// numericOrderWorkspace seeds doc entities whose order property sorts
+// differently as numbers than as strings.
+func numericOrderWorkspace(t *testing.T) *mockWorkspace {
+	t.Helper()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"doc": {
@@ -1560,12 +1008,29 @@ func TestSortEntities_ByNumericProperty(t *testing.T) {
 	ws.seedEntity(&entity.Entity{ID: "DOC-002", Type: "doc", Properties: map[string]any{"title": "First", "order": "1"}})
 	ws.seedEntity(&entity.Entity{ID: "DOC-003", Type: "doc", Properties: map[string]any{"title": "Second", "order": "2"}})
 	ws.seedEntity(&entity.Entity{ID: "DOC-010", Type: "doc", Properties: map[string]any{"title": "Tenth", "order": "10"}})
+	return ws
+}
 
-	var buf bytes.Buffer
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `
+func TestSortEntities(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		ws     func(t *testing.T) *mockWorkspace
+		script string
+		want   []string
+	}{
+		// Tickets have statuses "open" and "done"; "done" < "open" alphabetically.
+		{name: "ByStringProperty", ws: testWorkspace, want: []string{"done", "open"}, script: `
+local tickets = rela.list_entities("ticket")
+local sorted = rela.sort_entities(tickets, "status")
+local result = {}
+for i, e in ipairs(sorted) do
+    result[i] = e.properties.status
+end
+rela.output(result)
+`},
+		// Should sort numerically: 1, 2, 3, 10 (not lexicographically: 1, 10, 2, 3).
+		{name: "ByNumericProperty", ws: numericOrderWorkspace, want: []string{"1", "2", "3", "10"}, script: `
 local docs = rela.list_entities("doc")
 local sorted = rela.sort_entities(docs, "order")
 local result = {}
@@ -1573,38 +1038,9 @@ for i, e in ipairs(sorted) do
     result[i] = e.properties.order
 end
 rela.output(result)
-`
-	err := r.RunString(script)
-	if err != nil {
-		t.Fatalf("RunString failed: %v", err)
-	}
-
-	var result []any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	// Should sort numerically: 1, 2, 3, 10 (not lexicographically: 1, 10, 2, 3)
-	expected := []string{"1", "2", "3", "10"}
-	if len(result) != len(expected) {
-		t.Fatalf("Expected %d items, got %d", len(expected), len(result))
-	}
-	for i, exp := range expected {
-		if result[i] != exp {
-			t.Errorf("At index %d: expected %s, got %v", i, exp, result[i])
-		}
-	}
-}
-
-func TestSortEntities_Descending(t *testing.T) {
-	t.Parallel()
-	ws := testWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `
+`},
+		// Descending: "open" before "done".
+		{name: "Descending", ws: testWorkspace, want: []string{"open", "done"}, script: `
 local tickets = rela.list_entities("ticket")
 local sorted = rela.sort_entities(tickets, "status", "desc")
 local result = {}
@@ -1612,20 +1048,33 @@ for i, e in ipairs(sorted) do
     result[i] = e.properties.status
 end
 rela.output(result)
-`
-	err := r.RunString(script)
-	if err != nil {
-		t.Fatalf("RunString failed: %v", err)
+`},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ws := tc.ws(t)
+			var buf bytes.Buffer
+			r := NewWriter(ws.services("/tmp"), &buf)
+			defer r.Close()
 
-	var result []any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
+			if err := r.RunString(tc.script); err != nil {
+				t.Fatalf("RunString failed: %v", err)
+			}
 
-	// Descending: "open" before "done"
-	if len(result) != 2 || result[0] != "open" || result[1] != "done" {
-		t.Errorf("Expected [open, done], got %v", result)
+			var result []any
+			if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+				t.Fatalf("Failed to parse output: %v", err)
+			}
+			if len(result) != len(tc.want) {
+				t.Fatalf("Expected %d items, got %d: %v", len(tc.want), len(result), result)
+			}
+			for i, want := range tc.want {
+				if result[i] != want {
+					t.Errorf("At index %d: expected %s, got %v", i, want, result[i])
+				}
+			}
+		})
 	}
 }
 
@@ -1647,40 +1096,114 @@ func TestSortEntities_EmptyProperty(t *testing.T) {
 	}
 }
 
-func TestEntityProp(t *testing.T) {
+// TestRunString_OutputFields runs a script against the mock workspace and
+// checks top-level fields of the JSON object it passes to rela.output.
+func TestRunString_OutputFields(t *testing.T) {
 	t.Parallel()
-	ws := testWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `
+	tests := []struct {
+		name   string
+		opts   []Option
+		script string
+		want   map[string]any
+	}{
+		{
+			name: "WithParams",
+			opts: []Option{WithParams(map[string]string{
+				"entity_type":  "ticket",
+				"key_property": "date",
+			})},
+			script: `rela.output({et = rela.params.entity_type, kp = rela.params.key_property})`,
+			want:   map[string]any{"et": "ticket", "kp": "date"},
+		},
+		// rela.params should exist as an empty table.
+		{name: "WithParams_Empty", want: map[string]any{"count": float64(0)}, script: `
+		local count = 0
+		for _ in pairs(rela.params) do count = count + 1 end
+		rela.output({count = count})
+	`},
+		{
+			name: "WithSecrets",
+			opts: []Option{
+				WithSecrets(map[string]string{
+					"api_key":  "sk-secret",
+					"base_url": "https://example.com",
+				}),
+				WithCapabilities(Capabilities{Secrets: []string{"api_key", "base_url"}}),
+			},
+			script: `rela.output({k = rela.secrets.api_key, u = rela.secrets.base_url})`,
+			want:   map[string]any{"k": "sk-secret", "u": "https://example.com"},
+		},
+		// rela.secrets should exist as an empty table.
+		{name: "WithSecrets_Empty", want: map[string]any{"count": float64(0)}, script: `
+		local count = 0
+		for _ in pairs(rela.secrets) do count = count + 1 end
+		rela.output({count = count})
+	`},
+		{
+			name: "EntityProp",
+			want: map[string]any{"title": "Test Ticket", "missing": "fallback", "status": "open"},
+			script: `
 local e = rela.get_entity("TKT-001")
 rela.output({
     title = e:prop("title", "default"),
     missing = e:prop("nonexistent", "fallback"),
     status = e:prop("status")
 })
-`
-	err := r.RunString(script)
-	if err != nil {
-		t.Fatalf("RunString failed: %v", err)
+`,
+		},
+		{name: "EntityStripPrefix", want: map[string]any{"slug": "001"}, script: `
+local e = rela.get_entity("TKT-001")
+rela.output({slug = e:strip_prefix()})
+`},
+		{
+			name:   "MdLink",
+			script: `rela.output({link = rela.md.link("Guide", "docs/guide.md")})`,
+			want:   map[string]any{"link": "[Guide](docs/guide.md)"},
+		},
+		{
+			name:   "MdRef",
+			script: `rela.output({ref = rela.md.ref("GUIDE-001", "the guide")})`,
+			want:   map[string]any{"ref": "[the guide][GUIDE-001]"},
+		},
+		{
+			name: "MdTable",
+			want: map[string]any{
+				"table": "| Name | Status |\n| -------- | -------- |\n| Alice | active |\n| Bob | pending |\n",
+			},
+			script: `
+local tbl = rela.md.table(
+    {"Name", "Status"},
+    {
+        {"Alice", "active"},
+        {"Bob", "pending"}
+    }
+)
+rela.output({table = tbl})
+`,
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ws := newMockWorkspace(t)
+			var buf bytes.Buffer
+			r := NewWriter(ws.services("/tmp"), &buf, tc.opts...)
+			defer r.Close()
 
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
+			if err := r.RunString(tc.script); err != nil {
+				t.Fatalf("RunString failed: %v", err)
+			}
 
-	if result["title"] != "Test Ticket" {
-		t.Errorf("Expected title='Test Ticket', got %v", result["title"])
-	}
-	if result["missing"] != "fallback" {
-		t.Errorf("Expected missing='fallback', got %v", result["missing"])
-	}
-	if result["status"] != "open" {
-		t.Errorf("Expected status='open', got %v", result["status"])
+			var result map[string]any
+			if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+				t.Fatalf("Failed to parse output: %v", err)
+			}
+			for key, want := range tc.want {
+				if result[key] != want {
+					t.Errorf("Expected %s=%v, got %v", key, want, result[key])
+				}
+			}
+		})
 	}
 }
 
@@ -1734,114 +1257,6 @@ rela.output({
 	}
 }
 
-func TestWriteFile_EnsureNewline(t *testing.T) {
-	t.Parallel()
-	ws := testWorkspace(t)
-	var buf bytes.Buffer
-
-	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
-	defer r.Close()
-
-	// Write without trailing newline, but with ensure_newline option
-	script := `rela.write_file("test.txt", "no newline", {ensure_newline = true})`
-	err := r.RunString(script)
-	if err != nil {
-		t.Fatalf("RunString failed: %v", err)
-	}
-
-	outFile := filepath.Join(projectRoot, "output", "test.txt")
-	content, err := os.ReadFile(outFile)
-	if err != nil {
-		t.Fatalf("Failed to read output file: %v", err)
-	}
-
-	if string(content) != "no newline\n" {
-		t.Errorf("Expected 'no newline\\n', got %q", string(content))
-	}
-}
-
-func TestWriteFile_EnsureNewline_AlreadyHasNewline(t *testing.T) {
-	t.Parallel()
-	ws := testWorkspace(t)
-	var buf bytes.Buffer
-
-	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
-	defer r.Close()
-
-	// Write with trailing newline and ensure_newline option - should not double
-	script := `rela.write_file("test.txt", "has newline\n", {ensure_newline = true})`
-	err := r.RunString(script)
-	if err != nil {
-		t.Fatalf("RunString failed: %v", err)
-	}
-
-	outFile := filepath.Join(projectRoot, "output", "test.txt")
-	content, err := os.ReadFile(outFile)
-	if err != nil {
-		t.Fatalf("Failed to read output file: %v", err)
-	}
-
-	if string(content) != "has newline\n" {
-		t.Errorf("Expected 'has newline\\n', got %q", string(content))
-	}
-}
-
-func TestWriteFile_EnsureNewline_EmptyContent(t *testing.T) {
-	t.Parallel()
-	ws := testWorkspace(t)
-	var buf bytes.Buffer
-
-	projectRoot := t.TempDir()
-	r := NewWriter(ws.services(projectRoot), &buf, WithCapabilities(Capabilities{WriteFile: true}))
-	defer r.Close()
-
-	// Empty content should stay empty even with ensure_newline
-	script := `rela.write_file("empty.txt", "", {ensure_newline = true})`
-	err := r.RunString(script)
-	if err != nil {
-		t.Fatalf("RunString failed: %v", err)
-	}
-
-	outFile := filepath.Join(projectRoot, "output", "empty.txt")
-	content, err := os.ReadFile(outFile)
-	if err != nil {
-		t.Fatalf("Failed to read output file: %v", err)
-	}
-
-	if len(content) != 0 {
-		t.Errorf("Expected empty string, got %q", string(content))
-	}
-}
-
-func TestEntityStripPrefix(t *testing.T) {
-	t.Parallel()
-	ws := testWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `
-local e = rela.get_entity("TKT-001")
-rela.output({slug = e:strip_prefix()})
-`
-	err := r.RunString(script)
-	if err != nil {
-		t.Fatalf("RunString failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["slug"] != "001" {
-		t.Errorf("Expected slug='001', got %v", result["slug"])
-	}
-}
-
 func TestEntityStripPrefix_NoHyphen(t *testing.T) {
 	t.Parallel()
 	// Create entity with ID that has no hyphen
@@ -1878,90 +1293,6 @@ rela.output({slug = e:strip_prefix()})
 	// No hyphen, should return ID as-is
 	if result["slug"] != "NOHYPHEN" {
 		t.Errorf("Expected slug='NOHYPHEN', got %v", result["slug"])
-	}
-}
-
-func TestMdLink(t *testing.T) {
-	t.Parallel()
-	ws := testWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `rela.output({link = rela.md.link("Guide", "docs/guide.md")})`
-	err := r.RunString(script)
-	if err != nil {
-		t.Fatalf("RunString failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	expected := "[Guide](docs/guide.md)"
-	if result["link"] != expected {
-		t.Errorf("Expected link=%q, got %v", expected, result["link"])
-	}
-}
-
-func TestMdRef(t *testing.T) {
-	t.Parallel()
-	ws := testWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `rela.output({ref = rela.md.ref("GUIDE-001", "the guide")})`
-	err := r.RunString(script)
-	if err != nil {
-		t.Fatalf("RunString failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	expected := "[the guide][GUIDE-001]"
-	if result["ref"] != expected {
-		t.Errorf("Expected ref=%q, got %v", expected, result["ref"])
-	}
-}
-
-func TestMdTable(t *testing.T) {
-	t.Parallel()
-	ws := testWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	script := `
-local tbl = rela.md.table(
-    {"Name", "Status"},
-    {
-        {"Alice", "active"},
-        {"Bob", "pending"}
-    }
-)
-rela.output({table = tbl})
-`
-	err := r.RunString(script)
-	if err != nil {
-		t.Fatalf("RunString failed: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	expected := "| Name | Status |\n| -------- | -------- |\n| Alice | active |\n| Bob | pending |\n"
-	if result["table"] != expected {
-		t.Errorf("Expected table=%q, got %q", expected, result["table"])
 	}
 }
 
@@ -2218,61 +1549,6 @@ func TestRunFile_Errors(t *testing.T) {
 			t.Errorf("Expected error to include filename, got: %v", err)
 		}
 	})
-}
-
-func TestWithParams(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	params := map[string]string{
-		"entity_type":  "ticket",
-		"key_property": "date",
-	}
-	r := NewWriter(ws.services("/tmp"), &buf, WithParams(params))
-	defer r.Close()
-
-	script := `rela.output({et = rela.params.entity_type, kp = rela.params.key_property})`
-	if err := r.RunString(script); err != nil {
-		t.Fatalf("RunString failed: %v", err)
-	}
-
-	var result map[string]string
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["et"] != "ticket" || result["kp"] != "date" {
-		t.Errorf("Expected ticket/date, got %v", result)
-	}
-}
-
-func TestWithParams_Empty(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	// rela.params should exist as an empty table
-	script := `
-		local count = 0
-		for _ in pairs(rela.params) do count = count + 1 end
-		rela.output({count = count})
-	`
-	if err := r.RunString(script); err != nil {
-		t.Fatalf("RunString failed: %v", err)
-	}
-
-	var result map[string]float64
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["count"] != 0 {
-		t.Errorf("Expected empty params, got count=%v", result["count"])
-	}
 }
 
 func TestRunActionString_ReturnTable(t *testing.T) {
@@ -2665,62 +1941,6 @@ func TestWithContext_NoTimeoutStillCancels(t *testing.T) {
 	}
 	if elapsed > 5*time.Second {
 		t.Fatalf("busy loop ran for %v; expected parent cancel to interrupt", elapsed)
-	}
-}
-
-func TestWithSecrets(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	sec := map[string]string{
-		"api_key":  "sk-secret",
-		"base_url": "https://example.com",
-	}
-	r := NewWriter(ws.services("/tmp"), &buf, WithSecrets(sec),
-		WithCapabilities(Capabilities{Secrets: []string{"api_key", "base_url"}}))
-	defer r.Close()
-
-	script := `rela.output({k = rela.secrets.api_key, u = rela.secrets.base_url})`
-	if err := r.RunString(script); err != nil {
-		t.Fatalf("RunString failed: %v", err)
-	}
-
-	var result map[string]string
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["k"] != "sk-secret" || result["u"] != "https://example.com" {
-		t.Errorf("expected sk-secret/https://example.com, got %v", result)
-	}
-}
-
-func TestWithSecrets_Empty(t *testing.T) {
-	t.Parallel()
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-
-	// rela.secrets should exist as an empty table
-	script := `
-		local count = 0
-		for _ in pairs(rela.secrets) do count = count + 1 end
-		rela.output({count = count})
-	`
-	if err := r.RunString(script); err != nil {
-		t.Fatalf("RunString failed: %v", err)
-	}
-
-	var result map[string]float64
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["count"] != 0 {
-		t.Errorf("Expected empty secrets, got count=%v", result["count"])
 	}
 }
 

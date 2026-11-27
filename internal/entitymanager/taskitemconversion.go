@@ -8,7 +8,6 @@ import (
 	"maps"
 	"reflect"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -154,7 +153,7 @@ func (c *TaskItemConverter) Offers(ctx context.Context, source *entity.Entity) [
 			names = append(names, name)
 		}
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	if len(names) == 0 {
 		return nil
 	}
@@ -548,7 +547,7 @@ func taskItemValues(
 			props[key] = b.String()
 		}
 	}
-	sort.Strings(itemFields)
+	slices.Sort(itemFields)
 	return props, itemFields, nil
 }
 
@@ -621,7 +620,7 @@ func (c *TaskItemConverter) requiredFields(
 			required = append(required, key)
 		}
 	}
-	sort.Strings(required)
+	slices.Sort(required)
 	return required, nil
 }
 

@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/tools/seqtrace/browser"
@@ -65,7 +64,7 @@ func stitch(args []string) error {
 	if err != nil {
 		return err
 	}
-	sort.Strings(clients)
+	slices.Sort(clients)
 	resolve := browser.StaticResolver(f.static)
 
 	var pages []page

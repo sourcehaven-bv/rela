@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
@@ -140,13 +140,13 @@ func checkValidationRules(meta *metamodel.Metamodel) []string {
 // messages come out in a stable order.
 func ruleTypes(meta *metamodel.Metamodel, rule metamodel.ValidationRule) []string {
 	if types := rule.TargetTypes(); types != nil {
-		sort.Strings(types)
+		slices.Sort(types)
 		return types
 	}
 	types := make([]string, 0, len(meta.Entities))
 	for t := range meta.Entities {
 		types = append(types, t)
 	}
-	sort.Strings(types)
+	slices.Sort(types)
 	return types
 }

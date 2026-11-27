@@ -2,12 +2,13 @@ package mcp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -171,7 +172,7 @@ func captureToolsList(t *testing.T) []goldenTool {
 	if err := json.Unmarshal(result, &decoded); err != nil {
 		t.Fatalf("decode tools/list: %v", err)
 	}
-	sort.Slice(decoded.Tools, func(i, j int) bool { return decoded.Tools[i].Name < decoded.Tools[j].Name })
+	slices.SortFunc(decoded.Tools, func(a, b goldenTool) int { return cmp.Compare(a.Name, b.Name) })
 	return decoded.Tools
 }
 
@@ -221,7 +222,7 @@ func TestGolden_ToolCalls(t *testing.T) {
 	for name := range toolCalls {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	calls := make([]goldenCall, 0, len(names))
 	for _, name := range names {

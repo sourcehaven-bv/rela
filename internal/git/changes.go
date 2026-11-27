@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	gogit "github.com/go-git/go-git/v5"
@@ -267,6 +267,6 @@ func extractIDs(changes []EntityChange) []string {
 	for i, c := range changes {
 		ids[i] = c.ID
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	return ids
 }

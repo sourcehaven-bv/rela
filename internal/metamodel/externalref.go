@@ -1,12 +1,12 @@
 package metamodel
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"maps"
 	"net/url"
 	"slices"
-	"sort"
 	"strings"
 	"unicode"
 
@@ -196,7 +196,7 @@ func ExternalRefProps(m *Metamodel, system string) []ExternalRefProp {
 			}
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Type < out[j].Type })
+	slices.SortFunc(out, func(a, b ExternalRefProp) int { return cmp.Compare(a.Type, b.Type) })
 	return out
 }
 
@@ -233,7 +233,7 @@ func ExternalRefPropertyNames(m *Metamodel, entityType string) []string {
 			out = append(out, name)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -251,7 +251,7 @@ func SyncRefProps(m *Metamodel) []string {
 			}
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

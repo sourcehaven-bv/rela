@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -290,7 +289,7 @@ func TestGoldenParity_SlugListsNameEndpoints(t *testing.T) {
 				missing = append(missing, slug)
 			}
 		}
-		sort.Strings(missing)
+		slices.Sort(missing)
 		if len(missing) > 0 {
 			t.Errorf("%s names %s, which no corpus endpoint has", name, strings.Join(missing, ", "))
 		}

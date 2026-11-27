@@ -3,7 +3,7 @@ package storetest
 import (
 	"context"
 	"iter"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -114,7 +114,7 @@ func (b *BodyWatch) String() string {
 	for k := range b.calls {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	var sb strings.Builder
 	for i, k := range keys {
 		if i > 0 {

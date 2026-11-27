@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,7 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -242,11 +243,11 @@ func (d *Desktop) serveProjects(w http.ResponseWriter, _ *http.Request) {
 			Active: active != nil && active.id == p.id,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Name != out[j].Name {
-			return out[i].Name < out[j].Name
-		}
-		return out[i].ID < out[j].ID // stable when two projects share a name
+	slices.SortFunc(out, func(a, b projectSummary) int {
+		return cmp.Or(
+			cmp.Compare(a.Name, b.Name),
+			cmp.Compare(a.ID, b.ID),
+		)
 	})
 
 	w.Header().Set("Content-Type", "application/json")

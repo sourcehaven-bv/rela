@@ -13,10 +13,11 @@
 package check
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
@@ -129,7 +130,7 @@ func (e *Engine) Check(
 	for checker := range checkers {
 		names = append(names, checker)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	for _, checker := range names {
 		if err := ctx.Err(); err != nil {
@@ -195,14 +196,11 @@ func AnalyzeCheckers(m *metamodel.Metamodel) map[string]metamodel.CheckerDef {
 }
 
 func sortFindings(fs []Finding) {
-	sort.SliceStable(fs, func(i, j int) bool {
-		a, b := fs[i], fs[j]
-		if a.Line != b.Line {
-			return a.Line < b.Line
-		}
-		if a.Column != b.Column {
-			return a.Column < b.Column
-		}
-		return a.Checker < b.Checker
+	slices.SortStableFunc(fs, func(a, b Finding) int {
+		return cmp.Or(
+			cmp.Compare(a.Line, b.Line),
+			cmp.Compare(a.Column, b.Column),
+			cmp.Compare(a.Checker, b.Checker),
+		)
 	})
 }

@@ -1,12 +1,13 @@
 package comments
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/base32"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -317,11 +318,11 @@ func mintID() (string, error) {
 // quietly stops holding. The ID tie-break matters because a clock with
 // coarse resolution can stamp two comments in one tick.
 func SortComments(list []Comment) {
-	sort.SliceStable(list, func(i, j int) bool {
-		if !list[i].CreatedAt.Equal(list[j].CreatedAt) {
-			return list[i].CreatedAt.Before(list[j].CreatedAt)
-		}
-		return list[i].ID < list[j].ID
+	slices.SortStableFunc(list, func(a, b Comment) int {
+		return cmp.Or(
+			a.CreatedAt.Compare(b.CreatedAt),
+			cmp.Compare(a.ID, b.ID),
+		)
 	})
 }
 

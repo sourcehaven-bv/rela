@@ -3,7 +3,6 @@ package syncmerge
 import (
 	"fmt"
 	"slices"
-	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -98,7 +97,7 @@ func Merge(fields []Field, base *State, ours State, theirs Theirs) (Result, erro
 	}
 	res.Retag = res.Complete && len(res.Conflicts) == 0 && len(res.Write) == 0 && res.WriteContent == nil &&
 		len(res.Push) == 0 && baseDiffers
-	sort.Strings(res.Unchanged)
+	slices.Sort(res.Unchanged)
 	return res, nil
 }
 
