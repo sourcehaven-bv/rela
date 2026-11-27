@@ -33,12 +33,23 @@ import (
 func EntityRecord(
 	meta *metamodel.Metamodel, def *metamodel.EntityDef, id, typ string, props map[string]any,
 ) predicate.Value {
+	return entityRecord(meta, def, id, typ, props, false)
+}
+
+// entityRecord is [EntityRecord]; withRollups also binds each roll-up
+// property at its declared type, matching [EntityRecordTypeWithRollups].
+func entityRecord(
+	meta *metamodel.Metamodel, def *metamodel.EntityDef, id, typ string, props map[string]any, withRollups bool,
+) predicate.Value {
 	fields := map[string]predicate.Value{
 		"id":   predicate.NewString(id),
 		"type": predicate.NewString(typ),
 	}
 	for name, prop := range def.Properties {
 		p := prop
+		if p.Rollup != nil && withRollups {
+			p.Rollup = nil
+		}
 		if _, ok := ScalarTypeForProp(meta, &p); !ok {
 			continue // unmodelled type: omit (matches EntityRecordType)
 		}

@@ -97,10 +97,36 @@ func ScalarTypeForProp(meta *metamodel.Metamodel, prop *metamodel.PropertyDef) (
 // scalar type choice via ScalarType/ScalarTypeForProp; it layers its own
 // id/type pseudo-fields on top (see affordances.entityRecordType).
 func EntityRecordType(meta *metamodel.Metamodel, def *metamodel.EntityDef) predicate.RecordType {
+	return entityRecordType(meta, def, ScalarTypeForProp)
+}
+
+// EntityRecordTypeWithRollups is [EntityRecordType] that also declares each
+// roll-up property at its declared type. Only a surface whose caller
+// computes the roll-ups a condition reads for every row it judges may use
+// it: a list `condition:` ([Evaluator.CompileWithRollups]).
+func EntityRecordTypeWithRollups(meta *metamodel.Metamodel, def *metamodel.EntityDef) predicate.RecordType {
+	return entityRecordType(meta, def, rollupOrScalarType)
+}
+
+// rollupOrScalarType is [ScalarTypeForProp] that types a roll-up property
+// by the type it declares.
+func rollupOrScalarType(meta *metamodel.Metamodel, prop *metamodel.PropertyDef) (predicate.Type, bool) {
+	if prop.Rollup == nil {
+		return ScalarTypeForProp(meta, prop)
+	}
+	value := *prop
+	value.Rollup = nil
+	return ScalarTypeForProp(meta, &value)
+}
+
+func entityRecordType(
+	meta *metamodel.Metamodel, def *metamodel.EntityDef,
+	typeOf func(*metamodel.Metamodel, *metamodel.PropertyDef) (predicate.Type, bool),
+) predicate.RecordType {
 	rt := make(predicate.RecordType, len(def.Properties))
 	for name, prop := range def.Properties {
 		p := prop
-		scalar, ok := ScalarTypeForProp(meta, &p)
+		scalar, ok := typeOf(meta, &p)
 		if !ok {
 			continue // unmodelled type: omit so a reference fails at compile
 		}

@@ -100,6 +100,19 @@ func (e *Evaluator) CompileWithCurrentUser(entityType, source string) (*predicat
 	return e.compile(entityType, source, true)
 }
 
+// CompileWithRollups is [Evaluator.CompileWithCurrentUser] whose `entity`
+// record also declares the type's roll-up properties
+// ([EntityRecordTypeWithRollups]). A roll-up is never stored, so only a
+// caller that merges the reader's roll-up values into every row before it
+// evaluates may compile with it: a data-entry list `condition:`. A row
+// without a value reads the roll-up as nil.
+func (e *Evaluator) CompileWithRollups(entityType, source string) (*predicate.Program, error) {
+	key := "user+rollups\x00" + entityType + "\x00" + source
+	return e.compileKeyed(key, entityType, source, true, func(def *metamodel.EntityDef) predicate.RecordType {
+		return EntityRecordTypeWithRollups(e.meta, def)
+	})
+}
+
 // CompileForCollection is [Evaluator.CompileWithCurrentUser] for a condition
 // that filters a collection which may hold several entity types, such as a
 // view's traverse step. The program is compiled for entityType, one of
@@ -269,7 +282,7 @@ func (e *Evaluator) matches(
 		return false, fmt.Errorf("predicatefns: unknown entity type %q", entityType)
 	}
 	b := predicate.NewBindings()
-	if err := b.SetVar("entity", EntityRecord(e.meta, def, id, entityType, props)); err != nil {
+	if err := b.SetVar("entity", entityRecord(e.meta, def, id, entityType, props, readsRollup(prog, def))); err != nil {
 		return false, err
 	}
 	if err := Bind(b, e.ReadTime(ctx)); err != nil {
@@ -320,4 +333,15 @@ func AndFilters(meta *metamodel.Metamodel, def *metamodel.EntityDef, filters []*
 		b.WriteString(")")
 	}
 	return b.String(), nil
+}
+
+// readsRollup reports whether prog reads a roll-up property of def, which
+// only a program compiled by [Evaluator.CompileWithRollups] can.
+func readsRollup(prog *predicate.Program, def *metamodel.EntityDef) bool {
+	for _, name := range prog.Attributes(VarEntity) {
+		if pd, ok := def.Properties[name]; ok && pd.Rollup != nil {
+			return true
+		}
+	}
+	return false
 }

@@ -41,6 +41,8 @@ type ScopeLowering struct {
 //   - an attribute constrained twice declines rather than keep one binding
 //   - an equality the metamodel gate refuses (an undeclared property, an
 //     integer, boolean or list, or `id`) declines
+//   - a condition that reads a roll-up declines ([RollupRead]): the
+//     stored row holds no roll-up value
 //   - `current_user.tool` declines, as in [ConditionPrefilters]
 //   - a `current_user` reference with no identity declines, so the Go path
 //     can fail the request closed rather than this matching the unset rows.
@@ -56,6 +58,9 @@ func LowerScope(
 	prog *predicate.Program, meta *metamodel.Metamodel, entityType, identity string,
 ) (ScopeLowering, bool) {
 	if prog == nil || meta == nil || entityType == "" {
+		return ScopeLowering{}, false
+	}
+	if _, reads := RollupRead(prog, meta, entityType); reads {
 		return ScopeLowering{}, false
 	}
 	eqs, traversals, ok := prog.Conjunction(predicatefns.CurrentUserPrefilterSpec())
@@ -94,4 +99,31 @@ func LowerScope(
 		bound = append(bound, b)
 	}
 	return ScopeLowering{Props: props, Traversals: bound}, true
+}
+
+// RollupRead returns the first roll-up property prog reads: on the entity of
+// entityType, or as a constraint of a `related(...)` on the type its walk
+// lands on. A roll-up is computed per reader on read and never stored, so a
+// store query cannot compare it. ok is false when prog reads none.
+func RollupRead(prog *predicate.Program, meta *metamodel.Metamodel, entityType string) (property string, ok bool) {
+	if prog == nil || meta == nil {
+		return "", false
+	}
+	for _, attr := range prog.Attributes(predicatefns.VarEntity) {
+		if rollupOnAnyType(meta, []string{entityType}, attr) {
+			return attr, true
+		}
+	}
+	for _, spec := range prog.Traversals() {
+		target, err := predicatefns.ResolveTraversalTarget(meta, entityType, spec)
+		if err != nil {
+			continue
+		}
+		for name := range spec.Props {
+			if rollupOnAnyType(meta, []string{target}, name) {
+				return name, true
+			}
+		}
+	}
+	return "", false
 }

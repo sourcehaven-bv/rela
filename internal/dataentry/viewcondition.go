@@ -183,12 +183,13 @@ func AdaptViewConditions[M ViewConditionMatcher](
 // the compiler lives above this package, so the composition root supplies it.
 // Rejects nil for the same reason too — a silently absent compiler would
 // leave every condition unevaluated, showing rows the operator's view
-// excludes.
+// excludes. A condition that reads roll-ups is judged with them
+// ([withConditionRollups]).
 func (a *App) SetViewConditions(fn ViewConditionFunc) error {
 	if fn == nil {
 		return errors.New("dataentry.SetViewConditions: func must be non-nil")
 	}
-	a.viewConditions = fn
+	a.viewConditions = withConditionRollups(fn, newRollupSource(a))
 	logViewConditionProblems(fn, a.State())
 	return nil
 }
