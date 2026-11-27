@@ -3,7 +3,9 @@ id: TKT-XA69X24
 type: ticket
 title: Extract entity read handler and list pipeline from dataentry.App
 kind: chore
-status: backlog
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Description

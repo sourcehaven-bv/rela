@@ -3,7 +3,9 @@ id: TKT-QBI37RM
 type: ticket
 title: Remove stale plimsoll counts from comments
 kind: chore
-status: backlog
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Description

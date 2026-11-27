@@ -5,7 +5,9 @@ title: 'Data-entry guide: world route table matches worldCapablePath'
 kind: docs
 priority: low
 effort: xs
-status: backlog
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 The "Routes that serve a world" table and the worldCapablePath godoc were out of
