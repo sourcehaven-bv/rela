@@ -64,6 +64,10 @@ type Column struct {
 	// (TKT-SQ8O0EQ): done, open or total. It is computed in Go from the
 	// body by [CountTasks]; the relation and record fields are then empty.
 	BodyTasks string
+	// Along is the walk of an inherited roll-up (design gap 1); the
+	// relation and record fields are then empty, and Value and Numeric
+	// describe a min or max. Nil for every other roll-up.
+	Along *Along
 }
 
 // TaskCount picks the column's count from the task lines of body.
@@ -160,6 +164,7 @@ func Compile(meta *metamodel.Metamodel) (*Set, error) {
 		return nil, errors.New("rollup: Compile: nil metamodel")
 	}
 	set := &Set{byType: map[string][]Column{}}
+	eval := predicatefns.NewEvaluator(meta).LoweringSemantics()
 	var problems []string
 	for _, typeName := range slices.Sorted(maps.Keys(meta.Entities)) {
 		def := meta.Entities[typeName]
@@ -168,7 +173,7 @@ func Compile(meta *metamodel.Metamodel) (*Set, error) {
 			if pd.Rollup == nil {
 				continue
 			}
-			col, errs := compileColumn(meta, typeName, name, pd)
+			col, errs := compileColumn(meta, eval, typeName, name, pd)
 			if len(errs) > 0 {
 				problems = append(problems, errs...)
 				continue
@@ -184,7 +189,7 @@ func Compile(meta *metamodel.Metamodel) (*Set, error) {
 }
 
 func compileColumn(
-	meta *metamodel.Metamodel, typeName, name string, pd metamodel.PropertyDef,
+	meta *metamodel.Metamodel, eval *predicatefns.Evaluator, typeName, name string, pd metamodel.PropertyDef,
 ) (col Column, problems []string) {
 	r := pd.Rollup
 	at := fmt.Sprintf("entity %q property %q: rollup", typeName, name)
@@ -192,6 +197,9 @@ func compileColumn(
 	if !ok {
 		// The loader reports the shape; nothing more to check.
 		return Column{}, []string{at + " must declare exactly one function"}
+	}
+	if len(r.Along) > 0 {
+		return compileAlongColumn(meta, eval, typeName, name, pd, fn, prop, at)
 	}
 	if r.Records != "" {
 		return compileRecordsColumn(meta, typeName, name, pd, at)

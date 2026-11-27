@@ -93,6 +93,11 @@ type RollupQuery struct {
 	// not hold, the result has no Value, but the row still wins: an older
 	// row is never read instead.
 	PickRequire []RowCondition
+
+	// Along makes the query an inherited roll-up ([AlongWalk]); Related,
+	// Path and Relation are then empty, and Func is count, min or max.
+	// Nil: accepted — the query is a related or path roll-up.
+	Along *AlongWalk
 }
 
 // RollupStep is one step of a [RollupQuery.Path]: the identity-scoped edges
@@ -126,6 +131,8 @@ type RowCondition struct {
 type RollupResult struct {
 	Count int
 	Value any
+	// Visits are the counted visits of an along walk that asked for them.
+	Visits []AlongVisit
 }
 
 // Rollupper is the native form of [Rollup]: one statement per query.
@@ -152,6 +159,9 @@ func Rollup(ctx context.Context, st Store, q RollupQuery) (map[string]RollupResu
 // ValidateRollupQuery refuses a query every backend would answer
 // differently or not at all.
 func ValidateRollupQuery(q RollupQuery) error {
+	if q.Along != nil {
+		return validateAlong(q)
+	}
 	if q.Relation == "" {
 		return fmt.Errorf("%w: rollup: relation is required", ErrInvalidQuery)
 	}
@@ -210,6 +220,9 @@ func RollupGeneric(ctx context.Context, st RollupReader, q RollupQuery) (map[str
 	out := map[string]RollupResult{}
 	if len(q.Sources) == 0 {
 		return out, nil
+	}
+	if q.Along != nil {
+		return rollupAlong(ctx, st, q)
 	}
 	// reached maps each entity reached so far to the sources it is
 	// reached from.

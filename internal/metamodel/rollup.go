@@ -113,7 +113,20 @@ type RollupDef struct {
 	// BodyTasks is the count of a roll-up over the entity's own body:
 	// done, open or total.
 	BodyTasks string `yaml:"body_tasks,omitempty"`
+
+	// Along is the walk of an inherited roll-up: segment relation names, a
+	// `*` suffix repeating a segment zero or more times. The roll-up folds
+	// every entity the walk visits after one or more hops, within MaxDepth
+	// hops. Condition maps a visited type to the predicate expression that
+	// makes one of its entities count; a visited type without an entry is
+	// walked through but never counts.
+	Along     StringOrSlice     `yaml:"along,omitempty"`
+	MaxDepth  int               `yaml:"max_depth,omitempty"`
+	Condition map[string]string `yaml:"condition,omitempty"`
 }
+
+// AlongRepeat is the suffix that makes an along segment repeat.
+const AlongRepeat = "*"
 
 // MaxRollupPath is the most relations a roll-up's via may name. Each hop is
 // one more join in the statement that computes the roll-up for a page, and
@@ -189,6 +202,10 @@ func validateRollupShape(schemaName, propName string, pd PropertyDef, allowRollu
 		errs = append(errs, validateBodyTasksRollupShape(at, r, pd)...)
 	case r.Records != "":
 		errs = append(errs, validateRecordsRollupShape(at, r)...)
+	case len(r.Along) > 0:
+		errs = append(errs, validateAlongRollupShape(at, r)...)
+	case r.MaxDepth != 0 || len(r.Condition) > 0:
+		errs = append(errs, at+": max_depth and condition are only valid with along")
 	case r.Window != "":
 		errs = append(errs, at+": window is only valid with records")
 	case r.AvgOf != "" || r.LatestOf != "":
@@ -296,6 +313,35 @@ func validateBodyTasksRollupShape(at string, r *RollupDef, pd PropertyDef) []str
 	}
 	if pd.Type != PropertyTypeInteger {
 		errs = append(errs, fmt.Sprintf("%s: body_tasks needs type integer, not %q", at, pd.Type))
+	}
+	return errs
+}
+
+// validateAlongRollupShape checks an inherited roll-up's own shape: named
+// segments, no far-end option, and a non-empty expression per condition
+// entry. The checks that need the relations run in internal/rollup.
+func validateAlongRollupShape(at string, r *RollupDef) []string {
+	var errs []string
+	for i, seg := range r.Along {
+		if strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(seg), AlongRepeat)) == "" {
+			errs = append(errs, fmt.Sprintf("%s: along[%d] names no relation", at, i))
+		}
+	}
+	for _, c := range []struct {
+		set  bool
+		name string
+	}{
+		{r.Type != "", "type"}, {len(r.Where) > 0, "where"}, {r.Records != "", "records"},
+		{r.Window != "", "window"}, {r.Pick != "", "pick"},
+	} {
+		if c.set {
+			errs = append(errs, fmt.Sprintf("%s: along cannot be combined with %s; use condition", at, c.name))
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(r.Condition)) {
+		if strings.TrimSpace(name) == "" || strings.TrimSpace(r.Condition[name]) == "" {
+			errs = append(errs, fmt.Sprintf("%s: condition %q has an empty type or expression", at, name))
+		}
 	}
 	return errs
 }

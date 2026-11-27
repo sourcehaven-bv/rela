@@ -8,6 +8,7 @@ import "slices"
 // backend's conformance run fails with an unknown-type error.
 var entityTypes = []string{
 	"_flow-run",
+	"action",
 	"atype",
 	"btype",
 	"client",
@@ -36,6 +37,7 @@ var entityTypes = []string{
 	"risk",
 	"story",
 	"t",
+	"tag",
 	"task",
 	"team",
 	"test",

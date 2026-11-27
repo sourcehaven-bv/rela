@@ -19,9 +19,14 @@ var _ store.Rollupper = (*Store)(nil)
 // identity-scoped edges of the sources (through the gated path, when q has
 // one) and grouped per source. The fold rules match [store.RollupGeneric],
 // which is the reference.
+// An along query ([store.AlongWalk]) is answered by [store.RollupGeneric]
+// until the SQL walk lands.
 func (s *Store) Rollup(ctx context.Context, q store.RollupQuery) (map[string]store.RollupResult, error) {
 	if err := store.ValidateRollupQuery(q); err != nil {
 		return nil, err
+	}
+	if q.Along != nil {
+		return store.RollupGeneric(ctx, s, q)
 	}
 	if err := checkGraphQueryScope(q.Related); err != nil {
 		return nil, err

@@ -356,6 +356,7 @@ func (q qualifier) props(props map[string]PropertyDef) map[string]PropertyDef {
 			if r.Type != "" {
 				r.Type = q.entityRef(r.Type)
 			}
+			q.alongRefs(name, &r)
 			pd.Rollup = &r
 		}
 		out[name] = pd
@@ -887,4 +888,29 @@ func variantConversion(m *Metamodel, from, to string) (def ConversionDef, proble
 		}
 	}
 	return d, ""
+}
+
+// alongRefs qualifies an along roll-up's segment relations, keeping each
+// repeat suffix, and its condition types, and checks each condition
+// expression as a computed expression is checked.
+func (q qualifier) alongRefs(prop string, r *RollupDef) {
+	if len(r.Along) > 0 {
+		along := make(StringOrSlice, len(r.Along))
+		for i, seg := range r.Along {
+			name, repeat := strings.CutSuffix(strings.TrimSpace(seg), AlongRepeat)
+			along[i] = q.relationRef(strings.TrimSpace(name))
+			if repeat {
+				along[i] += AlongRepeat
+			}
+		}
+		r.Along = along
+	}
+	if r.Condition != nil {
+		cond := make(map[string]string, len(r.Condition))
+		for typ, expr := range r.Condition {
+			q.checkExpr(fmt.Sprintf("property %q rollup condition", prop), expr)
+			cond[q.entityRef(typ)] = expr
+		}
+		r.Condition = cond
+	}
 }
