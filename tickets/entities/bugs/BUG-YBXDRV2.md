@@ -15,3 +15,7 @@ started: "2026-11-27"
 completed: "2026-11-27"
 status: done
 ---
+
+## Follow-up
+
+Issue #2625: the flows guide and the `relationSourceRows` godoc promised that a relation trigger's `set` always needs the writer's update and read rights. A relation that a cascade creates fires its triggers through a cascade manager, which skips both checks, as every cascade write does. The guide and godoc now say so.

@@ -70,3 +70,7 @@ Once a write can start a run, a flow job's writes can start another run whose
 job writes again. Carry a hop count through the job handler (`appbuild` flow job
 context), as `automationjobs.go` does with `jobHopsKey`, and refuse a start past
 the bound.
+
+## Follow-up
+
+Issues #2606 and #2607: the flows guide said no trigger cascade write fires a change event, and suggested a roll-up as input for a predicate start. A Lua script action's `rela.update_entity` and a `set` on an update do fire the event; only a trigger's `set` written straight to the store does not. A roll-up is computed on read and never stored, so it starts nothing. The guide and the `UpdateHook` godoc now say so.
