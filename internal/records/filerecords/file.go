@@ -65,6 +65,8 @@ func (s *Store) lock(ctx context.Context) (func(), error) {
 		s.mu.Unlock()
 		return nil, err
 	}
+	// nosemgrep: trailofbits.go.missing-unlock-before-return.missing-unlock-before-return
+	// The returned func is the unlock; the caller defers it.
 	return func() { unlock(); s.mu.Unlock() }, nil
 }
 

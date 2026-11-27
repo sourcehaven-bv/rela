@@ -32,3 +32,7 @@ advisories are public, so that issue lists them.
 2. Results upload to code scanning per tool (categories gitleaks, semgrep, osv-scanner).
 3. Per tool one issue titled "Security scan: <tool> findings" is created, updated on later runs, and closed by the first clean run.
 4. Existing gitleaks false positives are listed in `.gitleaksignore` with a reason.
+
+## Follow-up
+
+The first runs (#2563, #2564) reported findings that are false positives. Each one now carries a `nosemgrep` comment or a `.gitleaksignore` entry with its reason. The memqueue drain goroutine moved into a small helper, and the collab test uses `wss://` URLs.

@@ -185,7 +185,7 @@ func (q *memQueue) Start(ctx context.Context) error {
 	q.started = true
 	// The workers keep the values of ctx but not its cancellation: the queue
 	// lives until Close, not until whatever call happened to start it.
-	base, cancel := context.WithCancel(context.WithoutCancel(ctx)) //nolint:gosec // G118: Close calls cancel
+	base, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	q.cancel = cancel
 	q.workers.Add(q.concurrency)
 	for range q.concurrency {
@@ -359,6 +359,16 @@ func (q *memQueue) finish(mj memJob) {
 	q.mu.Unlock()
 }
 
+// closeWhenDone returns a channel that is closed once wg's count reaches zero.
+func closeWhenDone(wg *sync.WaitGroup) chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	return done
+}
+
 // Close implements [Queue].
 //
 // Queued jobs and jobs waiting for a retry are dropped, as the package doc
@@ -383,12 +393,7 @@ func (q *memQueue) Close(ctx context.Context) error {
 		q.ready = nil
 		clear(q.keys)
 		q.cond.Broadcast()
-		drained := make(chan struct{})
-		go func() {
-			q.workers.Wait()
-			close(drained)
-		}()
-		q.drained = drained
+		q.drained = closeWhenDone(&q.workers)
 	}
 	drained := q.drained
 	q.mu.Unlock()

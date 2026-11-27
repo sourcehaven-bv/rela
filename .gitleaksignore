@@ -14,3 +14,7 @@ eeaa85620b6cd62802fa3e2ec1249afbf855948e:tickets/entities/docs-checklists/DOCS-E
 986f5ba603a9df56d473163133dd92999098ec7f:internal/dataentry/webhook_conflict_postgres_test.go:generic-api-key:181
 # Test fixture: attachment storage path
 6d43d38bf5892d5a0a655cf8590d720bcfb6243b:internal/workspace/attachment_filename_test.go:generic-api-key:65
+# Test fixture: the sample handshake nonce from RFC 6455
+f52410647cf44be1bd2dcffd6ef6e3760559eee1:internal/dataentry/collab_test.go:generic-api-key:369
+# Test fixture: made-up hex hash of a queue job
+7baa6433c686ce2c301ec387a09082dccc004de2:internal/jobs/neoqcutover_test.go:generic-api-key:37

@@ -43,7 +43,7 @@ function room(name = 'alice'): CollabRoom {
     type: 'ticket',
     id: 'TKT-1',
     user: { name, color: 'red' },
-    serverUrl: 'ws://relay',
+    serverUrl: 'wss://relay',
     WebSocketImpl: SilentSocket as unknown as typeof WebSocket,
   })
   rooms.push(r)
@@ -93,12 +93,12 @@ describe('collabRoom', () => {
       user: { name: 'a', color: 'red' },
       build: 'b1',
       epoch: 'e1',
-      serverUrl: 'ws://relay',
+      serverUrl: 'wss://relay',
       WebSocketImpl: SilentSocket as unknown as typeof WebSocket,
     })
     rooms.push(r)
     expect(SilentSocket.urls[SilentSocket.urls.length - 1]).toBe(
-      'ws://relay/api/v1/_collab/ticket/TKT-1%40draft?build=b1&epoch=e1'
+      'wss://relay/api/v1/_collab/ticket/TKT-1%40draft?build=b1&epoch=e1'
     )
   })
 

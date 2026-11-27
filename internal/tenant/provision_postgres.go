@@ -239,6 +239,8 @@ func (p *Provisioner) reserve(ctx context.Context, conn *pgx.Conn, t Tenant, opt
 	if found {
 		// The erased row, recreated: a compare-and-set, so a concurrent
 		// recreate makes this one fail rather than both proceed.
+		// nosemgrep: go.lang.security.audit.sqli.pgx-sqli.pgx-sqli
+		// controlTable is a constant; values are bound parameters.
 		tag, err := conn.Exec(ctx, "UPDATE "+controlTable+" SET status = $1, suspended_by = NULL, erased_at = NULL, "+
 			"read_only = false, plan = NULL, entitlements = NULL, archived_at = NULL, api_hold = false, "+
 			"created_at = now(), updated_at = now() WHERE schema_name = $2 AND org_id = $3 AND status = $4",
@@ -252,6 +254,8 @@ func (p *Provisioner) reserve(ctx context.Context, conn *pgx.Conn, t Tenant, opt
 		return nil
 	}
 	// No ON CONFLICT: a row inserted meanwhile is an error, never merged.
+	// nosemgrep: go.lang.security.audit.sqli.pgx-sqli.pgx-sqli
+	// controlTable is a constant; values are bound parameters.
 	if _, err := conn.Exec(ctx, "INSERT INTO "+controlTable+" (schema_name, org_id, status) VALUES ($1, $2, $3)",
 		t.Schema, t.OrgID, string(StatusProvisioning)); err != nil {
 		return fmt.Errorf("tenant: create org_id %q: record: %w", t.OrgID, err)
@@ -410,6 +414,8 @@ func setStatus(ctx context.Context, conn *pgx.Conn, t Tenant, to Status, by Susp
 		c := string(by)
 		cause = &c
 	}
+	// nosemgrep: go.lang.security.audit.sqli.pgx-sqli.pgx-sqli
+	// controlTable is a constant; values are bound parameters.
 	tag, err := conn.Exec(ctx, "UPDATE "+controlTable+" SET status = $1, suspended_by = $2, updated_at = now() "+
 		"WHERE schema_name = $3 AND org_id = $4 AND status = ANY($5)",
 		string(to), cause, t.Schema, t.OrgID, allowed)
