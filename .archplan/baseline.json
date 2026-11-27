@@ -1124,24 +1124,6 @@
       "at": "2026-10-28T13:29:06Z",
       "title": "No test shows handleSSE refusing a caller."
     },
-    "security.untested_denial-fc2f95290b9f": {
-      "state": "accepted",
-      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
-      "at": "2026-10-28T13:29:06Z",
-      "title": "No test shows handleV1Analyze refusing a caller."
-    },
-    "security.untested_denial-9d629eadfdc8": {
-      "state": "accepted",
-      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
-      "at": "2026-10-28T13:29:06Z",
-      "title": "No test shows handleV1Commands refusing a caller."
-    },
-    "security.untested_denial-269b294ad712": {
-      "state": "accepted",
-      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
-      "at": "2026-10-28T13:29:06Z",
-      "title": "No test shows handleV1Config refusing a caller."
-    },
     "security.untested_denial-b087c050ab7a": {
       "state": "accepted",
       "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
@@ -1178,23 +1160,11 @@
       "at": "2026-10-28T13:29:07Z",
       "title": "No test shows handleV1NextActionGet refusing a caller."
     },
-    "security.untested_denial-47ecab38c73b": {
-      "state": "accepted",
-      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
-      "at": "2026-10-28T13:29:07Z",
-      "title": "No test shows handleV1OpenAPI refusing a caller."
-    },
     "security.untested_denial-9a9f846235de": {
       "state": "accepted",
       "reason": "Detector gap: the refusal is tested (TestPiles_OwnerIsolation).",
       "at": "2026-10-28T13:29:07Z",
       "title": "No test shows handleV1Piles refusing a caller."
-    },
-    "security.untested_denial-a8944e270dc7": {
-      "state": "accepted",
-      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
-      "at": "2026-10-28T13:29:07Z",
-      "title": "No test shows handleV1Schema refusing a caller."
     },
     "security.untested_denial-ec2115fa21d1": {
       "state": "accepted",
@@ -2918,6 +2888,48 @@
       "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
       "at": "2026-11-26T17:00:00Z",
       "title": "2 components (triggers, validation) each write their own check_traversals for Program, a type of predicate."
+    },
+    "security.untested_denial-65825eb35110": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "No test shows handleV1Analyze refusing a caller."
+    },
+    "security.untested_denial-22955a3beaf2": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "No test shows handleV1Commands refusing a caller."
+    },
+    "security.untested_denial-af3b4173af3b": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "No test shows handleV1Config refusing a caller."
+    },
+    "security.untested_denial-947989dbd109": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "No test shows handleV1OpenAPI refusing a caller."
+    },
+    "security.untested_denial-71034309e910": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "No test shows handleV1Schema refusing a caller."
+    },
+    "security.untested_denial-f3420392f28b": {
+      "state": "accepted",
+      "reason": "Design: like gantt, a sankey reads gated, redacted rows and never refuses a signed-in caller; a hidden row is left out. An unknown sankey id is a config key and answers 404.",
+      "at": "2026-11-27T14:00:00Z",
+      "title": "No test shows handleV1Sankey refusing a caller."
+    },
+    "security.untested_denial-465f2371fcf9": {
+      "state": "accepted",
+      "reason": "Design: the schema sub-routes serve the metamodel, which is config and goes to every signed-in user like /api/v1/_schema. The only refusal is an unsigned caller, refused at the identity edge.",
+      "at": "2026-11-27T14:00:00Z",
+      "title": "No test shows handleV1SchemaRoutes refusing a caller."
     }
   },
   "labels": {},
