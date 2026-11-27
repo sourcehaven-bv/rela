@@ -119,7 +119,9 @@ func fireRelationEvent(
 
 // authorizeTriggerWrite asks whether the caller of m may update row, as
 // [Manager.AuthorizeUpdate] does. A trigger writes the source row on the
-// caller's behalf, and a relation grant does not cover that update.
+// caller's behalf, and a relation grant does not cover that update. For a
+// cascade manager only the managed-type rule applies, as for every cascade
+// write.
 func authorizeTriggerWrite(ctx context.Context, m *Manager, row *entity.Entity) error {
 	if err := requireReadableRow(ctx, faceGateOf(m), row.ID, []*entity.Entity{row}); err != nil {
 		return err
@@ -128,8 +130,10 @@ func authorizeTriggerWrite(ctx context.Context, m *Manager, row *entity.Entity) 
 }
 
 // relationSourceRows reads the rows a relation event on rel fires for, on
-// view. Rows the caller of m cannot read are left out, so a trigger never
-// writes a face the caller could not see.
+// view. Rows the caller of m cannot read are left out, so a trigger on a
+// caller's own relation write never writes a face the caller could not see.
+// A cascade manager (cascadeWrite) has no read gate and gets every row: a
+// relation a cascade creates fires its triggers as a system action.
 func relationSourceRows(
 	ctx context.Context, m *Manager, view store.Store, rel *entity.Relation,
 ) ([]*entity.Entity, error) {
