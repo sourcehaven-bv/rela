@@ -197,52 +197,9 @@ type alongVisit struct {
 // then one MatchingFaces per counting node.
 func rollupAlong(ctx context.Context, st RollupReader, q RollupQuery) (map[string]RollupResult, error) {
 	a := q.Along
-	limit := a.RowCap
-	if limit == 0 {
-		limit = AlongRowCap
-	}
-	seen := map[alongKey]bool{}
-	visited := map[string]map[string]alongVisit{}
-	frontier := make([]alongKey, 0, len(q.Sources))
-	for _, src := range slices.Sorted(slices.Values(q.Sources)) {
-		frontier = append(frontier, alongKey{src: src, id: src, state: -1})
-	}
-	frontier = slices.Compact(frontier)
-	for depth := 0; depth < a.MaxDepth && len(frontier) > 0; depth++ {
-		bySeg := map[int][]alongKey{}
-		for _, k := range frontier {
-			for _, j := range AlongNext(a.Segments, k.state) {
-				bySeg[j] = append(bySeg[j], k)
-			}
-		}
-		var next []alongKey
-		for _, j := range slices.Sorted(maps.Keys(bySeg)) {
-			reached, err := alongHop(ctx, st, a.Segments[j], bySeg[j])
-			if err != nil {
-				return nil, err
-			}
-			for _, r := range reached {
-				k := alongKey{src: r.src, id: r.header.ID, state: j}
-				if seen[k] {
-					continue
-				}
-				seen[k] = true
-				if len(seen) > limit {
-					return nil, ErrAlongRowCap
-				}
-				next = append(next, k)
-				if k.id == k.src {
-					continue
-				}
-				if visited[k.src] == nil {
-					visited[k.src] = map[string]alongVisit{}
-				}
-				if _, ok := visited[k.src][k.id]; !ok {
-					visited[k.src][k.id] = alongVisit{header: r.header, state: j}
-				}
-			}
-		}
-		frontier = next
+	seen, visited, err := walkAlong(ctx, st, a, q.Sources)
+	if err != nil {
+		return nil, err
 	}
 	counted, err := alongCounted(ctx, st, a, seen, visited)
 	if err != nil {
@@ -268,6 +225,62 @@ func rollupAlong(ctx context.Context, st RollupReader, q RollupQuery) (map[strin
 		out[src] = res
 	}
 	return out, nil
+}
+
+// walkAlong walks a from sources and returns every triple it holds and,
+// per source, each entity other than the source it visited, at the row
+// and state of its first arrival.
+func walkAlong(
+	ctx context.Context, st RollupReader, a *AlongWalk, sources []string,
+) (map[alongKey]bool, map[string]map[string]alongVisit, error) {
+	limit := a.RowCap
+	if limit == 0 {
+		limit = AlongRowCap
+	}
+	seen := map[alongKey]bool{}
+	visited := map[string]map[string]alongVisit{}
+	frontier := make([]alongKey, 0, len(sources))
+	for _, src := range slices.Sorted(slices.Values(sources)) {
+		frontier = append(frontier, alongKey{src: src, id: src, state: -1})
+	}
+	frontier = slices.Compact(frontier)
+	for depth := 0; depth < a.MaxDepth && len(frontier) > 0; depth++ {
+		bySeg := map[int][]alongKey{}
+		for _, k := range frontier {
+			for _, j := range AlongNext(a.Segments, k.state) {
+				bySeg[j] = append(bySeg[j], k)
+			}
+		}
+		var next []alongKey
+		for _, j := range slices.Sorted(maps.Keys(bySeg)) {
+			reached, err := alongHop(ctx, st, a.Segments[j], bySeg[j])
+			if err != nil {
+				return nil, nil, err
+			}
+			for _, r := range reached {
+				k := alongKey{src: r.src, id: r.header.ID, state: j}
+				if seen[k] {
+					continue
+				}
+				seen[k] = true
+				if len(seen) > limit {
+					return nil, nil, ErrAlongRowCap
+				}
+				next = append(next, k)
+				if k.id == k.src {
+					continue
+				}
+				if visited[k.src] == nil {
+					visited[k.src] = map[string]alongVisit{}
+				}
+				if _, ok := visited[k.src][k.id]; !ok {
+					visited[k.src][k.id] = alongVisit{header: r.header, state: j}
+				}
+			}
+		}
+		frontier = next
+	}
+	return seen, visited, nil
 }
 
 // alongReach is one entity a hop reached from a source.

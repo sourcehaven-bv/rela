@@ -123,6 +123,16 @@ type RollupDef struct {
 	Along     StringOrSlice     `yaml:"along,omitempty"`
 	MaxDepth  int               `yaml:"max_depth,omitempty"`
 	Condition map[string]string `yaml:"condition,omitempty"`
+
+	// SiblingsBefore names the ordered relation of an earlier-siblings
+	// roll-up (design gap 2): the entity's siblings are the other sources of
+	// the relation into its parent, and the roll-up reads those that come
+	// before it in the incoming order. Where filters the siblings,
+	// WhenParent the parent; Climb judges each ancestor along the relation
+	// too, within MaxDepth hops.
+	SiblingsBefore string            `yaml:"siblings_before,omitempty"`
+	WhenParent     map[string]string `yaml:"when_parent,omitempty"`
+	Climb          bool              `yaml:"climb,omitempty"`
 }
 
 // AlongRepeat is the suffix that makes an along segment repeat.
@@ -202,8 +212,12 @@ func validateRollupShape(schemaName, propName string, pd PropertyDef, allowRollu
 		errs = append(errs, validateBodyTasksRollupShape(at, r, pd)...)
 	case r.Records != "":
 		errs = append(errs, validateRecordsRollupShape(at, r)...)
+	case strings.TrimSpace(r.SiblingsBefore) != "":
+		errs = append(errs, validateSiblingsRollupShape(at, r)...)
 	case len(r.Along) > 0:
 		errs = append(errs, validateAlongRollupShape(at, r)...)
+	case len(r.WhenParent) > 0 || r.Climb:
+		errs = append(errs, at+": when_parent and climb are only valid with siblings_before")
 	case r.MaxDepth != 0 || len(r.Condition) > 0:
 		errs = append(errs, at+": max_depth and condition are only valid with along")
 	case r.Window != "":
@@ -342,6 +356,35 @@ func validateAlongRollupShape(at string, r *RollupDef) []string {
 		if strings.TrimSpace(name) == "" || strings.TrimSpace(r.Condition[name]) == "" {
 			errs = append(errs, fmt.Sprintf("%s: condition %q has an empty type or expression", at, name))
 		}
+	}
+	return errs
+}
+
+// validateSiblingsRollupShape checks an earlier-siblings roll-up's own
+// shape: no option of another roll-up form, a non-empty value per
+// when_parent entry, and max_depth only with climb. The checks that need
+// the relation run in internal/rollup.
+func validateSiblingsRollupShape(at string, r *RollupDef) []string {
+	var errs []string
+	for _, c := range []struct {
+		set  bool
+		name string
+	}{
+		{len(r.Via) > 0, "via"}, {len(r.Along) > 0, "along"}, {r.Type != "", "type"},
+		{r.Records != "", "records"}, {r.Window != "", "window"}, {r.Pick != "", "pick"},
+		{len(r.Condition) > 0, "condition"},
+	} {
+		if c.set {
+			errs = append(errs, fmt.Sprintf("%s: siblings_before cannot be combined with %s", at, c.name))
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(r.WhenParent)) {
+		if strings.TrimSpace(name) == "" || strings.TrimSpace(r.WhenParent[name]) == "" {
+			errs = append(errs, fmt.Sprintf("%s: when_parent %q has an empty property or value", at, name))
+		}
+	}
+	if r.MaxDepth != 0 && !r.Climb {
+		errs = append(errs, at+": max_depth is only valid with climb")
 	}
 	return errs
 }

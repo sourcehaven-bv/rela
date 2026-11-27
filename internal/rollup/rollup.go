@@ -68,6 +68,10 @@ type Column struct {
 	// relation and record fields are then empty, and Value and Numeric
 	// describe a min or max. Nil for every other roll-up.
 	Along *Along
+	// Siblings is the compiled earlier-siblings roll-up (design gap 2); the
+	// other relation and record fields are then empty. Nil for every other
+	// roll-up.
+	Siblings *Siblings
 }
 
 // TaskCount picks the column's count from the task lines of body.
@@ -197,6 +201,9 @@ func compileColumn(
 	if !ok {
 		// The loader reports the shape; nothing more to check.
 		return Column{}, []string{at + " must declare exactly one function"}
+	}
+	if strings.TrimSpace(r.SiblingsBefore) != "" {
+		return compileSiblingsColumn(meta, typeName, name, fn, r, at)
 	}
 	if len(r.Along) > 0 {
 		return compileAlongColumn(meta, eval, typeName, name, pd, fn, prop, at)

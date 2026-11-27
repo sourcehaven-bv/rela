@@ -98,6 +98,10 @@ type RollupQuery struct {
 	// Path and Relation are then empty, and Func is count, min or max.
 	// Nil: accepted — the query is a related or path roll-up.
 	Along *AlongWalk
+	// Siblings makes the query an earlier-siblings roll-up ([SiblingWalk]);
+	// Related, Path, Relation and Along are then empty, and Func is count.
+	// Nil: accepted — the query is another form.
+	Siblings *SiblingWalk
 }
 
 // RollupStep is one step of a [RollupQuery.Path]: the identity-scoped edges
@@ -133,6 +137,10 @@ type RollupResult struct {
 	Value any
 	// Visits are the counted visits of an along walk that asked for them.
 	Visits []AlongVisit
+	// Parents are the parents a siblings query judged the source's nodes
+	// under, sorted: each one a gate admits that meets its condition. A
+	// siblings source with none has no result.
+	Parents []string
 }
 
 // Rollupper is the native form of [Rollup]: one statement per query.
@@ -159,6 +167,9 @@ func Rollup(ctx context.Context, st Store, q RollupQuery) (map[string]RollupResu
 // ValidateRollupQuery refuses a query every backend would answer
 // differently or not at all.
 func ValidateRollupQuery(q RollupQuery) error {
+	if q.Siblings != nil {
+		return validateSiblings(q)
+	}
 	if q.Along != nil {
 		return validateAlong(q)
 	}
@@ -220,6 +231,9 @@ func RollupGeneric(ctx context.Context, st RollupReader, q RollupQuery) (map[str
 	out := map[string]RollupResult{}
 	if len(q.Sources) == 0 {
 		return out, nil
+	}
+	if q.Siblings != nil {
+		return rollupSiblings(ctx, st, q)
 	}
 	if q.Along != nil {
 		return rollupAlong(ctx, st, q)

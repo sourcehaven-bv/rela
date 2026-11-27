@@ -357,6 +357,9 @@ func (q qualifier) props(props map[string]PropertyDef) map[string]PropertyDef {
 				r.Type = q.entityRef(r.Type)
 			}
 			q.alongRefs(name, &r)
+			if r.SiblingsBefore != "" {
+				r.SiblingsBefore = q.relationRef(strings.TrimSpace(r.SiblingsBefore))
+			}
 			pd.Rollup = &r
 		}
 		out[name] = pd

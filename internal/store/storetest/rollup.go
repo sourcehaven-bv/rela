@@ -514,6 +514,7 @@ func RunRollupTests(t *testing.T, f Factory) {
 
 	t.Run("path", func(t *testing.T) { runRollupPathTests(t, f) })
 	t.Run("along", func(t *testing.T) { runRollupAlongTests(t, f) })
+	t.Run("siblings", func(t *testing.T) { runRollupSiblingsTests(t, f) })
 
 	t.Run("invalid_queries_are_refused", func(t *testing.T) {
 		s := f(t)

@@ -124,23 +124,7 @@ func buildAlongSQL(q store.RollupQuery, levels [][]store.AlongHop) (sqlText stri
 	if limit == 0 {
 		limit = store.AlongRowCap
 	}
-	limitArg := b.arg(limit + 1)
-	with := []string{fmt.Sprintf(
-		`l0 AS (SELECT DISTINCT s COLLATE "C" AS src, s COLLATE "C" AS id, -1 AS state FROM unnest(%s::text[]) s)`,
-		b.arg(q.Sources))}
-	walk := make([]string, 0, len(levels))
-	for i, hops := range levels {
-		k := i + 1
-		with = append(with, alongLevelSQL(b, q, k, hops, limitArg)...)
-		if k > 1 && k < len(levels) {
-			with = append(with, fmt.Sprintf(
-				"%s AS (SELECT src, id, state FROM %s UNION ALL SELECT src, id, state FROM l%d)",
-				alongSeen(k), alongSeen(k-1), k))
-		}
-		walk = append(walk, fmt.Sprintf("SELECT src, id, type, face, hit, val FROM l%d", k))
-	}
-	with = append(with,
-		"walk AS ("+strings.Join(walk, " UNION ALL ")+")",
+	with := append(alongWalkSQL(b, q, levels, b.arg(limit+1)),
 		`counted AS (SELECT w.src, w.id, min(w.type) AS type, min(w.face COLLATE "C") AS face, `+
 			`min(w.val) AS val FROM walk w WHERE w.id <> w.src GROUP BY w.src, w.id HAVING bool_or(w.hit))`)
 	sentinel := "SELECT TRUE AS over_cap, NULL::text AS src, NULL::text AS id, NULL::text AS type, " +
@@ -155,6 +139,27 @@ func buildAlongSQL(q store.RollupQuery, levels [][]store.AlongHop) (sqlText stri
 		return "", nil, b.err
 	}
 	return sqlText, b.args, nil
+}
+
+// alongWalkSQL renders the CTEs l0 to lK of q's walk and walk, the union
+// of l1 to lK: every gated (src, id, state) triple, at most limitArg per
+// level.
+func alongWalkSQL(b *sqlBuilder, q store.RollupQuery, levels [][]store.AlongHop, limitArg string) []string {
+	with := []string{fmt.Sprintf(
+		`l0 AS (SELECT DISTINCT s COLLATE "C" AS src, s COLLATE "C" AS id, -1 AS state FROM unnest(%s::text[]) s)`,
+		b.arg(q.Sources))}
+	walk := make([]string, 0, len(levels))
+	for i, hops := range levels {
+		k := i + 1
+		with = append(with, alongLevelSQL(b, q, k, hops, limitArg)...)
+		if k > 1 && k < len(levels) {
+			with = append(with, fmt.Sprintf(
+				"%s AS (SELECT src, id, state FROM %s UNION ALL SELECT src, id, state FROM l%d)",
+				alongSeen(k), alongSeen(k-1), k))
+		}
+		walk = append(walk, fmt.Sprintf("SELECT src, id, type, face, hit, val FROM l%d", k))
+	}
+	return append(with, "walk AS ("+strings.Join(walk, " UNION ALL ")+")")
 }
 
 // alongSeen names the CTE of every triple levels 1 to k hold.

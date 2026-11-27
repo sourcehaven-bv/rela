@@ -28,6 +28,9 @@ func (s *Store) Rollup(ctx context.Context, q store.RollupQuery) (map[string]sto
 	if err := store.ValidateRollupQuery(q); err != nil {
 		return nil, err
 	}
+	if q.Siblings != nil {
+		return s.rollupSiblings(ctx, q)
+	}
 	if q.Along != nil {
 		return s.rollupAlong(ctx, q)
 	}
