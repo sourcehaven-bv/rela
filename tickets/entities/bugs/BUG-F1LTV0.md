@@ -11,7 +11,7 @@ why2: The invalid operator shipped because ValidateConfig's validFilterOperators
 why3: The validator's set drifted because there was no pin tying it to the documented operator set — it was hand-maintained and diverged in BOTH directions (allowed `=~`, rejected documented `in`/`~`/`==`), and nothing failed when docs, validator, SPA map, and API set disagreed.
 why4: Four independent hand-maintained operator sets (docs table, validator map, SPA OPERATOR_MAP, API switch) existed with no cross-layer contract test, so each layer's silent-fallback behavior masked the others' gaps.
 why5: 'Systemic: filter-language surfaces in rela (search, calfeed where, CLI filter, list filters) look similar but have different operator sets, and config-time validation was not treated as the contract boundary that must exactly mirror what the runtime evaluates.'
-prevention: 'Validator set corrected to the documented set (drop `=~`, add `~`/`in`/`==`) and pinned by TestValidateConfig_DocumentedFilterOperatorsAccepted + TestValidateConfig_InvalidFilterOperator (now using `=~` as the canonical invalid case). Downstream layers no longer degrade silently (see BUG-F1LTP1), so any future drift is loud instead of invisible.'
+prevention: 'Validator set corrected to the documented set (drop `=~`, add `~`/`in`/`==`) and pinned by TestValidateConfig_DocumentedFilterOperatorsAccepted + TestValidateConfig_Errors/InvalidFilterOperator (now using `=~` as the canonical invalid case). Downstream layers no longer degrade silently (see BUG-F1LTP1), so any future drift is loud instead of invisible.'
 status: done
 ---
 
