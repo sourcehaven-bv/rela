@@ -361,8 +361,16 @@ export async function waitForExit(
 /** Build a Go binary if missing, using a filesystem lock so concurrent workers
  *  don't race each other writing the same output file (RR-BZUH5). In CI the
  *  fixture should never fire because the binary is pre-built in a prior step;
- *  we fail loudly there to surface misconfiguration. */
-function buildIfMissing(binaryPath: string, ...buildArgs: string[]): string {
+ *  we fail loudly there to surface misconfiguration.
+ *
+ *  `pkg` and `flags` are separate parameters because `go build` stops parsing
+ *  flags at the first package path: every flag, `-o` included, must precede
+ *  it (TKT-LDI9COS). */
+function buildIfMissing(
+  binaryPath: string,
+  pkg: string,
+  flags: readonly string[] = [],
+): string {
   if (fs.existsSync(binaryPath)) return binaryPath;
   if (process.env.CI) {
     throw new Error(
@@ -401,7 +409,7 @@ function buildIfMissing(binaryPath: string, ...buildArgs: string[]): string {
     // execFileSync with an args array: no shell, so the absolute paths can't
     // be interpreted as shell syntax (CodeQL js/shell-command-injection-from-
     // environment; also just breaks on checkout paths containing spaces).
-    execFileSync("go", ["build", ...buildArgs, "-o", binaryPath], {
+    execFileSync("go", ["build", ...flags, "-o", binaryPath, pkg], {
       cwd: PROJECT_ROOT,
       stdio: "inherit",
     });
@@ -906,12 +914,10 @@ export const postgresTest = test.extend<
     // eslint-disable-next-line no-empty-pattern
     async ({}, use) => {
       await use(
-        buildIfMissing(
-          PG_SERVER_BINARY,
+        buildIfMissing(PG_SERVER_BINARY, "./cmd/rela-server", [
           "-tags",
           "postgres",
-          "./cmd/rela-server",
-        ),
+        ]),
       );
     },
     { scope: "worker" },
