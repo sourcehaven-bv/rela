@@ -2,9 +2,17 @@
 id: BUG-BC90GPD
 type: bug
 title: TestSSEACL tests flake on a fixed settle() sleep
-description: sse_acl_test.go waits a fixed sseFlushInterval+80ms before reading the SSE sinks; on a loaded runner the flush lands later and the sinks are empty.
+description: sse_acl_test.go waited a fixed sseFlushInterval+80ms before reading the SSE sinks; on a loaded runner the flush lands later and the sinks are empty. Negative checks could also pass falsely on a late leak.
 priority: low
-status: backlog
+why1: The tests sleep a fixed sseFlushInterval+80ms (and 50 ms in one test) and then read the sink; on a loaded runner the flush lands after that window.
+why2: The test harness exposed no signal that the SSE loop had processed the sent events, so a sleep stood in for one.
+why3: The negative ACL checks (a hidden frame is NOT delivered) have nothing to wait for, so a fixed window looked like the only option and it also let a late leak pass falsely.
+why4: The stream already emits such a signal (the ping token carries the flushed feed position) but nothing pointed test authors at it.
+why5: There is no project rule or lint against fixed sleeps as synchronisation in async tests, so the pattern was copied between tests.
+prevention: Async tests wait on a signal from the system under test; a negative check needs a positive barrier (here the ping token reaching the last sent feed position) proving the work ran before asserting absence.
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Symptom
@@ -46,3 +54,14 @@ Waiting on the sink for the expected frames with a deadline fixes the tests that
 assert a frame arrived, but not the negative checks: they expect no frame, so
 there is nothing to wait for. A manual clock lets them read the sink after a
 flush has provably run.
+
+## Resolution
+
+The tests now wait on a signal from the stream instead of a manual clock. Each
+test connection pings every 5 ms, and a ping carries the resume token of the
+flushed feed position. `runSSELoop` advances that position only after the
+changes up to it are gated and their frames written. `drain` waits until a ping
+token reaches the number of feed events the test sent, so a negative check reads
+the sink after the hidden event has provably been processed. Broker frames wait
+for their own frames. The debounce tests use a 1 s flush window so a burst on a
+loaded runner still lands in one window.

@@ -66,28 +66,101 @@ func startTestFeed(t *testing.T) (feed *changefeed.Bus, events chan<- store.Even
 	return feed, src.ch
 }
 
-// runSSEConn drives runSSELoop on a goroutine with the given gated ctx.
-// Broker frames go to the loop's broker channel; entity and relation
-// changes go through a real change feed, as store events do in
-// production. The caller sends events, waits past the flush window, then
-// reads the sink. stop ends the loop.
-func runSSEConn(ctx context.Context, t *testing.T, app *App) (send chan<- testEvent, sink *sseSink, stop func()) {
+// sseTestConn is one runSSELoop under test. Every send goes through it so it
+// can count the change-feed events, which is what drain waits on.
+type sseTestConn struct {
+	in   chan testEvent
+	sink *sseSink
+	feed *changefeed.Bus
+	sent uint64 // change-feed events sent; the feed numbers them 1..sent
+	stop func()
+}
+
+// send hands ev to the connection.
+func (c *sseTestConn) send(ev testEvent) {
+	if ev.Name == "" {
+		c.sent++
+	}
+	c.in <- ev
+}
+
+// sseTestPing is the ping interval of a test connection. Pings are the drain
+// signal, so a short interval keeps drain fast.
+const sseTestPing = 5 * time.Millisecond
+
+// sseTestBurstFlush is the flush window of the debounce tests. A burst must
+// land inside one window to coalesce, and a loaded runner can spread a burst
+// over more than the production window, so these tests use a wider one. They
+// pin the coalescing logic, not the value of sseFlushInterval.
+const sseTestBurstFlush = time.Second
+
+// drain blocks until the loop has gated and written every change-feed event
+// sent so far. A ping carries the resume token of the flushed position, which
+// runSSELoop advances only after the changes up to it are gated and their
+// frames written. So once a ping's token reaches the count of events sent, any
+// frame those events produce is already in the sink, and a missing frame is
+// truly withheld rather than late. This is the positive signal the tests that
+// assert a frame is NOT delivered need.
+func (c *sseTestConn) drain(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for c.pingSeq(t) < c.sent {
+		if time.Now().After(deadline) {
+			t.Fatalf("stream did not flush through seq %d within 10s:\n%s", c.sent, c.sink.String())
+		}
+		time.Sleep(sseTestPing)
+	}
+}
+
+// pingSeq returns the feed position in the sink's last ping frame, or 0 when
+// there is no ping yet.
+func (c *sseTestConn) pingSeq(t *testing.T) uint64 {
+	t.Helper()
+	const prefix = "event: ping\nid: "
+	out := c.sink.String()
+	i := strings.LastIndex(out, prefix)
+	if i < 0 {
+		return 0
+	}
+	tok, _, _ := strings.Cut(out[i+len(prefix):], "\n")
+	// A token is sealed; a subscription opened at it reports its position.
+	sub := c.feed.Subscribe(tok)
+	defer sub.Close()
+	if sub.Resync() {
+		t.Fatalf("ping token %q did not open", tok)
+	}
+	return sub.Start()
+}
+
+// runSSEConn drives runSSELoop on a goroutine with the given gated ctx and
+// the production flush window.
+func runSSEConn(ctx context.Context, t *testing.T, app *App) *sseTestConn {
+	t.Helper()
+	return runSSEConnFlush(ctx, t, app, sseFlushInterval)
+}
+
+// runSSEConnFlush is [runSSEConn] with the given flush window. Broker frames
+// go to the loop's broker channel; entity and relation changes go through a
+// real change feed, as store events do in production. The caller sends
+// events, calls drain, then reads the sink. stop ends the loop.
+func runSSEConnFlush(ctx context.Context, t *testing.T, app *App, flush time.Duration) *sseTestConn {
 	t.Helper()
 	feed, storeEvents := startTestFeed(t)
 	sub := feed.Subscribe("")
 	broker := make(chan sseEvent, 64)
-	in := make(chan testEvent, 64)
-	sink = &sseSink{}
+	c := &sseTestConn{in: make(chan testEvent, 64), sink: &sseSink{}, feed: feed}
 	loopCtx, cancel := context.WithCancel(ctx)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_events", http.NoBody).WithContext(loopCtx)
-	conn := &sseConn{w: sink, flusher: sink, timing: defaultSSETimings}
+	conn := &sseConn{w: c.sink, flusher: c.sink, timing: sseTimings{flush: flush, ping: sseTestPing}}
 	done := make(chan struct{})
 	go func() {
 		app.sse.runSSELoop(conn, req, broker, sub, sub.Start(), nil)
 		close(done)
 	}()
 	go func() {
-		for ev := range in {
+		// Every non-broker case must be an op the feed numbers, because send
+		// counts it and drain waits for it.
+		for ev := range c.in {
 			switch {
 			case ev.Name != "":
 				broker <- sseEvent{Name: ev.Name, Data: ev.Data}
@@ -98,17 +171,14 @@ func runSSEConn(ctx context.Context, t *testing.T, app *App) (send chan<- testEv
 			}
 		}
 	}()
-	stop = func() {
+	c.stop = func() {
 		cancel()
 		<-done
-		close(in)
+		close(c.in)
 		sub.Close()
 	}
-	return in, sink, stop
+	return c
 }
-
-// settle waits for one flush window plus slack so coalesced frames land.
-func settle() { time.Sleep(sseFlushInterval + 80*time.Millisecond) }
 
 // waitForFrame blocks until the sink holds needle, so a slow event path is not
 // mistaken for a missing frame.
@@ -145,14 +215,14 @@ func TestSSEACL_PerTypeGating(t *testing.T) {
 	}, app.store)
 	setTestACL(t, app, d)
 
-	send, sink, stop := runSSEConn(gateCtxFor(aliceCtx(), t, d), t, app)
-	defer stop()
+	c := runSSEConn(gateCtxFor(aliceCtx(), t, d), t, app)
+	defer c.stop()
 
-	send <- testEvent{EntityType: "ticket"}
-	send <- testEvent{EntityType: "feature"}
-	settle()
+	c.send(testEvent{EntityType: "ticket"})
+	c.send(testEvent{EntityType: "feature"})
+	c.drain(t)
 
-	out := sink.String()
+	out := c.sink.String()
 	if !strings.Contains(out, `event: entity:changed`) || !strings.Contains(out, `"type":"ticket"`) {
 		t.Errorf("expected a ticket change frame, got:\n%s", out)
 	}
@@ -179,14 +249,14 @@ func TestSSEACL_RoleRelationInheritance(t *testing.T) {
 	}, app.store)
 	setTestACL(t, app, d)
 
-	send, sink, stop := runSSEConn(gateCtxFor(aliceCtx(), t, d), t, app)
-	defer stop()
+	c := runSSEConn(gateCtxFor(aliceCtx(), t, d), t, app)
+	defer c.stop()
 
-	send <- testEvent{EntityType: "ticket"}  // Query verdict → delivered
-	send <- testEvent{EntityType: "feature"} // no grant → withheld
-	settle()
+	c.send(testEvent{EntityType: "ticket"})  // Query verdict → delivered
+	c.send(testEvent{EntityType: "feature"}) // no grant → withheld
+	c.drain(t)
 
-	out := sink.String()
+	out := c.sink.String()
 	if !strings.Contains(out, `"type":"ticket"`) {
 		t.Errorf("Query-verdict principal should receive ticket nudges:\n%s", out)
 	}
@@ -206,14 +276,14 @@ func TestSSEACL_DenyAllWithholds(t *testing.T) {
 	setTestACL(t, app, d)
 
 	// bob has no assignment → DenyAll on everything.
-	send, sink, stop := runSSEConn(gateCtxFor(principalCtx("bob"), t, d), t, app)
-	defer stop()
+	c := runSSEConn(gateCtxFor(principalCtx("bob"), t, d), t, app)
+	defer c.stop()
 
-	send <- testEvent{EntityType: "ticket"}
-	send <- testEvent{EntityType: "feature"}
-	settle()
+	c.send(testEvent{EntityType: "ticket"})
+	c.send(testEvent{EntityType: "feature"})
+	c.drain(t)
 
-	if out := sink.String(); strings.Contains(out, "entity:changed") {
+	if out := c.sink.String(); strings.Contains(out, "entity:changed") {
 		t.Errorf("denied principal received a change nudge (timing leak):\n%s", out)
 	}
 }
@@ -222,13 +292,13 @@ func TestSSEACL_DenyAllWithholds(t *testing.T) {
 // a meaningful id, the wire frame carries only the type.
 func TestSSEACL_NoIDOnWire(t *testing.T) {
 	app := newTestAppV1(t)
-	send, sink, stop := runSSEConn(aliceCtx(), t, app) // NopACL ctx → all visible
-	defer stop()
+	c := runSSEConn(aliceCtx(), t, app) // NopACL ctx → all visible
+	defer c.stop()
 
-	send <- testEvent{EntityType: "ticket"}
-	settle()
+	c.send(testEvent{EntityType: "ticket"})
+	c.drain(t)
 
-	out := sink.String()
+	out := c.sink.String()
 	if !strings.Contains(out, `"type":"ticket"`) {
 		t.Fatalf("expected a ticket change frame:\n%s", out)
 	}
@@ -247,18 +317,15 @@ func TestSSEACL_NoIDOnWire(t *testing.T) {
 // window produces exactly one frame.
 func TestSSEACL_Debounce(t *testing.T) {
 	app := newTestAppV1(t)
-	send, sink, stop := runSSEConn(aliceCtx(), t, app)
-	defer stop()
+	c := runSSEConnFlush(aliceCtx(), t, app, sseTestBurstFlush)
+	defer c.stop()
 
 	for range 20 {
-		send <- testEvent{EntityType: "ticket"}
+		c.send(testEvent{EntityType: "ticket"})
 	}
-	// Wait for the first frame (a loaded runner can delay the feed past one
-	// flush window), then a full window more so a second frame would show.
-	waitForFrame(t, sink, "event: entity:changed")
-	settle()
+	c.drain(t)
 
-	if n := strings.Count(sink.String(), "event: entity:changed"); n != 1 {
+	if n := strings.Count(c.sink.String(), "event: entity:changed"); n != 1 {
 		t.Errorf("burst of 20 ticket events produced %d frames, want 1 (debounce)", n)
 	}
 }
@@ -267,16 +334,16 @@ func TestSSEACL_Debounce(t *testing.T) {
 // get exactly one frame.
 func TestSSEACL_DebounceMultiType(t *testing.T) {
 	app := newTestAppV1(t)
-	send, sink, stop := runSSEConn(aliceCtx(), t, app)
-	defer stop()
+	c := runSSEConnFlush(aliceCtx(), t, app, sseTestBurstFlush)
+	defer c.stop()
 
 	for range 5 {
-		send <- testEvent{EntityType: "ticket"}
-		send <- testEvent{EntityType: "feature"}
+		c.send(testEvent{EntityType: "ticket"})
+		c.send(testEvent{EntityType: "feature"})
 	}
-	settle()
+	c.drain(t)
 
-	out := sink.String()
+	out := c.sink.String()
 	if got := strings.Count(out, `"type":"ticket"`); got != 1 {
 		t.Errorf("ticket frames = %d, want 1", got)
 	}
@@ -299,19 +366,20 @@ func TestSSEACL_TwoPrincipalsDifferentFrames(t *testing.T) {
 	}, app.store)
 	setTestACL(t, app, d)
 
-	aSend, aSink, aStop := runSSEConn(gateCtxFor(principalCtx("alice"), t, d), t, app)
-	defer aStop()
-	bSend, bSink, bStop := runSSEConn(gateCtxFor(principalCtx("bob"), t, d), t, app)
-	defer bStop()
+	a := runSSEConn(gateCtxFor(principalCtx("alice"), t, d), t, app)
+	defer a.stop()
+	b := runSSEConn(gateCtxFor(principalCtx("bob"), t, d), t, app)
+	defer b.stop()
 
 	// The same store event reaches both connections.
-	for _, s := range []chan<- testEvent{aSend, bSend} {
-		s <- testEvent{EntityType: "ticket"}
-		s <- testEvent{EntityType: "feature"}
+	for _, c := range []*sseTestConn{a, b} {
+		c.send(testEvent{EntityType: "ticket"})
+		c.send(testEvent{EntityType: "feature"})
 	}
-	settle()
+	a.drain(t)
+	b.drain(t)
 
-	aOut, bOut := aSink.String(), bSink.String()
+	aOut, bOut := a.sink.String(), b.sink.String()
 	if !strings.Contains(aOut, `"type":"ticket"`) || strings.Contains(aOut, `"type":"feature"`) {
 		t.Errorf("alice (ticket-only) frames wrong:\n%s", aOut)
 	}
@@ -361,26 +429,26 @@ func TestSSEACL_VerdictCached(t *testing.T) {
 	}
 	ctx := withReadGate(aliceCtx(), rg)
 
-	send, _, stop := runSSEConn(ctx, t, app)
-	defer stop()
+	c := runSSEConn(ctx, t, app)
+	defer c.stop()
 
 	// Three ticket events → the verdict is resolved ONCE (cached).
 	for range 3 {
-		send <- testEvent{EntityType: "ticket"}
+		c.send(testEvent{EntityType: "ticket"})
 	}
-	settle()
-	if c := rg.callCount("ticket"); c != 1 {
-		t.Errorf("ReadQuery(ticket) called %d times across 3 events, want 1 (cached)", c)
+	c.drain(t)
+	if n := rg.callCount("ticket"); n != 1 {
+		t.Errorf("ReadQuery(ticket) called %d times across 3 events, want 1 (cached)", n)
 	}
 
 	// A relation change clears the cache; the next ticket event re-resolves.
 	// (app.acl is nil here → freshReadGate keeps the mock, so the same gate
 	// is re-queried — this pins the cache-clear, not the membership walk.)
-	send <- testEvent{RelationChange: true}
-	send <- testEvent{EntityType: "ticket"}
-	settle()
-	if c := rg.callCount("ticket"); c != 2 {
-		t.Errorf("ReadQuery(ticket) called %d times after invalidation, want 2 (re-resolved)", c)
+	c.send(testEvent{RelationChange: true})
+	c.send(testEvent{EntityType: "ticket"})
+	c.drain(t)
+	if n := rg.callCount("ticket"); n != 2 {
+		t.Errorf("ReadQuery(ticket) called %d times after invalidation, want 2 (re-resolved)", n)
 	}
 }
 
@@ -403,24 +471,24 @@ func TestSSEACL_MembershipChangeReGates(t *testing.T) {
 	}, app.store)
 	setTestACL(t, app, d)
 
-	send, sink, stop := runSSEConn(gateCtxFor(aliceCtx(), t, d), t, app)
-	defer stop()
+	c := runSSEConn(gateCtxFor(aliceCtx(), t, d), t, app)
+	defer c.stop()
 
 	// Before membership: alice has DenyAll on ticket → no nudge.
-	send <- testEvent{EntityType: "ticket"}
-	settle()
-	if strings.Contains(sink.String(), "entity:changed") {
-		t.Fatalf("alice received a ticket nudge before gaining membership:\n%s", sink.String())
+	c.send(testEvent{EntityType: "ticket"})
+	c.drain(t)
+	if strings.Contains(c.sink.String(), "entity:changed") {
+		t.Fatalf("alice received a ticket nudge before gaining membership:\n%s", c.sink.String())
 	}
 
 	// Grant: alice joins the editors group (member-of edge). This is a
 	// role-conferring relation write → RelationChange → re-derive gate.
 	seedRelation(app, entity.NewRelation("alice", "member-of", "editors"))
-	send <- testEvent{RelationChange: true}
-	send <- testEvent{EntityType: "ticket"}
-	settle()
-	if !strings.Contains(sink.String(), `"type":"ticket"`) {
-		t.Errorf("alice should receive ticket nudges after joining the conferring group (re-gate), got:\n%s", sink.String())
+	c.send(testEvent{RelationChange: true})
+	c.send(testEvent{EntityType: "ticket"})
+	c.drain(t)
+	if !strings.Contains(c.sink.String(), `"type":"ticket"`) {
+		t.Errorf("alice should receive ticket nudges after joining the conferring group (re-gate), got:\n%s", c.sink.String())
 	}
 }
 
@@ -440,13 +508,13 @@ func TestSSEACL_FailClosedOnZeroVerdict(t *testing.T) {
 	app := newTestAppV1(t)
 	ctx := withReadGate(aliceCtx(), zeroVerdictGate{})
 
-	send, sink, stop := runSSEConn(ctx, t, app)
-	defer stop()
+	c := runSSEConn(ctx, t, app)
+	defer c.stop()
 
-	send <- testEvent{EntityType: "ticket"}
-	settle()
+	c.send(testEvent{EntityType: "ticket"})
+	c.drain(t)
 
-	if out := sink.String(); strings.Contains(out, "entity:changed") {
+	if out := c.sink.String(); strings.Contains(out, "entity:changed") {
 		t.Errorf("zero/unresolvable verdict must fail closed (withhold), got:\n%s", out)
 	}
 }
@@ -462,15 +530,15 @@ func TestSSEACL_NonEntityEventsPassThrough(t *testing.T) {
 	}, app.store)
 	setTestACL(t, app, d)
 
-	send, sink, stop := runSSEConn(gateCtxFor(principalCtx("bob"), t, d), t, app)
-	defer stop()
+	c := runSSEConn(gateCtxFor(principalCtx("bob"), t, d), t, app)
+	defer c.stop()
 
-	send <- testEvent{Name: "refresh", Data: "refresh"}
-	send <- testEvent{Name: "git:status", Data: "{}"}
-	// give the immediate (non-debounced) writes a moment
-	time.Sleep(50 * time.Millisecond)
+	c.send(testEvent{Name: "refresh", Data: "refresh"})
+	c.send(testEvent{Name: "git:status", Data: "{}"})
+	waitForFrame(t, c.sink, "event: refresh")
+	waitForFrame(t, c.sink, "event: git:status")
 
-	out := sink.String()
+	out := c.sink.String()
 	if !strings.Contains(out, "event: refresh") {
 		t.Errorf("refresh frame not delivered to a denied principal:\n%s", out)
 	}
@@ -483,14 +551,14 @@ func TestSSEACL_NonEntityEventsPassThrough(t *testing.T) {
 // flows (nop gate → AllowAll), id-less.
 func TestSSEACL_NopACLAllTypesFlow(t *testing.T) {
 	app := newTestAppV1(t) // no app.acl set → nopReadGate via ctx fallback
-	send, sink, stop := runSSEConn(context.Background(), t, app)
-	defer stop()
+	c := runSSEConn(context.Background(), t, app)
+	defer c.stop()
 
-	send <- testEvent{EntityType: "ticket"}
-	send <- testEvent{EntityType: "feature"}
-	settle()
+	c.send(testEvent{EntityType: "ticket"})
+	c.send(testEvent{EntityType: "feature"})
+	c.drain(t)
 
-	out := sink.String()
+	out := c.sink.String()
 	if !strings.Contains(out, `"type":"ticket"`) || !strings.Contains(out, `"type":"feature"`) {
 		t.Errorf("NopACL should deliver every type nudge, got:\n%s", out)
 	}
