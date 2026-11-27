@@ -8,6 +8,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/flowcfg/triggers"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -103,6 +104,7 @@ func deleteRelationIfVersion(
 		return scopeErr
 	}
 	var rel *entity.Relation
+	var events relationEvents
 	err = auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
 		got, gErr := view.GetRelation(txCtx, key)
 		if gErr != nil {
@@ -128,8 +130,12 @@ func deleteRelationIfVersion(
 		if aErr := m.recordRelationAudit(txCtx, view, audit.OpDeleteRelation, rel, "deleted"); aErr != nil {
 			return aErr
 		}
-		return clears.apply(txCtx, m, view)
+		if cErr := clears.apply(txCtx, m, view); cErr != nil {
+			return cErr
+		}
+		return fireRelationEvent(txCtx, m, view, triggers.EventRelationRemoved, rel, &events)
 	})
+	events.run(ctx, m.deps, err)
 	if err != nil {
 		return err
 	}

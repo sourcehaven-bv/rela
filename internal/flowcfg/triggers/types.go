@@ -16,6 +16,8 @@
 package triggers
 
 import (
+	"slices"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -325,6 +327,19 @@ type Result struct {
 
 	// Errors contains validation errors (should block save in strict mode).
 	Errors []string
+
+	// SetBy names the rules that rendered a `set` or `unset` output, in
+	// render order, each once. A write path uses it to attribute the
+	// property write. It is left out of JSON, so the engine goldens pin only
+	// what the rules render.
+	SetBy []string `json:"-"`
+}
+
+// noteSetBy adds name to r.SetBy once.
+func (r *Result) noteSetBy(name string) {
+	if !slices.Contains(r.SetBy, name) {
+		r.SetBy = append(r.SetBy, name)
+	}
 }
 
 // HasWarnings returns true if there are any warnings.

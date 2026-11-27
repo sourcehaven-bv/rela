@@ -1117,8 +1117,8 @@ The keys under `on:` decide which changes fire the rule.
 | `created` | Fires when an entity is created. | `true` |
 | `updated` | Fires on an update that changes a property or the body. Does not fire on a create. Not with `property`, `becomes` or `from`. A script under it must be a background script. | `true` |
 | `deleted` | Fires once for each face a delete removes. Stands alone, and every output must be a background script. See [Running a script when an entity is deleted](#running-a-script-when-an-entity-is-deleted). | `true` |
-| `relation_created` | Fires when a relation of this type is created. | `implements` |
-| `relation_removed` | Fires when a relation of this type is removed. | `implements` |
+| `relation_created` | Fires when a relation of this type is created, for the relation's source. See [Triggers on a relation](#triggers-on-a-relation). | `implements` |
+| `relation_removed` | Fires when a relation of this type is removed, for the relation's source. Not on an entity delete or rename. | `implements` |
 | `faces` | The content states to watch: a name or a list. Without it, the rule watches every state. See [Scoping a trigger to content states](#scoping-a-trigger-to-content-states). | `[published]` |
 | `copy` | The copy definitions to watch: a name or a list. See [Triggers on a copy](#triggers-on-a-copy). | `adopt` |
 | `where` | A list of filter clauses that must all hold. See [Trigger conditions](#trigger-conditions). | `["kind=enhancement"]` |
@@ -1673,6 +1673,46 @@ Placeholders work in `set` values, `relate.to`, `create.template`,
 `rela.principal.user`. Any other placeholder is a load error. Earlier releases
 wrote an unknown placeholder into the data as literal text. The state outputs
 of a flow use `{{subject.<property>}}`; a trigger does not.
+
+### Triggers on a relation
+
+A `relation_created` or `relation_removed` rule fires for the relation's
+source, the entity the relation goes from. `entity:` and `faces:` scope on
+the source, `{{new.*}}` reads the source, `set` writes to the source, and a
+script gets the source as `entity`. A relation from a content state fires for
+that state. A relation from the entity as a whole fires for each state the
+writer may read.
+
+These writes fire the rules:
+
+- creating or removing a relation, from the CLI, MCP, the web app, a script
+  or a sync;
+- the relation fields of a data-entry form, which remove before they create;
+- a `relate` or `create` output of another rule.
+
+These writes do not fire them:
+
+- deleting or renaming an entity, which removes or moves its relations;
+- an edge removed because a `scope:` rule displaced it;
+- changing a relation's properties or body, or moving it in its order.
+  There is no `relation_updated` event.
+- creating an entity together with its relations: a flow step, a
+  data-entry batch create, a conversion or a copy;
+- a data-entry save that changes the entity and its relation fields in one
+  request.
+
+A `set` on a relation rule is part of the relation write. If it is refused,
+for example because it breaks a state machine or a `unique:` property, the
+relation write fails. On PostgreSQL and SQLite nothing is written. On the
+file and memory stores the relation stays and the error is returned. The
+other outputs run after the relation is saved. Their errors and warnings,
+including `check` outputs, go to the server log, because a relation write
+has no result to carry them.
+
+A rule whose outputs create the relation it watches would loop. rela stops
+the chain after 50 relation writes that fire a rule, counted over every
+branch. The write that would exceed the limit is refused before it writes
+anything, and the error is logged. A background script starts a new count.
 
 ### Order of evaluation
 

@@ -64,10 +64,10 @@ type TemplateLoader interface {
 //   - Rename: validate → write at new ID → rewrite incident relations
 //     → delete old. No automation, no cascade, no re-validation.
 //   - CreateRelation: fetch endpoints → validate type → check duplicate
-//     → apply template → write. No automation.
+//     → apply template → write → relation_created triggers.
 //   - UpdateRelation: fetch existing → merge properties → MetaUnset →
 //     content → write. No automation.
-//   - DeleteRelation: delete. No automation.
+//   - DeleteRelation: delete → relation_removed triggers.
 //
 // +1 (BUG-64MU2Q): DeleteRelationState, the face-addressed form of
 // DeleteRelation. It cannot be an option on the existing method — the tail is
@@ -3360,7 +3360,10 @@ func collectRenameAffectedRelations(ctx context.Context, st store.Store, id stri
 // part of the relation's identity: two edges on one triple with different
 // tails are two relations (BUG-64MU2Q). An edge whose endpoint types the
 // relation does not allow is refused with [*InvalidRelationError].
-// **No automation.**
+//
+// It raises relation_created for the relation's source; see
+// [fireRelationEvent]. A trigger's property writes share the relation's
+// transaction, and its other outputs run after the commit.
 func (m *Manager) CreateRelation(
 	ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
@@ -3371,6 +3374,10 @@ func (m *Manager) CreateRelation(
 	}
 	if err := checkRelationMetaWrite(ctx, m, key, opts.Properties, nil); err != nil {
 		return nil, err
+	}
+	ctx, spendErr := spendRelationBudget(ctx, m.deps, triggers.EventRelationCreated, key.Type)
+	if spendErr != nil {
+		return nil, spendErr
 	}
 	// Keyed on the TAIL too: two edges on the same triple with different
 	// tails are two relations, so a faced create must not be rejected by
@@ -3404,6 +3411,7 @@ func (m *Manager) CreateRelation(
 			return nil, err
 		}
 	}
+	var events relationEvents
 	create := func(ctx context.Context, st store.Store) error {
 		var cleared []entity.RelationKey
 		if scoped {
@@ -3423,14 +3431,19 @@ func (m *Manager) CreateRelation(
 		if err := m.recordRelationAudit(ctx, st, audit.OpCreateRelation, rel, "created"); err != nil {
 			return err
 		}
-		return clears.apply(ctx, m, st)
+		if err := clears.apply(ctx, m, st); err != nil {
+			return err
+		}
+		return fireRelationEvent(ctx, m, st, triggers.EventRelationCreated, rel, &events)
 	}
 	// An owning edge reads its neighbors' edges to decide whether it may
 	// exist, and a relation rule or a scope reads the ends' edges, so the
 	// reads and the write share one Tx for the same reason.
 	inTx := relTypeIsOrdered(m.deps.Meta, key.Type) || relTypeHasMax(m.deps.Meta, key.Type) ||
-		metamodel.IsOwning(m.deps.Meta, key.Type) || ruled || scoped
+		metamodel.IsOwning(m.deps.Meta, key.Type) || ruled || scoped ||
+		watchesRelation(m.deps, triggers.EventRelationCreated, key.Type)
 	createErr := auditTx(ctx, m.deps, inTx, create)
+	events.run(ctx, m.deps, createErr)
 	if createErr == nil {
 		clears.version(ctx, m)
 	}
@@ -3706,7 +3719,8 @@ func mergeRelationOptions(rel *entity.Relation, opts entity.RelationOptions) {
 // source type accepts it, so an edge stored under an older schema stays
 // deletable.
 //
-// **No automation.**
+// It raises relation_removed for the relation's source, as
+// [Manager.CreateRelation] raises relation_created.
 func (m *Manager) DeleteRelation(ctx context.Context, key entity.RelationKey) error {
 	return deleteRelation(ctx, m, key, "")
 }
@@ -3740,9 +3754,16 @@ func deleteRelation(ctx context.Context, m *Manager, key entity.RelationKey, exp
 		}
 		return fmt.Errorf("delete relation: %w", store.ErrNotFound)
 	}
+	ctx, err := spendRelationBudget(ctx, m.deps, triggers.EventRelationRemoved, relType)
+	if err != nil {
+		return err
+	}
 	// A sink that records in the transaction takes the transactional path,
-	// which reads, deletes and records on one view.
-	if expect != "" || relationWritesChecked(m.deps, key) || m.deps.scopes.touches(key) || auditsInTx(m.deps) {
+	// which reads, deletes and records on one view. So does a delete a
+	// trigger watches, whose property writes share the transaction.
+	if expect != "" || relationWritesChecked(m.deps, key) || m.deps.scopes.touches(key) || auditsInTx(m.deps) ||
+		watchesRelation(m.deps, triggers.EventRelationRemoved, relType) {
+
 		return deleteRelationIfVersion(ctx, m, key, expect)
 	}
 	// Fetch pre-delete AFTER authz (BUG-K6FEVB: a denied delete must return
