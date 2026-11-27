@@ -2731,9 +2731,9 @@ filter_controls:
 display titles of the relation's target entities — a plain `<select>` for a
 small set, upgrading to a typeahead combobox above ~10 options. `direction:
 incoming` pulls candidates from the relation's source types (`from`); `outgoing`
-(default) from its target types (`to`). The selected value the filter matches on
-is the target's **display title** (honoring each type's `display_property`), not
-its ID.
+(default) from its target types (`to`). Each option is labelled `Title (ID)`.
+The value the filter matches on is the target's **ID**, so a saved or
+deep-linked filter keeps working when the target is renamed.
 
 **Property filter controls** without declared `values:` render as a text box.
 On a `string` property it matches case-insensitively on a substring (`filter[x][contains]`);
@@ -2741,8 +2741,11 @@ on other types (dates, numbers) it matches the exact value.
 
 Notes:
 
-- Two targets that resolve to the same display title collapse to one option and
-  the filter matches both (title-based matching).
+- Two targets with the same display title are separate options, told apart by
+  their IDs.
+- A value that is a display title still matches, for links made before the
+  filter used IDs. This fallback is deprecated. A value that is one target's ID
+  and another target's title matches both.
 - The candidate list is fetched from the target types' entities; a type with
   more than ~100 entities has its option set truncated.
 - A relation whose name is not a plain identifier (e.g. contains a hyphen)

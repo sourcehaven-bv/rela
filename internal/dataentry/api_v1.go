@@ -390,13 +390,12 @@ func relationFilterClassifier(
 
 // matchRelationFilterMany evaluates a relation filter for every row at once:
 // one relation query, one header read per distinct neighbor, one gate probe
-// per neighbor type. A row matches when at least one READABLE neighbor over
-// the relation carries the wanted display title.
-//
+// per neighbor type. A row matches when a served neighbor over the relation has
+// the wanted id (TKT-ZKPA1E). Only when no served neighbor has that id does the
+// deprecated display-title fallback apply (see [logDeprecatedTitleMatch]).
 // A store failure is returned, never folded into an empty map, which would
-// admit every row for a `ne` filter. The title compared is the redacted one
-// the principal is shown, so the filter cannot confirm a display property
-// that `visible:` hides on the neighbor.
+// admit every row for a `ne` filter. Hidden neighbors are never compared, and
+// the title compared is the redacted one the principal is shown.
 func matchRelationFilterMany(
 	ctx context.Context, svc Services, visible visibleReader, red visibility.FieldRedactor,
 	rows []*entityPkg.Entity, relation string, direction dataentryconfig.Direction, want string,
@@ -415,17 +414,49 @@ func matchRelationFilterMany(
 		return nil, err
 	}
 	served = redactHeaders(ctx, red, served)
-	for _, re := range edges {
-		h, ok := served[re.targetID]
-		if !ok || svc.Meta.DisplayTitle(h.ID, h.Type, h.Properties) != want {
-			continue
+	candidates := servedFilterNeighbors(svc.Meta, edges, served, direction)
+	byID := slices.ContainsFunc(candidates, func(c filterNeighbor) bool { return c.head.ID == want })
+	for _, c := range candidates {
+		if byID && c.head.ID == want ||
+			!byID && svc.Meta.WholeDisplayTitle(c.head.ID, c.head.Type, c.head.Properties) == want {
+
+			matched[c.rowID] = true
 		}
-		if direction.IsIncoming() && !ownedByFace(svc.Meta, re.rel, h.Face) {
-			continue
-		}
-		matched[re.rowID] = true
+	}
+	if !byID && len(matched) > 0 {
+		logDeprecatedTitleMatch(ctx, relation, rows[0].Type)
 	}
 	return matched, nil
+}
+
+type filterNeighbor struct {
+	rowID string
+	head  store.EntityHeader
+}
+
+// servedFilterNeighbors pairs each edge with its served neighbor, dropping
+// edges to a hidden neighbor and incoming edges the served face does not own.
+func servedFilterNeighbors(
+	meta *metamodel.Metamodel, edges []relationFilterEdge, served map[string]store.EntityHeader,
+	direction dataentryconfig.Direction,
+) []filterNeighbor {
+	out := make([]filterNeighbor, 0, len(edges))
+	for _, re := range edges {
+		h, ok := served[re.targetID]
+		if !ok || direction.IsIncoming() && !ownedByFace(meta, re.rel, h.Face) {
+			continue
+		}
+		out = append(out, filterNeighbor{rowID: re.rowID, head: h})
+	}
+	return out
+}
+
+// logDeprecatedTitleMatch records that a relation filter matched by display
+// title, so the fallback's remaining use can be measured before it is removed.
+// The value is left out: a display title may be personal data.
+func logDeprecatedTitleMatch(ctx context.Context, relation, rowType string) {
+	slog.DebugContext(ctx, "dataentry: relation filter matched by deprecated title value",
+		"relation", relation, "type", rowType)
 }
 
 // redactHeaders redacts each header once with red, priming any `related(...)`

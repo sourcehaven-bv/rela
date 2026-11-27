@@ -394,8 +394,8 @@ onBeforeUnmount(() => {
           </RlMultiSelect>
 
           <!-- Relation widget: select (small) or typeahead (large) target
-               picker. Commits the target's bare display title as the value,
-               which the backend relation filter matches on. -->
+               picker. Commits the target's id as the value, which the
+               backend relation filter matches on (TKT-ZKPA1E). -->
           <EntityTargetSelect
             v-else-if="filter.widget === 'relation'"
             :control-id="`filter-${filter.key}`"
