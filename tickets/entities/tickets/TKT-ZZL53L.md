@@ -17,3 +17,9 @@ amplification. Drop it, or wire the tsvector query path.
 Closed: Done: pgstore migration 0014_read_indexes.sql drops
 entities_search_tsv_idx. Status is wont-fix, not done, because this ticket has
 no review checklist.
+
+## Agent run
+
+The agent runner POC refined, built and reviewed this ticket. The index was
+already dropped by migration 0014; PR #2632 fixes the CLAUDE.md search note
+and adds a regression test.
