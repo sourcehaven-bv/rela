@@ -32,8 +32,8 @@ value in the filter control works, because that path does not re-parse the URL.
 - [x] Regression test planned
 - [x] Related areas checked for similar issues
 
-Fix: accept every name `metamodel.ValidateSchemaName` accepts and reject the
-three prototype keys. Tests: vitest cases in `filters.test.ts` for legal names
+Fix: accept every name `metamodel.ValidateSchemaName` accepts and reject
+`__proto__`; `constructor` and `prototype` are valid names and are kept. Tests: vitest cases in `filters.test.ts` for legal names
 (hyphen, dot, space, digit start, non-ASCII) and for rejected names. Related:
 `conditions.ts` `IDENT_RE` is the expression tokenizer, not a name gate; no
 other identifier allowlist parses URL keys.

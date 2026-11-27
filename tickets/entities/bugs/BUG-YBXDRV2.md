@@ -19,6 +19,7 @@ status: done
 ## Follow-up
 
 Issue #2625: the flows guide and the `relationSourceRows` godoc promised that a relation trigger's `set` always needs the writer's update and read rights. A relation that a cascade creates fires its triggers through a cascade manager, which skips both checks, as every cascade write does. The guide and godoc now say so.
+
 ## Follow-up 2
 
 Issue #2636: a relation trigger's `set` skipped the relation rules with `enforce: write` and the strict validation mode, which an ordinary update applies. `writeRelationTriggerSet` now passes `relationRuleCheck` to `writeChecked` and partitions validation errors by the deployment's mode. `TestRelationTriggers_SetRunsUpdateChecks` pins both.

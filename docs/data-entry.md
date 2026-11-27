@@ -2137,11 +2137,11 @@ lists:
     page_size: 25
 ```
 
-> **Where does a click on a row go?** That's configured at entity-type
-> granularity in the top-level `entity_views:` block — see
-> [Entity Views](#entity-views) below. Per-list `detail_view` is no longer
-> used; if you have one in an existing config, run `rela migrate` and it
-> will be moved automatically.
+> **Where does a click on a row go?** To the entity's page,
+> `/entity/<type>/<id>`. It shows the [view](#views) whose `entry.type` is
+> the row's type, or a generated default view. The `detail_view` key, on a
+> list or under `entity_views:`, is removed: the `views-by-entity-type`
+> migration strips it when the config loads, so it has no effect.
 
 ### List Fields
 
@@ -3147,8 +3147,8 @@ entry:
 ```
 
 When a user opens a view, the entry entity is determined by the URL. For example,
-clicking a list row whose `entity_type` has `entity_views.ticket.detail_view: ticket_report`
-opens the view for that specific ticket entity.
+clicking a ticket row in a list opens the page of that ticket, which shows the
+view whose `entry.type` is `ticket`. A type has at most one view.
 
 ### Traverse Rules
 
@@ -4021,31 +4021,32 @@ adding these keys changes nothing until you use them.
 
 ## Entity Views
 
-`entity_views` declares the canonical detail view for each entity type — the
-view that opens when a user clicks on an entity reference anywhere in the
-data-entry app (a list row, a custom view's `display: list` section, a card,
-a table cell). Without an entry, the SPA falls back to a generic
-`/entity/<type>/<id>` page.
+`entity_views` sets per-type options for an entity's page. The page itself,
+`/entity/<type>/<id>`, shows the [view](#views) whose `entry.type` is the type,
+or a generated default view when there is none. It opens when a user clicks an
+entity reference anywhere in the data-entry app (a list row, a custom view's
+`display: list` section, a card, a table cell).
 
 ```yaml
 entity_views:
   ticket:
-    detail_view: ticket_detail
+    mentioned_by_hide_id: true
   decision:
-    detail_view: decision_detail
+    mentioned_by_panel: false
 ```
 
 ### Fields
 
 | Field         | Type    | Description                                                       |
 | ------------- | ------- | ----------------------------------------------------------------- |
-| `detail_view` | string  | View name (must reference a key under `views:`) used for entities of this type |
 | `duplicate`   | mapping | Narrows what a duplicate of this type copies — see below |
 | `mentioned_by_panel` | bool | `false` hides the built-in "Mentioned by" panel on this type's page |
 | `mentioned_by_hide_id` | bool | `true` leaves the entity ID off the rows of that panel |
 
 An entry may carry any of these fields. An entry that declares none is a
-load error, since it configures nothing.
+load error, since it configures nothing. The former `detail_view` field is
+removed: the `views-by-entity-type` migration strips it when the config loads,
+and drops an entry that is left empty.
 
 The "Mentioned by" panel lists the entities whose body mentions the one on the
 page. It is shown by default. It is hidden when `mentioned_by_panel` is
@@ -4102,7 +4103,6 @@ To narrow that, name the properties to carry:
 ```yaml
 entity_views:
   invoice:
-    detail_view: invoice_detail
     duplicate:
       properties: [customer, currency, line_items]
 ```
@@ -4290,21 +4290,20 @@ the following priority:
 
 1. A column-level `link:` on a list (server-resolved, e.g. `link: detail` or
    `link: document/<name>`).
-2. `entity_views.<type>.detail_view` (the canonical detail view for the
-   type) → `/view/<viewId>/<id>`.
-3. Fallback: `/entity/<type>/<id>` (a generic detail page).
+2. The entity's page, `/entity/<type>/<id>`. It shows the view whose
+   `entry.type` is the type, or a generated default view when there is none.
 
 This means you only configure the destination *once* per entity type, and
 every consumer (lists, view sections, table rows) routes consistently.
 
-### Migration from list-level `detail_view`
+### Migration from `detail_view`
 
-Earlier versions accepted `detail_view` directly on each list. That field is
-now deprecated; the canonical home is `entity_views.<type>.detail_view`. Run
-`rela migrate` to lift existing list-level values into the new section
-automatically. If two lists for the same entity type set conflicting
-`detail_view` values, the migration leaves them in place — resolve the
-conflict by hand and run `rela migrate` again.
+Earlier versions named a detail view with `detail_view`, on a list or under
+`entity_views.<type>`. Both are removed. The `views-by-entity-type` migration
+keys each view by its `entry.type` and strips every `detail_view`. It runs when
+the config loads, and `rela migrate` writes the result to the file. If two
+views have the same `entry.type`, the migration stops: keep one view per type
+by hand and run `rela migrate` again.
 
 ## Dashboard
 
@@ -6796,11 +6795,11 @@ navigation:
 | `limit`     | The most entries to show, from 1 to 50. The default is 20. |
 | `initial`   | A letter badge in front of each entry. Set `property` for the first letter of one of the row's properties, or `relation` for the first letter of a related entity's title, such as the owner. `direction` picks the side of the relation, and is needed only when the relation connects the type to itself. |
 | `create`    | Show a "+" on the group heading that creates a row of the list. It opens the list's `create_form:`, or else the type's create form, and then the new entity's page. It is shown only to a user who may create the type. A group that offers it stays in the sidebar when it has no entries, so the first one can be made. In a read-only workspace there is no "+", so an empty group is left out. |
-
 | `status`    | A count of related rows on each entry. See [Counts and children](#counts-and-children). |
 | `children`  | Related rows one level under each entry. See [Counts and children](#counts-and-children). |
 
-A group with `items_from` cannot also have `items`, and cannot have `status:`.
+A group with `items_from` cannot also have `items`, and cannot have a group-level
+`status:`. Use `items_from.status` for a count on each entry.
 `items_from` is only allowed on a group.
 
 #### Counts and children
@@ -7996,8 +7995,8 @@ item lands in the list. The list must have an `assign` block and the same
 entity type as the form.
 
 The shortcut is a set of modifiers and one key joined with `+`. Modifiers are
-`CmdOrCtrl`, `Cmd`, `Ctrl`, `Alt`, `Option`, `OptionOrAlt`, `Shift` and
-`Super`. At least one modifier is required. The key is a letter, a digit,
+`CmdOrCtrl`, `Cmd`, `Command`, `Ctrl`, `Alt`, `Option`, `OptionOrAlt`,
+`Shift` and `Super`. At least one modifier is required. The key is a letter, a digit,
 `F1` to `F12` or `Space`. The shortcut works in every application, so a
 letter, a digit or `Space` also needs `Shift` or `Alt`. That keeps keys such
 as `Cmd+V` free. Without `shortcut:` the desktop app uses
@@ -10101,10 +10100,6 @@ lists:
     create_form: create_ticket
     edit_form: edit_ticket
     page_size: 25
-
-entity_views:
-  ticket:
-    detail_view: ticket_detail
 
 views:
   ticket_detail:

@@ -1731,6 +1731,12 @@ and a cascade runs as a system action. Its rules' `set` outputs are not
 checked against the writer's update or read permissions, so they also write
 source states the writer cannot read. The other checks above still apply.
 
+This holds for a relation that a person, script or sync writes. A relation
+that another rule's `relate` or `create` output makes is a cascade write,
+and a cascade runs as a system action. Its rules' `set` outputs are not
+checked against the writer's update or read permissions, so they also write
+source states the writer cannot read.
+
 A `check` output on a relation rule must have `severity: error`. A source
 that fails the check refuses the relation write with the check's message. A
 relation write has no result to carry a warning, so a warning check is a

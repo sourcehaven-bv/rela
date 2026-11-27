@@ -5,7 +5,7 @@ title: Automations in an included schema file are silently dropped
 kind: chore
 priority: high
 effort: s
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -40,3 +40,7 @@ is chosen, the silent-drop path must go. A regression test should assert an
 automation declared in an included file is present in the loaded metamodel.
 
 Found while reviewing TKT-JJRVX9 (per-automation audit attribution).
+
+## Closed as wont-fix
+
+Obsolete: schema automations moved to flows.yaml in TKT-GWOBH2U (#2350), and a schema that declares automations: is now refused at load.

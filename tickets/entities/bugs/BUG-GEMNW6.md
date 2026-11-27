@@ -11,7 +11,9 @@ why3: The board fetches through the same list endpoint as a list but never sent 
 why4: Board filtering was built as a separate client-side copy of list filtering; kanban tests only covered property controls, so the relation path was never exercised.
 why5: Views over the same entity set (list, board) each implement filtering themselves, so a control type added to one silently does nothing on the other.
 prevention: The board now reuses FilterBar, useUrlFilterSync and filterStateToApiParams, so list and board share one filter path and the server applies both. A component test pins that a relation filter reaches the list request; the e2e board spec filters by property and by relation.
-status: backlog
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Summary

@@ -10,7 +10,7 @@ why2: The allowlist was written as an identifier rule to block prototype polluti
 why3: The unit test asserted that a-b is rejected, and the e2e relation filter test uses implements, which has no hyphen, so no test loaded a deep link with a real hyphenated name.
 why4: The identifier regex also accepted __proto__, so the guard it was justified by did not hold; toEqual ignores prototypes, so the old test passed anyway.
 why5: Client-side name checks are written by hand instead of mirroring the server's rule, and tests use synthetic names rather than names from a shipped schema.
-prevention: Vitest cases pin that every name ValidateSchemaName accepts survives a URL round trip and that __proto__, constructor and prototype are dropped with the result's prototype unchanged (AM-filter-url-accepts-schema-names).
+prevention: Vitest cases pin that every name ValidateSchemaName accepts survives a URL round trip and that __proto__ is dropped with the result's prototype unchanged, while constructor and prototype are kept as valid names (AM-filter-url-accepts-schema-names).
 started: "2026-11-25"
 completed: "2026-11-25"
 status: done
@@ -34,4 +34,5 @@ property names in the metamodel may contain dashes, spaces and dots
 ## Fix
 
 Accept every name `ValidateSchemaName` accepts, and keep rejecting `__proto__`,
-`constructor` and `prototype`.
+the one key that replaces an object's prototype on assignment. `constructor`
+and `prototype` are valid names and are kept.

@@ -9,3 +9,7 @@ status: implemented
 
 View sections and the "Mentioned by" panel can hide the entity type label and
 the internal ID on cards and rows.
+
+## Follow-up
+
+Issue #2627: the data-entry guide and the `EntityViewConfig` godoc still described `entity_views.<type>.detail_view` as the canonical detail view. The `views-by-entity-type` migration strips that key on every config load, so it has no effect; an entity's page shows the view whose `entry.type` is its type. The guide and godoc now say so.

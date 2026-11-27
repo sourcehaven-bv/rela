@@ -13,7 +13,7 @@ import (
 // validates here also registers there.
 var quickEntryModifiers = map[string]bool{
 	"cmdorctrl": true, "cmd": true, "command": true, "ctrl": true,
-	"alt": true, "option": true, "shift": true, "super": true,
+	"alt": true, "option": true, "optionoralt": true, "shift": true, "super": true,
 }
 
 // validateQuickEntry checks the `quick_entry:` block (TKT-24L1H36): the form

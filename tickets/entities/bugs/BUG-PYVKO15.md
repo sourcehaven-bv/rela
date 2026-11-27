@@ -7,8 +7,12 @@ priority: medium
 why1: Nothing removed a record when its bound user entity was deleted or renamed.
 why2: The role store sits outside the graph and was not subscribed to the entity manager's delete hook that comments, piles and leases use.
 why3: TKT-IZL6NX8 designed the store around webhook-driven revocation and did not treat the record as personal data with its own retention.
+why4: Data-protection review covered graph entities, and the role store was added outside the graph after that review.
+why5: 'Systemic: new stores of personal data outside the graph have no checklist step that asks how a record is erased.'
 prevention: Runtime state keyed by a person subscribes to the alias fanout delete hook; TestIDPRoles_ErasedWithThePerson pins it.
-status: backlog
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 Fix: `idproles.Store.ForgetEntity`, called from the alias fanout on delete and

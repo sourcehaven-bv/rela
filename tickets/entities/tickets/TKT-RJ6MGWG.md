@@ -3,7 +3,9 @@ id: TKT-RJ6MGWG
 type: ticket
 title: Extract next-action handler from dataentry.App
 kind: chore
-status: backlog
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Description
