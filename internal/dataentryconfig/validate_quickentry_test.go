@@ -25,6 +25,8 @@ func TestValidateQuickEntry(t *testing.T) {
 		{"form only", &QuickEntry{Form: "new_todo"}, ""},
 		{"form and list", &QuickEntry{Form: "new_todo", List: "inbox"}, ""},
 		{"custom shortcut", &QuickEntry{Form: "new_todo", Shortcut: "Cmd+Option+N"}, ""},
+		{"OptionOrAlt", &QuickEntry{Form: "new_todo", Shortcut: "OptionOrAlt+Space"}, ""},
+		{"Command", &QuickEntry{Form: "new_todo", Shortcut: "Command+Shift+N"}, ""},
 		{"function key", &QuickEntry{Form: "new_todo", Shortcut: "Ctrl+F12"}, ""},
 		{"no form", &QuickEntry{}, "form is required"},
 		{"unknown form", &QuickEntry{Form: "nope"}, `unknown form "nope"`},

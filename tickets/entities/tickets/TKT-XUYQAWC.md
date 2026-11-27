@@ -25,3 +25,7 @@ runtime deny.
 - A type with `records:append` refuses an append by a principal without it,
 even when that principal may update the owner.
 - Every surface (REST, Lua, MCP, CLI) applies it through `records.Service`.
+
+## Follow-up
+
+Issue #2576: the records guide said `append` alone covers changing or deleting a row. Both permissions are needed, as `changeable` in `internal/records/mutate.go` checks. The guide now says so.

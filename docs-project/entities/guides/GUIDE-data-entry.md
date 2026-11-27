@@ -6802,11 +6802,11 @@ navigation:
 | `limit`     | The most entries to show, from 1 to 50. The default is 20. |
 | `initial`   | A letter badge in front of each entry. Set `property` for the first letter of one of the row's properties, or `relation` for the first letter of a related entity's title, such as the owner. `direction` picks the side of the relation, and is needed only when the relation connects the type to itself. |
 | `create`    | Show a "+" on the group heading that creates a row of the list. It opens the list's `create_form:`, or else the type's create form, and then the new entity's page. It is shown only to a user who may create the type. A group that offers it stays in the sidebar when it has no entries, so the first one can be made. In a read-only workspace there is no "+", so an empty group is left out. |
-
 | `status`    | A count of related rows on each entry. See [Counts and children](#counts-and-children). |
 | `children`  | Related rows one level under each entry. See [Counts and children](#counts-and-children). |
 
-A group with `items_from` cannot also have `items`, and cannot have `status:`.
+A group with `items_from` cannot also have `items`, and cannot have a group-level
+`status:`. Use `items_from.status` for a count on each entry.
 `items_from` is only allowed on a group.
 
 #### Counts and children
@@ -8002,8 +8002,8 @@ item lands in the list. The list must have an `assign` block and the same
 entity type as the form.
 
 The shortcut is a set of modifiers and one key joined with `+`. Modifiers are
-`CmdOrCtrl`, `Cmd`, `Ctrl`, `Alt`, `Option`, `OptionOrAlt`, `Shift` and
-`Super`. At least one modifier is required. The key is a letter, a digit,
+`CmdOrCtrl`, `Cmd`, `Command`, `Ctrl`, `Alt`, `Option`, `OptionOrAlt`,
+`Shift` and `Super`. At least one modifier is required. The key is a letter, a digit,
 `F1` to `F12` or `Space`. The shortcut works in every application, so a
 letter, a digit or `Space` also needs `Shift` or `Alt`. That keeps keys such
 as `Cmd+V` free. Without `shortcut:` the desktop app uses
