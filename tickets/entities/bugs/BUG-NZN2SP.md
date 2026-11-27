@@ -31,3 +31,7 @@ Also required:
 - A resolved relation file runs the same relation affordance gate as `PATCH /relations/...`; a resolved entity file runs the field gate.
 - Denials do not name hidden faces.
 - Tests through the resolve route, in the style of `relation_sibling_paths_test.go`.
+
+## Note (2026-11-27)
+
+Mostly fixed in c6fba457e (#2100) and 80ba3d766 (#2097). `conflictFieldDenial` runs the field check on entity files and `relationSources` plus `relationMetaDenial` on relation files; the handler restores the tail face from the file path. `relationOpDenial` does not apply, because a resolve updates an edge. Remaining: keep the tail face in `docToRelation` (`internal/conflict/parse.go`), and add a resolve-route test with a faced source that checks denials do not name hidden faces.
