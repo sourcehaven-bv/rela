@@ -8438,9 +8438,11 @@ an action. It has these limits:
 - Transition rules and validation apply as on any update.
 - A trigger on the same entity is part of the elevated update: a value
   its `set` output writes is stored with the update and is not checked
-  against `elevated_updates:`. A cascade the update starts, such as a
-  trigger's `create` or `script` output, runs with the caller's normal
-  access.
+  against `elevated_updates:`. A trigger's `script` output the update
+  starts runs with the caller's normal access, or as `run_as` for a
+  background script. A trigger's `create` and `relate` outputs are not
+  checked against the caller's role grants; only the refusal of managed
+  types and relations still applies.
 - A transition guard still checks the caller's permission. To keep a field
   that only the action may change out of the form and the API, restrict it
   with `acl.yaml` field rules, not with a transition guard.

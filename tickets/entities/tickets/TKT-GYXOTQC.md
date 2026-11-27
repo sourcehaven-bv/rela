@@ -74,3 +74,7 @@ the bound.
 ## Follow-up
 
 Issues #2606 and #2607: the flows guide said no trigger cascade write fires a change event, and suggested a roll-up as input for a predicate start. A Lua script action's `rela.update_entity` and a `set` on an update do fire the event; only a trigger's `set` written straight to the store does not. A roll-up is computed on read and never stored, so it starts nothing. The guide and the `UpdateHook` godoc now say so.
+
+## Follow-up 2
+
+Issues #2653 and #2654: the flows guide now says a background script's update is attributed to `run_as`. The ACL and data-entry guides now say a trigger's `create` and `relate` outputs are not checked against the caller's role grants; only the managed refusal applies.

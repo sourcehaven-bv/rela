@@ -1743,9 +1743,11 @@ which row is written:
   grant.
 - **Same-entity triggers are part of the write.** A trigger's `set`
   output on the same entity is stored with the elevated update and is not
-  checked against `elevated_updates:`. A cascade the write starts, such as
-  a trigger's `create` or `script` output, runs with the caller's normal
-  access.
+  checked against `elevated_updates:`. A trigger's `script` output the
+  write starts runs with the caller's normal access, or as `run_as` for a
+  background script. A trigger's `create` and `relate` outputs are not
+  checked against the caller's role grants; only the refusal of managed
+  types and relations still applies.
 
 Elevation lifts only the role grants. Every other write check still
 applies, through the same code as a normal write, and a refusal is a 403
