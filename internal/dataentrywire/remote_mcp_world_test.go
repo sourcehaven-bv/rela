@@ -172,7 +172,14 @@ func aliceCtx(t *testing.T, svc *appbuild.Services) context.Context {
 // attachACLRequest does for a remote MCP call.
 func boundCtx(t *testing.T, svc *appbuild.Services, user string) context.Context {
 	t.Helper()
-	ctx, err := appbuild.MustIdentityBinder(svc)(principal.With(context.Background(), principal.Principal{User: user, Tool: principal.ToolMCP}))
+	return boundCtxFrom(context.Background(), t, svc, user)
+}
+
+// boundCtxFrom is boundCtx derived from parent, for a request handler that
+// must keep the request's context.
+func boundCtxFrom(parent context.Context, t *testing.T, svc *appbuild.Services, user string) context.Context {
+	t.Helper()
+	ctx, err := appbuild.MustIdentityBinder(svc)(principal.With(parent, principal.Principal{User: user, Tool: principal.ToolMCP}))
 	if err != nil {
 		t.Fatalf("IdentityBinder: %v", err)
 	}

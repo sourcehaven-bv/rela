@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
@@ -148,4 +149,37 @@ func TestFieldGate_OperatorSurfacesUngated(t *testing.T) {
 	bob := boundAs(t, svc, principal.Principal{User: "bob", Tool: principal.ToolCLI})
 	_, err = svc.EntityManager().PatchEntity(bob, locked, entity.Patch{Properties: map[string]any{"status": "x"}})
 	require.Error(t, err, "row grants must still refuse a principal without update")
+}
+
+// TestBuildFieldWriteGate: the fixture-facing builder gives the policy gate
+// for a Declarative ACL with field grants, and AllowAllFieldGate when there
+// is no policy (BUG-VUNO11).
+func TestBuildFieldWriteGate(t *testing.T) {
+	svc := fieldGateServices(t)
+	locked := createTask(t, svc, "locked")
+	row, err := svc.Store().GetEntity(context.Background(), entity.Ref{ID: locked})
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name      string
+		acl       acl.ACL
+		allowsAll bool
+	}{
+		{name: "nil ACL", acl: nil, allowsAll: true},
+		{name: "NopACL", acl: acl.NopACL{}, allowsAll: true},
+		{name: "ReadOnlyACL", acl: acl.ReadOnlyACL{}, allowsAll: true},
+		{name: "Declarative with field grants", acl: svc.ACL(), allowsAll: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gate, err := appbuild.BuildFieldWriteGate(svc.Meta(), svc.Store(), tc.acl)
+			require.NoError(t, err)
+			if tc.allowsAll {
+				require.IsType(t, entitymanager.AllowAllFieldGate{}, gate)
+				return
+			}
+			err = gate.CheckFieldWrite(asAlice(t, svc), row, map[string]any{"status": "done"}, nil)
+			requireReadOnlyStatus(t, err)
+			require.NoError(t, gate.CheckFieldWrite(asAlice(t, svc), row, map[string]any{"title": "renamed"}, nil))
+		})
+	}
 }

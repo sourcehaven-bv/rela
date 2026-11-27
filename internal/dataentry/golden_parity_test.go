@@ -29,9 +29,9 @@ import (
 // are the wire contract a refactor of the access layer must keep: a change in
 // any of them is either the intended fix of a recorded gap or a regression.
 //
-// Cases named after an open bug (BUG-VUNO11) record a known gap as it is
-// today. The fix of that bug is expected to change those files. A case named
-// after a fixed bug (BUG-2TPO2F) pins the fix.
+// A case named after an open bug records a known gap as it is today. The fix
+// of that bug is expected to change those files. A case named after a fixed
+// bug (BUG-2TPO2F, BUG-VUNO11) pins the fix.
 //
 // Rewrite the recordings with:
 //
