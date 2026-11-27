@@ -119,7 +119,9 @@ type RollupDef struct {
 	// every entity the walk visits after one or more hops, within MaxDepth
 	// hops. Condition maps a visited type to the predicate expression that
 	// makes one of its entities count; a visited type without an entry is
-	// walked through but never counts.
+	// walked through but never counts. A via of one relation may carry a
+	// Condition too, keyed by the related type, instead of Where and Type.
+	// A condition may read roll-ups of the type it judges, one level deep.
 	Along     StringOrSlice     `yaml:"along,omitempty"`
 	MaxDepth  int               `yaml:"max_depth,omitempty"`
 	Condition map[string]string `yaml:"condition,omitempty"`
@@ -218,8 +220,10 @@ func validateRollupShape(schemaName, propName string, pd PropertyDef, allowRollu
 		errs = append(errs, validateAlongRollupShape(at, r)...)
 	case len(r.WhenParent) > 0 || r.Climb:
 		errs = append(errs, at+": when_parent and climb are only valid with siblings_before")
-	case r.MaxDepth != 0 || len(r.Condition) > 0:
-		errs = append(errs, at+": max_depth and condition are only valid with along")
+	case r.MaxDepth != 0:
+		errs = append(errs, at+": max_depth is only valid with along")
+	case len(r.Condition) > 0:
+		errs = append(errs, validateViaConditionShape(at, r)...)
 	case r.Window != "":
 		errs = append(errs, at+": window is only valid with records")
 	case r.AvgOf != "" || r.LatestOf != "":
@@ -350,6 +354,30 @@ func validateAlongRollupShape(at string, r *RollupDef) []string {
 	} {
 		if c.set {
 			errs = append(errs, fmt.Sprintf("%s: along cannot be combined with %s; use condition", at, c.name))
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(r.Condition)) {
+		if strings.TrimSpace(name) == "" || strings.TrimSpace(r.Condition[name]) == "" {
+			errs = append(errs, fmt.Sprintf("%s: condition %q has an empty type or expression", at, name))
+		}
+	}
+	return errs
+}
+
+// validateViaConditionShape checks a via roll-up with a per-type
+// `condition:`: one relation, no where or type (the condition keys pick the
+// related types), and a non-empty expression per entry.
+func validateViaConditionShape(at string, r *RollupDef) []string {
+	var errs []string
+	if len(r.Via) != 1 || strings.TrimSpace(r.Via[0]) == "" {
+		errs = append(errs, at+": a via with condition names exactly one relation")
+	}
+	for _, c := range []struct {
+		set  bool
+		name string
+	}{{r.Type != "", "type"}, {len(r.Where) > 0, "where"}, {r.Pick != "", "pick"}} {
+		if c.set {
+			errs = append(errs, fmt.Sprintf("%s: a via with condition cannot be combined with %s", at, c.name))
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(r.Condition)) {

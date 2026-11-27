@@ -57,8 +57,12 @@ type Segment struct {
 type Node struct {
 	Type   string
 	Source string
-	// Reads are the properties the condition reads, sorted.
+	// Reads are the stored properties the condition reads, sorted.
 	Reads []string
+	// Rollups are the roll-ups of Type the condition reads, sorted: the
+	// inner roll-ups of a nested roll-up (design section 10). The caller
+	// fills their values into the row before [Node.Holds].
+	Rollups []string
 	// Lowered is the condition as a store condition over the stored row,
 	// before defaults are filled in ([Node.FillDefaults]). Nil when it has
 	// no exact store form.
@@ -156,14 +160,47 @@ func compileAlongColumn(
 	case r.MaxDepth < 1 || r.MaxDepth > MaxAlongDepth:
 		problems = append(problems, fmt.Sprintf("%s: max_depth %d is outside 1 to %d", at, r.MaxDepth, MaxAlongDepth))
 	}
-	segs, reach, segProblems := compileSegments(meta, typeName, r.Along, at)
-	problems = append(problems, segProblems...)
-	along := &Along{Segments: segs, MaxDepth: r.MaxDepth, Nodes: map[string]*Node{}}
+	col, walkProblems := compileWalk(meta, eval, typeName, name, pd, fn, prop, at, r.Along, r.MaxDepth)
+	return col, append(problems, walkProblems...)
+}
+
+// compileViaConditionColumn compiles a via of one relation with a per-type
+// condition as an along walk of one hop: the related entities are the
+// visits, and the condition keys pick the types that count.
+func compileViaConditionColumn(
+	meta *metamodel.Metamodel, eval *predicatefns.Evaluator, typeName, name string, pd metamodel.PropertyDef,
+	fn metamodel.RollupFunc, prop, at string,
+) (Column, []string) {
+	var problems []string
+	switch fn {
+	case metamodel.RollupExists, metamodel.RollupCount, metamodel.RollupMin, metamodel.RollupMax:
+	case metamodel.RollupSum, metamodel.RollupLatest, metamodel.RollupAvg, metamodel.RollupLatestRow,
+		metamodel.RollupBodyTasks:
+		problems = append(problems, fmt.Sprintf("%s: a via with condition folds exists, count, min or max, not %s",
+			at, fn))
+	}
+	if len(pd.Rollup.Via) != 1 {
+		return Column{}, append(problems, at+": a via with condition names exactly one relation")
+	}
+	col, walkProblems := compileWalk(meta, eval, typeName, name, pd, fn, prop, at, pd.Rollup.Via, 1)
+	return col, append(problems, walkProblems...)
+}
+
+// compileWalk compiles the segments, the node conditions and the min or
+// max property of an along walk of path from typeName.
+func compileWalk(
+	meta *metamodel.Metamodel, eval *predicatefns.Evaluator, typeName, name string, pd metamodel.PropertyDef,
+	fn metamodel.RollupFunc, prop, at string, path []string, depth int,
+) (Column, []string) {
+	r := pd.Rollup
+	segs, reach, problems := compileSegments(meta, typeName, path, at)
+	resolved := problems == nil
+	along := &Along{Segments: segs, MaxDepth: depth, Nodes: map[string]*Node{}}
 	if len(r.Condition) == 0 {
 		problems = append(problems, at+": along needs a condition for at least one visited type")
 	}
 	for _, typ := range slices.Sorted(maps.Keys(r.Condition)) {
-		if segProblems == nil && !reach[typ] {
+		if resolved && !reach[typ] {
 			problems = append(problems, fmt.Sprintf("%s: condition type %q is not a type the walk reaches", at, typ))
 			continue
 		}
@@ -274,18 +311,20 @@ func compileSegment(meta *metamodel.Metamodel, name string, repeat bool, before 
 }
 
 // compileNode compiles one visited type's condition, or says why it is
-// refused: it must compile and read only stored properties, now() and
-// today().
+// refused: it must compile and read only stored properties, roll-ups of
+// typ ([Node.Rollups]), now() and today(). A condition that reads a
+// roll-up has no store form.
 func compileNode(meta *metamodel.Metamodel, eval *predicatefns.Evaluator, typ, src string) (*Node, string) {
 	def := meta.Entities[typ]
 	wide, err := eval.CompileWithRollups(typ, src)
 	if err != nil {
 		return nil, fmt.Sprintf("does not compile: %v", err)
 	}
+	var rollups []string
 	for _, a := range wide.Attributes("entity") {
 		switch pd := def.Properties[a]; {
 		case pd.Rollup != nil:
-			return nil, fmt.Sprintf("reads the roll-up %q; a node condition reads stored properties only", a)
+			rollups = append(rollups, a)
 		case pd.Computed != "":
 			return nil, fmt.Sprintf("reads the computed property %q; a node condition reads stored properties only", a)
 		}
@@ -296,19 +335,28 @@ func compileNode(meta *metamodel.Metamodel, eval *predicatefns.Evaluator, typ, s
 	case len(wide.Traversals()) > 0:
 		return nil, "calls related(); a node condition reads the visited entity only"
 	}
-	prog, err := eval.Compile(typ, src)
-	if err != nil {
-		return nil, fmt.Sprintf("does not compile: %v", err)
+	prog := wide
+	if len(rollups) == 0 {
+		if prog, err = eval.Compile(typ, src); err != nil {
+			return nil, fmt.Sprintf("does not compile: %v", err)
+		}
 	}
-	n := &Node{Type: typ, Source: src, Reads: slices.Sorted(slices.Values(prog.Attributes("entity"))),
-		prog: prog, eval: eval, defaults: map[string]any{}}
+	n := &Node{Type: typ, Source: src, prog: prog, eval: eval, defaults: map[string]any{},
+		Rollups: slices.Compact(slices.Sorted(slices.Values(rollups)))}
+	for _, a := range slices.Sorted(slices.Values(prog.Attributes("entity"))) {
+		if !slices.Contains(n.Rollups, a) {
+			n.Reads = append(n.Reads, a)
+		}
+	}
 	n.Reads = slices.Compact(n.Reads)
 	for _, p := range n.Reads {
 		if d, ok := typedDefault(meta, def.Properties[p]); ok {
 			n.defaults[p] = d
 		}
 	}
-	n.Lowered = lowerNode(meta, n)
+	if len(n.Rollups) == 0 {
+		n.Lowered = lowerNode(meta, n)
+	}
 	return n, ""
 }
 

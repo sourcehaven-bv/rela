@@ -72,6 +72,9 @@ type Column struct {
 	// other relation and record fields are then empty. Nil for every other
 	// roll-up.
 	Siblings *Siblings
+	// Types are the entity types whose rows or edges the roll-up reads
+	// directly, sorted. [Set.ReadTypes] adds those of its inner roll-ups.
+	Types []string
 }
 
 // TaskCount picks the column's count from the task lines of body.
@@ -182,8 +185,12 @@ func Compile(meta *metamodel.Metamodel) (*Set, error) {
 				problems = append(problems, errs...)
 				continue
 			}
+			col.Types = columnTypes(meta, typeName, col)
 			set.byType[typeName] = append(set.byType[typeName], col)
 		}
+	}
+	if len(problems) == 0 {
+		problems = buildGraph(set.byType).problems()
 	}
 	if len(problems) > 0 {
 		slices.Sort(problems)
@@ -284,8 +291,8 @@ func compileColumn(
 	return col, problems
 }
 
-// compileShapedColumn compiles a siblings, along or records roll-up, and
-// reports false for a plain via roll-up, which compileColumn handles.
+// compileShapedColumn compiles a siblings, along, via with condition or
+// records roll-up, and reports false for a plain via roll-up, which compileColumn handles.
 func compileShapedColumn(
 	meta *metamodel.Metamodel, eval *predicatefns.Evaluator, typeName, name string, pd metamodel.PropertyDef,
 	fn metamodel.RollupFunc, prop, at string,
@@ -296,6 +303,8 @@ func compileShapedColumn(
 		col, problems = compileSiblingsColumn(meta, typeName, name, fn, r, at)
 	case len(r.Along) > 0:
 		col, problems = compileAlongColumn(meta, eval, typeName, name, pd, fn, prop, at)
+	case len(r.Condition) > 0 && len(r.Via) > 0:
+		col, problems = compileViaConditionColumn(meta, eval, typeName, name, pd, fn, prop, at)
 	case r.Records != "":
 		col, problems = compileRecordsColumn(meta, typeName, name, pd, at)
 	default:

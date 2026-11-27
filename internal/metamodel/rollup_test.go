@@ -65,6 +65,14 @@ func TestRollupShape(t *testing.T) {
 			"only valid with records"},
 		{"computed", `n: {type: integer, computed: "1", rollup: {via: treatedBy, count: true}}`,
 			"cannot be combined with computed"},
+		{"via with condition loads", `any: {type: boolean, rollup: {via: treatedBy, exists: true,
+          condition: {plan: "entity.done == true"}}}`, ""},
+		{"via with condition and where", `any: {type: boolean, rollup: {via: treatedBy, exists: true,
+          where: {done: "true"}, condition: {plan: "true"}}}`, "a via with condition cannot be combined with where"},
+		{"via with condition over a path", `any: {type: boolean, rollup: {via: [treatedBy, treats], exists: true,
+          condition: {plan: "true"}}}`, "a via with condition names exactly one relation"},
+		{"via with empty condition", `any: {type: boolean, rollup: {via: treatedBy, exists: true,
+          condition: {plan: " "}}}`, "has an empty type or expression"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
