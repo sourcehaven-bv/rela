@@ -315,7 +315,7 @@ async function loadCandidates() {
     offWorldFaces.value = hints
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
-    // (see BUG-6C3V).
+    // (see BUG-6C3V and src/composables/usePageData.ts).
     if (isCancelledFetch(err)) return
     console.error('Failed to load relation candidates:', err)
   } finally {

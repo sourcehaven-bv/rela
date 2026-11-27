@@ -687,7 +687,7 @@ async function loadEntity(force = false) {
     loadState.value = 'loaded'
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
-    // (see BUG-6C3V).
+    // (see BUG-6C3V and src/composables/usePageData.ts).
     if (isCancelledFetch(err)) return
     loadState.value = 'error'
     uiStore.error(t('form.loadFailed'))

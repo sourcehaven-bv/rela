@@ -51,7 +51,7 @@ async function loadHelp() {
   } catch (err) {
     if (myToken !== loadToken) return // superseded
     // Suppress cancellation errors from rapid navigation in Firefox
-    // (see BUG-6C3V).
+    // (see BUG-6C3V and src/composables/usePageData.ts).
     if (isCancelledFetch(err)) return
     console.error('Failed to load help:', err)
     error.value = t('help.loadFailed')

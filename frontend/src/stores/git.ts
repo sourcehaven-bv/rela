@@ -51,7 +51,7 @@ export const useGitStore = defineStore('git', () => {
       status.value = await getGitStatus()
     } catch (err) {
       // Suppress cancellation errors from rapid navigation in Firefox
-      // (see BUG-6C3V).
+      // (see BUG-6C3V and src/composables/usePageData.ts).
       if (isCancelledFetch(err)) return
       console.error('Failed to fetch git status:', err)
       lastError.value = getErrorMessage(err, t('git.fetchFailed'))
