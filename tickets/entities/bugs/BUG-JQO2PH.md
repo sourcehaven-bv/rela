@@ -4,7 +4,15 @@ type: bug
 title: pgstore change-feed listener fails when RELA_DATABASE_URL sets pool_max_conns
 description: The listener connects with pgx.Connect on the full DSN; Postgres rejects pool_max_conns as an unknown runtime parameter, so the cross-process change feed is silently disabled.
 priority: high
-status: backlog
+why1: The change-feed listener could not connect when RELA_DATABASE_URL set pool_max_conns.
+why2: It called pgx.Connect with the full DSN, which forwards pool-only parameters to the server, and the server refused them.
+why3: The pool and the listener parsed the same DSN with different parsers, and no test used a pool-tuned DSN.
+why4: The listener's connection was added later than the pool and reused the raw DSN without the pool's parsing.
+why5: 'Systemic: two connection paths were configured from one string with no shared constructor, so a setting valid for one silently broke the other.'
+prevention: The listener parses the DSN with pgxpool.ParseConfig, and the docscapture admin connection got the same fix (#1750).
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Summary

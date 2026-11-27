@@ -5,7 +5,9 @@ title: 'List toolbar_actions: entity-less action buttons on a list'
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Description

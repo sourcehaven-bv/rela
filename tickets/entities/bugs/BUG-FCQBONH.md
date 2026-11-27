@@ -8,8 +8,12 @@ effort: s
 why1: applyCopyEdges ran the replace only for relation types in plan.edges, and planCopyEdges only marked target edges removable for types with a creatable source edge.
 why2: Both loops were keyed on the source face's edges, so a type with zero source edges was never visited.
 why3: The copy kernel treated replace as 'delete then add for each copied type' instead of 'make the target set equal the source set', and the comment recorded that as intended.
+why4: The copy tests covered one-edge and many-edge sources but not an empty source set.
+why5: 'Systemic: set-replacement semantics were tested only through additions, so the boundary case where the result is empty was never exercised.'
 prevention: TestCopyReplace_EmptySourceEmptiesTarget covers the empty source set, with and without the create right. Replace tests now include the empty-set case alongside the one-edge case.
-status: backlog
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Description

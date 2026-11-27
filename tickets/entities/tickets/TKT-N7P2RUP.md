@@ -5,7 +5,9 @@ title: Roll-ups in lists and dashboard cards, decimal sum, total cards
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Description

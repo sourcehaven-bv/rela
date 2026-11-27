@@ -4,7 +4,15 @@ type: bug
 title: 'Merge queue stalls forever: No Session Trailer is required on develop but never reports on merge_group'
 description: 'The develop ruleset requires the `no-session-trailer / No Session Trailer` check, but .github/workflows/no-session-trailer.yml triggers only on pull_request. Merge-queue entries are tested on an ephemeral gh-readonly-queue/... ref, which fires merge_group instead, so the required check never reports there and every queue entry sits in AWAITING_CHECKS until check_response_timeout_minutes expires, then requeues forever. CI itself is green, so the PR page and the queue run both look healthy. ci.yml already carries merge_group: and a comment documenting this exact failure mode; no-session-trailer.yml was added later without it.'
 priority: high
-status: backlog
+why1: Merge-queue entries waited for a required check until timeout and requeued, so nothing merged.
+why2: No Session Trailer was required on develop, but its workflow ran only on pull_request and never reported on merge_group.
+why3: The workflow was added after ci.yml and did not copy its merge_group trigger, and nothing checks that required checks run on merge_group.
+why4: The queue reported the entry as waiting, not failed, so the stall looked like slow CI.
+why5: 'Systemic: required checks and workflow triggers are configured in different places, and nothing verifies that every required check runs on merge_group.'
+prevention: The workflow now also triggers on merge_group (#1550).
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Symptom
