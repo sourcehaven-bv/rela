@@ -22,6 +22,16 @@ type PeerUpdateInfo struct {
 	// Origin is the transaction origin apply applies the update with, which
 	// the document's OnUpdate observers receive.
 	Origin any
+	// Identity is the ConnectionConfig.Identity of the connection that sent
+	// the update: from Server.Authorize, or from Server.OnTokenAuth once a
+	// token is accepted. Nil when neither set one.
+	//
+	// It names the connection that transmitted the update, not the author of
+	// the items inside it: a reconnecting client's SyncStep2 re-sends items
+	// other users authored under its own identity. For per-item authorship
+	// read the client IDs in Update, which are not an authenticated identity
+	// either.
+	Identity any
 }
 
 // PeerUpdateHook is the signature of Server.OnPeerUpdate. apply applies
@@ -83,18 +93,20 @@ func (c *PeerClose) Error() string {
 
 // applyPeerUpdate applies a read-write peer's update to the room, through
 // Server.OnPeerUpdate when one is set. It reports whether the room applied
-// the update and, when the peer is to be closed, the close's sendable code and
-// reason (see PeerUpdateHook). A hook that panics is recovered and logged; the
-// update stands applied only if the hook's apply applied it.
-func (p *peer) applyPeerUpdate(update []byte) (applied bool, closeWith *PeerClose) {
+// the update, whether the room already held all of it, and, when the peer is
+// to be closed, the close's sendable code and reason (see PeerUpdateHook). A
+// hook that panics is recovered and logged; the update stands applied only if
+// the hook's apply applied it.
+func (p *peer) applyPeerUpdate(update []byte) (applied, held bool, closeWith *PeerClose) {
 	hook := p.server.OnPeerUpdate
 	if hook == nil {
-		if err := p.applyToRoom(update); err != nil {
+		roomHeld, err := p.applyToRoom(update)
+		if err != nil {
 			p.server.log().Debug("discarded unappliable sync message",
 				"room", p.roomName, "err", err)
-			return false, nil
+			return false, false, nil
 		}
-		return true, nil
+		return true, roomHeld, nil
 	}
 	// mu orders apply's start against the hook's return: a call that started
 	// first counts, and one after the return applies nothing. It is not held
@@ -104,6 +116,7 @@ func (p *peer) applyPeerUpdate(update []byte) (applied bool, closeWith *PeerClos
 		mu               sync.Mutex
 		called, returned bool
 		applyErr         error
+		applyHeld        bool
 		applyDone        = make(chan struct{})
 	)
 	apply := func() error {
@@ -119,12 +132,12 @@ func (p *peer) applyPeerUpdate(update []byte) (applied bool, closeWith *PeerClos
 		called = true
 		mu.Unlock()
 		defer close(applyDone)
-		applyErr = p.applyToRoom(update)
+		applyHeld, applyErr = p.applyToRoom(update)
 		return applyErr
 	}
 	var hookErr error
 	p.server.safeHook("OnPeerUpdate", func() {
-		hookErr = hook(PeerUpdateInfo{Room: p.roomName, Doc: p.room.doc, Update: update, Origin: p}, apply)
+		hookErr = hook(PeerUpdateInfo{Room: p.roomName, Doc: p.room.doc, Update: update, Origin: p, Identity: p.identity}, apply)
 	})
 	mu.Lock()
 	returned = true
@@ -134,18 +147,18 @@ func (p *peer) applyPeerUpdate(update []byte) (applied bool, closeWith *PeerClos
 		<-applyDone // an apply that started before the return finishes first
 	}
 	if ranApply && applyErr == nil {
-		return true, nil
+		return true, applyHeld, nil
 	}
 	p.server.log().Debug("peer update refused", "room", p.roomName,
 		"hookErr", hookErr, "applyErr", applyErr)
 	var refusal *PeerClose
 	if errors.As(hookErr, &refusal) && refusal != nil {
 		if code, reason, ok := sendableClose(refusal.Code, refusal.Reason); ok {
-			return false, &PeerClose{Code: code, Reason: reason}
+			return false, false, &PeerClose{Code: code, Reason: reason}
 		}
 	} else if ranApply {
 		// The room did not take the update: answered as without a hook.
-		return false, nil
+		return false, false, nil
 	}
-	return false, &PeerClose{Code: wsCodeResetConnection, Reason: wsReasonResetConnection}
+	return false, false, &PeerClose{Code: wsCodeResetConnection, Reason: wsReasonResetConnection}
 }

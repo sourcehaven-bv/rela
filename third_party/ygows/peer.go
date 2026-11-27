@@ -38,6 +38,7 @@ type peer struct {
 	closeReason string        // #104: WS close reason accompanying closeCode
 	limiter     *rate.Limiter // per-peer inbound-message rate limiter; nil = unlimited (#51)
 	readOnly    bool          // #59: drop this peer's inbound writes (sync step-2/update + awareness)
+	identity    any           // ConnectionConfig.Identity, handed to OnPeerUpdate; set and read on the read loop
 	// stampAwareness rewrites this peer's awareness states (rela fork); see
 	// ConnectionConfig.StampAwareness. Only read on the read-loop goroutine.
 	stampAwareness func(map[string]any) map[string]any
@@ -249,10 +250,10 @@ func (p *peer) handleMessage(data []byte) {
 // applySyncUpdate handles a SyncStep2 or Update (update, the sync payload's
 // content) that a peer sent under Sync (tag 0) or SyncReply (tag 4): it applies
 // the update to the room, through Server.OnPeerUpdate when one is set, and
-// broadcasts payload to the room's other peers once the room has applied it. A
-// read-only peer's update is neither applied nor broadcast (#59). An update the
-// hook refused is not broadcast, and the peer is then closed (see
-// PeerUpdateHook).
+// broadcasts payload to the room's other peers once the room has applied it,
+// unless the room already held all of it. A read-only peer's update is neither
+// applied nor broadcast (#59). An update the hook refused is not broadcast, and
+// the peer is then closed (see PeerUpdateHook).
 //
 // On a connection using Hocuspocus framing it answers every such frame with
 // exactly one SyncStatus (tag 8), in the order the frames arrived, so a client
@@ -276,7 +277,7 @@ func (p *peer) applySyncUpdate(subType int, update, payload []byte) {
 		}
 		return
 	}
-	applied, closeWith := p.applyPeerUpdate(update)
+	applied, held, closeWith := p.applyPeerUpdate(update)
 	if !applied {
 		p.sendSyncStatus(false)
 		if closeWith != nil {
@@ -284,20 +285,23 @@ func (p *peer) applySyncUpdate(subType int, update, payload []byte) {
 		}
 		return
 	}
-	p.broadcastSync(payload)
+	if !held {
+		p.broadcastSync(payload)
+	}
 	p.sendSyncStatus(true)
 }
 
-// applyToRoom applies update to the room's document. ApplyUpdateV1 integrates
-// item by item, so an update that overflows MaxPendingItems can leave part of
-// itself in the room; when it fails, applyToRoom broadcasts that part, and only
-// that part, to the room's other peers.
-func (p *peer) applyToRoom(update []byte) error {
-	landed, err := crdt.ApplyUpdateV1Landed(p.room.doc, update, p)
+// applyToRoom applies update to the room's document and reports whether the
+// room already held all of it. ApplyUpdateV1 integrates item by item, so an
+// update that overflows MaxPendingItems can leave part of itself in the room;
+// when it fails, applyToRoom broadcasts that part, and only that part, to the
+// room's other peers.
+func (p *peer) applyToRoom(update []byte) (bool, error) {
+	landed, held, err := crdt.ApplyUpdateV1Held(p.room.doc, update, p)
 	if err != nil && landed != nil {
 		p.broadcastSync(ygsync.EncodeUpdate(landed))
 	}
-	return err
+	return held, err
 }
 
 // roomHolds reports whether the room's document already holds everything the
@@ -375,7 +379,8 @@ func (p *peer) handleAuth(dec *encoding.Decoder) {
 		return
 	}
 
-	p.readOnly = cfg.ReadOnly // safe: only read on this read-loop goroutine
+	// safe: both are only read on this read-loop goroutine
+	p.readOnly, p.identity = cfg.ReadOnly, cfg.Identity
 	if cfg.StampAwareness != nil {
 		// rela fork: a later auth frame may replace the stamp, never
 		// remove it, so a hook that omits it cannot switch it off.
