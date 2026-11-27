@@ -793,7 +793,7 @@
   "internal/store/pgstore/dsn.go": 3,
   "internal/store/pgstore/entity.go": 41,
   "internal/store/pgstore/feed.go": 6,
-  "internal/store/pgstore/graphquery.go": 32,
+  "internal/store/pgstore/graphquery.go": 31,
   "internal/store/pgstore/keyedlock.go": 8,
   "internal/store/pgstore/listener.go": 21,
   "internal/store/pgstore/mentions.go": 1,

@@ -499,10 +499,7 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 		return fmt.Sprintf("(NOT COALESCE(jsonb_typeof(%s) = 'string' AND %s = %s, FALSE))", jsn, txt, valArg)
 	}
 
-	// isEmpty covers: missing key, JSON null, empty string, empty array.
-	isEmpty := fmt.Sprintf(
-		"(%s IS NULL OR %s = '' OR (jsonb_typeof(%s) = 'array' AND jsonb_array_length(%s) = 0))",
-		txt, txt, jsn, jsn)
+	isEmpty := emptyCond(txt, jsn)
 
 	switch p.Op {
 	case store.PropEqual:
@@ -546,6 +543,16 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 		// PropKeyEqual returned above; anything else is unknown.
 		return b.fail(store.UnknownPropOpError(p))
 	}
+}
+
+// emptyCond is true when the property whose text is txt and whose JSON is jsn
+// is missing, JSON null, the empty string or the empty array. The derived
+// empty-value index (createEmptyIndexDDL) is partial on this same expression,
+// so the planner can serve the empty arm of a [store.PropEqualOrEmpty] from it.
+func emptyCond(txt, jsn string) string {
+	return fmt.Sprintf(
+		"(%s IS NULL OR %s = '' OR (jsonb_typeof(%s) = 'array' AND jsonb_array_length(%s) = 0))",
+		txt, txt, jsn, jsn)
 }
 
 // keyEqualCond renders [store.PropKeyEqual]: the entry Key of an object

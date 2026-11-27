@@ -262,10 +262,10 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 			"\x02"+orderValuesKey(spec.OrderValues)] = spec
 	}
 	for _, ts := range scopeTraversalSpecs(meta) {
-		byKey[ts.Type+"\x00"+strings.Join(ts.Properties, "\x00")] = ts
+		byKey[traversalSpecKey(ts)] = ts
 	}
 	for _, ts := range conditionTraversalSpecs(cfg, meta) {
-		byKey[ts.Type+"\x00"+strings.Join(ts.Properties, "\x00")] = ts
+		byKey[traversalSpecKey(ts)] = ts
 	}
 	keys := make([]string, 0, len(byKey))
 	for key := range byKey {

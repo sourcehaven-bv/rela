@@ -16,9 +16,9 @@ import (
 )
 
 // defaultWorld builds tickets that each implement one feature. The feature's
-// blocked property defaults to false and its stage to draft. T-UNSET's
-// feature has neither written; T-NONE implements nothing. editor may write
-// secret and viewer may see it only when the given constraint holds.
+// blocked property defaults to false and its stage to draft; owner has no
+// default. T-UNSET's feature has none written; T-NONE implements nothing.
+// editor may write secret and viewer may see it only when the given constraint holds.
 func defaultWorld(t *testing.T, constraint string) fieldWorld {
 	t.Helper()
 	meta := &metamodel.Metamodel{
@@ -30,6 +30,7 @@ func defaultWorld(t *testing.T, constraint string) fieldWorld {
 			"feature": {Properties: map[string]metamodel.PropertyDef{
 				"blocked": {Type: metamodel.PropertyTypeBoolean, Default: "false"},
 				"stage":   {Type: metamodel.PropertyTypeEnum, Values: []string{"draft", "live"}, Default: "draft"},
+				"owner":   {Type: metamodel.PropertyTypeString},
 			}},
 			"person": {Properties: map[string]metamodel.PropertyDef{}},
 		},
@@ -69,8 +70,8 @@ assignments:
 	features := map[string]map[string]any{
 		"F-UNSET": nil,
 		"F-FALSE": {"blocked": false, "stage": "draft"},
-		"F-TRUE":  {"blocked": true, "stage": "live"},
-		"F-EMPTY": {"blocked": "", "stage": ""},
+		"F-TRUE":  {"blocked": true, "stage": "live", "owner": "x"},
+		"F-EMPTY": {"blocked": "", "stage": "", "owner": ""},
 	}
 	for id, props := range features {
 		e := entity.New(id, "feature")
@@ -112,7 +113,8 @@ func allowsSecret(verdicts map[string]bool) bool {
 // A related() constraint in a grant's or a visible: rule's when: that compares
 // against the target's schema default also holds when the target never had
 // the property written. A non-default value, another value, and a missing
-// target do not satisfy it. The visible: rule is checked both per row and
+// target do not satisfy it, nor does an unset or empty target on a property
+// with no declared default. The visible: rule is checked both per row and
 // through the store query search runs.
 func TestRelatedWhen_DefaultMatchesUnsetTarget(t *testing.T) {
 	t.Parallel()
@@ -126,6 +128,7 @@ func TestRelatedWhen_DefaultMatchesUnsetTarget(t *testing.T) {
 		{"stage = 'live'", []string{"T-TRUE"}},
 		{"blocked = false, stage = 'draft'", []string{"T-EMPTY", "T-FALSE", "T-UNSET"}},
 		{"blocked = false, stage = 'live'", nil},
+		{"owner = 'x'", []string{"T-TRUE"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.constraint, func(t *testing.T) {

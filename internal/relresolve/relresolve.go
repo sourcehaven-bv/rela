@@ -145,7 +145,7 @@ func bindIdentity(ctx context.Context, spec predicate.TraversalSpec) (predicate.
 // intermediate hops constrain type and relation. The spec must be bound (see
 // [predicatefns.BindTraversal]): a `current_user.id` constraint has no value
 // to lower until it is. A constraint on the property's schema default also
-// matches an endpoint without the property, which holds the default.
+// matches an endpoint without the property; an unknown target has none.
 func Hop(meta *metamodel.Metamodel, entityType string, spec predicate.TraversalSpec) (acl.TraversalHop, error) {
 	if len(spec.Refs) > 0 {
 		return acl.TraversalHop{}, errors.New("related: the traversal reads current_user and has not been bound")
@@ -158,14 +158,14 @@ func Hop(meta *metamodel.Metamodel, entityType string, spec predicate.TraversalS
 		// coverage-ignore: invariant: the engine refuses an empty relation path at compile
 		return acl.TraversalHop{}, errors.New("related: empty relation path")
 	}
-	target, _ := meta.GetEntityDef(hops[len(hops)-1].Target)
+	target, known := meta.GetEntityDef(hops[len(hops)-1].Target)
 	props := make([]store.PropPredicate, 0, len(spec.Props))
 	for _, name := range spec.PropNames() {
 		pred, err := constraintPredicate(name, spec.Props[name])
 		if err != nil {
 			return acl.TraversalHop{}, err
 		}
-		if metamodel.IsDeclaredDefault(target.Properties[name], meta, pred.Value) {
+		if known && metamodel.IsDeclaredDefault(target.Properties[name], meta, pred.Value) {
 			pred.Op = store.PropEqualOrEmpty
 		}
 		props = append(props, pred)

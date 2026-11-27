@@ -1089,7 +1089,7 @@ entities:
 | ----------- | --------------------------------------------------------------------------------------------- |
 | `via`       | One relation, or a list of up to three. A name walks from → to; an `inverse` walks to → from |
 | `type`      | The related type, when the last relation's far side names several                             |
-| `where`     | Keep only related entities whose properties equal these values (enum, string, boolean, integer). A value equal to the property's schema default (its `default:`, or its custom type's `initial:` or `default:`) also keeps entities that do not have the property set. On a path, it filters the far end only |
+| `where`     | Keep only related entities whose properties equal these values (enum, string, boolean, integer). A value equal to the property's schema default (its `default:`, or its custom type's `initial:` or `default:`) also keeps entities on which the property is unset or empty (missing, null, an empty string or an empty list). On a path, it filters the far end only |
 | `count`     | The number of related entities. The property must be `integer`                               |
 | `exists`    | Whether there is at least one. The property must be `boolean`                                 |
 | `min`/`max` | The lowest or highest value of an `integer` or `date` property; same type. Not yet `decimal`  |
@@ -2035,11 +2035,14 @@ The arguments are:
   [Matching the current user](#matching-the-current-user).
 
 A constraint whose value is the property's schema default also matches an
-entity that does not have the property set. The default is the property's
-`default:`, or else its custom type's `initial:` or `default:`. With
+entity on which the property is unset or empty: missing, null, an empty
+string or an empty list. The default is the property's `default:`, or else its
+custom type's `initial:` or `default:`. With
 `blocked: { type: boolean, default: false }` on `action`,
 `related(entity, 'has', { blocked = false })` matches a project with an
-action that never had `blocked` written.
+action that never had `blocked` written. The negation narrows to match:
+`not related(entity, 'has', { blocked = false })` no longer matches that
+project.
 
 An entity the reader may not see does not count. It neither makes a row match
 `related(...)` nor stops a row matching `not related(...)`. The result can

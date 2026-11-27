@@ -57,6 +57,8 @@ func describeDerived(spec store.DerivedObjectSpec) string {
 		return fmt.Sprintf("unique constraint on %s.%s", spec.Type, spec.Property)
 	case store.DerivedExternalRefUnique:
 		return fmt.Sprintf("external-ref unique index on %s.%s", spec.Type, spec.Property)
+	case store.DerivedEmptyIndex:
+		return fmt.Sprintf("empty-value index on %s.%v", spec.Type, spec.Properties)
 	case store.DerivedListIndex:
 		return fmt.Sprintf("list index on %s.%v ordered by %v", spec.Type, spec.Properties, spec.OrderBy)
 	default:
