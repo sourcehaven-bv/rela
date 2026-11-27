@@ -112,14 +112,14 @@ func (s nestedSeed) mk(id, typ string, props map[string]any) {
 	s.t.Helper()
 	e := entity.New(id, typ)
 	maps.Copy(e.Properties, props)
-	if err := s.st.CreateEntity(context.Background(), e); err != nil {
+	if err := s.st.CreateEntity(s.t.Context(), e); err != nil {
 		s.t.Fatal(err)
 	}
 }
 
 func (s nestedSeed) rel(from, typ, to string) {
 	s.t.Helper()
-	if _, err := s.st.CreateRelation(context.Background(), entity.RelationKey{From: from, Type: typ, To: to},
+	if _, err := s.st.CreateRelation(s.t.Context(), entity.RelationKey{From: from, Type: typ, To: to},
 		nil); err != nil {
 		s.t.Fatal(err)
 	}
@@ -221,6 +221,7 @@ func assertNestedRollups(t *testing.T, st store.Store) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			r, err := visibility.NewRollups(set, st, tc.rows, tc.fields)
 			if err != nil {
 				t.Fatal(err)
@@ -238,8 +239,12 @@ func assertNestedRollups(t *testing.T, st store.Store) {
 // one evaluation path, so the backends are what it is compared across.
 func TestRollups_Nested(t *testing.T) {
 	t.Parallel()
-	t.Run("memstore", func(t *testing.T) { assertNestedRollups(t, memstore.New()) })
+	t.Run("memstore", func(t *testing.T) {
+		t.Parallel()
+		assertNestedRollups(t, memstore.New())
+	})
 	t.Run("fsstore", func(t *testing.T) {
+		t.Parallel()
 		fs := storage.NewMemFS()
 		rooted, err := storage.NewRootedFS(fs, "/")
 		if err != nil {
@@ -265,7 +270,6 @@ func TestRollups_Nested(t *testing.T) {
 // and one of 50 make the same store calls.
 func TestRollups_NestedBudget(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
 	set := compileNestedSet(t)
 	measure := func(t *testing.T, page int) (storetest.Cost, string) {
 		t.Helper()
@@ -286,7 +290,7 @@ func TestRollups_NestedBudget(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got := r.Values(ctx, "project", rows, store.TrivialScope(), nil)
+		got := r.Values(t.Context(), "project", rows, store.TrivialScope(), nil)
 		for _, ref := range rows {
 			if got[ref.ID]["has_available_action"] != true {
 				t.Fatalf("has_available_action on %s = %v", ref.ID, got[ref.ID]["has_available_action"])

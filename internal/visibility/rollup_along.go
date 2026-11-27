@@ -249,7 +249,8 @@ func (r *Rollups) innerValues(
 		if len(names) == 0 {
 			continue
 		}
-		vals, err := r.values(ctx, typ, refs[typ], world, func(p string) bool { return slices.Contains(names, p) }, share)
+		want := func(p string) bool { return slices.Contains(names, p) }
+		vals, err := r.values(ctx, typ, refs[typ], world, want, share)
 		if err != nil {
 			return nil, fmt.Errorf("inner roll-ups of %s: %w", typ, err)
 		}

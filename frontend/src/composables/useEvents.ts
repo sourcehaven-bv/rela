@@ -1,6 +1,6 @@
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useQueryCache } from '@pinia/colada'
-import { useGitStore, useEntitiesStore, useUIStore } from '@/stores'
+import { useGitStore, useEntitiesStore, useUIStore, useSchemaStore } from '@/stores'
 import { entityKeys } from '@/queries/entities'
 import { isConfigSaveInFlight } from '@/configure/saveGate'
 import { t } from '@/i18n'
@@ -11,6 +11,7 @@ import {
   setLiveReconnect,
 } from './useLiveSubscription'
 import { invalidateWhenVisible, refetchJitter, runWhenVisible } from './visibleRefetch'
+import { listTypesRefreshedBy } from './listRefresh'
 
 export type SSEEventType = 'refresh' | 'git' | 'git:status' | 'entity:changed'
 
@@ -109,6 +110,7 @@ export function useEvents() {
   const gitStore = useGitStore()
   const entitiesStore = useEntitiesStore()
   const uiStore = useUIStore()
+  const schemaStore = useSchemaStore()
   const queryCache = useQueryCache()
 
   /* v8 ignore start - reconnection logic tested via e2e */
@@ -254,6 +256,11 @@ export function useEvents() {
           invalidateWhenVisible(queryCache, {
             key: data.type ? entityKeys.type(data.type) : entityKeys.root,
           }).catch(() => {})
+          if (data.type) {
+            for (const listType of listTypesRefreshedBy(schemaStore.lists.values(), data.type)) {
+              invalidateWhenVisible(queryCache, { key: entityKeys.list(listType) }).catch(() => {})
+            }
+          }
           eventHandlers.get('entity:changed')?.forEach((handler) => handler(data))
         } catch {
           console.warn('Failed to parse entity:changed event data')

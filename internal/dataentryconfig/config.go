@@ -1007,9 +1007,10 @@ type RelationProperty struct {
 // happen to set it get a header region without a rewrite.
 //
 // The plimsoll directive is the format-mirror exception documented on
-// [Config]: each exported field is one key of a list in data-entry.yaml.
+// [Config]: each exported field is one key of a list in data-entry.yaml,
+// except RefreshTypes, which the server derives for the SPA.
 //
-//plimsoll:max-fields=24
+//plimsoll:max-fields=25
 type List struct {
 	EntityType  string `yaml:"entity_type" json:"entity"`
 	Title       string `yaml:"title" json:"title"`
@@ -1122,6 +1123,11 @@ type List struct {
 	// form's prefill, a drop on the list's sidebar entry, and an action's
 	// `assign:`. Nil: the list assigns nothing. See [Assign].
 	Assign *Assign `yaml:"assign,omitempty" json:"assign,omitempty"`
+	// RefreshTypes is never read from data-entry.yaml: the server fills it
+	// in the config response with every entity type a change to which can
+	// change a roll-up of EntityType, nested roll-ups included (design
+	// decision Q8), sorted. The SPA refetches the list on a change to any.
+	RefreshTypes []string `yaml:"-" json:"refresh_types,omitempty"`
 }
 
 // ListColumn defines a column in a list view. A column is one of four

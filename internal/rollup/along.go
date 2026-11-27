@@ -170,8 +170,7 @@ func compileAlongColumn(
 func compileViaConditionColumn(
 	meta *metamodel.Metamodel, eval *predicatefns.Evaluator, typeName, name string, pd metamodel.PropertyDef,
 	fn metamodel.RollupFunc, prop, at string,
-) (Column, []string) {
-	var problems []string
+) (col Column, problems []string) {
 	switch fn {
 	case metamodel.RollupExists, metamodel.RollupCount, metamodel.RollupMin, metamodel.RollupMax:
 	case metamodel.RollupSum, metamodel.RollupLatest, metamodel.RollupAvg, metamodel.RollupLatestRow,
@@ -183,7 +182,8 @@ func compileViaConditionColumn(
 		return Column{}, append(problems, at+": a via with condition names exactly one relation")
 	}
 	col, walkProblems := compileWalk(meta, eval, typeName, name, pd, fn, prop, at, pd.Rollup.Via, 1)
-	return col, append(problems, walkProblems...)
+	problems = append(problems, walkProblems...)
+	return col, problems
 }
 
 // compileWalk compiles the segments, the node conditions and the min or
@@ -191,7 +191,7 @@ func compileViaConditionColumn(
 func compileWalk(
 	meta *metamodel.Metamodel, eval *predicatefns.Evaluator, typeName, name string, pd metamodel.PropertyDef,
 	fn metamodel.RollupFunc, prop, at string, path []string, depth int,
-) (Column, []string) {
+) (col Column, problems []string) {
 	r := pd.Rollup
 	segs, reach, problems := compileSegments(meta, typeName, path, at)
 	resolved := problems == nil
@@ -214,7 +214,7 @@ func compileWalk(
 		}
 		along.Nodes[typ] = node
 	}
-	col := Column{Property: name, Func: fn, Along: along}
+	col = Column{Property: name, Func: fn, Along: along}
 	if fn == metamodel.RollupMin || fn == metamodel.RollupMax {
 		prop = strings.TrimSpace(prop)
 		col.Value, col.Numeric = prop, pd.Type == metamodel.PropertyTypeInteger

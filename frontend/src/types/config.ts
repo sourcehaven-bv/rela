@@ -426,6 +426,12 @@ export interface ListConfig {
   filters?: ListFilter[]
   filter_controls?: FilterControl[]
   default_sort?: SortSpec[]
+  /**
+   * Entity types whose change can change a roll-up of `entity`, nested
+   * roll-ups included, sorted. The server derives it; a change to any of
+   * them refetches the list.
+   */
+  refresh_types?: string[]
   create_form?: string
   /**
    * World the create button opens its form in, when a new entity belongs in a

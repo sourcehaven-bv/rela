@@ -20,6 +20,11 @@ vi.mock('@/stores', () => ({
   useUIStore: () => ({
     error: mockUIError,
   }),
+  useSchemaStore: () => ({
+    lists: new Map([
+      ['stalled', { entity: 'project', columns: [], refresh_types: ['action', 'project', 'tag'] }],
+    ]),
+  }),
 }))
 
 const mockProbeSessionEnded = vi.fn().mockResolvedValue(undefined)
@@ -206,6 +211,17 @@ describe('useEvents', () => {
 
       expect(mockEntitiesInvalidateAll).toHaveBeenCalledTimes(1)
       expect(spy).toHaveBeenCalledWith({ key: ['entities', 'ticket'] }, true)
+    })
+
+    it('refetches the lists whose roll-ups read the changed type (Q8)', async () => {
+      const queryCache = useQueryCache()
+      const spy = vi.spyOn(queryCache, 'invalidateQueries')
+      await mountConnected()
+
+      lastSource!._emit('entity:changed', JSON.stringify({ type: 'tag' }))
+
+      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'tag'] }, true)
+      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'project', 'list'] }, true)
     })
 
     it('invalidates per type across successive entity:changed events', async () => {

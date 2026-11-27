@@ -108,6 +108,7 @@ func TestCompile_Nested(t *testing.T) {
 	a := col.Along
 	if a == nil || len(a.Segments) != 1 || a.Segments[0].Relation != "child_of" || !a.Segments[0].SourceIsTo ||
 		a.Segments[0].Repeat || a.MaxDepth != 1 {
+
 		t.Fatalf("along = %+v", a)
 	}
 	node := a.Nodes["action"]

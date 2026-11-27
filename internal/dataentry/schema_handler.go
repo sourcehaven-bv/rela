@@ -251,9 +251,10 @@ func resolveConfigDirection(
 }
 
 // resolveListDirections returns a copy of lists with relation-column and
-// filter-control directions materialized, and empty column labels filled
-// from the schema (withSchemaLabels). Copy-on-serve, like
-// resolveFormRelations: the in-memory config keeps what the operator wrote.
+// filter-control directions materialized, empty column labels filled from
+// the schema (withSchemaLabels), and the refresh types of its roll-ups set.
+// Copy-on-serve, like resolveFormRelations: the in-memory config keeps
+// what the operator wrote.
 func resolveListDirections(s *Schema, lists map[string]dataentryconfig.List) map[string]dataentryconfig.List {
 	out := make(map[string]dataentryconfig.List, len(lists))
 	for id, list := range lists {
@@ -267,6 +268,7 @@ func resolveListDirections(s *Schema, lists map[string]dataentryconfig.List) map
 			l.Columns = withSchemaLabels(s.Meta, []string{l.EntityType}, cols)
 		}
 		l.FilterControls = resolveFilterControlDirections(s, l.EntityType, l.FilterControls)
+		l.RefreshTypes = s.rollups.ReadTypes(l.EntityType)
 		out[id] = l
 	}
 	return out
