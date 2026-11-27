@@ -5,7 +5,9 @@ title: 'collectAllIDs scans every entity with content on each auto-ID create: O(
 kind: refactor
 priority: high
 effort: m
-status: backlog
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Problem
@@ -28,7 +30,8 @@ return entity.GenerateNextID(existingIDs, prefix), nil
 The scan happens **before** the branch, so it costs the same whether the type
 uses short or sequential IDs. Since `GetIDType()` defaults to `short`, this is
 the common path for nearly every create in a typical project — see Fix
-direction, where this reverses the priorities this ticket was first written with.
+direction, where this reverses the priorities this ticket was first written
+with.
 
 `collectAllIDs` iterates `ListEntities` and keeps only `e.ID`, but pgstore's
 `buildEntityListSQL` selects `id, type, properties, content, updated_at` with no
@@ -97,17 +100,18 @@ return entity.GenerateShortID(existingIDs, prefix, len(existingIDs), caps), nil
 `GenerateShortID` uses the full id set for exactly two things:
 
 1. `calculateIDLength(entityCount)` — birthday-paradox thresholds at
-   500 / 1500 / 10000 / 50000. This needs a **count**, and only its bucket. A
-   `COUNT(*)` is an indexed aggregate; an approximate or slightly stale count is
-   safe (see "The precision was never required" below).
+500 / 1500 / 10000 / 50000. This needs a **count**, and only its bucket. A
+`COUNT(*)` is an indexed aggregate; an approximate or slightly stale count is
+safe (see "The precision was never required" below).
 2. A membership set for collision retry (100 attempts, lengthening periodically).
 
 Point 2 does not need a materialised set at all. `store.CreateEntity` already
 returns `ErrConflict` on a duplicate id, and `createCore` already maps that to
-`ErrEntityAlreadyExists` — so **retry-on-conflict at the write** is strictly more
-correct than pre-checking against a snapshot, which is racy by construction:
-between the scan and the insert another writer can take the id. The current
-membership check does not prevent collisions, it only makes them rarer.
+`ErrEntityAlreadyExists` — so **retry-on-conflict at the write** is strictly
+more correct than pre-checking against a snapshot, which is racy by
+construction: between the scan and the insert another writer can take the id.
+The current membership check does not prevent collisions, it only makes them
+rarer.
 
 Target shape: generate a candidate from a cheap count, attempt the insert, and
 on `ErrConflict` regenerate (lengthening as now). This removes the scan from the
@@ -154,15 +158,15 @@ collapses.
 Two constraints on the loosening:
 
 - **Do not redefine `store.CountEntities`.** It already exists
-  (`store.go:255`) and is exact; `cli/rename.go` and `cli/schema.go` display its
-  result to users, where an estimate would be a regression. Either keep calling
-  the exact method (the rename alone still documents the contract) or add a
-  separate approximate capability — do not weaken the existing one in place.
+(`store.go:255`) and is exact; `cli/rename.go` and `cli/schema.go` display its
+result to users, where an estimate would be a regression. Either keep calling
+the exact method (the rename alone still documents the contract) or add a
+separate approximate capability — do not weaken the existing one in place.
 - **A wrong bucket must be safe, not merely unlikely.** Under-estimating yields
-  shorter starting ids and more collisions, which is exactly why AC7
-  (resolve collisions at the write) is a prerequisite: with retry-on-conflict a
-  bad estimate costs an extra round-trip instead of a duplicate id. Landing the
-  approximate count *before* the retry change would trade correctness for speed.
+shorter starting ids and more collisions, which is exactly why AC7 (resolve
+collisions at the write) is a prerequisite: with retry-on-conflict a bad
+estimate costs an extra round-trip instead of a duplicate id. Landing the
+approximate count *before* the retry change would trade correctness for speed.
 
 The payoff is that this licenses `reltuples`-style planner estimates on pgstore,
 which are O(1) and touch no rows at all.
@@ -248,8 +252,8 @@ query inspection or a store-level assertion.
 5. Uncontended create at 262k entities drops from 0.74 s to well under 50 ms.
 6. 80-way concurrent creates no longer produce multi-second latencies.
 7. **Short-ID collisions are resolved at the write, not by pre-check**: a
-concurrent create that loses the race retries and succeeds rather than
-surfacing `ErrEntityAlreadyExists` to the caller.
+concurrent create that loses the race retries and succeeds rather than surfacing
+`ErrEntityAlreadyExists` to the caller.
 8. **Numeric, not lexicographic** (sequential): crossing 999 → 1000 mints
 `TKT-1000` then `TKT-1001`, never a duplicate.
 9. **Prefix-scoped, not type-scoped** (sequential): two entity types sharing an
@@ -298,13 +302,13 @@ check for collision retry. A max-aggregate does nothing for either. It wants
 `COUNT(*)` plus a per-candidate existence probe. Note `store.CreateEntity`
 already returns `ErrConflict`, so retry-on-conflict against the store is a
 plausible and much cheaper design than materialising the id set. Left
-unaddressed, a short-ID type keeps the full scan and this ticket only half-lands.
+unaddressed, a short-ID type keeps the full scan and this ticket only
+half-lands.
 
 **Out of scope**
 
 - The `_analyze` retention fix (landed in TKT-1ESTYJ; this consumes its
 `EntityHeader` type for the fallback path).
-
 
 ## Related
 

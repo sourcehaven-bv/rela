@@ -4,7 +4,7 @@ type: bug
 title: DeleteEntity authorizes one face and deletes every face
 description: Manager.DeleteEntity on a bare id authorizes against the first face anyFaceOf returns and then deletes the whole family, so a face-scoped delete grant can delete a face it may not read.
 priority: high
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -20,3 +20,7 @@ MCP `delete_entity`. Found in the BUG-6XTX0G security review.
 ## Fix
 
 Authorize every face in the family before deleting it.
+
+## Closed as wont-fix
+
+Duplicate of BUG-1YN750, which is done: Manager.DeleteEntity now authorizes every face it removes.

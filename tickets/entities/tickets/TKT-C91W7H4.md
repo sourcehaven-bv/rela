@@ -5,7 +5,9 @@ title: Schema namespaces and variants (load-time expansion)
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Description

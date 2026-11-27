@@ -4,7 +4,7 @@ type: bug
 title: 'The worlds-manual CI step is flaky: a 30s per-capture wall-clock deadline on a loaded runner'
 description: 'The E2E job''s "Build the worlds manual (executable doc assertions)" step fails intermittently with a chromedp capture timing out, while the code under test is correct. Observed twice on PR #1593 at `manual:479: lua: <string>:2: context deadline exceeded` (the first screenshot{} of the manual), then PASSING on a re-run of the same commit with no code change. A local run with CI-equivalent settings also passed. Same class as BUG-TIMEFLAKE: perCaptureTimeout is a fixed 30s sized against fast, uncontended runs, and the manual step runs last in the E2E job, after the whole Playwright suite has loaded the runner.'
 priority: medium
-status: backlog
+status: wont-fix
 ---
 
 ## Evidence
@@ -58,3 +58,7 @@ disproved: per-request query-scope recompilation (measured at 0.38ms per list
 request, four orders of magnitude short of the timeout) and the SPA now sending
 `list_id` unconditionally (the manual project's `policies` list declares no
 `condition:`, so the resolved matcher is nil and the read path is unchanged).
+
+## Closed as wont-fix
+
+Duplicate of BUG-TIMEFLAKE. It is one instance of that class; the details moved there.

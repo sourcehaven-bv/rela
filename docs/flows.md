@@ -192,9 +192,11 @@ Only a start whose `when:` reads a property the update changed is
 checked.
 
 To act on a change of a related entity, give the subject a property
-that a trigger, a rollup or a sync script keeps up to date, and test
-that property in `when:`. A `when:` reads only the subject's own
-properties.
+that a sync script or a trigger's Lua script action (through
+`rela.update_entity`) keeps up to date, and test that property in
+`when:`. A `when:` reads only the subject's own properties. A roll-up
+does not work: rela computes it when it is read and never stores it, so
+no update starts the run.
 
 ## States
 
@@ -325,8 +327,15 @@ Some writes fire no event:
 - a completed step, on the run whose step it completes (the step takes
   the branch itself);
 - an edit that changes no property;
-- writes that are not updates: a rename, a conversion, a restore, a copy
-  to another face, and the writes of a trigger's cascade.
+- writes that are not updates: a rename, a conversion, a restore and a
+  copy to another face;
+- a trigger's `set` that rela writes straight to the store: a `set` after
+  a create, and a `set` on an entity the trigger's cascade created.
+
+Other trigger writes do fire the event. A `set` of a trigger on an update
+is part of that update. A Lua script action that calls
+`rela.update_entity` makes an ordinary update, attributed to the person
+whose write ran the trigger.
 
 If another person has claimed the step, an edit by someone else leaves
 it to them. If the run is still writing the outputs of its state, rela
@@ -1711,6 +1720,12 @@ every state the rule writes. Without it the relation write is refused with a
 403, as an update of the source would be. A `set` that is refused for
 another reason, for example because it breaks a state machine or a
 `unique:` property, also fails the relation write.
+
+This holds for a relation that a person, script or sync writes. A relation
+that another rule's `relate` or `create` output makes is a cascade write,
+and a cascade runs as a system action. Its rules' `set` outputs are not
+checked against the writer's update or read permissions, so they also write
+source states the writer cannot read.
 
 A `check` output on a relation rule must have `severity: error`. A source
 that fails the check refuses the relation write with the check's message. A

@@ -5,7 +5,7 @@ title: Whole-file seal/unseal at fsstore I/O boundary via age
 kind: enhancement
 priority: high
 effort: m
-status: backlog
+status: wont-fix
 ---
 
 > **Sweep note (2026-07-20): goal still valid (seal/unseal at the fsstore I/O boundary, depends on TKT-7XEFM), but the body's wiring site is dead — `internal/workspace/workspace.go` no longer exists; crypto wiring belongs in `appbuild`. The `repo` semantics referenced are also gone. Retarget before planning.**
@@ -112,3 +112,7 @@ On fsstore.New, if the committed recipient list in `.rela/encryption.yaml` diffe
 - One-shot cleartext-to-encrypted migration (with resumable state).
 - PQ recipient plugin.
 - Signed envelopes to protect against pubkey substitution.
+
+## Closed as wont-fix
+
+Depends on TKT-7XEFM, which is dropped: at-rest encryption was removed in ea99547ea (#508) in favour of git-crypt.

@@ -29,16 +29,21 @@ static `=` filters and its `sort:` keys into a `DerivedListIndex` spec.
 reporting.
 - `filter_controls` do not feed that derivation. A runtime control value
 becomes a predicate with no index behind it.
-- The derivation accepts only string-shaped properties (`StringShaped`). Date
-ranges, which Today and Upcoming need, are not indexed.
+- The derivation accepts string-shaped properties (`metamodel.StringShaped`),
+which include `date` and `datetime`. It takes only `=` filters, though, and the
+list pushdown refuses `lt`/`lte`/`gt`/`gte`. Date ranges, which Today and
+Upcoming need, are therefore not indexed.
 - Relation filter controls match on the target's display title, eq/ne only.
 TKT-ZKPA1E moves them to the target id.
 - No saved-filter or smart-list state exists. `internal/userstate` holds
 per-suggestion state only.
 - The list API already accepts `filter[prop][op]` with `eq`, `ne`,
 `contains`, `in`, `lt`, `lte`, `gt` and `gte` on any property, not only on
-declared controls. `applyV1Filters` (`internal/dataentry/api_v1.go`) runs them
-in Go over loaded rows, so they use no index.
+declared controls. The list first tries a pushdown
+(`planListPushdown`, `internal/dataentry/listpushdown.go`): `eq` and a single
+`ne` on a string-shaped scalar go to the store when the whole request
+qualifies. `applyV1Filters` (`internal/dataentry/api_v1.go`) runs the other
+cases in Go over loaded rows, so those use no index.
 - Date grouping already exists: `group_by.buckets: relative` and calendar
 buckets (TKT-DOGRL6C), and `relative_weeks` (TKT-9F85BEX, PR #2601). They
 section rows in the SPA; they do not filter. Their bound definitions (today,
@@ -55,7 +60,7 @@ Status on develop at `a0c8ce5c3` (2026-11-26):
 | TKT-ZKPA1E: relation filters match on target id | Backlog |
 | `ops:` allowlist on `filter_controls` | Not started |
 | Index derivation from `filter_controls` | Not started |
-| Date-shaped properties in index derivation | Not started |
+| Range operators (`lt`/`lte`/`gt`/`gte`) in index derivation and pushdown | Not started |
 | Per-user store for saved smart lists | Not started |
 | BUG-EXJ54CD: hyphenated filter names in list deep links | Open PR #2603; land first, saved lists likely reuse the URL filter state |
 
@@ -109,10 +114,12 @@ BitmapAnd. For a hot combination, the operator opts in to a composite, e.g.
 indexes; `rela db` reporting should show it.
 3. **Operators per control.** The API already parses the operators. The new
 part is an `ops:` allowlist on each control (e.g. `eq`, `in`, `gte`/`lte`) that
-a saved smart list must stay within, plus relative date bounds (`today`, `+7d`)
-resolved at query time from the existing bucket definitions. Pushing these
-filters into the store query replaces the Go post-filter for declared controls.
-Ranges need the derivation to accept date-shaped properties.
+a saved smart list must stay within. Relative date bounds already exist:
+`resolveFilterVariable` (`internal/dataentry/helpers.go`) resolves `$today`,
+`$today+7d` and `$now` in filter values at query time. Pushing the remaining
+operators into the store query replaces the Go post-filter for declared
+controls; `eq` and `ne` are pushed already. Ranges need range operators in the
+index derivation and the pushdown; date properties are already accepted.
 4. **Relation controls.** Depend on TKT-ZKPA1E. Matching on the target id makes
 the filter a join the store can index, and a saved value survives a rename of
 the target.

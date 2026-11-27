@@ -5,7 +5,7 @@ title: 'Expose current_user on where: surfaces (views, feeds, kanbans, CalDAV) a
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: wont-fix
 ---
 
 ## Problem
@@ -73,3 +73,7 @@ query because the relevance cap runs before the condition. A view or feed
 2. Two principals hitting one CalDAV collection see different resources.
 3. A zero/unknown principal on a per-user surface fails closed, with a test.
 4. Any per-collection cache is keyed on the identity, with a test.
+
+## Closed as wont-fix
+
+Duplicate of TKT-LPLZ1V. That ticket adds `condition:` with `current_user` on the same `where:` surfaces.

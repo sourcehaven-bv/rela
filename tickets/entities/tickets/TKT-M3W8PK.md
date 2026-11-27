@@ -8,6 +8,14 @@ priority: high
 effort: l
 ---
 
+## Description
+
+A trigger that creates a relation is not authorized as the principal whose write started the cascade. `cascadeHost.WriteRelation` (`internal/entitymanager/cascadehost.go`) refuses only managed-type writes (`cascadeManagedDenial`), then checks owning, bound and scope rules and writes to the store.
+
+Gate the write as the triggering principal; the principal is on ctx. Elevation needs an explicit `allow_acl_bypass` (TKT-7QM4RB). A denial must abort the cascade. Today `applyRelationCreations` appends the error to `Outcome.Errors` and continues, and the manager folds it into `AutomationErrors` while the write still succeeds.
+
+## Original description (2026-11-27: superseded by the text above)
+
 ## Blocked on
 
 **TKT-7QM4RB** (carry `allow_acl_bypass` through the declarative

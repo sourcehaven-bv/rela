@@ -3,7 +3,9 @@ id: TKT-3KUIROC
 type: ticket
 title: Extract SSE and git handlers from dataentry.App
 kind: chore
-status: backlog
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Description

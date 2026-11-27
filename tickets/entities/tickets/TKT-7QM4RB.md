@@ -8,6 +8,14 @@ priority: medium
 effort: m
 ---
 
+## Description
+
+A trigger's `create_relation:` action cannot declare `allow_acl_bypass`. The Lua action already carries it on `triggers.Action.AllowACLBypass`. But `triggers.RelationToCreate` (`internal/flowcfg/triggers/types.go`) holds only the relation and the trigger name. `autocascade.Runner.applyRelationCreations` passes that relation to `Host.WriteRelation` and nothing else.
+
+Add the elevation to `RelationToCreate` as a bare string, since autocascade must not import metamodel. Pass it to `WriteRelation` through an options struct, not a second method. Nothing reads the value until TKT-M3W8PK lands.
+
+## Original description (2026-11-27: superseded by the text above)
+
 ## Why
 
 `AllowACLBypass` (`metamodel/types.go:646-656`) is the codebase's declared

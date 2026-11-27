@@ -5,7 +5,15 @@ title: rela validate exits 0 when entity frontmatter fails to parse — validati
 description: A single entity file with unparseable YAML frontmatter makes store.ListEntities return an iterator error. rela validate logs it as a WARN, skips the entity, and still prints 'All validations passed' with exit 0. CI is therefore green on a corpus it never fully read, and any rule violation on the skipped entity is invisible.
 priority: high
 effort: s
-status: backlog
+why1: One entity file with unparseable frontmatter was skipped, and rela validate still exited 0.
+why2: collectEntities logged a warning and returned a short slice instead of an error.
+why3: The analysis service had no error channel to its callers, so a read failure could only be a warning.
+why4: The success message claimed every rule passed for a run that could not read all the input.
+why5: 'Systemic: read failures were treated as warnings in a tool whose output gates CI, so an incomplete run looked the same as a clean one.'
+prevention: collectEntities returns IncompleteScanError through every call site, and validate exits 2 when the input could not be fully read (#1656).
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Symptom
@@ -90,13 +98,13 @@ Two people hit this within days of each other, from different directions, and
 both stopped at the symptom rather than the tooling:
 
 - **TKT-1ESTYJ / #1337** quoted the frontmatter as a drive-by fix while working
-  on analyze memory, which re-exposed the hidden BUG-E9DYW5 violation. Its
-  backfilled `REV-E9DYW5` closes with exactly this diagnosis: *"A parse failure
-  during an analyze scan should be an error, not a warning that degrades into an
-  under-count — otherwise 'all rules passed' can mean 'the rule never saw the
-  file'. Worth its own ticket."* That ticket is this one.
+on analyze memory, which re-exposed the hidden BUG-E9DYW5 violation. Its
+backfilled `REV-E9DYW5` closes with exactly this diagnosis: *"A parse failure
+during an analyze scan should be an error, not a warning that degrades into an
+under-count — otherwise 'all rules passed' can mean 'the rule never saw the
+file'. Worth its own ticket."* That ticket is this one.
 - Separately, while resolving merge conflicts for **#1319** (scheduler failure
-  backoff), repairing the same file surfaced the same violation.
+backoff), repairing the same file surfaced the same violation.
 
 Neither encounter was looking for a validation bug; both tripped over it. That
 is the argument for fixing the tool rather than the files — the next occurrence
@@ -125,11 +133,11 @@ All validations passed.
 EXIT=0
 ```
 
-`rela validate` continues to report success over a corpus it did not fully
-read. The CI job now catches it out-of-band by pattern-matching a log line —
-which works, but means the guarantee lives in a grep in a YAML file rather than
-in the command's exit code. Anyone running `rela validate` locally, or from a
-different pipeline, still gets a green result on a partial read.
+`rela validate` continues to report success over a corpus it did not fully read.
+The CI job now catches it out-of-band by pattern-matching a log line — which
+works, but means the guarantee lives in a grep in a YAML file rather than in the
+command's exit code. Anyone running `rela validate` locally, or from a different
+pipeline, still gets a green result on a partial read.
 
 The remaining work is the one-line-ish version of the fix: propagate the
 iterator error to a non-zero exit and name the offending files. The CI step can

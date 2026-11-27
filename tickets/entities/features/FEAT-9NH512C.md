@@ -22,7 +22,7 @@ Research: RES-7SH71TW. Option B there; options A (free expressions) and C
 
 - `ops:` allowlist per filter control, with relative date bounds.
 - Indexes derived from filter controls.
-- Date-shaped properties in index derivation.
+- Range operators on date properties in index derivation and pushdown.
 - Per-user saved smart lists.
 - Relation controls match on target id (TKT-ZKPA1E).
 

@@ -14,9 +14,10 @@ import (
 // rolls back with the write.
 //
 // It covers every update that goes through updateCore: [Manager.UpdateEntity],
-// [Manager.PatchEntity] and a granted patch. It does not cover a rename,
-// a conversion, a restore, a copy, a cascade write or a write straight to
-// the store.
+// [Manager.PatchEntity] and a granted patch. That includes an update a
+// trigger's Lua script action makes through its Mutator. It does not cover a
+// rename, a conversion, a restore, a copy, or a write straight to the store,
+// such as a trigger's set after a create or on an entity its cascade created.
 type UpdateHook interface {
 	// Watches reports whether an update of an entity of type typ concerns
 	// the hook. An update the hook watches always runs in a store

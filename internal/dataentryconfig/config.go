@@ -212,11 +212,10 @@ func (q *QuickEntry) Accelerator() string {
 	return q.Shortcut
 }
 
-// EntityViewConfig declares UX bindings for a metamodel entity type.
-// detail_view names the canonical view used to display an entity of this type
-// — consumed by the SPA when an entity link needs to be rendered (entity-list
-// rows, custom-view sections). Missing detail_view falls back to
-// /entity/:type/:id.
+// EntityViewConfig declares UX bindings for a metamodel entity type. An
+// entity's page shows the view whose entry.type is the type, not a named view.
+// DetailView is a removed key: the views-by-entity-type migration strips it
+// on every config load, so it is always empty here.
 type EntityViewConfig struct {
 	DetailView string `yaml:"detail_view,omitempty" json:"detail_view,omitempty"`
 

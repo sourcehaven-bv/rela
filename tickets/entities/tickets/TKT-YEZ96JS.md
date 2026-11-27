@@ -26,3 +26,7 @@ findings and two worse ratchet metrics.
 - Routes suite: add a flows.yaml, grant `git:sync` to the manager, write a conflicted task file, and send requests for conflict detail and resolve, batch, reconcile, view entries, and flows. Each includes a refused case where the route can refuse, and every new request checks its status. A demo role with `git:sync` that reads only tasks shows the conflict row gate refusing.
 - `Title` skips closures of every handler it already chose.
 - Accept three `untested_denial` findings that never refuse by design (dry-run create, entity help, reconcile), and re-record the ratchet from the traced model.
+
+## Follow-up
+
+Issue #2565: five accepted read-only handler findings got new ids when their code moved files, so their baseline entries were re-keyed. The routes suite now also calls a sankey and `/api/v1/_schema/types`; their "no refusal" findings are accepted, because both serve gated rows or config to every signed-in user.

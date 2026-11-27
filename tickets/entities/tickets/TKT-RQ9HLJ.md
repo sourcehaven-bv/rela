@@ -5,7 +5,7 @@ title: 'IdP webhook receiver principal is not under the reserved system: prefix'
 kind: chore
 priority: medium
 effort: s
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -19,3 +19,7 @@ inherit any grant acl.yaml gives that name.
 Move the receiver's identity under `system:` (for example
 `system:idp-webhook:<event>`), and give it a principal_type if it should be
 cappable. Found during the design review of TKT-J3RDJ4.
+
+## Closed as wont-fix
+
+Duplicate of BUG-S6S1Z0.

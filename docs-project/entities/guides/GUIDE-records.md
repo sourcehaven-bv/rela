@@ -86,11 +86,13 @@ the amounts negated. Each transaction can be reversed once.
 
 ## Changing rows
 
-A row of a mutable type can be changed or deleted. You need the same right
-as for appending: you may update every face of the owner. A row has no
-owner of its own beyond its entity, so anyone who may append to an owner may
-also change any of its rows. When rows need per-person rights, give each
-person their own owner entity.
+A row of a mutable type can be changed or deleted. You need the same owner
+access as for appending: you may update every face of the owner. A row has
+no owner of its own beyond its entity, so anyone who may append to an owner
+may also change any of its rows. When the type declares `permissions`, you
+also need both the `read` and the `append` permission; `append` alone lets
+you append but not change or delete. When rows need per-person rights, give
+each person their own owner entity.
 
 A change can set new field values and a new `ts`. The owner of a row never
 changes. A field you do not name keeps its value; `null` clears an optional
@@ -114,7 +116,8 @@ Reads, aggregates and retention work the same on mutable types.
 
 ## Access control
 
-Records have no grants of their own. They follow their owner:
+Records have no grants of their own. They follow their owner, and a type's
+`permissions` can narrow that further (see the table above):
 
 - You can read an owner's rows when you can read every face of the owner.
   Rows belong to the whole owner, not to one face. To anyone else the
