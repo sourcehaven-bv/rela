@@ -213,6 +213,8 @@ func dropSchema(ctx context.Context, dsn, schema string) error {
 		return err
 	}
 	defer func() { _ = conn.Close(ctx) }()
+	// nosemgrep: go.lang.security.audit.sqli.pgx-sqli.pgx-sqli
+	// The schema name is quoted by pgx.Identifier.
 	_, err = conn.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 	return err
 }
@@ -238,6 +240,8 @@ func withSearchPath(dsn, path string) (string, error) {
 // runLogged runs a command with extra environment, writes its combined
 // output to logPath and returns it.
 func runLogged(ctx context.Context, logPath string, env []string, name string, args ...string) ([]byte, error) {
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
+	// Operator tool: the command is chosen by the scalerun code itself.
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(os.Environ(), env...)
 	var buf bytes.Buffer
@@ -270,6 +274,8 @@ func startServer(ctx context.Context, o runOptions, project, dsn, logPath string
 	}
 	// Not CommandContext: stop sends SIGTERM and waits, so the server
 	// shuts down cleanly even when the run is interrupted.
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
+	// The server binary is an operator flag.
 	cmd := exec.Command(o.serverBin, //nolint:noctx // operator-chosen binary; stopped by stop
 		"-project", project, "-port", strconv.Itoa(o.port), "-bind", "127.0.0.1",
 		"-verbose", "-principal-header", principalHeader)

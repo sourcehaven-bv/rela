@@ -359,6 +359,16 @@ func (q *memQueue) finish(mj memJob) {
 	q.mu.Unlock()
 }
 
+// closeWhenDone returns a channel that is closed once wg's count reaches zero.
+func closeWhenDone(wg *sync.WaitGroup) chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	return done
+}
+
 // Close implements [Queue].
 //
 // Queued jobs and jobs waiting for a retry are dropped, as the package doc
@@ -383,12 +393,7 @@ func (q *memQueue) Close(ctx context.Context) error {
 		q.ready = nil
 		clear(q.keys)
 		q.cond.Broadcast()
-		drained := make(chan struct{})
-		go func() {
-			q.workers.Wait()
-			close(drained)
-		}()
-		q.drained = drained
+		q.drained = closeWhenDone(&q.workers)
 	}
 	drained := q.drained
 	q.mu.Unlock()

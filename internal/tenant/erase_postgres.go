@@ -201,6 +201,8 @@ func refuseTenantDatabase(ctx context.Context, conn *pgx.Conn) error {
 		return ErrTenantDatabase
 	}
 	var registered bool
+	// nosemgrep: go.lang.security.audit.sqli.pgx-sqli.pgx-sqli
+	// controlTable is a constant; the value is a bound parameter.
 	if err := conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM "+controlTable+" WHERE schema_name = $1)",
 		*here).Scan(&registered); err != nil {
 		return fmt.Errorf("check database: %w", err)
