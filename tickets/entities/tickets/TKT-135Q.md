@@ -186,3 +186,7 @@ in some future ticket, not for runtime use. Keep it lightweight.
 - This ticket explicitly **depends on** `TKT-5FYM` (embeddings) for
 the Embed code path. The Chat caching can ship first if needed, but the whole
 point is making embeddings affordable, so don't split unless required.
+
+## Note (2026-11-27)
+
+Embeddings shipped in 9b59570f3 (`ai.embed`). Analyze has no semantic search, so the cache serves Lua callers, not analyze runs. Wire the cache through `script.NewWriterRuntime` / `lua.LoadContextOptions`, not `ai.LoadProvider`.

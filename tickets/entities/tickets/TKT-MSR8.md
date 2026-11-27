@@ -8,6 +8,14 @@ effort: s
 status: backlog
 ---
 
+## Description
+
+When a cascade creates an entity, that entity's soft-validation warnings are lost. `autocascade.Host.CreateEntity` returns only `(*entity.Entity, error)`, and `cascadeHost.CreateEntity` discards them. `Outcome.Warnings` already reaches the caller as `AutomationWarnings`.
+
+Widen `Host.CreateEntity` to return the warnings and append them to `Outcome.Warnings`, prefixed with the created entity's id.
+
+## Original description (2026-11-27: superseded by the text above)
+
 ## Summary
 
 `autocascade.Host.CreateEntity` returns `(*entity.Entity, error)`. When the

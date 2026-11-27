@@ -15,3 +15,7 @@ properties an on-create automation sets after the create, and no audit record
 describes that write. The create record shows the entity as the caller sent it.
 Record the follow-up write in its own transaction, as every other write now does
 (TKT-TU0VZ4Y), or fold the properties into the create record.
+
+## Note (2026-11-27)
+
+"Automation" now means a flows.yaml trigger (TKT-GWOBH2U). The gap is unchanged: `writeAutomationProperties` still writes without an audit record.

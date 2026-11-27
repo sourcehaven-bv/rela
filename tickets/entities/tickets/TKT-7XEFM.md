@@ -5,7 +5,7 @@ title: Rewrite internal/encryption as an age-based leaf package
 kind: enhancement
 priority: high
 effort: s
-status: ready
+status: wont-fix
 ---
 
 Replace the ported custom-crypto primitives with a thin `filippo.io/age` facade. See DEC-D5P4X for the rationale.
@@ -64,3 +64,7 @@ These map onto age's error classification internally. Sentinels are NOT exported
 6. `Identity.String()` and `Identity.MarshalJSON` never reveal the secret scalar; reflective `TestSecretTypes_NoStringMethods` adapted to the new types.
 7. All public API doc-comments mention that this is age-backed and reference DEC-D5P4X.
 8. `just ci` passes end-to-end.
+
+## Closed as wont-fix
+
+At-rest encryption was removed on purpose in ea99547ea (#508) and replaced by git-crypt at the git-sync boundary (`docs/git-crypt.md`). `internal/encryption` and `filippo.io/age` are gone.
