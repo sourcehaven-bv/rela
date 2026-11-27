@@ -5,7 +5,9 @@ title: 'e2e: buildIfMissing passes -o after the package path'
 kind: chore
 priority: low
 effort: xs
-status: backlog
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Description
