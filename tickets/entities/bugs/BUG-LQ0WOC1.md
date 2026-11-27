@@ -2,9 +2,17 @@
 id: BUG-LQ0WOC1
 type: bug
 title: TestOutputs_TriggerFinalCloseOnly misses the close when a mark arrives mid-round
-description: "TestOutputs_TriggerFinalCloseOnly in internal/appbuild failed on PR 2093 (job 126664977178): realtime_runas_internal_test.go:544 Condition never satisfied after 20.98s; passed on rerun. Likely cause: startOutputs skips a wake while the last outputs round runs (outputsBusy), so the mark for the final move waits for the minute tick, after the 20s window. Fix: rerun a busy round when a wake arrived during it, or have the test wait for the first round before the move."
+description: 'The realtime worker dropped an outputs wake that arrived while an outputs round ran: startOutputs returned false when outputsBusy was set and recorded nothing. A mark written mid-round then waited for the minute tick. TestOutputs_TriggerFinalCloseOnly failed in CI (PR 2093, job 126664977178) when the move to cold landed during the round for hot. Fixed with a dirty flag: each wake sets it and the round goroutine reruns while it is set.'
 priority: low
-status: backlog
+why1: 'The second outputs mark waited for the minute tick because startOutputs skipped the wake from the trigger round that wrote it: an outputs round for the first mark was still running.'
+why2: startOutputs used one busy flag for both mutual exclusion and wake delivery. A wake that lost the CompareAndSwap was discarded and nothing reran the round after it ended.
+why3: The design assumed a running round would pick up new marks, but a round reads the pending marks once at its start, so a mark written after that read is invisible to it.
+why4: The existing unit test TestWorker_OutputsRoundBesideTheLoop pinned that a second start is skipped, which encoded the drop as intended behaviour; no test covered a wake during a round.
+why5: Coalescing wake signals for a single-flight worker is a known pattern (busy plus dirty flag) that was not applied; integration tests relied on timing windows instead of forcing the interleaving.
+prevention: TestWorker_OutputsWakeDuringRoundReruns pins the rerun with a gated round. TestOutputs_TriggerFinalCloseOnly now holds the first round until the second wake reached the busy runner, so it exercises the mid-round path every run instead of by chance.
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Description

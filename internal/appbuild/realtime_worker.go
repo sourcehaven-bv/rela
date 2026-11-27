@@ -263,6 +263,9 @@ type realtimeWorker struct {
 	leading atomic.Bool
 	// outputsBusy is set while a round of the outputs runner runs.
 	outputsBusy atomic.Bool
+	// outputsDirty is set by each wake of the outputs runner and cleared
+	// when a round starts, so a wake during a round runs one more round.
+	outputsDirty atomic.Bool
 
 	life *workerLife
 }
@@ -441,7 +444,8 @@ func (l *workerLife) stop() {
 // run tries to take the worker lock until it gets it or ctx ends, and
 // then leads until ctx ends or the lock is lost, when it goes back to
 // trying. Store events are drained on a goroutine of
-// their own, so a long round never fills the subscription.
+// their own, so a long round never fills the subscription. A wake while
+// another process leads only ends the wait early; the leader purges.
 func (w *realtimeWorker) run(ctx context.Context) {
 	events, cancel := w.changes.Subscribe(triggerEventBuffer)
 	defer cancel()
@@ -470,7 +474,7 @@ func (w *realtimeWorker) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-takeover.C:
-		case <-w.wake: // the leader purges
+		case <-w.wake:
 		}
 	}
 }
@@ -502,7 +506,9 @@ func (w *realtimeWorker) drain(ctx context.Context, events <-chan store.Event) {
 // every tick that has work, a trigger reconcile on its timer, and a timer
 // round when the [realtime.TimerSchedule] says. The trigger engine and the timer loop
 // start and end with nothing in memory, so they never act on what they
-// held while another process led.
+// held while another process led. Outputs rounds run beside the loop and
+// end with the lead. The due-wake noted before the lead is dropped, because
+// the first timer round covers it.
 func (w *realtimeWorker) lead(ctx context.Context, check func(context.Context) error) {
 	ctx = principal.With(ctx, principal.Principal{User: principal.UserRealtime, Tool: principal.ToolRealtime})
 	w.leading.Store(true)
@@ -513,7 +519,6 @@ func (w *realtimeWorker) lead(ctx context.Context, check func(context.Context) e
 		w.triggers.Reset()
 		w.timers.Reset()
 	}()
-	// An outputs round runs beside this loop; it ends with the lead.
 	ctx, cancel := context.WithCancel(ctx)
 	var rounds sync.WaitGroup
 	defer func() {
@@ -524,7 +529,7 @@ func (w *realtimeWorker) lead(ctx context.Context, check func(context.Context) e
 	w.retention(ctx)
 	w.lifecycle(ctx)
 	w.reconcile(ctx, &rounds)
-	w.dueWake.Take() // the first round below covers what was noted before
+	w.dueWake.Take()
 	sched := w.timerRound(ctx, &rounds)
 	timer := time.NewTimer(sched.Delay(time.Now()))
 	defer timer.Stop()
@@ -596,7 +601,7 @@ func (w *realtimeWorker) timerRound(ctx context.Context, rounds *sync.WaitGroup)
 
 // marksWake starts an outputs round when a timer or trigger round wrote
 // marks, so their outputs run now rather than at the next minute tick. A
-// round that is still running picks them up or leaves them for the tick.
+// round that is still running runs once more when it ends.
 func (w *realtimeWorker) marksWake(ctx context.Context, rounds *sync.WaitGroup, marks int) {
 	if marks > 0 {
 		w.startOutputs(ctx, rounds)
@@ -641,26 +646,49 @@ func (w *realtimeWorker) lifecycle(ctx context.Context) {
 	}
 }
 
-// startOutputs starts a round of the session outputs runner in its own
-// goroutine, unless the last one still runs. A round writes the graph and
-// may take minutes, so it never runs in the leader loop, where it would
-// hold up the timers, the triggers and the leader lock check. It ends at
+// startOutputs wakes the session outputs runner and returns whether it
+// started the runner goroutine. A round writes the graph and may take
+// minutes, so it never runs in the leader loop, where it would hold up the
+// timers, the triggers and the leader lock check. Each round ends at
 // [realtimeOutputsRoundTimeout] or with ctx.
+//
+// A wake while a round runs is not dropped: it marks the runner dirty, and
+// the goroutine runs one more round when the current one ends, so a mark
+// written mid-round does not wait for the minute tick (BUG-LQ0WOC1). The
+// rerun uses the ctx and rounds of the call that started the goroutine, so
+// every call within one lead passes the same ctx and rounds.
 func (w *realtimeWorker) startOutputs(ctx context.Context, rounds *sync.WaitGroup) bool {
+	w.outputsDirty.Store(true)
 	if !w.outputsBusy.CompareAndSwap(false, true) {
 		return false
 	}
 	rounds.Go(func() {
-		defer w.outputsBusy.Store(false)
-		rctx, cancel := context.WithTimeout(ctx, realtimeOutputsRoundTimeout)
-		defer cancel()
-		w.runOutputs(rctx)
+		for {
+			if w.outputsDirty.Swap(false) && ctx.Err() == nil {
+				w.runOutputs(ctx)
+				continue
+			}
+			if !w.releaseOutputs() {
+				return
+			}
+		}
 	})
 	return true
 }
 
-// runOutputs runs one round of the session outputs runner.
+// releaseOutputs frees the outputs runner and reports whether it took the
+// runner back. A wake between the last dirty check and the release saw the
+// runner busy and started nothing, so the runner is taken back for it.
+func (w *realtimeWorker) releaseOutputs() bool {
+	w.outputsBusy.Store(false)
+	return w.outputsDirty.Load() && w.outputsBusy.CompareAndSwap(false, true)
+}
+
+// runOutputs runs one round of the session outputs runner, bounded by
+// [realtimeOutputsRoundTimeout].
 func (w *realtimeWorker) runOutputs(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, realtimeOutputsRoundTimeout)
+	defer cancel()
 	rep, err := w.outputs.Run(ctx)
 	if err != nil && ctx.Err() == nil {
 		slog.Warn("realtime: session outputs round failed", "error", err)
