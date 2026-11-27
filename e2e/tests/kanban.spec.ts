@@ -155,12 +155,12 @@ test.describe('Kanban Board', () => {
       await expect(kanbanPage.cards.filter({ hasText: 'Dashboard Analytics' })).toBeVisible();
 
       // Only FEAT-001 blocks FEAT-003 (Export Data). The control's options are
-      // the relation's targets; the board used to ignore relation controls.
-      await kanbanPage.setFilter('Blocks', 'Export Data');
+      // the relation's targets, and the value it commits is the target id.
+      await kanbanPage.setFilter('Blocks', 'FEAT-003');
 
       await expect(kanbanPage.cards.filter({ hasText: 'User Authentication' })).toBeVisible();
       await expect(kanbanPage.cards.filter({ hasText: 'Dashboard Analytics' })).toHaveCount(0);
-      await expect(appPage).toHaveURL(/filter%5Bblocks%5D|filter\[blocks\]/);
+      await expect(appPage).toHaveURL(/(filter%5Bblocks%5D|filter\[blocks\])=FEAT-003/);
     });
   });
 
