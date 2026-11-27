@@ -2,9 +2,17 @@
 id: BUG-5CS40M2
 type: bug
 title: Pre-commit full race run times out on the sqlite packages
-description: The pre-commit hook's full go test -race run times out in sqlchannels and sqlitestore on a loaded machine and fails rela-desktop without a frontend build; it hides the output.
+description: The pre-commit hook ran go test -race over all packages with output discarded; on a loaded machine it timed out in untouched sqlite packages and reported only "Tests failed". It now tests only the staged packages with a named timeout and prints what failed.
 priority: medium
-status: backlog
+why1: The hook ran go test -race over every package with the default 10m per-package timeout and sent all output to /dev/null, so a timeout in an untouched sqlite package failed the commit with only "Tests failed".
+why2: The hook was written when the full suite was small; it never scoped the run to the staged change, and nothing printed which package failed or why.
+why3: The installed hook is a copy made by just install-hooks, so improvements to scripts/ never reached existing checkouts (the installed pre-push had already drifted from scripts/pre-push).
+why4: Local hooks are treated as a convenience next to CI, so nobody owned their runtime budget as the race suite grew into multi-minute sqlite conformance packages.
+why5: There was no rule that a local gate must be bounded by the size of the change and must report its own failure; a gate that hides its output and scales with the repo becomes a blocker on a loaded machine.
+prevention: The hook tests only packages that contain staged .go files, with a named timeout (RELA_PRECOMMIT_TEST_TIMEOUT, default 5m), and prints the failing packages, the stuck tests on a timeout and the failure lines. just install-hooks installs stubs that run scripts/<hook> from the checked-out tree, so hook fixes take effect without a reinstall. Measure AM-pre-commit-names-failing-packages is active.
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Description
