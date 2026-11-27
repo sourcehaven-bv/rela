@@ -1,6 +1,7 @@
 package rollup_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -81,8 +82,8 @@ func TestCompile_Siblings(t *testing.T) {
 		t.Fatalf("columns = %+v", cols)
 	}
 	s := cols[0].Siblings
-	if s.Relation != "child_of" || s.Climb != 12 || strings.Join(s.Parents, ",") != "action,project" ||
-		strings.Join(s.Members, ",") != "action" {
+	shape := fmt.Sprintf("%s %d %v %v", s.Relation, s.Climb, s.Parents, s.Members)
+	if shape != "child_of 12 [action project] [action]" {
 		t.Errorf("siblings = %+v", s)
 	}
 	if w := s.Where["action"]; len(w) != 1 || w[0].Op != store.PropEqualOrEmpty || w[0].Value != "open" {

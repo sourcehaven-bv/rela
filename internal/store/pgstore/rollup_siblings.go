@@ -9,7 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -19,8 +18,8 @@ import (
 // type seeded by their targets judges the parents, se holds the edges into
 // the qualifying parents, and one gate per sibling type seeded by their
 // sources judges the siblings. Each edge's order is the guarded float8 of
-// [metamodel.OrderPropertyIn]; NULL sorts last and ties fall to the source
-// id in byte order, which is [metamodel.CompareOrderKeys]. The reference is
+// [store.SiblingOrderProperty]; NULL sorts last and ties fall to the source
+// id in byte order, which is the order [store.SiblingWalk] names. The reference is
 // [store.RollupGeneric].
 
 // orderUnderflow is half the smallest float64 subnormal: a number at or
@@ -54,8 +53,8 @@ func (s *Store) rollupSiblings(ctx context.Context, q store.RollupQuery) (map[st
 			n       *int
 			parents []string
 		)
-		if err := rows.Scan(&overCap, &src, &n, &parents); err != nil {
-			return fmt.Errorf("pgstore: rollup scan: %w", err)
+		if scanErr := rows.Scan(&overCap, &src, &n, &parents); scanErr != nil {
+			return fmt.Errorf("pgstore: rollup scan: %w", scanErr)
 		}
 		if overCap {
 			return store.ErrAlongRowCap
@@ -91,7 +90,7 @@ func buildSiblingsSQL(q store.RollupQuery) (sqlText string, args []any, err erro
 		nodes += " UNION SELECT src, id FROM walk"
 		read = "(SELECT count(*) FROM walk)"
 	}
-	ord := siblingOrderSQL(b.arg(metamodel.OrderPropertyIn))
+	ord := siblingOrderSQL(b.arg(store.SiblingOrderProperty))
 	with = append(with,
 		"sn AS ("+nodes+")",
 		fmt.Sprintf("ne AS (SELECT r.from_id AS id, r.to_id AS parent, %s AS ord FROM relations r "+
@@ -140,7 +139,7 @@ func siblingOrderSQL(propArg string) string {
 // siblingGatesSQL renders one gate per type of nodes, named prefix_tN and
 // seeded by ids.
 func siblingGatesSQL(b *sqlBuilder, prefix string, nodes map[string]store.AlongNode, ids string) []string {
-	var with []string
+	with := make([]string, 0, len(nodes))
 	count := store.RollupQuery{Func: store.RollupCount}
 	for ti, typ := range slices.Sorted(maps.Keys(nodes)) {
 		with = append(with, alongGateSQL(b, fmt.Sprintf("%s_t%d", prefix, ti), nodes[typ], count, ids)...)
@@ -151,7 +150,8 @@ func siblingGatesSQL(b *sqlBuilder, prefix string, nodes map[string]store.AlongN
 // siblingAdmittedSQL selects the ids the gates siblingGatesSQL named
 // admit and whose Counts holds; a nil Counts holds on every gated row.
 func siblingAdmittedSQL(prefix string, nodes map[string]store.AlongNode) string {
-	arms := []string{`SELECT NULL::text COLLATE "C" AS id WHERE FALSE`}
+	arms := make([]string, 0, len(nodes)+1)
+	arms = append(arms, `SELECT NULL::text COLLATE "C" AS id WHERE FALSE`)
 	for ti, typ := range slices.Sorted(maps.Keys(nodes)) {
 		arm := fmt.Sprintf("SELECT id FROM %s_t%d", prefix, ti)
 		if nodes[typ].Counts != nil {

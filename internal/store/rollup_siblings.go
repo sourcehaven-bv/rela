@@ -10,6 +10,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
+// SiblingOrderProperty is the relation meta key whose value orders the
+// siblings of a [SiblingWalk].
+const SiblingOrderProperty = metamodel.OrderPropertyIn
+
 // SiblingWalk is an earlier-siblings roll-up (design gap 2). A node's
 // siblings under a parent p are the other sources of an identity-scoped
 // Relation edge into p. Node n is behind under p when p passes a Parents
@@ -162,7 +166,9 @@ func rollupSiblings(ctx context.Context, st RollupReader, q RollupQuery) (map[st
 		}
 	}
 	for _, list := range before {
-		slices.SortFunc(list, func(a, b SiblingEdge) int { return metamodel.CompareOrderKeys(a.orderKey(), b.orderKey()) })
+		slices.SortFunc(list, func(a, b SiblingEdge) int {
+			return metamodel.CompareOrderKeys(a.orderKey(), b.orderKey())
+		})
 	}
 	return foldSiblings(w, srcsOf, nodeEdges, qualify, before), nil
 }
@@ -222,13 +228,16 @@ func edgeEnds(edges []SiblingEdge, end func(SiblingEdge) string) []string {
 
 // siblingEdges reads the identity-scoped edges of rel whose near end is in
 // ids: their sources for dir outgoing, their targets for incoming.
-func siblingEdges(ctx context.Context, st RollupReader, rel string, ids []string, dir Direction) ([]SiblingEdge, error) {
+func siblingEdges(
+	ctx context.Context, st RollupReader, rel string, ids []string, dir Direction,
+) ([]SiblingEdge, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
 	identity := entity.Face("")
 	var out []SiblingEdge
-	for r, err := range st.ListRelations(ctx, RelationQuery{Type: rel, EntityIDs: ids, FromFace: &identity, Direction: dir}) {
+	rq := RelationQuery{Type: rel, EntityIDs: ids, FromFace: &identity, Direction: dir}
+	for r, err := range st.ListRelations(ctx, rq) {
 		if err != nil {
 			return nil, err
 		}

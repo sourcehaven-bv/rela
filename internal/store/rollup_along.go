@@ -232,13 +232,13 @@ func rollupAlong(ctx context.Context, st RollupReader, q RollupQuery) (map[strin
 // and state of its first arrival.
 func walkAlong(
 	ctx context.Context, st RollupReader, a *AlongWalk, sources []string,
-) (map[alongKey]bool, map[string]map[string]alongVisit, error) {
+) (seen map[alongKey]bool, visited map[string]map[string]alongVisit, _ error) {
 	limit := a.RowCap
 	if limit == 0 {
 		limit = AlongRowCap
 	}
-	seen := map[alongKey]bool{}
-	visited := map[string]map[string]alongVisit{}
+	seen = map[alongKey]bool{}
+	visited = map[string]map[string]alongVisit{}
 	frontier := make([]alongKey, 0, len(sources))
 	for _, src := range slices.Sorted(slices.Values(sources)) {
 		frontier = append(frontier, alongKey{src: src, id: src, state: -1})
@@ -267,20 +267,26 @@ func walkAlong(
 					return nil, nil, ErrAlongRowCap
 				}
 				next = append(next, k)
-				if k.id == k.src {
-					continue
-				}
-				if visited[k.src] == nil {
-					visited[k.src] = map[string]alongVisit{}
-				}
-				if _, ok := visited[k.src][k.id]; !ok {
-					visited[k.src][k.id] = alongVisit{header: r.header, state: j}
-				}
+				noteVisit(visited, k, r.header)
 			}
 		}
 		frontier = next
 	}
 	return seen, visited, nil
+}
+
+// noteVisit records k's entity as visited from its source at h and k's
+// state, unless it is the source itself or was reached earlier.
+func noteVisit(visited map[string]map[string]alongVisit, k alongKey, h EntityHeader) {
+	if k.id == k.src {
+		return
+	}
+	if visited[k.src] == nil {
+		visited[k.src] = map[string]alongVisit{}
+	}
+	if _, ok := visited[k.src][k.id]; !ok {
+		visited[k.src][k.id] = alongVisit{header: h, state: k.state}
+	}
 }
 
 // alongReach is one entity a hop reached from a source.

@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/graphquerynaive"
 )
@@ -19,7 +18,7 @@ import (
 // stored number as a REAL when that is finite, else NULL, which sorts
 // last; ties fall to the source id under BINARY, which is byte order.
 // SQLite parses a JSON number as Go's strconv.ParseFloat does, so this is
-// [metamodel.CompareOrderKeys]. A query whose names the builder cannot
+// the order [store.SiblingWalk] names. A query whose names the builder cannot
 // render is answered by [store.RollupGeneric].
 
 // siblingNode is one node of a siblings walk: a source or an ancestor it
@@ -61,8 +60,8 @@ func (s *Store) rollupSiblings(ctx context.Context, q store.RollupQuery) (map[st
 	}
 	rows, err := collectRows(ctx, s.q(), sqlText, args, func(sc scanner) (row, error) {
 		var r row
-		err := sc.Scan(&r.overCap, &r.src, &r.n, &r.parents)
-		return r, err
+		scanErr := sc.Scan(&r.overCap, &r.src, &r.n, &r.parents)
+		return r, scanErr
 	})
 	if err != nil {
 		return nil, err
@@ -140,7 +139,7 @@ func buildSiblingsSQL(q store.RollupQuery) (sqlText string, args []any, ok bool)
 	}
 	limitArg := b.arg(limit + 1)
 	relArg := b.arg(w.Relation)
-	ord := siblingOrderSQL(b.jsonPath(metamodel.OrderPropertyIn))
+	ord := siblingOrderSQL(b.jsonPath(store.SiblingOrderProperty))
 	with := []string{
 		"sn AS (SELECT json_extract(value, '$.s') AS src, json_extract(value, '$.i') AS id FROM json_each(" +
 			nodesArg + "))",
@@ -189,7 +188,7 @@ func siblingOrderSQL(path string) string {
 // siblingGatesSQL renders one gate per type of nodes, named prefix_tN and
 // seeded by ids.
 func siblingGatesSQL(b *sqlBuilder, prefix string, nodes map[string]store.AlongNode, ids string) []string {
-	var with []string
+	with := make([]string, 0, len(nodes))
 	count := store.RollupQuery{Func: store.RollupCount}
 	for ti, typ := range slices.Sorted(maps.Keys(nodes)) {
 		with = append(with, alongGateSQL(b, fmt.Sprintf("%s_t%d", prefix, ti), nodes[typ], count, ids)...)
@@ -200,7 +199,8 @@ func siblingGatesSQL(b *sqlBuilder, prefix string, nodes map[string]store.AlongN
 // siblingAdmittedSQL selects the ids the gates siblingGatesSQL named
 // admit and whose Counts holds; a nil Counts holds on every gated row.
 func siblingAdmittedSQL(prefix string, nodes map[string]store.AlongNode) string {
-	arms := []string{"SELECT NULL AS id WHERE 0"}
+	arms := make([]string, 0, len(nodes)+1)
+	arms = append(arms, "SELECT NULL AS id WHERE 0")
 	for ti, typ := range slices.Sorted(maps.Keys(nodes)) {
 		arm := fmt.Sprintf("SELECT id FROM %s_t%d", prefix, ti)
 		if nodes[typ].Counts != nil {

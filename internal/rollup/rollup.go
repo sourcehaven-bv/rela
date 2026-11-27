@@ -202,14 +202,8 @@ func compileColumn(
 		// The loader reports the shape; nothing more to check.
 		return Column{}, []string{at + " must declare exactly one function"}
 	}
-	if strings.TrimSpace(r.SiblingsBefore) != "" {
-		return compileSiblingsColumn(meta, typeName, name, fn, r, at)
-	}
-	if len(r.Along) > 0 {
-		return compileAlongColumn(meta, eval, typeName, name, pd, fn, prop, at)
-	}
-	if r.Records != "" {
-		return compileRecordsColumn(meta, typeName, name, pd, at)
+	if c, p, shaped := compileShapedColumn(meta, eval, typeName, name, pd, fn, prop, at); shaped {
+		return c, p
 	}
 	switch fn {
 	case metamodel.RollupBodyTasks:
@@ -288,6 +282,26 @@ func compileColumn(
 	slices.Sort(col.Reads)
 	col.Reads = slices.Compact(col.Reads)
 	return col, problems
+}
+
+// compileShapedColumn compiles a siblings, along or records roll-up, and
+// reports false for a plain via roll-up, which compileColumn handles.
+func compileShapedColumn(
+	meta *metamodel.Metamodel, eval *predicatefns.Evaluator, typeName, name string, pd metamodel.PropertyDef,
+	fn metamodel.RollupFunc, prop, at string,
+) (col Column, problems []string, shaped bool) {
+	r := pd.Rollup
+	switch {
+	case strings.TrimSpace(r.SiblingsBefore) != "":
+		col, problems = compileSiblingsColumn(meta, typeName, name, fn, r, at)
+	case len(r.Along) > 0:
+		col, problems = compileAlongColumn(meta, eval, typeName, name, pd, fn, prop, at)
+	case r.Records != "":
+		col, problems = compileRecordsColumn(meta, typeName, name, pd, at)
+	default:
+		return Column{}, nil, false
+	}
+	return col, problems, true
 }
 
 // compileFunc fills col's value, order and reads for its function fn over

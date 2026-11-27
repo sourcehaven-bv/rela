@@ -237,6 +237,12 @@ func BuildAlongSQLForTest(q store.RollupQuery) (sqlText string, args []any, err 
 	return buildAlongSQL(q, store.AlongLevels(q.Along))
 }
 
+// BuildSiblingsSQLForTest exposes the statement [Store.Rollup] issues for
+// a siblings query. Test-only.
+func BuildSiblingsSQLForTest(q store.RollupQuery) (sqlText string, args []any, err error) {
+	return buildSiblingsSQL(q)
+}
+
 // RollupStatementTimeoutSettingForTest reads statement_timeout inside the
 // transaction a roll-up statement runs in. Test-only.
 func RollupStatementTimeoutSettingForTest(ctx context.Context, s *Store) (string, error) {

@@ -31,16 +31,18 @@ type Siblings struct {
 	// Climb is the most hops an ancestor may be above the entity; zero
 	// judges the entity alone.
 	Climb int
+	// CountSiblings is set for count, which counts the earlier siblings
+	// rather than whether one exists.
+	CountSiblings bool
 }
 
 // compileSiblingsColumn checks an earlier-siblings roll-up (design section
 // 4.2) and compiles it, returning every problem found.
 func compileSiblingsColumn(
 	meta *metamodel.Metamodel, typeName, name string, fn metamodel.RollupFunc, r *metamodel.RollupDef, at string,
-) (Column, []string) {
+) (col Column, problems []string) {
 	relName := strings.TrimSpace(r.SiblingsBefore)
 	at = fmt.Sprintf("%s siblings_before %s", at, relName)
-	var problems []string
 	switch fn {
 	case metamodel.RollupExists:
 	case metamodel.RollupCount:
@@ -59,12 +61,15 @@ func compileSiblingsColumn(
 		return Column{}, append(problems, at+": "+problem)
 	}
 	s := &Siblings{
-		Relation: relName, Parents: slices.Sorted(slices.Values(def.To)), Members: slices.Sorted(slices.Values(def.From)),
-		Where: map[string][]store.PropPredicate{}, WhenParent: map[string][]store.PropPredicate{},
+		Relation: relName,
+		Parents:  slices.Sorted(slices.Values(def.To)),
+		Members:  slices.Sorted(slices.Values(def.From)),
+		Where:    map[string][]store.PropPredicate{}, WhenParent: map[string][]store.PropPredicate{},
 	}
 	if r.Climb {
 		s.Climb = r.MaxDepth
 	}
+	s.CountSiblings = fn == metamodel.RollupCount
 	problems = append(problems, siblingsConditions(meta, s.Members, r.Where, s.Where, at+": where")...)
 	problems = append(problems, siblingsConditions(meta, s.Parents, r.WhenParent, s.WhenParent, at+": when_parent")...)
 	return Column{Property: name, Func: fn, Siblings: s}, problems
@@ -72,7 +77,9 @@ func compileSiblingsColumn(
 
 // siblingsRelation is the relation a siblings_before names, or why it
 // cannot order typeName's siblings.
-func siblingsRelation(meta *metamodel.Metamodel, typeName, relName string) (*metamodel.RelationDef, string) {
+func siblingsRelation(
+	meta *metamodel.Metamodel, typeName, relName string,
+) (def *metamodel.RelationDef, problem string) {
 	def, ok := meta.GetRelationDef(relName)
 	switch {
 	case !ok:
