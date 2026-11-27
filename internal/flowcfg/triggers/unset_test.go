@@ -26,6 +26,9 @@ entities:
       score: {type: integer, computed: "1"}
       scan: {type: file}
       stage: {type: phase}
+      ref: {type: external_ref, system: tracker}
+relations:
+  follows: {from: [todo], to: [todo]}
 `
 
 // TestSetUnset_ClearsCompletedOnReopen pins the behavior the output exists
@@ -108,21 +111,31 @@ func TestSetUnset_LoadErrors(t *testing.T) {
 		{"computed", `{unset: [score]}`, "is computed"},
 		{"file", `{unset: [scan]}`, "file property"},
 		{"state machine", `{unset: [stage]}`, "not a declared transition"},
+		{"external ref", `{unset: [ref]}`, "is an external ref"},
 		{"nothing", `{}`, "needs `properties:` or `unset:`"},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			_, err := Parse([]byte(`
+	// A relation rule writes its source as an update rule writes its
+	// subject, so it is refused the same names.
+	events := []string{
+		"{entity: todo, updated: true}",
+		"{entity: todo, relation_created: follows}",
+		"{entity: todo, relation_removed: follows}",
+	}
+	for _, on := range events {
+		for _, tc := range cases {
+			t.Run(on+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				_, err := Parse([]byte(`
 triggers:
   r:
-    on: {entity: todo, updated: true}
+    on: `+on+`
     outputs:
       - set: `+tc.set+"\n"), meta)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("err = %v, want it to contain %q", err, tc.want)
-			}
-		})
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("err = %v, want it to contain %q", err, tc.want)
+				}
+			})
+		}
 	}
 }
 

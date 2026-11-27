@@ -1717,11 +1717,24 @@ writer's own permission to update the source. A permission to make the
 relation, including one from `relation_grants:`, does not cover it. For a
 relation from the entity as a whole, the writer needs that permission for
 every state the rule writes. Without it the relation write is refused with a
-403, as an update of the source would be. A `set` runs the same checks as
-an update of the source. A `set` that is refused for another reason also
-fails the relation write. Examples are a `set` that breaks a state machine, a
-`unique:` property or a validation rule with `enforce: write`, and, in
-strict validation mode, a `set` that leaves the source invalid.
+403, as an update of the source would be.
+
+A `set` on a relation rule is checked as the `set` of an update rule is. A
+`set` that is refused also fails the relation write. These are the reasons
+it can be refused:
+
+- it breaks a state machine, or a transition guard the writer does not
+  hold, which is a 403;
+- it breaks a `unique:` property;
+- it breaks a validation rule with `enforce: write`, judged against the
+  relations as the relation write leaves them;
+- in strict validation mode, it leaves the source invalid.
+
+Two things differ from an update of the source. The field rules of
+`acl.yaml` (`visible:` and `writable:`) do not judge the values a rule
+writes, as they do not for an update rule. And the write does not fire `updated` or
+`property` rules on the source, so one relation write cannot start a chain
+of updates.
 
 This holds for a relation that a person, script or sync writes. A relation
 that another rule's `relate` or `create` output makes is a cascade write,
