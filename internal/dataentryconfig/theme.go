@@ -79,7 +79,7 @@ type ThemeManifest struct {
 
 	// Palette colors are inlined at the top level so a manifest reads
 	// like a superset of palette.yaml.
-	PaletteConfig `yaml:",inline" json:",inline"`
+	PaletteConfig `yaml:",inline"`
 }
 
 // Manifest length limits. These are deliberately generous — a theme
