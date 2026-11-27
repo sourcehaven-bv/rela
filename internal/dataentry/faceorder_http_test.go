@@ -58,8 +58,8 @@ entities:
 	if got := resp.Entry.Properties["title"]; got != "PUBLISHED TEXT" {
 		t.Errorf("world-absent entry title = %v, want the first DECLARED face's %q", got, "PUBLISHED TEXT")
 	}
-	if resp.HideMentionedByPanel {
-		t.Error("world-absent page hides the Mentioned by panel without an entity_views switch")
+	if resp.HideMentionedByPanel || resp.HideMentionedByID {
+		t.Error("world-absent page hides the Mentioned by panel or its IDs without an entity_views switch")
 	}
 
 	// The operator's switch holds on the world-absent page too (TKT-HF0D5W).
@@ -67,12 +67,14 @@ entities:
 	if app.Cfg().EntityViews == nil {
 		app.Cfg().EntityViews = map[string]dataentryconfig.EntityViewConfig{}
 	}
-	app.Cfg().EntityViews["policy"] = dataentryconfig.EntityViewConfig{MentionedByPanel: &off}
+	app.Cfg().EntityViews["policy"] = dataentryconfig.EntityViewConfig{MentionedByPanel: &off, MentionedByHideID: true}
 	rec = viewRecord(t, app, "/api/v1/_views/policy/POL-1")
+	resp = v1.ViewResponse{}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !resp.WorldAbsent || !resp.HideMentionedByPanel {
-		t.Errorf("worldAbsent=%v hideMentionedByPanel=%v, want both true", resp.WorldAbsent, resp.HideMentionedByPanel)
+	if !resp.WorldAbsent || !resp.HideMentionedByPanel || !resp.HideMentionedByID {
+		t.Errorf("worldAbsent=%v hideMentionedByPanel=%v hideMentionedByID=%v, want all true",
+			resp.WorldAbsent, resp.HideMentionedByPanel, resp.HideMentionedByID)
 	}
 }

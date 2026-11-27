@@ -294,11 +294,13 @@ func (h *viewsHandler) writeWorldAbsentView(
 	sch := h.schema()
 	m := sch.Meta
 	def := m.Entities[e.Type]
+	view := ViewConfig{Entry: ViewEntry{Type: e.Type}}
 	resp := v1.ViewResponse{
 		Entry:                h.serializer.forWire(ctx, e, rels, m, def.GetPlural(e.Type)),
 		Sections:             []v1.ViewSection{},
 		WorldAbsent:          true,
-		HideMentionedByPanel: hideMentionedByPanel(sch.Cfg, ViewConfig{Entry: ViewEntry{Type: e.Type}}),
+		HideMentionedByPanel: hideMentionedByPanel(sch.Cfg, view),
+		HideMentionedByID:    hideMentionedByID(sch.Cfg, view),
 	}
 	h.rollups.add(ctx, e.Type, []rollupRow{{ref: e.Ref(), props: resp.Entry.Properties}}, worldScopeFrom(ctx), nil)
 	writeV1JSON(w, http.StatusOK, resp)
