@@ -11,6 +11,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -98,6 +99,26 @@ type gatedListQuery struct {
 	//
 	// Nil: accepted. The read is not narrowed.
 	reach map[string]bool
+	// relationTargets is what each relation filter value names, keyed by
+	// its query key ([resolveRelationTargets]). The relation pass and the
+	// pushdown both read it, so they decide id or title the same way.
+	//
+	// Nil: accepted. A relation key without an entry is judged as a title.
+	relationTargets map[string]relationTarget
+}
+
+// relationTarget is what a relation filter value names (TKT-ZKPA1E). A
+// value that is the id of an entity the principal is served, of a type the
+// relation can reach, names that entity. Any other value is a display
+// title, the deprecated form older URLs carry.
+type relationTarget struct {
+	// id is the served target's id; empty for a title value.
+	id string
+	// entityType and face are the served target's, set together with id.
+	entityType string
+	face       entity.Face
+	// title is the display title to match when id is empty.
+	title string
 }
 
 // fieldVisibility is the one capability gateListQuery needs from the field
@@ -150,7 +171,116 @@ func gateAppListQuery(
 	ctx context.Context, a *App, state *Schema, typeName string, query map[string][]string,
 ) (gatedListQuery, error) {
 	isRelationKey := relationFilterClassifier(state.Meta, state.Cfg, typeName)
-	return gateListQuery(ctx, a.fieldResolver, isRelationKey, typeName, query)
+	gated, err := gateListQuery(ctx, a.fieldResolver, isRelationKey, typeName, query)
+	if err != nil {
+		return gated, err
+	}
+	gated.relationTargets, err = resolveRelationTargets(ctx, a.visibleReader, state, typeName, gated)
+	return gated, err
+}
+
+// resolveRelationTargets reads every `eq` and `ne` relation filter value of
+// q as an id, in one batch through the read gate and the request's world. A
+// served id whose type the relation reaches from typeName names that
+// entity; any other value is a title. An unreadable id therefore filters
+// exactly like a value that names nothing.
+//
+// It runs after the field gate. Any lookup fault, a gate error included, is
+// errListLoad: reading it as "not served" would make `ne` admit every row.
+func resolveRelationTargets(
+	ctx context.Context, visible visibleReader, state *Schema, typeName string, q gatedListQuery,
+) (map[string]relationTarget, error) {
+	values, err := relationFilterValues(q)
+	if err != nil || len(values) == 0 {
+		return map[string]relationTarget{}, err
+	}
+	ids := make([]string, 0, len(values))
+	for _, v := range values {
+		ids = append(ids, v.value)
+	}
+	served, err := visible.servedIDsStrict(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("%w: relation filter target: %w", errListLoad, err)
+	}
+	out := make(map[string]relationTarget, len(values))
+	for key, v := range values {
+		h, ok := served[v.value]
+		if ok && relationReaches(state, typeName, v.relation, h.Type) {
+			out[key] = relationTarget{id: h.ID, entityType: h.Type, face: h.Face}
+		} else {
+			out[key] = relationTarget{title: v.value}
+		}
+	}
+	return out, nil
+}
+
+// relationReaches reports whether a filter on relation, in the direction
+// typeName's control reads it, can lead to an entity of targetType. It keeps
+// a slug id that equals an old title value of another type in title mode.
+func relationReaches(state *Schema, typeName, relation, targetType string) bool {
+	def, ok := state.Meta.GetRelationDef(relation)
+	if !ok {
+		return false
+	}
+	if def.Symmetric {
+		return slices.Contains(def.From, targetType) || slices.Contains(def.To, targetType)
+	}
+	direction, _ := state.Cfg.RelationFilterDirection(typeName, relation)
+	if direction.IsIncoming() {
+		return slices.Contains(def.From, targetType)
+	}
+	return slices.Contains(def.To, targetType)
+}
+
+// relationFilterValue is the relation and value of one relation filter key.
+type relationFilterValue struct {
+	relation, value string
+}
+
+// relationFilterValues returns the value of each `eq` and `ne` relation
+// filter key of q, keyed by the query key. A key without a value constrains
+// nothing and is left out. Other operators are left to the relation pass,
+// which refuses them.
+func relationFilterValues(q gatedListQuery) (map[string]relationFilterValue, error) {
+	if q.isRelationKey == nil {
+		return map[string]relationFilterValue{}, nil
+	}
+	out := make(map[string]relationFilterValue)
+	for key, vals := range q.params {
+		if !strings.HasPrefix(key, "filter[") {
+			continue
+		}
+		fk, err := parseFilterKey(key)
+		if err != nil || !q.isRelationKey(fk.property) || (fk.operator != "eq" && fk.operator != "ne") {
+			continue
+		}
+		v, err := relationFilterValueOf(key, vals)
+		if err != nil {
+			return nil, err
+		}
+		if v != "" {
+			out[key] = relationFilterValue{relation: fk.property, value: v}
+		}
+	}
+	return out, nil
+}
+
+// relationFilterValueOf returns the one non-empty value given for a relation
+// filter key, or "" when there is none. Two different values are
+// errBadFilter: the filter matches one target, so keeping either would
+// quietly drop the other.
+func relationFilterValueOf(key string, vals []string) (string, error) {
+	var v string
+	for _, x := range vals {
+		if x == "" || x == v {
+			continue
+		}
+		if v != "" {
+			return "", fmt.Errorf("%w: relation filter %q has more than one value", errBadFilter, key)
+		}
+		v = x
+	}
+	return v, nil
 }
 
 // listQueryProperty is one property a list query reads, and whether it

@@ -468,6 +468,13 @@ func (vr visibleReader) servedIDsErr(ctx context.Context, ids []string) (map[str
 	return vr.resolver.ResolveIDsErr(ctx, worldFromContext(ctx).visibility(), ids)
 }
 
+// servedIDsStrict is servedIDsErr that also returns a gate error
+// ([visibility.Resolver.ResolveIDsStrict]). Answer its error as a failed
+// request, never per id.
+func (vr visibleReader) servedIDsStrict(ctx context.Context, ids []string) (map[string]store.EntityHeader, error) {
+	return vr.resolver.ResolveIDsStrict(ctx, worldFromContext(ctx).visibility(), ids)
+}
+
 // filterVisible drops every candidate the principal cannot read, batching the
 // gate probe by entity type — one ReadableFacesMany per distinct type, turning
 // a worst case of O(N) per-id probes into O(distinct-types) (RR-FRK1). A

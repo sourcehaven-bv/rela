@@ -5,7 +5,9 @@ title: Relation filter controls match on target id instead of display title
 kind: enhancement
 priority: medium
 effort: s
-status: backlog
+started: "2026-11-25"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Description

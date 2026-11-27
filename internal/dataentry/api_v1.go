@@ -388,18 +388,18 @@ func relationFilterClassifier(
 	}
 }
 
-// matchRelationFilterMany evaluates a relation filter for every row at once:
-// one relation query, one header read per distinct neighbor, one gate probe
-// per neighbor type. A row matches when at least one READABLE neighbor over
-// the relation carries the wanted display title.
+// matchRelationFilterMany evaluates a relation filter for every row at once
+// (TKT-1U8XYN): one relation query for all rows, and for a title target one
+// header read for every distinct neighbor. A row matches when one of its
+// neighbors over the relation is the served target (TKT-ZKPA1E) or, for a
+// legacy title, a readable neighbor with that display title (RR-HK1XNO).
 //
-// A store failure is returned, never folded into an empty map, which would
-// admit every row for a `ne` filter. The title compared is the redacted one
-// the principal is shown, so the filter cannot confirm a display property
-// that `visible:` hides on the neighbor.
+// A store failure is returned, never an empty verdict map: for `ne` that
+// would admit every row. It is a free function because App sits at its load
+// line (see worldneighbors.go).
 func matchRelationFilterMany(
 	ctx context.Context, svc Services, visible visibleReader, red visibility.FieldRedactor,
-	rows []*entityPkg.Entity, relation string, direction dataentryconfig.Direction, want string,
+	rows []*entityPkg.Entity, relation string, direction dataentryconfig.Direction, target relationTarget,
 ) (map[string]bool, error) {
 	matched := make(map[string]bool, len(rows))
 	if len(rows) == 0 {
@@ -409,15 +409,13 @@ func matchRelationFilterMany(
 	if err != nil || len(neighborIDs) == 0 {
 		return matched, err
 	}
-
-	served, err := visible.servedIDsErr(ctx, neighborIDs)
+	served, err := relationFilterNeighbors(ctx, visible, red, neighborIDs, target)
 	if err != nil {
 		return nil, err
 	}
-	served = redactHeaders(ctx, red, served)
 	for _, re := range edges {
 		h, ok := served[re.targetID]
-		if !ok || svc.Meta.DisplayTitle(h.ID, h.Type, h.Properties) != want {
+		if !ok || !target.matches(svc.Meta, h) {
 			continue
 		}
 		if direction.IsIncoming() && !ownedByFace(svc.Meta, re.rel, h.Face) {
@@ -426,6 +424,39 @@ func matchRelationFilterMany(
 		matched[re.rowID] = true
 	}
 	return matched, nil
+}
+
+// relationFilterNeighbors returns the neighbors a relation filter compares,
+// each at the face the principal is served (the ACL trims faces, then the
+// world ranks the rest). An id target is the only neighbor that can match,
+// so it is served as the request resolved it. A title is compared on every
+// neighbor, redacted once with red, because the raw title would let a guess
+// confirm a display property `visible:` hides (BUG-WJSYQT). Comparing
+// another face, or one the reader may not read, is an oracle (BUG-ISJHML);
+// the served face is also the one an incoming content-scoped edge must have.
+func relationFilterNeighbors(
+	ctx context.Context, visible visibleReader, red visibility.FieldRedactor,
+	neighborIDs []string, target relationTarget,
+) (map[string]store.EntityHeader, error) {
+	if target.id != "" {
+		return map[string]store.EntityHeader{
+			target.id: {ID: target.id, Type: target.entityType, Face: target.face},
+		}, nil
+	}
+	served, err := visible.servedIDsErr(ctx, neighborIDs)
+	if err != nil {
+		return nil, err
+	}
+	return redactHeaders(ctx, red, served), nil
+}
+
+// matches reports whether h, a served and (for a title) redacted neighbor,
+// is the target.
+func (t relationTarget) matches(meta *metamodel.Metamodel, h store.EntityHeader) bool {
+	if t.id != "" {
+		return h.ID == t.id
+	}
+	return meta.DisplayTitle(h.ID, h.Type, h.Properties) == t.title
 }
 
 // redactHeaders redacts each header once with red, priming any `related(...)`

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -62,6 +63,13 @@ func relationFilterMeta() *metamodel.Metamodel {
 // small graph. Returns the app.
 func relationFilterApp(t *testing.T) *App {
 	t.Helper()
+	return relationFilterAppOn(t)
+}
+
+// relationFilterAppOn is relationFilterApp with app options, such as the
+// store to seed.
+func relationFilterAppOn(t *testing.T, opts ...appbuildtest.Option) *App {
+	t.Helper()
 	return relationFilterAppWithConfig(t, &dataentryconfig.Config{
 		App: dataentryconfig.AppConfig{Name: "Test"},
 		Lists: map[string]dataentryconfig.List{
@@ -74,11 +82,11 @@ func relationFilterApp(t *testing.T) *App {
 				},
 			},
 		},
-	})
+	}, opts...)
 }
 
 // relationFilterAppWithConfig seeds relationFilterApp's graph under cfg.
-func relationFilterAppWithConfig(t *testing.T, cfg *dataentryconfig.Config) *App {
+func relationFilterAppWithConfig(t *testing.T, cfg *dataentryconfig.Config, opts ...appbuildtest.Option) *App {
 	t.Helper()
 	meta := relationFilterMeta()
 
@@ -106,7 +114,7 @@ func relationFilterAppWithConfig(t *testing.T, cfg *dataentryconfig.Config) *App
 	f.AddEdge(entity.NewRelation("TAAK-002", "belongs_to", "PRJ-002")) // Gemini
 	f.AddEdge(entity.NewRelation("TAAK-003", "belongs_to", "PRJ-001")) // Apollo
 
-	return newAppFromParts(cfg, meta, f)
+	return newAppFromParts(cfg, meta, f, opts...)
 }
 
 // listTaken drives the list handler and returns the returned entity IDs.

@@ -3,11 +3,12 @@
  * Single-value entity-target selector, shared across the SPA (TKT-DL16XM).
  *
  * Given a pre-resolved candidate list, the user picks exactly one target. The
- * COMMITTED VALUE is the candidate's bare display title (`entityDisplayTitle`),
- * never `Title (ID)` — the data-entry relation filter matches on the backend's
- * `DisplayTitle` (api_v1.go matchRelationFilter), so a `Title (ID)` value would
- * match nothing (RR-X4QWBF). The dropdown MAY show `Title (ID)` for
- * disambiguation, but that is display-only.
+ * COMMITTED VALUE is the candidate's id: the data-entry relation filter matches
+ * on the target id (TKT-ZKPA1E), so two targets that share a title stay apart
+ * and a rename does not change the filter. The control shows titles. A legacy
+ * title value that exactly one candidate has is replaced by that candidate's
+ * id. Any other value that is no candidate's id (an ambiguous title, or a
+ * target beyond the fetch cap) is shown as it is.
  *
  * Two modes:
  * - `select`   → native `<select>` of titles. Right for a small closed set.
@@ -23,7 +24,7 @@
  *
  * This component deliberately carries NONE of RelationPicker's write-path
  * machinery (incoming-changed, verdicts, inline create, update:types,
- * multi-select). It is presentational: candidates in, one title out.
+ * multi-select). It is presentational: candidates in, one id out.
  */
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -43,41 +44,27 @@ const { candidates, mode, controlId, placeholder, allLabel } = defineProps<{
   allLabel?: string
 }>()
 
-/** Committed value: the bare display title of the chosen candidate (or ''). */
+/** Committed value: the id of the chosen candidate (or ''). */
 const model = defineModel<string>({ required: true })
 
 const { t } = useI18n()
 const placeholderText = computed(() => placeholder ?? t('shell.targetSelect.search'))
 const allText = computed(() => allLabel ?? t('shell.targetSelect.all'))
 
-// Candidates sorted by display title, case-insensitive. De-duplicated by the
-// bare title so two entities sharing a DisplayTitle collapse to one option
-// (the backend matches both — documented title-collision behavior, RR-A51QQ2).
-//
-// The option VALUE is always the bare title. The LABEL shows the id in
-// parentheses to disambiguate — but ONLY when the title is unique. When several
-// candidates share a title, the collapsed option matches all of them, so
-// pinning one candidate's id in the label would be misleading (it's whichever
-// happened to be fetched first). For collided titles we show the bare title
-// instead (RR-0TY8MA).
+// One option per candidate, sorted by display title case-insensitively and
+// then by id. The value is the id; the label is "Title (ID)", so candidates
+// that share a title can be told apart.
 const sortedOptions = computed(() => {
-  // First pass: count how many candidates resolve to each title.
-  const titleCounts = new Map<string, number>()
-  for (const c of candidates) {
-    const value = entityDisplayTitle(c)
-    titleCounts.set(value, (titleCounts.get(value) ?? 0) + 1)
-  }
-  const seen = new Set<string>()
-  const opts: { value: string; label: string }[] = []
-  for (const c of candidates) {
-    const value = entityDisplayTitle(c)
-    if (seen.has(value)) continue
-    seen.add(value)
-    // Unique title → show "Title (ID)"; collided title → bare title.
-    const label = titleCounts.get(value) === 1 ? entityDisplayTitleWithId(c) : value
-    opts.push({ value, label })
-  }
-  return opts.sort((a, b) => a.value.localeCompare(b.value, undefined, { sensitivity: 'base' }))
+  const opts = candidates.map((c) => ({
+    value: c.id,
+    title: entityDisplayTitle(c),
+    label: entityDisplayTitleWithId(c),
+  }))
+  return opts.sort(
+    (a, b) =>
+      a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }) ||
+      a.value.localeCompare(b.value)
+  )
 })
 
 // A committed value the current candidate set doesn't cover — a deep-linked or
@@ -92,6 +79,23 @@ const missingSelectedValue = computed(() => {
   return sortedOptions.value.some((o) => o.value === model.value) ? '' : model.value
 })
 
+// A legacy deep link carries a title instead of an id. When exactly one
+// candidate has that title, commit its id, so the URL moves to the id form and
+// the control shows one option for it. Otherwise the value stays as it is.
+const legacyTitleId = computed(() => {
+  if (!missingSelectedValue.value) return ''
+  const hits = sortedOptions.value.filter((o) => o.title === model.value)
+  return hits.length === 1 ? hits[0].value : ''
+})
+
+watch(
+  legacyTitleId,
+  (id) => {
+    if (id) model.value = id
+  },
+  { immediate: true }
+)
+
 // --- typeahead mode --------------------------------------------------------
 
 // In-progress search string. Component-local; NEVER driven by modelValue, so an
@@ -99,8 +103,12 @@ const missingSelectedValue = computed(() => {
 const searchQuery = ref('')
 const showDropdown = ref(false)
 
-// The label to show in the closed typeahead: the committed selection, or empty.
-const committedLabel = computed(() => model.value)
+// The label to show in the closed typeahead: the committed candidate's title,
+// the raw value when no candidate has that id, or empty.
+const committedLabel = computed(() => {
+  if (!model.value) return ''
+  return sortedOptions.value.find((o) => o.value === model.value)?.title ?? model.value
+})
 
 const filteredOptions = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
@@ -150,7 +158,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="entity-target-select">
-    <!-- select mode: native <select> of titles -->
+    <!-- select mode: native <select>; option values are ids -->
     <select v-if="mode === 'select'" :id="controlId" v-model="model">
       <option value="">{{ allText }}</option>
       <!-- Active committed value not covered by the loaded candidates (deep
@@ -205,7 +213,7 @@ onBeforeUnmount(() => {
           :key="opt.value"
           class="dropdown-item"
           role="option"
-          :aria-selected="opt.value === committedLabel"
+          :aria-selected="opt.value === model"
           @click="commit(opt.value)"
         >
           {{ opt.label }}

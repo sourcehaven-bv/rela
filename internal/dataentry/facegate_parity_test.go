@@ -209,7 +209,7 @@ func TestFaceGateParity_RelationFilterComparesTheServedFace(t *testing.T) {
 		{"public title", true},
 	} {
 		matched, err := matchRelationFilterMany(wctx, app.Services(), app.visibleReader, appRedactor(app), rows,
-			"blocks", dataentryconfig.DirectionOutgoing, tc.want)
+			"blocks", dataentryconfig.DirectionOutgoing, relationTarget{title: tc.want})
 		if err != nil {
 			t.Fatal(err)
 		}

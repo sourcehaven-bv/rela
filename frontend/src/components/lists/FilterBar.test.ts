@@ -139,15 +139,13 @@ describe('FilterBar — relation filter controls', () => {
     })
     await flushPromises()
 
-    wrapper.findComponent(EntityTargetSelect).vm.$emit('update:modelValue', 'Jeroen Vloothuis')
+    wrapper.findComponent(EntityTargetSelect).vm.$emit('update:modelValue', 'PERS-JV')
     await flushPromises()
 
     const emits = wrapper.emitted('filter')
     expect(emits).toBeTruthy()
-    // Wire key is the bare relation name; value is the bare title.
-    expect(emits?.[emits.length - 1]).toEqual([
-      { verantwoordelijk_voor: { value: 'Jeroen Vloothuis' } },
-    ])
+    // Wire key is the bare relation name; value is the target id.
+    expect(emits?.[emits.length - 1]).toEqual([{ verantwoordelijk_voor: { value: 'PERS-JV' } }])
   })
 
   it('empty commit clears the filter (omits the key)', async () => {
@@ -170,7 +168,24 @@ describe('FilterBar — relation filter controls', () => {
     expect(emits?.[emits.length - 1]).toEqual([{}])
   })
 
-  it('a deep-linked relation filter value is passed through as the committed value', async () => {
+  it('a deep-linked id is passed through as the committed value', async () => {
+    seedRelationType('verantwoordelijk_voor', { from: ['persoon'], to: ['taak'] })
+    stubCandidates([persoon('PERS-JV', 'Jeroen Vloothuis')])
+
+    const wrapper = mount(FilterBar, {
+      props: {
+        config: relationListConfig('incoming'),
+        entityType: TAAK_TYPE,
+        filters: { verantwoordelijk_voor: { value: 'PERS-JV' } },
+      },
+    })
+    await flushPromises()
+
+    expect(targetSelectProps(wrapper).modelValue).toBe('PERS-JV')
+    expect(wrapper.emitted('filter')).toBeUndefined()
+  })
+
+  it('a deep-linked legacy title is rewritten to the id of the one candidate with that title', async () => {
     seedRelationType('verantwoordelijk_voor', { from: ['persoon'], to: ['taak'] })
     stubCandidates([persoon('PERS-JV', 'Jeroen Vloothuis')])
 
@@ -183,7 +198,8 @@ describe('FilterBar — relation filter controls', () => {
     })
     await flushPromises()
 
-    expect(targetSelectProps(wrapper).modelValue).toBe('Jeroen Vloothuis')
+    const emits = wrapper.emitted('filter')
+    expect(emits?.[emits.length - 1]).toEqual([{ verantwoordelijk_voor: { value: 'PERS-JV' } }])
   })
 
   it('the mode flips select→typeahead when the loaded set exceeds the threshold', async () => {

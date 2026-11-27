@@ -270,7 +270,7 @@ function handleFilterChange() {
   emitFilters()
 }
 
-// Relation target selector committed a value (a bare display title, or '' to
+// Relation target selector committed a value (the target's id, or '' to
 // clear). Fires immediately like a select — no debounce, no mid-type state.
 function handleRelationChange(key: string, value: string) {
   localFilters.value[key] = value
@@ -394,8 +394,8 @@ onBeforeUnmount(() => {
           </RlMultiSelect>
 
           <!-- Relation widget: select (small) or typeahead (large) target
-               picker. Commits the target's bare display title as the value,
-               which the backend relation filter matches on. -->
+               picker. Commits the target's id, which the backend relation
+               filter matches on (TKT-ZKPA1E). -->
           <EntityTargetSelect
             v-else-if="filter.widget === 'relation'"
             :control-id="`filter-${filter.key}`"

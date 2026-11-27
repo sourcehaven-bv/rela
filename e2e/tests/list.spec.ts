@@ -248,13 +248,14 @@ test.describe('List View', () => {
     });
 
     // TKT-DL16XM: a relation filter_control renders as a target selector (a
-    // native <select> here, since the feature set is small) whose options are
-    // the display titles of the relation's targets. Selecting a feature narrows
+    // native <select> here, since the feature set is small) whose options show
+    // the display titles of the relation's targets and carry their ids as values
+    // (TKT-ZKPA1E). Selecting a feature narrows
     // the task list to tasks that implement it. The tasks list declares
     // `filter_controls: [{ relation: implements }]`; the seed links
     // TASK-001 --implements--> FEAT-001 ("User Authentication"), and TASK-002
     // is unlinked.
-    test('relation filter narrows the list by target title', async ({ appPage }) => {
+    test('relation filter narrows the list by target id', async ({ appPage }) => {
       const listPage = new ListPage(appPage);
 
       await listPage.navigateToList('tasks');
@@ -264,13 +265,13 @@ test.describe('List View', () => {
       await listPage.expectRowContains('Write unit tests');
       await listPage.expectRowContains('Refactor auth module');
 
-      // The relation filter renders as a <select> populated with feature
-      // display titles (the option VALUE is the bare title — the backend
-      // matches on it).
+      // The relation filter renders as a <select> labelled with feature
+      // display titles; the option VALUE is the feature id.
       expect(await listPage.filterOptionCount('User Authentication')).toBe(1);
 
       // Filter by the feature TASK-001 implements.
-      await listPage.selectFilterOption('User Authentication');
+      await listPage.selectFilterOption('FEAT-001');
+      await expect(appPage).toHaveURL(/filter%5Bimplements%5D=FEAT-001|filter\[implements\]=FEAT-001/);
 
       // Only the implementing task remains.
       await listPage.expectRowContains('Write unit tests');

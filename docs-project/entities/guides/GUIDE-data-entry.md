@@ -2737,9 +2737,20 @@ filter_controls:
 display titles of the relation's target entities — a plain `<select>` for a
 small set, upgrading to a typeahead combobox above ~10 options. `direction:
 incoming` pulls candidates from the relation's source types (`from`); `outgoing`
-(default) from its target types (`to`). The selected value the filter matches on
-is the target's **display title** (honoring each type's `display_property`), not
-its ID.
+(default) from its target types (`to`). The control shows each target's display
+title. The value it sends, and the value the filter matches on, is the target's
+**ID**, so two targets with the same title stay separate and renaming a target
+does not change the filter. A deep link like `?filter[implements]=FEAT-001`
+selects the same target.
+
+A value is read as an ID only when it names an entity you can read, of a type
+the relation can lead to. Any other value is matched against the targets'
+display titles instead. That is the form older links use. It is deprecated: it
+may be removed, and the server logs a warning, at most once an hour per list
+type and relation, when a title matches. When exactly one candidate has that
+title, the control replaces the value with its ID. Use IDs in links and saved
+views. A relation filter takes one value; two different values for the same
+key are refused with a 400.
 
 **Property filter controls** without declared `values:` render as a text box.
 On a `string` property it matches case-insensitively on a substring (`filter[x][contains]`);
@@ -2747,8 +2758,13 @@ on other types (dates, numbers) it matches the exact value.
 
 Notes:
 
-- Two targets that resolve to the same display title collapse to one option and
-  the filter matches both (title-based matching).
+- Two targets with the same display title are listed separately, each with its
+  ID after the title.
+- A filter by ID is part of the store query, so on postgres the database
+  applies it while paging. That holds for one `eq` or `ne` value on a relation
+  that is not content-scoped, without the `[]` form, and for a target type
+  without faces or one you can read whole. Other relation filters are applied
+  after the rows are read.
 - The candidate list is fetched from the target types' entities; a type with
   more than ~100 entities has its option set truncated.
 - A relation whose name is not a plain identifier (e.g. contains a hyphen)

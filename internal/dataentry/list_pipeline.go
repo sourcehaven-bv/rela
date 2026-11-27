@@ -3,8 +3,11 @@ package dataentry
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
@@ -225,7 +228,7 @@ func (p *listPipeline) scopedSortedEntitiesScoped(
 			if ferr != nil {
 				return nil, ferr
 			}
-			rows, ferr = p.applyRelationFilters(ctx, rows, params, typeName, query.isRelationKey)
+			rows, ferr = p.applyRelationFilters(ctx, rows, query, typeName)
 			if ferr != nil {
 				return nil, ferr
 			}
@@ -262,29 +265,32 @@ func (p *listPipeline) scanType(
 	return headerEntities(headers), nil
 }
 
-// applyRelationFilters keeps the entities that match every relation filter in
-// query; isRelationKey decides which params are relation filters. An entity
-// matches when it has an edge of that relation, in the configured direction,
-// to a READABLE neighbor whose title equals the value. An unreadable neighbor
-// never matches, so the filter is no title-inference channel.
-//
-// Only `eq` and `ne` are supported; any other operator is errBadFilter (400),
-// never a silent fail-open. It runs over the whole visible set before
-// pagination, so the list and _position agree.
+// applyRelationFilters keeps the entities that match every relation filter
+// of gated: an edge of the control's relation and direction to a READABLE
+// neighbor that is the filter's target (matchRelationFilterMany). The target
+// is an id, or for older URLs a display title, which is deprecated and logged
+// (TKT-ZKPA1E). Only `eq` and `ne` are supported; any other operator is
+// errBadFilter, a 400, never an unfiltered set (RR-6RF60V). The list handler
+// and scope navigation share this pass, so both see the same rows. The
+// pushdown answers an id filter in the store instead when it can
+// (listpushdown.go).
 func (p *listPipeline) applyRelationFilters(
-	ctx context.Context, entities []*entityPkg.Entity, query map[string][]string, typeName string,
-	isRelationKey func(string) bool,
+	ctx context.Context, entities []*entityPkg.Entity, gated gatedListQuery, typeName string,
 ) ([]*entityPkg.Entity, error) {
 	cfg := p.schema().Cfg
-	for key, values := range query {
+	isRelationKey := gated.isRelationKey
+	for key, values := range gated.params {
 		if !strings.HasPrefix(key, "filter[") || len(values) == 0 {
 			continue
 		}
 		relation, operator, ok := parseRelationFilterKey(key)
-		if !ok || !isRelationKey(relation) {
+		if !ok || isRelationKey == nil || !isRelationKey(relation) {
 			continue
 		}
-		want := values[len(values)-1]
+		want, err := relationFilterValueOf(key, values)
+		if err != nil {
+			return nil, err
+		}
 		if want == "" {
 			continue
 		}
@@ -296,11 +302,18 @@ func (p *listPipeline) applyRelationFilters(
 				errBadFilter, operator, key)
 		}
 
+		target, resolved := gated.relationTargets[key]
+		if !resolved {
+			target = relationTarget{title: want}
+		}
 		direction, _ := cfg.RelationFilterDirection(typeName, relation)
 		matched, merr := matchRelationFilterMany(
-			ctx, p.services(), p.visible(), affRedactor{aff: p.affordances}, entities, relation, direction, want)
+			ctx, p.services(), p.visible(), affRedactor{aff: p.affordances}, entities, relation, direction, target)
 		if merr != nil {
 			return nil, fmt.Errorf("%w: relation filter %q: %w", errListLoad, relation, merr)
+		}
+		if target.id == "" && len(matched) > 0 {
+			warnTitleRelationFilter(typeName, relation, time.Now())
 		}
 		filtered := entities[:0]
 		for _, e := range entities {
@@ -311,6 +324,30 @@ func (p *listPipeline) applyRelationFilters(
 		entities = filtered
 	}
 	return entities, nil
+}
+
+// titleFilterWarned holds when the title deprecation warning was last
+// logged per entity type and relation. Both come from the configuration, so
+// the map stays small.
+var titleFilterWarned sync.Map
+
+// titleFilterWarnEvery is how often the warning repeats for one entity type
+// and relation, so a page that refreshes does not flood the log.
+const titleFilterWarnEvery = time.Hour
+
+// warnTitleRelationFilter logs that a relation filter matched rows by
+// display title (TKT-ZKPA1E), at most once per titleFilterWarnEvery for
+// typeName and relation. It never logs the value, which the caller chose.
+func warnTitleRelationFilter(typeName, relation string, now time.Time) {
+	key := typeName + "\x00" + relation
+	if v, ok := titleFilterWarned.Load(key); ok {
+		if last, ok := v.(time.Time); ok && now.Sub(last) < titleFilterWarnEvery {
+			return
+		}
+	}
+	titleFilterWarned.Store(key, now)
+	slog.Warn("dataentry: relation filter matched by display title (deprecated); send the target id",
+		"relation", relation, "entity_type", typeName)
 }
 
 // scopeListCondition narrows a list scope's rows by the `condition:` of the
