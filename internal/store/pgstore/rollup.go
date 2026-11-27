@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -19,14 +22,15 @@ var _ store.Rollupper = (*Store)(nil)
 // identity-scoped edges of the sources (through the gated path, when q has
 // one) and grouped per source. The fold rules match [store.RollupGeneric],
 // which is the reference.
-// An along query ([store.AlongWalk]) is answered by [store.RollupGeneric]
-// until the SQL walk lands.
+// An along query ([store.AlongWalk]) is the unrolled walk of
+// rollup_along.go. Every roll-up statement runs under
+// [RollupStatementTimeout].
 func (s *Store) Rollup(ctx context.Context, q store.RollupQuery) (map[string]store.RollupResult, error) {
 	if err := store.ValidateRollupQuery(q); err != nil {
 		return nil, err
 	}
 	if q.Along != nil {
-		return store.RollupGeneric(ctx, s, q)
+		return s.rollupAlong(ctx, q)
 	}
 	if err := checkGraphQueryScope(q.Related); err != nil {
 		return nil, err
@@ -44,34 +48,68 @@ func (s *Store) Rollup(ctx context.Context, q store.RollupQuery) (map[string]sto
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(ctx, sqlText, args...)
-	if err != nil {
-		return nil, fmt.Errorf("pgstore: rollup: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
+	err = s.queryBounded(ctx, sqlText, args, func(rows pgx.Rows) error {
 		var (
 			src   string
 			count int
 			value *string
 		)
 		if err := rows.Scan(&src, &count, &value); err != nil {
-			return nil, fmt.Errorf("pgstore: rollup scan: %w", err)
+			return fmt.Errorf("pgstore: rollup scan: %w", err)
 		}
 		res := store.RollupResult{Count: count}
 		if value != nil {
 			v, err := rollupValue(q, *value)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			res.Value = v
 		}
 		out[src] = res
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("pgstore: rollup: %w", err)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
+}
+
+// RollupStatementTimeout bounds every roll-up statement (design T7). A walk
+// a writer made expensive fails instead of holding a connection.
+const RollupStatementTimeout = 5 * time.Second
+
+// queryBounded runs one read statement in its own transaction under
+// [RollupStatementTimeout] and calls each for every row. SET LOCAL ends
+// with the transaction (a savepoint inside a [Store.Tx] view), so the
+// timeout never reaches the next user of the connection.
+func (s *Store) queryBounded(ctx context.Context, sqlText string, args []any, each func(pgx.Rows) error) error {
+	tx, err := unwrapDB(s.db).Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("pgstore: rollup: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // a read-only transaction; nothing to keep
+	timeout := fmt.Sprintf("SET LOCAL statement_timeout = '%dms'", RollupStatementTimeout.Milliseconds())
+	if _, err := tx.Exec(ctx, timeout); err != nil {
+		return fmt.Errorf("pgstore: rollup: %w", err)
+	}
+	var db DBTX = tx
+	if i, ok := s.db.(*instantDB); ok {
+		db = i.over(tx)
+	}
+	rows, err := db.Query(ctx, sqlText, args...)
+	if err != nil {
+		return fmt.Errorf("pgstore: rollup: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		if err := each(rows); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("pgstore: rollup: %w", err)
+	}
+	return nil
 }
 
 // rollupValue decodes the text the statement returns for the aggregate.
@@ -111,7 +149,7 @@ func buildRollupSQL(q store.RollupQuery) (sqlText string, args []any, err error)
 	with, pairs := rollupPairsSQL(b, q)
 
 	typeArg := b.arg(q.Related.EntityType)
-	relWith, source := graphSource(b, q.Related, typeArg, "e.id IN (SELECT p.id FROM "+pairs+" p)")
+	relWith, source := graphSourceSeeded(b, "", q.Related, typeArg, "SELECT p.id FROM "+pairs+" p")
 	with = append(with, relWith...)
 
 	requireWith, require := rowConditionsSQL(b, "rq", q.Require, typeArg)
@@ -143,8 +181,8 @@ func rollupPairsSQL(b *sqlBuilder, q store.RollupQuery) (with []string, last str
 		name := fmt.Sprintf("rup%d", i)
 		with = append(with, name+"_raw AS ("+rollupHopSQL(b, q.Sources, prev, step.Relation, step.SourceIsTo)+")")
 		typeArg := b.arg(step.Through.EntityType)
-		gateWith, source := graphSourcePrefixed(b, name+"_", step.Through, typeArg,
-			"e.id IN (SELECT p.id FROM "+name+"_raw p)")
+		gateWith, source := graphSourceSeeded(b, name+"_", step.Through, typeArg,
+			"SELECT p.id FROM "+name+"_raw p")
 		with = append(with, gateWith...)
 		with = append(with, fmt.Sprintf(
 			"%s AS (SELECT p.src, p.id FROM %s_raw p WHERE p.id IN (SELECT e.id FROM %s))", name, name, source))

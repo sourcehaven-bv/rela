@@ -23,14 +23,13 @@ var _ store.Rollupper = (*Store)(nil)
 // path, when q has one) and grouped per source. A query whose names the
 // builder cannot render is answered by [store.RollupGeneric], the reference
 // both backends are tested against.
-// An along query ([store.AlongWalk]) is answered by [store.RollupGeneric]
-// until the SQL walk lands.
+// An along query ([store.AlongWalk]) runs as one unrolled statement.
 func (s *Store) Rollup(ctx context.Context, q store.RollupQuery) (map[string]store.RollupResult, error) {
 	if err := store.ValidateRollupQuery(q); err != nil {
 		return nil, err
 	}
 	if q.Along != nil {
-		return store.RollupGeneric(ctx, s, q)
+		return s.rollupAlong(ctx, q)
 	}
 	if err := graphquerynaive.CheckEndpointShape(q.Related); err != nil {
 		return nil, err

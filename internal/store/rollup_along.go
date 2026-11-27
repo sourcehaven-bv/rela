@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -140,6 +141,42 @@ func AlongNext(segs []AlongSegment, state int) []int {
 		}
 	}
 	return out
+}
+
+// AlongHop is one hop of a level of an unrolled walk: segment Seg, taken
+// from the frontier triples whose state is in From.
+type AlongHop struct {
+	Seg  int
+	From []int
+}
+
+// AlongLevels unrolls a's walk for a SQL backend: per level, the hops its
+// frontier can take, in segment order. A segment that gates no type reaches
+// nothing, so it is left out, and the levels end early when no hop remains.
+// The level count is at most a.MaxDepth.
+func AlongLevels(a *AlongWalk) [][]AlongHop {
+	var levels [][]AlongHop
+	states := []int{-1}
+	for len(levels) < a.MaxDepth {
+		from := map[int][]int{}
+		for _, st := range states {
+			for _, j := range AlongNext(a.Segments, st) {
+				if len(a.Segments[j].Through) > 0 {
+					from[j] = append(from[j], st)
+				}
+			}
+		}
+		if len(from) == 0 {
+			break
+		}
+		hops := make([]AlongHop, 0, len(from))
+		for _, j := range slices.Sorted(maps.Keys(from)) {
+			hops = append(hops, AlongHop{Seg: j, From: from[j]})
+		}
+		levels = append(levels, hops)
+		states = slices.Sorted(maps.Keys(from))
+	}
+	return levels
 }
 
 // alongKey is one walk triple: a source, an entity reached, and the
@@ -349,4 +386,17 @@ func FoldHeaders(q RollupQuery, rows []EntityHeader) RollupResult {
 		f.add(h, true)
 	}
 	return f.result()
+}
+
+// AlongVisitsResult is one source's answer from its counted visits, for a
+// SQL backend that returns them rather than folding: rows carry q.Value
+// when they supply one. The visits are listed in id order, as the generic
+// walk lists them.
+func AlongVisitsResult(q RollupQuery, rows []EntityHeader) RollupResult {
+	slices.SortFunc(rows, func(a, b EntityHeader) int { return strings.Compare(a.ID, b.ID) })
+	res := FoldHeaders(q, rows)
+	for _, h := range rows {
+		res.Visits = append(res.Visits, AlongVisit{ID: h.ID, Type: h.Type, Face: h.Face})
+	}
+	return res
 }

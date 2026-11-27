@@ -27,6 +27,8 @@ func runRollupAlongTests(t *testing.T, f Factory) {
 		"tags":                  alongTags,
 		"incoming_and_extremes": alongIncomingAndExtremes,
 		"invalid":               alongInvalid,
+		"visits":                alongVisits,
+		"differential":          alongDifferential,
 	} {
 		t.Run(name, func(t *testing.T) { run(t, f(t)) })
 	}

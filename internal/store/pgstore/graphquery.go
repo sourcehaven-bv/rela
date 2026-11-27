@@ -357,6 +357,18 @@ func graphSourcePrefixed(
 	return with, source
 }
 
+// graphSourceSeeded is [graphSourcePrefixed] restricted to the ids the
+// subquery ids selects: the candidates and the seed of every entity closure
+// the gate renders alike, so a gate costs its ids, not its type.
+func graphSourceSeeded(
+	b *sqlBuilder, prefix string, q store.GraphQuery, typeArg, ids string,
+) (with []string, source string) {
+	prev := b.closureSeed
+	b.closureSeed = ids
+	defer func() { b.closureSeed = prev }()
+	return graphSourcePrefixed(b, prefix, q, typeArg, "e.id IN ("+ids+")")
+}
+
 // withClause renders the recursive CTE prefix, or nothing.
 func withClause(with []string) string {
 	if len(with) == 0 {
@@ -986,6 +998,9 @@ func entityClosureSQL(b *sqlBuilder, prefix string, p store.RelationPredicate, t
 		if b.pageAfter != "" {
 			seedAfter = " AND e0.id " + b.pageSeedOp + " " + b.pageAfter
 		}
+		if b.closureSeed != "" {
+			seedAfter += " AND e0.id IN (" + b.closureSeed + ")"
+		}
 		cte = fmt.Sprintf(`%s(id, root, depth) AS (
     -- IDENTITY ANCHOR (TKT-WAV8XP Q5). The seed is ENTITY-level: one row
     -- per id of the type, whatever faces it has, so a faced candidate
@@ -1198,6 +1213,10 @@ type sqlBuilder struct {
 	// pageSeedOp is ">" when the page resumes after a whole family and ">="
 	// when it may resume inside one.
 	pageSeedOp string
+	// closureSeed is a subquery of the only candidate ids the statement asks
+	// about, or "". A candidate-rooted closure then seeds from those ids
+	// alone, for the reason pageAfter does (T12). See [graphSourceSeeded].
+	closureSeed string
 	// err is the first predicate the builder could not render. A builder
 	// that sees it set must not run the statement.
 	err error
