@@ -104,7 +104,6 @@ func deleteRelationIfVersion(
 		return scopeErr
 	}
 	var rel *entity.Relation
-	var events relationEvents
 	err = auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
 		got, gErr := view.GetRelation(txCtx, key)
 		if gErr != nil {
@@ -133,9 +132,8 @@ func deleteRelationIfVersion(
 		if cErr := clears.apply(txCtx, m, view); cErr != nil {
 			return cErr
 		}
-		return fireRelationEvent(txCtx, m, view, triggers.EventRelationRemoved, rel, &events)
+		return fireRelationEvent(txCtx, m, view, triggers.EventRelationRemoved, rel)
 	})
-	events.run(ctx, m.deps, err)
 	if err != nil {
 		return err
 	}

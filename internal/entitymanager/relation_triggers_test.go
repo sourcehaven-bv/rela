@@ -50,6 +50,8 @@ relations:
   chain: {from: [task], to: [task]}
   fan: {from: [task], to: [task]}
   cites: {from: [doc], to: [project], scope: content}
+  blocks: {from: [task], to: [project]}
+  mentions: {from: [doc], to: [project]}
 `
 
 const relTriggerFlows = `
@@ -74,6 +76,14 @@ triggers:
     on: {relation_created: cites}
     outputs:
       - set: {properties: {cited: "yes"}}
+  mark-mentioned:
+    on: {relation_created: mentions}
+    outputs:
+      - set: {properties: {cited: "mentioned"}}
+  refuse-blocked:
+    on: {relation_created: blocks}
+    outputs:
+      - check: {where: "title!=One", severity: error, message: "{{new.title}} cannot be blocked"}
   grow-chain:
     on: {relation_created: chain}
     outputs:
@@ -110,6 +120,11 @@ var relTriggerBackends = []relTriggerBackend{
 
 func newRelTriggerManager(t *testing.T, st store.Store) (*entitymanager.Manager, *audit.Memory) {
 	t.Helper()
+	return newRelTriggerManagerWith(t, st, acl.NopACL{})
+}
+
+func newRelTriggerManagerWith(t *testing.T, st store.Store, a acl.ACL) (*entitymanager.Manager, *audit.Memory) {
+	t.Helper()
 	meta, err := metamodel.Parse([]byte(relTriggerSchema))
 	require.NoError(t, err)
 	set, err := transitions.CompileTransitions(meta)
@@ -123,10 +138,12 @@ func newRelTriggerManager(t *testing.T, st store.Store) (*entitymanager.Manager,
 	aud := audit.NewMemory()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: aud,
-		ACL: acl.NopACL{}, Transitions: set,
+		ACL: a, Transitions: set,
 		Automations: engine, Cascade: runner,
-		FieldGate:   entitymanager.AllowAllFieldGate{},
-		AnchorGuard: entitymanager.NopAnchorGuard{},
+		FieldGate:      entitymanager.AllowAllFieldGate{},
+		AnchorGuard:    entitymanager.NopAnchorGuard{},
+		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
+		CopyVisibility: allowAllCopyVisibility(t, st),
 	})
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -205,6 +222,16 @@ func TestRelationTriggers_Fire(t *testing.T) {
 			_, err := m.DeleteEntity(ctx, "P-1", true)
 			return err
 		}, "T-1", "", "linked", "yes One"},
+		{"a patch with relations fires after the patch", func(ctx context.Context, m *entitymanager.Manager) error {
+			g, err := m.AuthorizeUpdate(ctx, &entity.Entity{ID: "T-1", Type: "task"})
+			if err != nil {
+				return err
+			}
+			_, _, err = entitymanager.PatchWithRelations(ctx, g, "T-1",
+				entity.Patch{Properties: map[string]any{"title": "Two"}},
+				[]entitymanager.RelationCreate{{Key: taskKey("in_project", "P-1")}}, nil)
+			return err
+		}, "T-1", "", "linked", "yes Two"},
 		{"a reorder fires nothing", func(ctx context.Context, m *entitymanager.Manager) error {
 			if _, err := m.CreateRelation(ctx, taskKey("queued", "P-1"), entity.RelationOptions{}); err != nil {
 				return err
@@ -263,6 +290,25 @@ func TestRelationTriggers_FailedSetFailsTheWrite(t *testing.T) {
 				require.Empty(t, aud.Records())
 			} else {
 				require.NoError(t, getErr)
+			}
+		})
+	}
+}
+
+// TestRelationTriggers_ErrorCheckRefusesTheWrite pins that a failed check
+// of severity error refuses the relation write.
+func TestRelationTriggers_ErrorCheckRefusesTheWrite(t *testing.T) {
+	for _, b := range relTriggerBackends {
+		t.Run(b.name, func(t *testing.T) {
+			st := b.open(t)
+			m, _ := newRelTriggerManager(t, st)
+			ctx := context.Background()
+			_, err := m.CreateRelation(ctx, taskKey("blocks", "P-1"), entity.RelationOptions{})
+			require.ErrorIs(t, err, entitymanager.ErrRelationTriggerCheck)
+			require.ErrorContains(t, err, "One cannot be blocked")
+			_, getErr := st.GetRelation(ctx, taskKey("blocks", "P-1"))
+			if store.TxRollsBack(st) {
+				require.ErrorIs(t, getErr, store.ErrNotFound)
 			}
 		})
 	}

@@ -218,7 +218,6 @@ func (m *Manager) ReplaceRelations(
 		return nil, err
 	}
 	var deleted []*entity.Relation
-	var events relationEvents
 	err = auditTx(ctx, m.deps, true, func(txCtx context.Context, view store.Store) error {
 		var txErr error
 		if deleted, txErr = rp.write(txCtx, view); txErr != nil {
@@ -227,9 +226,8 @@ func (m *Manager) ReplaceRelations(
 		if txErr := rp.audit(txCtx, view, deleted); txErr != nil {
 			return txErr
 		}
-		return rp.fire(txCtx, view, deleted, &events)
+		return rp.fire(txCtx, view, deleted)
 	})
-	events.run(ctx, m.deps, err)
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			return nil, fmt.Errorf("%w: %w", ErrRelationAlreadyExists, err)
@@ -280,8 +278,9 @@ func (rp *relationReplace) audit(ctx context.Context, view store.Store, deleted 
 	return nil
 }
 
-// spendBudget spends one relation-event dispatch for each event the
-// replace raises that a trigger watches; see [spendRelationBudget].
+// spendBudget spends one relation-event dispatch when a trigger watches one
+// of the replace's removes, and one when a trigger watches one of its
+// creates; see [spendRelationBudget].
 func (rp *relationReplace) spendBudget(ctx context.Context) (context.Context, error) {
 	var err error
 	removed := make([]string, len(rp.removes))
@@ -302,18 +301,18 @@ func (rp *relationReplace) spendBudget(ctx context.Context) (context.Context, er
 // for each edge the caller removed, then relation_created for each edge it
 // created. An edge a scope cleared raises nothing, as on every write path.
 func (rp *relationReplace) fire(
-	ctx context.Context, view store.Store, deleted []*entity.Relation, events *relationEvents,
+	ctx context.Context, view store.Store, deleted []*entity.Relation,
 ) error {
 	for _, r := range deleted {
 		if !slices.Contains(rp.removes, r.Identity()) {
 			continue
 		}
-		if err := fireRelationEvent(ctx, rp.m, view, triggers.EventRelationRemoved, r, events); err != nil {
+		if err := fireRelationEvent(ctx, rp.m, view, triggers.EventRelationRemoved, r); err != nil {
 			return err
 		}
 	}
 	for _, rel := range rp.rels {
-		if err := fireRelationEvent(ctx, rp.m, view, triggers.EventRelationCreated, rel, events); err != nil {
+		if err := fireRelationEvent(ctx, rp.m, view, triggers.EventRelationCreated, rel); err != nil {
 			return err
 		}
 	}

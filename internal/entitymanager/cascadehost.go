@@ -199,7 +199,6 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 		return spendErr
 	}
 	watched := watchesRelation(h.deps, triggers.EventRelationCreated, r.Type)
-	var events relationEvents
 	bounded := relTypeHasMax(h.deps.Meta, r.Type)
 	write := func(ctx context.Context, st store.Store) error {
 		if bounded {
@@ -226,11 +225,10 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 			return err
 		}
 		return fireRelationEvent(ctx, &Manager{deps: h.deps, cascadeWrite: true}, st,
-			triggers.EventRelationCreated, r, &events)
+			triggers.EventRelationCreated, r)
 	}
 	inTx := bounded || metamodel.IsOwning(h.deps.Meta, r.Type) || h.deps.scopes.touches(r.Identity()) || watched
 	err := auditTx(ctx, h.deps, inTx, write)
-	events.run(ctx, h.deps, err)
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			return nil

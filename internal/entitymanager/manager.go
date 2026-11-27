@@ -3411,7 +3411,6 @@ func (m *Manager) CreateRelation(
 			return nil, err
 		}
 	}
-	var events relationEvents
 	create := func(ctx context.Context, st store.Store) error {
 		var cleared []entity.RelationKey
 		if scoped {
@@ -3434,7 +3433,7 @@ func (m *Manager) CreateRelation(
 		if err := clears.apply(ctx, m, st); err != nil {
 			return err
 		}
-		return fireRelationEvent(ctx, m, st, triggers.EventRelationCreated, rel, &events)
+		return fireRelationEvent(ctx, m, st, triggers.EventRelationCreated, rel)
 	}
 	// An owning edge reads its neighbors' edges to decide whether it may
 	// exist, and a relation rule or a scope reads the ends' edges, so the
@@ -3443,7 +3442,6 @@ func (m *Manager) CreateRelation(
 		metamodel.IsOwning(m.deps.Meta, key.Type) || ruled || scoped ||
 		watchesRelation(m.deps, triggers.EventRelationCreated, key.Type)
 	createErr := auditTx(ctx, m.deps, inTx, create)
-	events.run(ctx, m.deps, createErr)
 	if createErr == nil {
 		clears.version(ctx, m)
 	}

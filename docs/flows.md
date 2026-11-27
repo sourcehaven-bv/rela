@@ -1697,17 +1697,33 @@ These writes do not fire them:
 - changing a relation's properties or body, or moving it in its order.
   There is no `relation_updated` event.
 - creating an entity together with its relations: a flow step, a
-  data-entry batch create, a conversion or a copy;
-- a data-entry save that changes the entity and its relation fields in one
-  request.
+  data-entry batch create, a conversion or a copy.
 
-A `set` on a relation rule is part of the relation write. If it is refused,
-for example because it breaks a state machine or a `unique:` property, the
-relation write fails. On PostgreSQL and SQLite nothing is written. On the
-file and memory stores the relation stays and the error is returned. The
-other outputs run after the relation is saved. Their errors and warnings,
-including `check` outputs, go to the server log, because a relation write
-has no result to carry them.
+A data-entry save that changes the entity and its relation fields in one
+request fires the rules after the entity is saved, so `{{new.*}}` reads the
+saved values.
+
+A `set` on a relation rule is part of the relation write, and it needs the
+writer's own permission to update the source. A permission to make the
+relation, including one from `relation_grants:`, does not cover it. For a
+relation from the entity as a whole, the writer needs that permission for
+every state the rule writes. Without it the relation write is refused with a
+403, as an update of the source would be. A `set` that is refused for
+another reason, for example because it breaks a state machine or a
+`unique:` property, also fails the relation write.
+
+A `check` output on a relation rule must have `severity: error`. A source
+that fails the check refuses the relation write with the check's message. A
+relation write has no result to carry a warning, so a warning check is a
+load error.
+
+On PostgreSQL and SQLite a refused relation write stores nothing. The file
+and memory stores cannot undo a write. There the relation is already saved
+when a rule refuses it: the relation stays and the error is returned.
+Remove the relation by hand if it should not exist.
+
+The other outputs run after the relation is saved. Their errors and warnings
+go to the server log.
 
 A rule whose outputs create the relation it watches would loop. rela stops
 the chain after 50 relation writes that fire a rule, counted over every

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -71,32 +72,20 @@ func watchesRelation(deps Deps, ev triggers.EventType, relType string) bool {
 	return deps.Automations != nil && deps.Automations.WatchesRelation(ev, relType)
 }
 
-// relationEvents collects the cascades of the relation events a write
-// raised when ctx carries no commit list to queue them on. The write's
-// entry point runs them after its transaction.
-type relationEvents struct{ later []func(context.Context) }
-
-// run runs the collected cascades on ctx after a write that stayed: one
-// that committed, or one that failed on a store that cannot roll back.
-func (r *relationEvents) run(ctx context.Context, deps Deps, err error) {
-	if err != nil && store.TxRollsBack(deps.Store) {
-		return
-	}
-	for _, fn := range r.later {
-		fn(ctx)
-	}
-	r.later = nil
-}
+// ErrRelationTriggerCheck refuses a relation write whose trigger raised an
+// error: a `check` of severity error that the source row fails, or an
+// output that cannot run as written.
+var ErrRelationTriggerCheck = errors.New("entitymanager: relation trigger refused the write")
 
 // fireRelationEvent raises ev for rel inside the write's transaction, on
 // view. The subject is the relation's source: the face row of a tailed
 // edge, or every row of the source family the caller may read for an
-// identity edge. Each row's `set` and `unset` outputs are written to that
-// row on view, so they commit or roll back with the relation. The rest of
-// each row's outputs run as a cascade after the commit.
+// identity edge. A trigger error refuses the write. Each row's `set` and
+// `unset` outputs are written to that row on view, after the caller's own
+// update authorization for the row, so they commit or roll back with the
+// relation. The rest of each row's outputs run as a cascade after the commit.
 func fireRelationEvent(
 	ctx context.Context, m *Manager, view store.Store, ev triggers.EventType, rel *entity.Relation,
-	events *relationEvents,
 ) error {
 	if !watchesRelation(m.deps, ev, rel.Type) {
 		return nil
@@ -107,21 +96,35 @@ func fireRelationEvent(
 	}
 	for _, row := range rows {
 		res := m.deps.Automations.Process(ctx, triggers.Event{Type: ev, Entity: row, OldEntity: row, Relation: rel})
+		where := entity.FormatStateRef(row.ID, row.Face)
+		if res.HasErrors() {
+			return fmt.Errorf("%w: %s trigger on %s: %s",
+				ErrRelationTriggerCheck, rel.Type, where, strings.Join(res.Errors, "; "))
+		}
 		subject := row
 		if res.HasWrites() {
+			if aErr := authorizeTriggerWrite(ctx, m, row); aErr != nil {
+				return aErr
+			}
 			if subject, err = writeRelationTriggerSet(ctx, m.deps, row, res); err != nil {
-				return fmt.Errorf("%s trigger on %s: %w", rel.Type, entity.FormatStateRef(row.ID, row.Face), err)
+				return fmt.Errorf("%s trigger on %s: %w", rel.Type, where, err)
 			}
 		}
-		if !hasCascadeWork(res) {
-			continue
-		}
-		cascade := relationCascade(ctx, m, subject, res, rel)
-		if !onCommit(ctx, cascade) {
-			events.later = append(events.later, cascade)
+		if hasCascadeWork(res) && !onCommit(ctx, relationCascade(ctx, m, subject, res, rel)) {
+			return errors.New("entitymanager: relation trigger outside a manager transaction")
 		}
 	}
 	return nil
+}
+
+// authorizeTriggerWrite asks whether the caller of m may update row, as
+// [Manager.AuthorizeUpdate] does. A trigger writes the source row on the
+// caller's behalf, and a relation grant does not cover that update.
+func authorizeTriggerWrite(ctx context.Context, m *Manager, row *entity.Entity) error {
+	if err := requireReadableRow(ctx, faceGateOf(m), row.ID, []*entity.Entity{row}); err != nil {
+		return err
+	}
+	return m.authorizeAndAudit(ctx, entityUpdateRequest(row.Type, row.Ref()))
 }
 
 // relationSourceRows reads the rows a relation event on rel fires for, on
@@ -153,8 +156,8 @@ func relationSourceRows(
 }
 
 // writeRelationTriggerSet applies the property writes of res to stored, a
-// row read on the transaction view ctx carries, and returns the row as written. It checks what an entity update
-// checks of an automation's values: computed, external-ref and file
+// row read on the transaction view ctx carries, and returns the row as
+// written. It checks what an entity update checks of an automation's values: computed, external-ref and file
 // properties are refused, structural validation errors refuse, and the
 // state machine judges the move from stored. Unique and write-enforced
 // rules run through [writeChecked], which joins view. The write is pinned
@@ -224,7 +227,7 @@ func setByCtx(ctx context.Context, setBy []string) context.Context {
 // hasCascadeWork reports whether res holds an output the cascade runs.
 func hasCascadeWork(res *triggers.Result) bool {
 	return len(res.RelationsToCreate) > 0 || len(res.EntitiesToCreate) > 0 || len(res.LuaToExecute) > 0 ||
-		len(res.PilesToPush) > 0 || len(res.Notifications) > 0 || len(res.Warnings) > 0 || len(res.Errors) > 0
+		len(res.PilesToPush) > 0 || len(res.Notifications) > 0 || len(res.Warnings) > 0
 }
 
 // relationCascade returns the cascade of one relation event, to run after
