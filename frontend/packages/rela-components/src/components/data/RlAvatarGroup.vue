@@ -12,22 +12,19 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    people: Array<{ name: string; src?: string }>
-    max?: number
-    size?: 'xs' | 'sm' | 'md' | 'lg'
-    label?: string
-  }>(),
-  { max: 3, size: 'sm', label: undefined },
-)
+const { people, max = 3, size = 'sm', label } = defineProps<{
+  people: Array<{ name: string; src?: string }>
+  max?: number
+  size?: 'xs' | 'sm' | 'md' | 'lg'
+  label?: string
+}>()
 
-const shown = computed(() => props.people.slice(0, props.max))
-const overflow = computed(() => Math.max(0, props.people.length - props.max))
+const shown = computed(() => people.slice(0, max))
+const overflow = computed(() => Math.max(0, people.length - max))
 
 const description = computed(() => {
-  const names = props.people.map((person) => person.name)
-  return `${props.label ?? messages.chromeText({ key: 'assignedTo' })}: ${names.join(', ')}`
+  const names = people.map((person) => person.name)
+  return `${label ?? messages.chromeText({ key: 'assignedTo' })}: ${names.join(', ')}`
 })
 </script>
 

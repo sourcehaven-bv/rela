@@ -23,7 +23,7 @@ import type { EntityType, FilterControl, FilterState } from '@/types'
  * takes its definition from the first. Nothing is read from it but
  * `properties`, so the rest is the first type's.
  */
-export function mergedEntityType(types: Array<EntityType | undefined>): EntityType | undefined {
+function mergedEntityType(types: Array<EntityType | undefined>): EntityType | undefined {
   const known = types.filter((t): t is EntityType => !!t)
   if (!known.length) return undefined
   const properties: EntityType['properties'] = {}
@@ -36,7 +36,7 @@ export function mergedEntityType(types: Array<EntityType | undefined>): EntityTy
  * controls only. A relation control is resolved by the list read of one entity
  * type, and a calendar or a gantt has no such type, so it is left out.
  */
-export function propertyControls(controls: FilterControl[] | undefined): FilterControl[] {
+function propertyControls(controls: FilterControl[] | undefined): FilterControl[] {
   return (controls ?? []).filter((c) => !!c.property && !c.relation)
 }
 

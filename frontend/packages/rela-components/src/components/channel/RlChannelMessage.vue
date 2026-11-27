@@ -83,29 +83,37 @@ import type {
 } from './types'
 import { useMessages, type ChannelTextKey } from '../../composables/useMessages'
 
-const props = withDefaults(
-  defineProps<{
-    message: ChannelMessageView
-    /** The message's type. Without it the properties show by name. */
-    messageType?: ChannelMessageTypeDef
-    presentation?: ChannelMessagePresentation
-    /** Enum labels and colours, keyed by enum type. */
-    enumOptions?: Record<string, ChannelEnumOption[]>
-    /** The link for a readable ref; without it a chip is a button. */
-    entityHref?: (ref: ChannelReadableRef) => string | undefined
-    /** Operations in flight, by `messagePendingKey`. */
-    pending?: ReadonlySet<string>
-    /** Whether the user may post a reply in this channel now. */
-    canReply?: boolean
-    /** The session decisions this row shows; see the header comment. */
-    decisions?: ChannelDecisionView[]
-    /** The reply buttons of this question's options; see the header comment. */
-    choices?: ChannelDecisionView[]
-    /** Where this question stands; see the header comment. */
-    question?: ChannelQuestionState
-  }>(),
-  { canReply: false },
-)
+const {
+  message,
+  messageType,
+  presentation,
+  enumOptions,
+  entityHref,
+  pending,
+  canReply = false,
+  decisions,
+  choices,
+  question,
+} = defineProps<{
+  message: ChannelMessageView
+  /** The message's type. Without it the properties show by name. */
+  messageType?: ChannelMessageTypeDef
+  presentation?: ChannelMessagePresentation
+  /** Enum labels and colours, keyed by enum type. */
+  enumOptions?: Record<string, ChannelEnumOption[]>
+  /** The link for a readable ref; without it a chip is a button. */
+  entityHref?: (ref: ChannelReadableRef) => string | undefined
+  /** Operations in flight, by `messagePendingKey`. */
+  pending?: ReadonlySet<string>
+  /** Whether the user may post a reply in this channel now. */
+  canReply?: boolean
+  /** The session decisions this row shows; see the header comment. */
+  decisions?: ChannelDecisionView[]
+  /** The reply buttons of this question's options; see the header comment. */
+  choices?: ChannelDecisionView[]
+  /** Where this question stands; see the header comment. */
+  question?: ChannelQuestionState
+}>()
 
 const emit = defineEmits<{
   reply: [seq: number]
@@ -128,29 +136,29 @@ const metaId = useId()
 const messages = useMessages()
 const t = (key: ChannelTextKey) => messages.channelText({ key })
 
-const allowed = computed(() => new Set(props.message.actions ?? []))
+const allowed = computed(() => new Set(message.actions ?? []))
 
 const fields = computed<ResolvedChannelField[]>(() => {
-  if (props.messageType) {
-    return resolveChannelFields(props.messageType, props.presentation).filter((f) => f.property.type !== 'file')
+  if (messageType) {
+    return resolveChannelFields(messageType, presentation).filter((f) => f.property.type !== 'file')
   }
   // An unknown type (the descriptor is reloading): show what arrived, by name.
-  return Object.keys(props.message.props ?? {})
+  return Object.keys(message.props ?? {})
     .sort()
     .map((name) => ({ property: { name, label: name, type: 'string' }, label: name, widget: 'text' }))
 })
 
-const choiceList = computed(() => props.choices ?? [])
+const choiceList = computed(() => choices ?? [])
 
 const root = useTemplateRef<HTMLElement>('root')
 /** The reader reopened the choices of an answered question. */
 const changing = ref(false)
 watch(
-  () => props.question?.answerSeq,
+  () => question?.answerSeq,
   () => (changing.value = false),
 )
 /** Shows the answer line in place of the choices. */
-const showAnswer = computed(() => !!props.question?.answered && !changing.value)
+const showAnswer = computed(() => !!question?.answered && !changing.value)
 const buttonsShown = computed(() => choiceList.value.length > 0 && !showAnswer.value)
 
 async function changeAnswer() {
@@ -161,8 +169,8 @@ async function changeAnswer() {
 
 /** The cards of `display: cards`, when the message type has their list. */
 const cards = computed(() => {
-  const c = props.presentation?.cards
-  return c && props.messageType?.properties.some((p) => p.name === c.items) ? c : undefined
+  const c = presentation?.cards
+  return c && messageType?.properties.some((p) => p.name === c.items) ? c : undefined
 })
 
 /**
@@ -171,15 +179,15 @@ const cards = computed(() => {
  * its other fields inform the choice.
  */
 const choicesFrom = computed(() => {
-  const from = buttonsShown.value ? props.messageType?.choices?.from : undefined
-  const prop = props.messageType?.properties.find((p) => p.name === from)
+  const from = buttonsShown.value ? messageType?.choices?.from : undefined
+  const prop = messageType?.properties.find((p) => p.name === from)
   return prop?.type === 'object' ? undefined : from
 })
 
 const shown = computed(() =>
   fields.value.filter(
     (f) =>
-      props.message.props?.[f.property.name] !== undefined &&
+      message.props?.[f.property.name] !== undefined &&
       f.property.name !== choicesFrom.value &&
       f.property.name !== cards.value?.items &&
       f.property.name !== cards.value?.body,
@@ -190,23 +198,23 @@ const shown = computed(() =>
 const prose = computed(
   () =>
     !cards.value &&
-    !!props.messageType &&
+    !!messageType &&
     fields.value.length === 1 &&
     fields.value[0]!.property.type === 'markdown' &&
-    props.messageType.actions.length === 0,
+    messageType.actions.length === 0,
 )
 
 const actionButtons = computed(() =>
-  (props.messageType?.actions ?? []).filter((a) => allowed.value.has(a.name)),
+  (messageType?.actions ?? []).filter((a) => allowed.value.has(a.name)),
 )
 
 const actionLabel = computed(() => {
-  const name = props.message.action?.name
+  const name = message.action?.name
   if (!name) return ''
-  return props.messageType?.actions.find((a) => a.name === name)?.label ?? name
+  return messageType?.actions.find((a) => a.name === name)?.label ?? name
 })
 
-const decisionList = computed(() => props.decisions ?? [])
+const decisionList = computed(() => decisions ?? [])
 
 /**
  * The ids that describe the decision group: the card's type label, if shown,
@@ -214,19 +222,19 @@ const decisionList = computed(() => props.decisions ?? [])
  * branch that renders the card head with `headId`; keep the two in step.
  */
 const decisionsDescribedBy = computed(() =>
-  [!prose.value && props.messageType ? headId : undefined, metaId].filter(Boolean).join(' '),
+  [!prose.value && messageType ? headId : undefined, metaId].filter(Boolean).join(' '),
 )
 
 const hasControls = computed(
   () =>
     decisionList.value.length > 0 ||
-    props.canReply ||
+    canReply ||
     actionButtons.value.length > 0 ||
     [...CHANNEL_OPERATIONS].some((op) => allowed.value.has(op)),
 )
 
 const noticeText = computed(() => {
-  const n = props.message.notice
+  const n = message.notice
   if (!n) return ''
   return n.reentry
     ? messages.channelSessionReentered({ state: n.toLabel })
@@ -234,7 +242,7 @@ const noticeText = computed(() => {
 })
 
 function isPending(op: string): boolean {
-  return props.pending?.has(messagePendingKey(props.message.seq, op)) ?? false
+  return pending?.has(messagePendingKey(message.seq, op)) ?? false
 }
 
 function isRef(v: ChannelPropValue): v is ChannelRef {
@@ -242,12 +250,12 @@ function isRef(v: ChannelPropValue): v is ChannelRef {
 }
 
 function enumOption(f: ResolvedChannelField, v: ChannelPropValue): ChannelEnumOption | undefined {
-  const opts = f.property.enum ? props.enumOptions?.[f.property.enum] : undefined
+  const opts = f.property.enum ? enumOptions?.[f.property.enum] : undefined
   return opts?.find((o) => o.value === v)
 }
 
 function plain(f: ResolvedChannelField, v: ChannelPropValue): string {
-  const text = props.message.text?.[f.property.name]
+  const text = message.text?.[f.property.name]
   if (text !== undefined) return text
   if (typeof v === 'boolean') return t(v ? 'yes' : 'no')
   if (Array.isArray(v)) return v.join(', ')
@@ -263,14 +271,14 @@ function itemFields(
   item: ChannelObjectItem,
   i: number,
 ): { name: string; label: string; text: string }[] {
-  const pre = props.message.itemText?.[prop.name]?.[i]
+  const pre = message.itemText?.[prop.name]?.[i]
   const defs: Pick<ChannelPropertyDef, 'name' | 'label' | 'enum'>[] =
     prop.fields ?? Object.keys(item).sort().map((name) => ({ name, label: name }))
   return defs
     .filter((d) => item[d.name] !== undefined)
     .map((d) => {
       const v = item[d.name]!
-      const opt = d.enum ? props.enumOptions?.[d.enum]?.find((o) => o.value === v) : undefined
+      const opt = d.enum ? enumOptions?.[d.enum]?.find((o) => o.value === v) : undefined
       const text =
         pre?.[d.name] ??
         opt?.label ??
@@ -280,7 +288,7 @@ function itemFields(
 }
 
 function hrefFor(v: ChannelRef): string | undefined {
-  return v.restricted ? undefined : props.entityHref?.(v)
+  return v.restricted ? undefined : entityHref?.(v)
 }
 </script>
 

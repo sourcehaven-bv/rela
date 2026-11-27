@@ -8,18 +8,11 @@ import type { FakeSnapshot } from './server'
 export {
   FakeServer,
   type FakeEvent,
-  type FakeStream,
   type FakeRequest,
   type FakeResponse,
-  type FakeServerOptions,
   type FakeSnapshot,
 } from './server'
-export {
-  fakeAdapter,
-  type FakeAdapter,
-  type FakeAdapterOptions,
-  type RecordedRequest,
-} from './adapter'
+export { fakeAdapter } from './adapter'
 export { fakeEventSource } from './eventSource'
 export { Gate } from './gate'
 export { INERT_ROUTES } from './inert'

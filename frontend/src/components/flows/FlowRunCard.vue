@@ -46,22 +46,24 @@ import {
   timelineEntries,
 } from './flowView'
 
-const props = withDefaults(
-  defineProps<{
-    run: FlowRun
-    /** The flow's subject type; links and the step form need it. */
-    subjectType?: string
-    /**
-     * Link the title to the run's own page. Only a reader who manages the run
-     * gets the link: the page adds nothing for anyone else, who sees the run's
-     * state and status on this card.
-     */
-    linkTitle?: boolean
-    /** Leave the flow label out; the run's own page already shows it as the page title. */
-    hideTitle?: boolean
-  }>(),
-  { subjectType: '', linkTitle: false, hideTitle: false }
-)
+const {
+  run,
+  subjectType = '',
+  linkTitle = false,
+  hideTitle = false,
+} = defineProps<{
+  run: FlowRun
+  /** The flow's subject type; links and the step form need it. */
+  subjectType?: string
+  /**
+   * Link the title to the run's own page. Only a reader who manages the run
+   * gets the link: the page adds nothing for anyone else, who sees the run's
+   * state and status on this card.
+   */
+  linkTitle?: boolean
+  /** Leave the flow label out; the run's own page already shows it as the page title. */
+  hideTitle?: boolean
+}>()
 
 const emit = defineEmits<{
   /** The run changed through this card. */
@@ -81,7 +83,7 @@ let controller: AbortController | null = null
 
 /** The full run when it has loaded for this id, else the prop. */
 const shown = computed<FlowRun>(() =>
-  detail.value && detail.value.id === props.run.id ? detail.value : props.run
+  detail.value && detail.value.id === run.id ? detail.value : run
 )
 
 async function reload() {
@@ -89,7 +91,7 @@ async function reload() {
   const ctl = new AbortController()
   controller = ctl
   try {
-    detail.value = await getFlowRun(props.run.id, ctl.signal)
+    detail.value = await getFlowRun(run.id, ctl.signal)
   } catch (err) {
     if (isCancelledFetch(err)) return
     if (shouldDropHeldContent(err)) {
@@ -106,10 +108,10 @@ async function reload() {
 // subject's list already sends it, also for a finished run, whose header
 // keeps its timeline.
 watch(
-  () => [props.run.id, props.run.generation, props.run.status],
+  () => [run.id, run.generation, run.status],
   () => {
     detail.value = null
-    if (props.run.active && props.run.log === undefined) void reload()
+    if (run.active && run.log === undefined) void reload()
   },
   { immediate: true }
 )
@@ -120,9 +122,7 @@ const places = computed(() => (shown.value.active ? (shown.value.parallel ?? [])
 const waiting = computed(() =>
   shown.value.active && places.value.length === 0 ? shown.value.waiting : undefined
 )
-const showStep = computed(
-  () => !!waiting.value && shown.value._actions.complete && !!props.subjectType
-)
+const showStep = computed(() => !!waiting.value && shown.value._actions.complete && !!subjectType)
 /** A reader with the step form open needs no line saying it waits for them. */
 const showWaiting = computed(() => !!waiting.value && (manage.value || !showStep.value))
 
@@ -134,7 +134,7 @@ const branches = computed(() =>
   places.value.map((place) => ({
     place,
     run: { ...shown.value, generation: place.generation, waiting: place.waiting },
-    showStep: !!place.waiting && place.complete && !!props.subjectType,
+    showStep: !!place.waiting && place.complete && !!subjectType,
   }))
 )
 
@@ -177,11 +177,11 @@ async function retry() {
   await act('retry', () => retryFlowRun(shown.value.id), t('flows.run.retried'))
 }
 
-async function act(kind: 'cancel' | 'retry', run: () => Promise<void>, done: string) {
+async function act(kind: 'cancel' | 'retry', request: () => Promise<void>, done: string) {
   if (busy.value) return
   busy.value = kind
   try {
-    await run()
+    await request()
     ui.success(done)
   } catch (err) {
     ui.error(getErrorMessage(err, t('flows.run.actionFailed')))

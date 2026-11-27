@@ -13,7 +13,7 @@
 import type { RouteLocationNormalizedLoaded, RouteRecordNameGeneric } from 'vue-router'
 
 /** A surface kind. Mirrors dataentryconfig.NextActionSurface. */
-export type NextActionSurface =
+type NextActionSurface =
   | 'dashboard'
   | 'list'
   | 'kanban'

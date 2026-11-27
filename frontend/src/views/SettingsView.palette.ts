@@ -6,12 +6,12 @@
 
 import type { PaletteConfig, PaletteColors, DarkPalette } from '@/api/settings'
 
-export type PaletteMode = 'regular' | 'light-dark'
+type PaletteMode = 'regular' | 'light-dark'
 
 // The 8 valid role keys, kept as a literal-typed const so iteration
 // over them is type-checked. A typo (e.g. 'acent') would be caught
 // at compile time rather than silently sent on the wire.
-export const PALETTE_ROLE_KEYS = [
+const PALETTE_ROLE_KEYS = [
   'base',
   'surface',
   'accent',
@@ -21,8 +21,6 @@ export const PALETTE_ROLE_KEYS = [
   'warning',
   'info',
 ] as const satisfies readonly (keyof PaletteColors)[]
-
-export type PaletteRoleKey = typeof PALETTE_ROLE_KEYS[number]
 
 export interface PaletteEditState {
   mode: PaletteMode

@@ -19,33 +19,30 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-withDefaults(
-  defineProps<{
-    title: string
-    fields: DetailField[]
-    description?: string[]
-    attachments?: Attachment[]
-    subtasks?: Task[]
-    showEmptyFieldsToggle?: boolean
-    emptyFieldsLabel?: string
-    /** Makes every detail field click-to-edit. */
-    editableFields?: boolean
-    /** Choices offered when a status field is being edited. */
-    statusOptions?: StatusOption[]
-    /** Choices offered when a single-tag field, such as a priority, is edited. */
-    tagOptions?: Tag[]
-  }>(),
-  {
-    description: () => [],
-    attachments: () => [],
-    subtasks: () => [],
-    showEmptyFieldsToggle: true,
-    emptyFieldsLabel: undefined,
-    editableFields: false,
-    statusOptions: () => [],
-    tagOptions: () => [],
-  },
-)
+const {
+  description = [],
+  attachments = [],
+  subtasks = [],
+  showEmptyFieldsToggle = true,
+  emptyFieldsLabel,
+  editableFields = false,
+  statusOptions = [],
+  tagOptions = [],
+} = defineProps<{
+  title: string
+  fields: DetailField[]
+  description?: string[]
+  attachments?: Attachment[]
+  subtasks?: Task[]
+  showEmptyFieldsToggle?: boolean
+  emptyFieldsLabel?: string
+  /** Makes every detail field click-to-edit. */
+  editableFields?: boolean
+  /** Choices offered when a status field is being edited. */
+  statusOptions?: StatusOption[]
+  /** Choices offered when a single-tag field, such as a priority, is edited. */
+  tagOptions?: Tag[]
+}>()
 
 const emit = defineEmits<{
   toggleEmptyFields: []

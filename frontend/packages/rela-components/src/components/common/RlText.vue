@@ -1,17 +1,21 @@
 <script setup lang="ts">
 /** Body and supporting text. Keeps size, tone and weight on the token scale. */
-withDefaults(
-  defineProps<{
-    as?: 'span' | 'p' | 'div' | 'dd'
-    size?: 'xs' | 'sm' | 'md' | 'lg'
-    tone?: 'default' | 'muted' | 'subtle'
-    weight?: 'normal' | 'medium' | 'semibold'
-    truncate?: boolean
-    /** Tabular figures, so digits line up down a column of numbers. */
-    numeric?: boolean
-  }>(),
-  { as: 'span', size: 'md', tone: 'default', weight: 'normal', truncate: false, numeric: false },
-)
+const {
+  as = 'span',
+  size = 'md',
+  tone = 'default',
+  weight = 'normal',
+  truncate = false,
+  numeric = false,
+} = defineProps<{
+  as?: 'span' | 'p' | 'div' | 'dd'
+  size?: 'xs' | 'sm' | 'md' | 'lg'
+  tone?: 'default' | 'muted' | 'subtle'
+  weight?: 'normal' | 'medium' | 'semibold'
+  truncate?: boolean
+  /** Tabular figures, so digits line up down a column of numbers. */
+  numeric?: boolean
+}>()
 </script>
 
 <template>

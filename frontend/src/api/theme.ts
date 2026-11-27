@@ -12,7 +12,7 @@ export interface UploadLogoResponse {
   logoUrl: string
 }
 
-export interface LogoUploadError extends Error {
+interface LogoUploadError extends Error {
   /** Server-reported maximum byte size, populated on 413 responses. */
   maxBytes?: number
 }

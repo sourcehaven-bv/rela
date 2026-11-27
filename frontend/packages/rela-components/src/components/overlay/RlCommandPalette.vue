@@ -40,31 +40,23 @@ export interface Command {
   disabled?: boolean
 }
 
-const props = withDefaults(
-  defineProps<{
-    open: boolean
-    commands: Command[]
-    placeholder?: string
-    /**
-     * Whether the palette narrows the list itself. On for a list held in
-     * memory; off where the caller is searching a server and `commands` is
-     * already the answer.
-     */
-    filter?: boolean
-    /** Shown when nothing matches. */
-    emptyLabel?: string
-    /** Names the dialog for a screen reader; the title is never drawn. */
-    title?: string
-  }>(),
-  {
-    placeholder: undefined,
-    filter: true,
-    emptyLabel: undefined,
-    title: undefined,
-  },
-)
+const { filter = true, title, commands, open } = defineProps<{
+  open: boolean
+  commands: Command[]
+  placeholder?: string
+  /**
+   * Whether the palette narrows the list itself. On for a list held in
+   * memory; off where the caller is searching a server and `commands` is
+   * already the answer.
+   */
+  filter?: boolean
+  /** Shown when nothing matches. */
+  emptyLabel?: string
+  /** Names the dialog for a screen reader; the title is never drawn. */
+  title?: string
+}>()
 
-const titleText = computed(() => props.title ?? messages.chromeText({ key: 'commandPalette' }))
+const titleText = computed(() => title ?? messages.chromeText({ key: 'commandPalette' }))
 
 const emit = defineEmits<{
   'update:open': [value: boolean]
@@ -79,8 +71,8 @@ const cursor = ref(0)
 const listRef = ref<HTMLElement | null>(null)
 
 const matches = computed(() => {
-  const enabled = props.commands
-  if (!props.filter) return enabled
+  const enabled = commands
+  if (!filter) return enabled
   const needle = query.value.trim().toLowerCase()
   if (!needle) return enabled
   return enabled.filter((command) =>
@@ -112,7 +104,7 @@ const active = computed(() => matches.value[cursor.value])
 
 /* A new query means a new list, so the cursor goes back to the top of it. */
 watch(
-  () => [query.value, props.commands] as const,
+  () => [query.value, commands] as const,
   () => {
     cursor.value = 0
     emit('update:query', query.value)
@@ -122,9 +114,9 @@ watch(
 /* Reopening starts clean: a palette that remembered the last query would
  * make the common case, typing something new, begin with a deletion. */
 watch(
-  () => props.open,
-  (open) => {
-    if (!open) return
+  () => open,
+  (isOpen) => {
+    if (!isOpen) return
     query.value = ''
     cursor.value = 0
   },

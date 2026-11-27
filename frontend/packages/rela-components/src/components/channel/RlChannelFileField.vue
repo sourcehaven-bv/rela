@@ -22,14 +22,11 @@ import RlFieldShell from '../form/RlFieldShell.vue'
 import type { ResolvedChannelField } from './channelFields'
 import { useMessages } from '../../composables/useMessages'
 
-const props = withDefaults(
-  defineProps<{
-    field: ResolvedChannelField
-    files: File[]
-    error?: string
-  }>(),
-  { error: undefined },
-)
+const { field, files, error } = defineProps<{
+  field: ResolvedChannelField
+  files: File[]
+  error?: string
+}>()
 
 const emit = defineEmits<{
   'update:files': [files: File[]]
@@ -38,7 +35,7 @@ const emit = defineEmits<{
 const messages = useMessages()
 const input = useTemplateRef<HTMLInputElement>('input')
 
-const p = computed(() => props.field.property)
+const p = computed(() => field.property)
 const multiple = computed(() => (p.value.max ?? 1) > 1)
 
 /** The picker's filter. `default-safe` names the server's preset, not a type. */
@@ -48,7 +45,7 @@ const accept = computed(() => {
 })
 
 const label = computed(() =>
-  props.field.placeholder ?? messages.channelText({ key: multiple.value ? 'chooseFiles' : 'chooseFile' }),
+  field.placeholder ?? messages.channelText({ key: multiple.value ? 'chooseFiles' : 'chooseFile' }),
 )
 
 function open() {
@@ -62,13 +59,13 @@ function onChange() {
   // Cleared, so picking the same file again after removing it fires change.
   el.value = ''
   if (!picked.length) return
-  emit('update:files', multiple.value ? [...props.files, ...picked] : picked.slice(0, 1))
+  emit('update:files', multiple.value ? [...files, ...picked] : picked.slice(0, 1))
 }
 
 function remove(i: number) {
   emit(
     'update:files',
-    props.files.filter((_, j) => j !== i),
+    files.filter((_, j) => j !== i),
   )
 }
 </script>

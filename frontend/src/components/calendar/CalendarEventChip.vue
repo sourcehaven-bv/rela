@@ -39,7 +39,9 @@ const { t } = useI18n()
  * makes a conference indistinguishable from a daily standup. The arrows say
  * "this continues": `→` it runs on, `←` it began earlier, `↔` both.
  */
-const span = computed<'single' | 'start' | 'middle' | 'end'>(() => {
+type Span = 'single' | 'start' | 'middle' | 'end'
+
+const span = computed<Span>(() => {
   const { startDay, endDay } = props.event
   if (compareDays(startDay, endDay) === 0) return 'single'
   if (sameDay(props.day, startDay)) return 'start'
@@ -47,31 +49,25 @@ const span = computed<'single' | 'start' | 'middle' | 'end'>(() => {
   return 'middle'
 })
 
-const spanMarker = computed(() => {
-  switch (span.value) {
-    case 'start':
-      return '→'
-    case 'end':
-      return '←'
-    case 'middle':
-      return '↔'
-    default:
-      return ''
-  }
-})
+const SPAN_MARKERS = {
+  single: '',
+  start: '→',
+  end: '←',
+  middle: '↔',
+} satisfies Record<Span, string>
+
+const SPAN_DESCRIPTION_KEYS: Partial<Record<Span, string>> = {
+  start: 'calendar.continuesAfter',
+  end: 'calendar.continuedFrom',
+  middle: 'calendar.continuesBoth',
+}
+
+const spanMarker = computed(() => SPAN_MARKERS[span.value])
 
 /** Spoken by screen readers in place of the arrow, which is decorative. */
 const spanDescription = computed(() => {
-  switch (span.value) {
-    case 'start':
-      return t('calendar.continuesAfter')
-    case 'end':
-      return t('calendar.continuedFrom')
-    case 'middle':
-      return t('calendar.continuesBoth')
-    default:
-      return ''
-  }
+  const key = SPAN_DESCRIPTION_KEYS[span.value]
+  return key ? t(key) : ''
 })
 
 defineEmits<{

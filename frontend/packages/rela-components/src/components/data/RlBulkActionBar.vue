@@ -20,25 +20,22 @@
 import RlIconButton from '../common/RlIconButton.vue'
 import { useMessages } from '../../composables/useMessages'
 
-const props = withDefaults(
-  defineProps<{
-    /** How many rows are selected. Zero hides the bar. */
-    count: number
-    /**
-     * What the count is counting, singular. Pluralised with a trailing `s`
-     * unless `pluralLabel` says otherwise.
-     */
-    label?: string
-    /** The plural, where adding `s` gets it wrong. */
-    pluralLabel?: string
-    /**
-     * Whether to offer clearing the selection. On by default: a user who
-     * selected by mistake needs a way back that is not unticking each row.
-     */
-    clearable?: boolean
-  }>(),
-  { label: 'item', pluralLabel: undefined, clearable: true },
-)
+const { count, label = 'item', pluralLabel, clearable = true } = defineProps<{
+  /** How many rows are selected. Zero hides the bar. */
+  count: number
+  /**
+   * What the count is counting, singular. Pluralised with a trailing `s`
+   * unless `pluralLabel` says otherwise.
+   */
+  label?: string
+  /** The plural, where adding `s` gets it wrong. */
+  pluralLabel?: string
+  /**
+   * Whether to offer clearing the selection. On by default: a user who
+   * selected by mistake needs a way back that is not unticking each row.
+   */
+  clearable?: boolean
+}>()
 
 const emit = defineEmits<{
   /** The selection should be emptied. */
@@ -54,9 +51,9 @@ const messages = useMessages()
 
 const tally = () =>
   messages.selectedCount({
-    count: props.count,
-    noun: props.label,
-    pluralNoun: props.pluralLabel,
+    count,
+    noun: label,
+    pluralNoun: pluralLabel,
   })
 </script>
 

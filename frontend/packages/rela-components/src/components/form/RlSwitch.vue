@@ -19,37 +19,27 @@
 import { computed } from 'vue'
 import RlFieldShell from './RlFieldShell.vue'
 
-const props = withDefaults(
-  defineProps<{
-    modelValue?: boolean
-    label: string
-    hint?: string
-    error?: string
-    disabled?: boolean
-    labelHidden?: boolean
-    /**
-     * Whether the change is in flight. Holds the current position and blocks
-     * further presses, so a slow save cannot be queued up twice.
-     */
-    pending?: boolean
-    size?: 'sm' | 'md'
-  }>(),
-  {
-    modelValue: false,
-    disabled: false,
-    labelHidden: false,
-    pending: false,
-    size: 'md',
-  },
-)
+const { disabled = false, labelHidden = false, pending = false, size = 'md' } = defineProps<{
+  label: string
+  hint?: string
+  error?: string
+  disabled?: boolean
+  labelHidden?: boolean
+  /**
+   * Whether the change is in flight. Holds the current position and blocks
+   * further presses, so a slow save cannot be queued up twice.
+   */
+  pending?: boolean
+  size?: 'sm' | 'md'
+}>()
 
-const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
+const model = defineModel<boolean>({ default: false })
 
-const locked = computed(() => props.disabled || props.pending)
+const locked = computed(() => disabled || pending)
 
 function toggle() {
   if (locked.value) return
-  emit('update:modelValue', !props.modelValue)
+  model.value = !model.value
 }
 
 /*
@@ -78,13 +68,13 @@ function onKeydown(event: KeyboardEvent) {
         :class="[
           `rl-switch--${size}`,
           {
-            'rl-switch--on': modelValue,
+            'rl-switch--on': model,
             'rl-switch--locked': locked,
             'rl-switch--pending': pending,
           },
         ]"
         role="switch"
-        :aria-checked="modelValue"
+        :aria-checked="model"
         :aria-describedby="describedBy"
         :aria-invalid="invalid || undefined"
         :disabled="locked"

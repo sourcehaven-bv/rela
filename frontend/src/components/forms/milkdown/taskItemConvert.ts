@@ -51,13 +51,13 @@ type TaskItemConvertMeta = { refresh: true } | { mark: BusyMark } | { clear: num
 
 let nextBusyToken = 1
 
-export const taskItemConvertKey = new PluginKey<TaskItemConvertState>('rela-task-item-convert')
+const taskItemConvertKey = new PluginKey<TaskItemConvertState>('rela-task-item-convert')
 
 /**
  * The text of an item's own line: its first paragraph, with references as
  * their ids and whitespace collapsed. Nested items are not part of it.
  */
-export function taskItemText(item: ProseNode): string {
+function taskItemText(item: ProseNode): string {
   const para = item.firstChild
   if (!para || para.type.name !== 'paragraph') return ''
   const text = para.textBetween(0, para.content.size, ' ', (leaf) =>
@@ -84,7 +84,7 @@ function hasOwnText(item: ProseNode): boolean {
  * text. Several, or none, is null: guessing would mark a line the user did
  * not convert. From then on the mark, not this search, names the item.
  */
-export function findTaskItem(doc: ProseNode, target: TaskItemTarget): number | null {
+function findTaskItem(doc: ProseNode, target: TaskItemTarget): number | null {
   const at = target.pos >= 0 && target.pos < doc.content.size ? doc.nodeAt(target.pos) : null
   if (at && isTaskItem(at) && taskItemText(at) === target.text) return target.pos
   const matches: number[] = []

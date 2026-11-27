@@ -42,16 +42,16 @@ import type { ByteSpan } from '@/api/comments'
 import { t } from '@/i18n'
 
 /** The tag used for a highlight. Must be allowlisted in the sanitiser config. */
-export const HIGHLIGHT_TAG = 'mark'
+const HIGHLIGHT_TAG = 'mark'
 
 /** Attribute carrying the comment id, so a click can open the right thread. */
-export const HIGHLIGHT_ID_ATTR = 'data-comment-id'
+const HIGHLIGHT_ID_ATTR = 'data-comment-id'
 
 /** Attribute set when the anchor resolved below the exact-match band. */
-export const HIGHLIGHT_UNCERTAIN_ATTR = 'data-comment-uncertain'
+const HIGHLIGHT_UNCERTAIN_ATTR = 'data-comment-uncertain'
 
 /** Attribute marking the chip that opens a thread for a link highlight. */
-export const HIGHLIGHT_CHIP_ATTR = 'data-comment-chip'
+const HIGHLIGHT_CHIP_ATTR = 'data-comment-chip'
 
 /** A resolved range to mark. Offsets are BYTES into the source body. */
 export interface HighlightRange {

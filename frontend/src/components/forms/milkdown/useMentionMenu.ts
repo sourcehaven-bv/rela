@@ -57,7 +57,7 @@ export type MentionChoice = { kind: 'type'; name: string } | { kind: 'entity'; e
  * the same row or it does not resolve at all, and `highlightedIndex()` falls
  * back to the first row rather than inventing a selection.
  */
-export type MentionHighlight =
+type MentionHighlight =
   { kind: 'type'; name: string } | { kind: 'entity'; id: string } | null
 
 /** The SPA menu's state: the shared snapshot plus what the plan decided. */

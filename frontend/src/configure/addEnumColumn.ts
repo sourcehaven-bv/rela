@@ -35,7 +35,7 @@ export interface AddColumnTarget {
  * Why the edit cannot be made. `exists` carries the existing column's name.
  * `unsupported` means the property is not an inline enum in this snapshot.
  */
-export type AddColumnRefusal =
+type AddColumnRefusal =
   { reason: 'no_name' } | { reason: 'exists'; name: string } | { reason: 'unsupported' }
 
 export type AddColumnEdit = { value: string; draft: ConfigDraftBody } | AddColumnRefusal

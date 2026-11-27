@@ -9,23 +9,20 @@
 import { computed } from 'vue'
 import RlIcon from '../common/RlIcon.vue'
 
-const props = withDefaults(
-  defineProps<{
-    name?: string
-    src?: string
-    size?: 'xs' | 'sm' | 'md' | 'lg'
-    /**
-     * Hides the avatar from screen readers. Correct when the name is already
-     * written beside it, which is the common case in a list.
-     */
-    decorative?: boolean
-  }>(),
-  { size: 'md', decorative: false },
-)
+const { name, src, size = 'md', decorative = false } = defineProps<{
+  name?: string
+  src?: string
+  size?: 'xs' | 'sm' | 'md' | 'lg'
+  /**
+   * Hides the avatar from screen readers. Correct when the name is already
+   * written beside it, which is the common case in a list.
+   */
+  decorative?: boolean
+}>()
 
 /** At most two letters: more does not fit and stops reading as initials. */
 const initials = computed(() =>
-  (props.name ?? '')
+  (name ?? '')
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
@@ -36,9 +33,9 @@ const initials = computed(() =>
 const palette = ['grey', 'blue', 'green', 'amber', 'red', 'purple'] as const
 
 const swatch = computed(() => {
-  if (!props.name) return 'grey'
+  if (!name) return 'grey'
   // Sum of code points: stable across sessions and cheap, which is all it needs.
-  const hash = [...props.name].reduce((total, char) => total + char.charCodeAt(0), 0)
+  const hash = [...name].reduce((total, char) => total + char.charCodeAt(0), 0)
   return palette[hash % palette.length]
 })
 </script>

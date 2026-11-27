@@ -14,36 +14,33 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    modelValue?: string
-    label?: string
-    placeholder?: string
-    /** Milliseconds to wait after the last keystroke. */
-    debounce?: number
-    size?: 'sm' | 'md'
-    disabled?: boolean
-    /** Announced result count, such as `12 results`. */
-    resultText?: string
-  }>(),
-  {
-    modelValue: '',
-    label: undefined,
-    placeholder: undefined,
-    debounce: 250,
-    size: 'md',
-    disabled: false,
-  },
-)
+const model = defineModel<string>({ default: '' })
+
+const {
+  label,
+  placeholder,
+  debounce = 250,
+  size = 'md',
+  disabled = false,
+  resultText,
+} = defineProps<{
+  label?: string
+  placeholder?: string
+  /** Milliseconds to wait after the last keystroke. */
+  debounce?: number
+  size?: 'sm' | 'md'
+  disabled?: boolean
+  /** Announced result count, such as `12 results`. */
+  resultText?: string
+}>()
 
 const emit = defineEmits<{
-  'update:modelValue': [value: string]
   /** Fires after the debounce, or at once on clear and Enter. */
   search: [value: string]
 }>()
 
 const input = ref<HTMLInputElement | null>(null)
-const draft = ref(props.modelValue)
+const draft = ref(model.value)
 let timer: ReturnType<typeof setTimeout> | undefined
 
 /*
@@ -51,7 +48,7 @@ let timer: ReturnType<typeof setTimeout> | undefined
  * slow response arriving late would overwrite what they have since typed.
  */
 watch(
-  () => props.modelValue,
+  () => model.value,
   (value) => {
     if (!timer) draft.value = value
   },
@@ -60,7 +57,7 @@ watch(
 function commit(value: string) {
   clearTimeout(timer)
   timer = undefined
-  emit('update:modelValue', value)
+  model.value = value
   emit('search', value)
 }
 
@@ -68,7 +65,7 @@ function onInput(event: Event) {
   const value = (event.target as HTMLInputElement).value
   draft.value = value
   clearTimeout(timer)
-  timer = setTimeout(() => commit(value), props.debounce)
+  timer = setTimeout(() => commit(value), debounce)
 }
 
 function clear() {

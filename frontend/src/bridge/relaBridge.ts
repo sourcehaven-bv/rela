@@ -76,7 +76,7 @@ function optPage(params: Record<string, unknown>): number | undefined {
   return v
 }
 
-export class BridgeError extends Error {
+class BridgeError extends Error {
   constructor(
     public code: string,
     message: string,

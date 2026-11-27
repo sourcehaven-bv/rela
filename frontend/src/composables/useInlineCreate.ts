@@ -7,7 +7,7 @@ import { workspaceReadOnly } from '@/api/workspaceReadOnly'
  * nothing has provided it) means "top-level form"; a nested create modal
  * provides depth + 1.
  */
-export const INLINE_CREATE_DEPTH = Symbol('inlineCreateDepth')
+const INLINE_CREATE_DEPTH = Symbol('inlineCreateDepth')
 
 /**
  * Deepest level at which the inline-create affordance is offered. At depth 0

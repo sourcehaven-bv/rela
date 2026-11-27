@@ -1,4 +1,4 @@
-import type { DotColor, StatusColor } from 'rela-components/types'
+import type { DotColor } from 'rela-components/types'
 import type { ColorName } from '@/types/config'
 
 /**
@@ -53,7 +53,7 @@ export function styleSwatch(cls: string | undefined): StyleSwatch | undefined {
 }
 
 /** The key a value is styled under, normalized the way Badge.vue always has. */
-export function styleKey(value: unknown): string {
+function styleKey(value: unknown): string {
   return String(value).toLowerCase().replace(/\s/g, '_')
 }
 
@@ -129,7 +129,7 @@ export function styleBarColor(cls: string | undefined): string | undefined {
 }
 
 /** The solid CSS colour a status dot of this colour shows. */
-export function dotColorVar(status: DotColor | undefined): string | undefined {
+function dotColorVar(status: DotColor | undefined): string | undefined {
   if (!status) return undefined
   if (status.startsWith('--rl-')) return `var(${status})`
   // The dots paint purple with the accent, as the purple badge does.
@@ -144,7 +144,7 @@ export function dotColorVar(status: DotColor | undefined): string | undefined {
  * names in ColorNames (internal/dataentryconfig/colors.go), and
  * TestColorNamesMatchSPA pins the two.
  */
-export const NAMED_COLORS = {
+const NAMED_COLORS = {
   grey: 'grey',
   gray: 'grey',
   slate: 'grey',
@@ -170,4 +170,4 @@ export function namedColorVar(name: string | undefined): string | undefined {
   return dotColorVar(namedColor(name))
 }
 
-export type { DotColor, StatusColor }
+export type { DotColor }

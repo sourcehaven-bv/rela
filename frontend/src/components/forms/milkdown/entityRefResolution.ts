@@ -26,7 +26,7 @@ export interface ResolverHandle {
   resolver: EntityRefResolver | undefined
 }
 
-export const entityRefResolutionKey = new PluginKey('rela-entity-ref-resolution')
+const entityRefResolutionKey = new PluginKey('rela-entity-ref-resolution')
 
 /**
  * Attributes a resolver contributes to an `entityRef` node.

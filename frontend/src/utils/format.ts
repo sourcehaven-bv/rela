@@ -11,7 +11,7 @@ import { intlLocale } from '@/i18n/locale'
 import { decimalText, parseDecimal } from './decimal'
 import { t } from '@/i18n'
 
-export const DATE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
+const DATE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
   year: 'numeric',
   month: 'short',
   day: 'numeric',
@@ -66,7 +66,7 @@ const currencyDigitCache = new Map<string, number>()
  * The number of minor-unit digits of an ISO 4217 currency: 2 for EUR, 0 for
  * JPY, 3 for KWD. Intl knows the table; the locale does not change it.
  */
-export function currencyDigits(currency: string): number {
+function currencyDigits(currency: string): number {
   let d = currencyDigitCache.get(currency)
   if (d === undefined) {
     try {

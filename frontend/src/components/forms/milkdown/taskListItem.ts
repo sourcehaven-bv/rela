@@ -206,7 +206,7 @@ class TaskListItemView implements NodeView {
  * GFM preset extends with `checked` — there is no separate task-item node type.
  * Non-task items return no view and keep the preset's rendering.
  */
-export const taskListItemView = $view(listItemSchema.node, () => {
+const taskListItemView = $view(listItemSchema.node, () => {
   // ProseMirror accepts a null return to mean "no custom view, use toDOM", but
   // `NodeViewConstructor` types the result as non-nullable. The cast is on the
   // CONSTRUCTOR rather than on a fake view object, so no code downstream is
@@ -279,7 +279,7 @@ function selectedListItems(state: EditorView['state']): Array<{ pos: number; nod
  * task item from anywhere. Splitting that into "make a list, then press again"
  * would be a worse button than the bullet-list one beside it.
  */
-export const toggleTaskListCommand = $command(TOGGLE_TASK_LIST_COMMAND, () => (): Command => {
+const toggleTaskListCommand = $command(TOGGLE_TASK_LIST_COMMAND, () => (): Command => {
   return (state, dispatch) => {
     const items = selectedListItems(state)
 

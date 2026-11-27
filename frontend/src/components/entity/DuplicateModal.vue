@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ownLookup } from '@/utils/ownLookup'
 /**
  * DuplicateModal — copy an entity, choosing which relations come with it
  * (TKT-Z8K2FS).
@@ -121,23 +122,18 @@ const omittedNotices = computed(() =>
   (prefill.value?.omitted ?? []).filter((o) => o.reason !== 'not-configured')
 )
 
+const OMITTED_REASON_KEYS: Partial<Record<string, string>> = {
+  redacted: 'entity.duplicate.omitted.redacted',
+  file: 'entity.duplicate.omitted.file',
+  'external-ref': 'entity.duplicate.omitted.externalRef',
+  'state-machine': 'entity.duplicate.omitted.stateMachine',
+  'self-loop': 'entity.duplicate.omitted.selfLoop',
+  'untyped-peer': 'entity.duplicate.omitted.untypedPeer',
+}
+
 function omittedReasonLabel(reason: string): string {
-  switch (reason) {
-    case 'redacted':
-      return t('entity.duplicate.omitted.redacted')
-    case 'file':
-      return t('entity.duplicate.omitted.file')
-    case 'external-ref':
-      return t('entity.duplicate.omitted.externalRef')
-    case 'state-machine':
-      return t('entity.duplicate.omitted.stateMachine')
-    case 'self-loop':
-      return t('entity.duplicate.omitted.selfLoop')
-    case 'untyped-peer':
-      return t('entity.duplicate.omitted.untypedPeer')
-    default:
-      return reason
-  }
+  const key = ownLookup(OMITTED_REASON_KEYS, reason)
+  return key ? t(key) : reason
 }
 
 /**

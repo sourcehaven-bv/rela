@@ -14,14 +14,14 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(defineProps<{ tags: Tag[]; max?: number }>(), { max: 2 })
+const { tags, max = 2 } = defineProps<{ tags: Tag[]; max?: number }>()
 
-const shown = () => props.tags.slice(0, props.max)
-const hidden = () => props.tags.length - props.max
+const shown = () => tags.slice(0, max)
+const hidden = () => tags.length - max
 /** Named in full, so the count is not the only way to know what is hidden. */
 const hiddenLabel = () =>
-  props.tags
-    .slice(props.max)
+  tags
+    .slice(max)
     .map((tag) => tag.label)
     .join(', ')
 </script>

@@ -25,63 +25,61 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    section: Section<T>
-    addLabel?: string
-    selectedId?: string
-    /** Whether the column offers its add control. */
-    showAdd?: boolean
-    /**
-     * What to say when the column has no cards. Without it an empty column
-     * draws its heading and then nothing, which reads as a column that failed
-     * to load rather than one that is genuinely empty.
-     *
-     * It also gives the column back the height a drop needs. A board whose
-     * cards move is asking the user to aim at the empty column above all
-     * others, and a 4px strip under a heading is not a target.
-     *
-     * A column with cards ignores it, so it can be set once for the whole
-     * board rather than per column.
-     */
-    emptyLabel?: string
-    /** A line under `emptyLabel`, for what would put a card here. */
-    emptyDescription?: string
-    /**
-     * Whether a given card may be dragged out of this column. Absent, the
-     * column has no drag at all, which is what a board that never moves a
-     * card wants and what every existing caller already gets.
-     */
-    canMove?: (item: T) => boolean
-    /** The card the keyboard has picked up, if it is in this column. */
-    grabbedId?: string
-    /** Whether a keyboard move is in flight, so the column shows as a target. */
-    keyboardTarget?: boolean
-    /** Whether a drop reports where among the cards it landed. See `RlBoard`. */
-    reorder?: boolean
-    /** Whether the heading offers a control that collapses the column. */
-    collapsible?: boolean
-    /** Whether a card dropped on another card's middle groups. See `RlBoard`. */
-    group?: boolean
-    /**
-     * Whether this column can be dragged by its handle, and other movable
-     * columns dropped beside it. See `sectionsMovable` on `RlBoard`.
-     */
-    movable?: boolean
-  }>(),
-  {
-    collapsible: false,
-    group: false,
-    movable: false,
-    reorder: false,
-    showAdd: true,
-    canMove: undefined,
-    grabbedId: undefined,
-    keyboardTarget: false,
-    emptyLabel: undefined,
-    emptyDescription: undefined,
-  }
-)
+const {
+  section,
+  showAdd = true,
+  emptyLabel,
+  emptyDescription,
+  canMove,
+  grabbedId,
+  keyboardTarget = false,
+  reorder = false,
+  collapsible = false,
+  group = false,
+  movable = false,
+} = defineProps<{
+  section: Section<T>
+  addLabel?: string
+  selectedId?: string
+  /** Whether the column offers its add control. */
+  showAdd?: boolean
+  /**
+   * What to say when the column has no cards. Without it an empty column
+   * draws its heading and then nothing, which reads as a column that failed
+   * to load rather than one that is genuinely empty.
+   *
+   * It also gives the column back the height a drop needs. A board whose
+   * cards move is asking the user to aim at the empty column above all
+   * others, and a 4px strip under a heading is not a target.
+   *
+   * A column with cards ignores it, so it can be set once for the whole
+   * board rather than per column.
+   */
+  emptyLabel?: string
+  /** A line under `emptyLabel`, for what would put a card here. */
+  emptyDescription?: string
+  /**
+   * Whether a given card may be dragged out of this column. Absent, the
+   * column has no drag at all, which is what a board that never moves a
+   * card wants and what every existing caller already gets.
+   */
+  canMove?: (item: T) => boolean
+  /** The card the keyboard has picked up, if it is in this column. */
+  grabbedId?: string
+  /** Whether a keyboard move is in flight, so the column shows as a target. */
+  keyboardTarget?: boolean
+  /** Whether a drop reports where among the cards it landed. See `RlBoard`. */
+  reorder?: boolean
+  /** Whether the heading offers a control that collapses the column. */
+  collapsible?: boolean
+  /** Whether a card dropped on another card's middle groups. See `RlBoard`. */
+  group?: boolean
+  /**
+   * Whether this column can be dragged by its handle, and other movable
+   * columns dropped beside it. See `sectionsMovable` on `RlBoard`.
+   */
+  movable?: boolean
+}>()
 
 const emit = defineEmits<{
   add: [section: Section<T>]
@@ -105,19 +103,19 @@ const handle = ref<HTMLElement>()
 
 const { over, sectionEdge } = useDropTargetColumn({
   element,
-  data: computed(() => ({ sectionId: props.section.id })),
-  onDrop: (drag, at) => emit('drop', { drag, section: props.section, at }),
-  reorder: computed(() => props.reorder),
-  group: computed(() => props.group),
-  acceptsSection: computed(() => props.movable),
+  data: computed(() => ({ sectionId: section.id })),
+  onDrop: (drag, at) => emit('drop', { drag, section, at }),
+  reorder: computed(() => reorder),
+  group: computed(() => group),
+  acceptsSection: computed(() => movable),
   onSectionDrop: (move) => emit('moveSection', move),
 })
 
 const { dragging: sectionDragging } = useDraggableSection({
   element,
   handle,
-  enabled: computed(() => props.movable),
-  sectionId: computed(() => props.section.id),
+  enabled: computed(() => movable),
+  sectionId: computed(() => section.id),
 })
 
 /*
@@ -126,14 +124,14 @@ const { dragging: sectionDragging } = useDraggableSection({
  * its tag background; a palette property is used as it is.
  */
 const tint = computed(() => {
-  const color = props.section.color
+  const color = section.color
   if (!color) return undefined
   if (color.startsWith('--rl-')) return `var(${color})`
   return `var(--rl-tag-${color}-bg)`
 })
 
 /** Whether the column is lit as a place the held card could land. */
-const target = computed(() => over.value || props.keyboardTarget)
+const target = computed(() => over.value || keyboardTarget)
 
 /*
  * Named rather than inline, because an inline handler inside `v-for` is

@@ -36,167 +36,166 @@ import type {
 } from './types'
 import RlTableSection from './RlTableSection.vue'
 
-const props = withDefaults(
-  defineProps<{
-    sections: Section<T>[]
-    columns?: TableColumn[]
-    showHeaderRow?: boolean
-    /** Id of the item whose detail is open, marked in the list. */
-    selectedId?: string
-    /**
-     * Id of the item the keyboard cursor is on, for a list driven by `j`/`k`
-     * or the arrow keys.
-     *
-     * The third of three independent row states, and the reason it needs its
-     * own prop: `selectedIds` is what a bulk action would apply to,
-     * `selectedId` is the row whose detail is open, and this is the row the
-     * next keystroke acts on. A reader can move the cursor down the list
-     * while the panel stays where it is, then press Enter to bring the panel
-     * to the cursor — two positions that are genuinely separate until that
-     * press, so one prop cannot carry both.
-     *
-     * Marked with a ring rather than a fill, since all three states can land
-     * on one row at once.
-     *
-     * The table paints the cursor and announces it; moving it is the
-     * caller's, because what `j` means at the end of a section — stop, wrap,
-     * or cross into the next one — depends on the list, not on the table.
-     * Keep DOM focus on the grid and change this prop; the row is named
-     * through `aria-activedescendant`, so a screen reader follows the cursor
-     * without focus moving row to row.
-     */
-    cursorId?: string
-    /** Rows each section shows before the rest go behind "show more". */
-    pageSize?: number
-    /** Label for each section's add control, such as `Add task`. */
-    addLabel?: string
-    /**
-     * Header for the flexible first column, which holds each row's title.
-     * Defaults to `Name`.
-     */
-    nameLabel?: string
-    /**
-     * The first column described as a column, when it needs to sort. Its
-     * `header` replaces `nameLabel`, and its `key` is what `sort` and
-     * `sort-click` carry for it.
-     */
-    nameColumn?: TableColumn
-    /**
-     * Whether each section shows its own header. A flat list is one unnamed
-     * section, where a heading, a count, a collapse toggle and an "Add to"
-     * button all describe a grouping the caller does not have.
-     *
-     * Hiding it also moves the column header to the top of the scroll area.
-     * Left where it was, it would float over the first row and take its
-     * clicks: the row stays visible and correctly marked up, and is
-     * unpressable.
-     */
-    showSectionHeader?: boolean
-    /**
-     * Whether a section offers a way to add a row. Off hides both controls
-     * at once: the "Add to" button in a section header and the one at the
-     * foot of its list are the same affordance in two places.
-     *
-     * For a list that refuses creation, whether because of a permission or
-     * because the list has no form to create with. A control that emits an
-     * event nothing can act on is worse than no control. This is the same
-     * prop, with the same name and default, that the boards take.
-     */
-    showAdd?: boolean
-    /**
-     * What a section says when it has no rows. Without it an empty section
-     * draws its header and then nothing, which reads as a failure to load
-     * rather than an empty list. Sections with rows ignore it.
-     */
-    emptyLabel?: string
-    /** A line under `emptyLabel`, for what would put a row here. */
-    emptyDescription?: string
-    /**
-     * Current sort, primary key first. Mark a column `sortable` to give it
-     * the control; the sort itself is the caller's, since a collection of
-     * any size sorts on the server.
-     */
-    sort?: TableSort[]
-    /**
-     * Ids of the checked rows. Passing this — even empty — turns on the
-     * select column; leaving it off keeps the plain list.
-     *
-     * Separate from `selectedId`, which marks the one row whose detail is
-     * open, and from `cursorId`, which marks the row the keyboard is on. A
-     * table can have all three: three rows checked for a bulk action, a
-     * fourth open in the panel, and the cursor resting on a fifth.
-     */
-    selectedIds?: Set<string> | string[]
-    /**
-     * Which columns are showing, keyed by `TableColumn.key`. Absent from the
-     * record means visible, so `{}` shows everything.
-     *
-     * State rather than a flag on the column, so one record serves a columns
-     * menu and a saved view at once.
-     *
-     * Fitting a narrow pane is not what this is for. The table reshapes its
-     * rows on its own once it is too narrow for fixed columns — see `compact`
-     * — measuring itself rather than the window, so a caller does not have to
-     * hide columns to stay readable beside an open detail panel. Use this to
-     * drop a column the user does not want to see, which is a different
-     * question from whether it fits.
-     */
-    columnVisibility?: ColumnVisibility
-    /**
-     * What the table does once it is too narrow for its fixed columns.
-     *
-     * `stack` gives each populated cell its own labelled line under the
-     * title, so the row keeps everything and grows tall. `compress` keeps the
-     * row on one line and drops every column not marked `primary`.
-     *
-     * Defaults to `stack`, which is what the table has always done.
-     *
-     * Pick by what the narrow table is. A phone showing nothing else wants
-     * `stack`, because the row is the only place the data is. A master list
-     * beside an open detail panel wants `compress`: the row is an index entry
-     * into a panel that is already showing those fields, so stacking them
-     * repeats the panel at three times the height and pushes the next row off
-     * screen.
-     */
-    compact?: TableCompact
-    /**
-     * Extra attributes per row, such as `data-entity-id`. The caller does not
-     * render rows itself, so this is the only way to reach one: useful for a
-     * test hook, and for addressing a row whose cells are all withheld and
-     * which therefore renders no link to key off.
-     */
-    rowAttrs?: (item: T) => Record<string, unknown>
-    /**
-     * Which rows carry a handle to move them, for a list whose order the
-     * reader sets by hand. Absent means no row does.
-     *
-     * The table reports a move through `reorder` and moves nothing itself:
-     * the caller's data decides the order, as it does for a board's cards.
-     * Leave this off while the list is sorted or grouped by a field, where a
-     * row dropped somewhere would only jump back to where the sort puts it.
-     */
-    reorderable?: (item: T) => boolean
-  }>(),
-  {
-    columns: () => [],
-    showHeaderRow: true,
-    cursorId: undefined,
-    pageSize: 0,
-    addLabel: undefined,
-    nameLabel: undefined,
-    nameColumn: undefined,
-    showSectionHeader: true,
-    showAdd: true,
-    emptyLabel: undefined,
-    emptyDescription: undefined,
-    sort: () => [],
-    selectedIds: undefined,
-    columnVisibility: () => ({}),
-    rowAttrs: undefined,
-    compact: 'stack',
-    reorderable: undefined,
-  },
-)
+const {
+  sections,
+  columns = [],
+  showHeaderRow = true,
+  selectedId,
+  cursorId,
+  pageSize = 0,
+  addLabel,
+  nameLabel,
+  nameColumn,
+  showSectionHeader = true,
+  showAdd = true,
+  emptyLabel,
+  emptyDescription,
+  sort = [],
+  selectedIds,
+  columnVisibility = {},
+  compact = 'stack',
+  rowAttrs,
+  reorderable,
+} = defineProps<{
+  sections: Section<T>[]
+  columns?: TableColumn[]
+  showHeaderRow?: boolean
+  /** Id of the item whose detail is open, marked in the list. */
+  selectedId?: string
+  /**
+   * Id of the item the keyboard cursor is on, for a list driven by `j`/`k`
+   * or the arrow keys.
+   *
+   * The third of three independent row states, and the reason it needs its
+   * own prop: `selectedIds` is what a bulk action would apply to,
+   * `selectedId` is the row whose detail is open, and this is the row the
+   * next keystroke acts on. A reader can move the cursor down the list
+   * while the panel stays where it is, then press Enter to bring the panel
+   * to the cursor — two positions that are genuinely separate until that
+   * press, so one prop cannot carry both.
+   *
+   * Marked with a ring rather than a fill, since all three states can land
+   * on one row at once.
+   *
+   * The table paints the cursor and announces it; moving it is the
+   * caller's, because what `j` means at the end of a section — stop, wrap,
+   * or cross into the next one — depends on the list, not on the table.
+   * Keep DOM focus on the grid and change this prop; the row is named
+   * through `aria-activedescendant`, so a screen reader follows the cursor
+   * without focus moving row to row.
+   */
+  cursorId?: string
+  /** Rows each section shows before the rest go behind "show more". */
+  pageSize?: number
+  /** Label for each section's add control, such as `Add task`. */
+  addLabel?: string
+  /**
+   * Header for the flexible first column, which holds each row's title.
+   * Defaults to `Name`.
+   */
+  nameLabel?: string
+  /**
+   * The first column described as a column, when it needs to sort. Its
+   * `header` replaces `nameLabel`, and its `key` is what `sort` and
+   * `sort-click` carry for it.
+   */
+  nameColumn?: TableColumn
+  /**
+   * Whether each section shows its own header. A flat list is one unnamed
+   * section, where a heading, a count, a collapse toggle and an "Add to"
+   * button all describe a grouping the caller does not have.
+   *
+   * Hiding it also moves the column header to the top of the scroll area.
+   * Left where it was, it would float over the first row and take its
+   * clicks: the row stays visible and correctly marked up, and is
+   * unpressable.
+   */
+  showSectionHeader?: boolean
+  /**
+   * Whether a section offers a way to add a row. Off hides both controls
+   * at once: the "Add to" button in a section header and the one at the
+   * foot of its list are the same affordance in two places.
+   *
+   * For a list that refuses creation, whether because of a permission or
+   * because the list has no form to create with. A control that emits an
+   * event nothing can act on is worse than no control. This is the same
+   * prop, with the same name and default, that the boards take.
+   */
+  showAdd?: boolean
+  /**
+   * What a section says when it has no rows. Without it an empty section
+   * draws its header and then nothing, which reads as a failure to load
+   * rather than an empty list. Sections with rows ignore it.
+   */
+  emptyLabel?: string
+  /** A line under `emptyLabel`, for what would put a row here. */
+  emptyDescription?: string
+  /**
+   * Current sort, primary key first. Mark a column `sortable` to give it
+   * the control; the sort itself is the caller's, since a collection of
+   * any size sorts on the server.
+   */
+  sort?: TableSort[]
+  /**
+   * Ids of the checked rows. Passing this — even empty — turns on the
+   * select column; leaving it off keeps the plain list.
+   *
+   * Separate from `selectedId`, which marks the one row whose detail is
+   * open, and from `cursorId`, which marks the row the keyboard is on. A
+   * table can have all three: three rows checked for a bulk action, a
+   * fourth open in the panel, and the cursor resting on a fifth.
+   */
+  selectedIds?: Set<string> | string[]
+  /**
+   * Which columns are showing, keyed by `TableColumn.key`. Absent from the
+   * record means visible, so `{}` shows everything.
+   *
+   * State rather than a flag on the column, so one record serves a columns
+   * menu and a saved view at once.
+   *
+   * Fitting a narrow pane is not what this is for. The table reshapes its
+   * rows on its own once it is too narrow for fixed columns — see `compact`
+   * — measuring itself rather than the window, so a caller does not have to
+   * hide columns to stay readable beside an open detail panel. Use this to
+   * drop a column the user does not want to see, which is a different
+   * question from whether it fits.
+   */
+  columnVisibility?: ColumnVisibility
+  /**
+   * What the table does once it is too narrow for its fixed columns.
+   *
+   * `stack` gives each populated cell its own labelled line under the
+   * title, so the row keeps everything and grows tall. `compress` keeps the
+   * row on one line and drops every column not marked `primary`.
+   *
+   * Defaults to `stack`, which is what the table has always done.
+   *
+   * Pick by what the narrow table is. A phone showing nothing else wants
+   * `stack`, because the row is the only place the data is. A master list
+   * beside an open detail panel wants `compress`: the row is an index entry
+   * into a panel that is already showing those fields, so stacking them
+   * repeats the panel at three times the height and pushes the next row off
+   * screen.
+   */
+  compact?: TableCompact
+  /**
+   * Extra attributes per row, such as `data-entity-id`. The caller does not
+   * render rows itself, so this is the only way to reach one: useful for a
+   * test hook, and for addressing a row whose cells are all withheld and
+   * which therefore renders no link to key off.
+   */
+  rowAttrs?: (item: T) => Record<string, unknown>
+  /**
+   * Which rows carry a handle to move them, for a list whose order the
+   * reader sets by hand. Absent means no row does.
+   *
+   * The table reports a move through `reorder` and moves nothing itself:
+   * the caller's data decides the order, as it does for a board's cards.
+   * Leave this off while the list is sorted or grouped by a field, where a
+   * row dropped somewhere would only jump back to where the sort puts it.
+   */
+  reorderable?: (item: T) => boolean
+}>()
 
 /** Ties drags to this table, so two tables on one page cannot trade rows. */
 const reorderGroup = useId()
@@ -210,7 +209,7 @@ const moveStatus = ref('')
 
 function onReorder(move: RowMove) {
   if ('step' in move) {
-    const item = props.sections.flatMap((s) => s.items).find((i) => i.id === move.itemId)
+    const item = sections.flatMap((s) => s.items).find((i) => i.id === move.itemId)
     if (item) moveStatus.value = `${item.title} moved ${move.step < 0 ? 'up' : 'down'}`
   }
   emit('reorder', move)
@@ -230,7 +229,7 @@ if (import.meta.env.DEV) {
   watchEffect(() => {
     const seen = new Set<string>()
     const duplicates = new Set<string>()
-    for (const column of props.columns) {
+    for (const column of columns) {
       if (seen.has(column.key)) duplicates.add(column.key)
       seen.add(column.key)
     }

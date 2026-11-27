@@ -8,31 +8,27 @@
  */
 import RlFieldShell from './RlFieldShell.vue'
 
-withDefaults(
-  defineProps<{
-    modelValue?: number
-    label: string
-    hint?: string
-    error?: string
-    required?: boolean
-    labelHidden?: boolean
-    disabled?: boolean
-    readonly?: boolean
-    placeholder?: string
-    min?: number
-    max?: number
-    step?: number
-    /** Shown after the box, such as `hours` or `%`. */
-    suffix?: string
-  }>(),
-  { required: false, labelHidden: false, disabled: false, readonly: false },
-)
+const { required = false, labelHidden = false, disabled = false, readonly = false } = defineProps<{
+  label: string
+  hint?: string
+  error?: string
+  required?: boolean
+  labelHidden?: boolean
+  disabled?: boolean
+  readonly?: boolean
+  placeholder?: string
+  min?: number
+  max?: number
+  step?: number
+  /** Shown after the box, such as `hours` or `%`. */
+  suffix?: string
+}>()
 
-const emit = defineEmits<{ 'update:modelValue': [value: number | undefined] }>()
+const model = defineModel<number>()
 
 function onInput(event: Event) {
   const raw = (event.target as HTMLInputElement).value
-  emit('update:modelValue', raw === '' ? undefined : Number(raw))
+  model.value = raw === '' ? undefined : Number(raw)
 }
 </script>
 
@@ -51,7 +47,7 @@ function onInput(event: Event) {
         class="rl-control"
         type="number"
         inputmode="decimal"
-        :value="modelValue ?? ''"
+        :value="model ?? ''"
         :placeholder="placeholder"
         :disabled="disabled"
         :readonly="readonly"

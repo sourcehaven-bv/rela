@@ -18,42 +18,39 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    /** What to call the destination, without the arrow. */
-    label?: string
-    /**
-     * The destination URL. Omit for a history-based back step.
-     *
-     * For a native anchor. A link component passed through `as` resolves its
-     * own URL from its own prop, usually `to`, so this is not passed on to one
-     * and setting both has no meaning.
-     */
-    href?: string
-    /**
-     * What to render. A router-based app passes its link component here
-     * rather than resolving the URL itself: `router.resolve(to).href` makes
-     * the calling component depend on a router that can resolve, which a
-     * partially mocked router in a test cannot.
-     *
-     * Pass the component itself rather than a name, so this library does not
-     * depend on a router, and pass its `to` alongside — it falls through to
-     * the rendered element.
-     *
-     * Left unset, `href` still picks the element: an anchor when there is a
-     * URL, a button when there is not.
-     */
-    as?: 'button' | 'a' | Component
-  }>(),
-  { label: undefined },
-)
+const { as, href } = defineProps<{
+  /** What to call the destination, without the arrow. */
+  label?: string
+  /**
+   * The destination URL. Omit for a history-based back step.
+   *
+   * For a native anchor. A link component passed through `as` resolves its
+   * own URL from its own prop, usually `to`, so this is not passed on to one
+   * and setting both has no meaning.
+   */
+  href?: string
+  /**
+   * What to render. A router-based app passes its link component here
+   * rather than resolving the URL itself: `router.resolve(to).href` makes
+   * the calling component depend on a router that can resolve, which a
+   * partially mocked router in a test cannot.
+   *
+   * Pass the component itself rather than a name, so this library does not
+   * depend on a router, and pass its `to` alongside — it falls through to
+   * the rendered element.
+   *
+   * Left unset, `href` still picks the element: an anchor when there is a
+   * URL, a button when there is not.
+   */
+  as?: 'button' | 'a' | Component
+}>()
 
 /*
  * An explicit `as` wins; otherwise a URL means a link and its absence means a
  * button. Anything that is not the native button is treated as a link, so it
  * takes no `type` and its activation is the browser's to handle.
  */
-const tag = computed(() => props.as ?? (props.href ? 'a' : 'button'))
+const tag = computed(() => as ?? (href ? 'a' : 'button'))
 
 const isButton = computed(() => tag.value === 'button')
 
@@ -71,7 +68,7 @@ const isButton = computed(() => tag.value === 'button')
  */
 const elementAttrs = computed(() => {
   if (isButton.value) return { type: 'button' as const }
-  return tag.value === 'a' ? { href: props.href } : {}
+  return tag.value === 'a' ? { href } : {}
 })
 
 const emit = defineEmits<{ navigate: [event: MouseEvent] }>()

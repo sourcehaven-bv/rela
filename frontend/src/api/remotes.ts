@@ -18,13 +18,13 @@ export type RemoteReason =
 export type RemoteValue =
   string | number | boolean | null | RemoteValue[] | { [key: string]: RemoteValue }
 
-export interface RemoteTypeField {
+interface RemoteTypeField {
   local: string
   remote: string
   rule: string
 }
 
-export interface RemoteType {
+interface RemoteType {
   /** `relation` for a relation type; absent for an entity type. */
   kind?: string
   local: string
@@ -58,7 +58,7 @@ export interface RemoteSummary {
   conflicts: { total: number; by_reason: Partial<Record<RemoteReason, number>> }
 }
 
-export type RemoteAction = 'resolve_local' | 'resolve_remote' | 'dismiss' | 'link'
+type RemoteAction = 'resolve_local' | 'resolve_remote' | 'dismiss' | 'link'
 
 /** One entry of a remote's conflict list. */
 export interface RemoteEntry {

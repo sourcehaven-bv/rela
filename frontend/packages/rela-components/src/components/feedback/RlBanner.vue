@@ -15,14 +15,11 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    tone?: MessageTone
-    title?: string
-    dismissible?: boolean
-  }>(),
-  { tone: 'info', dismissible: false },
-)
+const { tone = 'info', dismissible = false } = defineProps<{
+  tone?: MessageTone
+  title?: string
+  dismissible?: boolean
+}>()
 
 defineEmits<{ dismiss: [] }>()
 
@@ -38,9 +35,9 @@ const icons = {
  * success are not, because interrupting to say something went right is noise.
  */
 const live = computed(() =>
-  props.tone === 'danger' || props.tone === 'warning' ? 'assertive' : undefined,
+  tone === 'danger' || tone === 'warning' ? 'assertive' : undefined,
 )
-const role = computed(() => (props.tone === 'danger' ? 'alert' : 'status'))
+const role = computed(() => (tone === 'danger' ? 'alert' : 'status'))
 </script>
 
 <template>

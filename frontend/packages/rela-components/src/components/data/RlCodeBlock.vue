@@ -34,57 +34,54 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    /**
-     * The code, as text. Leave it off and fill the default slot instead when
-     * the caller has already highlighted it.
-     *
-     * Still worth passing alongside a highlighted slot: it is what the copy
-     * button puts on the clipboard, and copying the rendered markup's
-     * `textContent` instead would carry the line numbers with it.
-     */
-    code?: string
-    /**
-     * The language, for the label and for the `language-<name>` class that
-     * every highlighter keys off. Not validated against a list: the set of
-     * languages is the app's business, and a name this component rejected
-     * would simply be unlabelled.
-     */
-    language?: string
-    /** A caption above the block, such as a file path. */
-    title?: string
-    /**
-     * Whether to number the lines. Off by default: numbers earn their place
-     * when something refers to a line, and otherwise they are furniture that
-     * also has to be excluded from a copy.
-     */
-    lineNumbers?: boolean
-    /**
-     * Rows past which the block scrolls instead of growing. Zero lets it grow
-     * to whatever it holds.
-     *
-     * Counted in lines rather than pixels so it stays right when a consumer
-     * changes the mono font's size.
-     */
-    maxLines?: number
-    /** Whether to offer the copy button. */
-    copyable?: boolean
-    /** Label for the copy control, and its confirmation. */
-    copyLabel?: string
-    copiedLabel?: string
-  }>(),
-  {
-    code: undefined,
-    language: undefined,
-    title: undefined,
-    lineNumbers: false,
-    maxLines: 0,
-    copyable: true,
-    copyLabel: undefined,
-    copiedLabel: undefined,
-  },
-)
+const {
+  code,
+  language,
+  title,
+  lineNumbers = false,
+  maxLines = 0,
+  copyable = true,
+  copyLabel,
+  copiedLabel,
+} = defineProps<{
+  /**
+   * The code, as text. Leave it off and fill the default slot instead when
+   * the caller has already highlighted it.
+   *
+   * Still worth passing alongside a highlighted slot: it is what the copy
+   * button puts on the clipboard, and copying the rendered markup's
+   * `textContent` instead would carry the line numbers with it.
+   */
+  code?: string
+  /**
+   * The language, for the label and for the `language-<name>` class that
+   * every highlighter keys off. Not validated against a list: the set of
+   * languages is the app's business, and a name this component rejected
+   * would simply be unlabelled.
+   */
+  language?: string
+  /** A caption above the block, such as a file path. */
+  title?: string
+  /**
+   * Whether to number the lines. Off by default: numbers earn their place
+   * when something refers to a line, and otherwise they are furniture that
+   * also has to be excluded from a copy.
+   */
+  lineNumbers?: boolean
+  /**
+   * Rows past which the block scrolls instead of growing. Zero lets it grow
+   * to whatever it holds.
+   *
+   * Counted in lines rather than pixels so it stays right when a consumer
+   * changes the mono font's size.
+   */
+  maxLines?: number
+  /** Whether to offer the copy button. */
+  copyable?: boolean
+  /** Label for the copy control, and its confirmation. */
+  copyLabel?: string
+  copiedLabel?: string
+}>()
 
 const emit = defineEmits<{
   /**
@@ -100,15 +97,15 @@ const emit = defineEmits<{
   copyError: [error: unknown]
 }>()
 
-const lines = computed(() => (props.code ?? '').replace(/\n$/, '').split('\n'))
+const lines = computed(() => (code ?? '').replace(/\n$/, '').split('\n'))
 
 /*
  * The scroll cap as a line count. `em` rather than the line-height token's
  * unitless value multiplied out, so the two cannot drift.
  */
 const maxHeight = computed(() =>
-  props.maxLines > 0
-    ? `calc(${props.maxLines} * ${'1em'} * var(--rl-line-height-normal))`
+  maxLines > 0
+    ? `calc(${maxLines} * ${'1em'} * var(--rl-line-height-normal))`
     : undefined,
 )
 
@@ -127,7 +124,7 @@ async function copy() {
    * and with line numbers on, reading `textContent` back would put "1" at the
    * start of the first line.
    */
-  const text = props.code
+  const text = code
   if (text === undefined) return
 
   try {

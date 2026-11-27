@@ -57,7 +57,7 @@ function unitStart(n: number, unit: CalendarUnit): number {
 }
 
 /** The number of days in `for`, or 0 when it is unset or not `<n>d`. */
-export function forDays(buckets: CalendarBuckets): number {
+function forDays(buckets: CalendarBuckets): number {
   const m = /^(\d+)d$/.exec(buckets.for ?? '')
   return m ? Number(m[1]) : 0
 }

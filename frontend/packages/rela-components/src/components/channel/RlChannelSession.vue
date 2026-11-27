@@ -59,17 +59,14 @@ import { computed, ref, useId, useTemplateRef } from 'vue'
 import RlIcon from '../common/RlIcon.vue'
 import RlTag from '../common/RlTag.vue'
 import RlBusyIndicator from '../feedback/RlBusyIndicator.vue'
-import type { ChannelSessionView } from './types'
+import type { ChannelSessionStatus, ChannelSessionView } from './types'
 import { useMessages, type ChannelTextKey } from '../../composables/useMessages'
 
-const props = withDefaults(
-  defineProps<{
-    session: ChannelSessionView
-    /** Folds the list at every width, with the short list at 32rem and wider. */
-    compact?: boolean
-  }>(),
-  { compact: false },
-)
+const { session, compact = false } = defineProps<{
+  session: ChannelSessionView
+  /** Folds the list at every width, with the short list at 32rem and wider. */
+  compact?: boolean
+}>()
 
 const strings = useMessages()
 const t = (key: ChannelTextKey) => strings.channelText({ key })
@@ -86,7 +83,7 @@ defineExpose({
 type Status = 'stranded' | 'loading' | 'final' | 'paused' | 'normal'
 
 const status = computed<Status>(() => {
-  const s = props.session
+  const s = session
   if (s.stranded) return 'stranded'
   if (s.loading) return 'loading'
   if (s.final) return 'final'
@@ -95,37 +92,34 @@ const status = computed<Status>(() => {
 })
 
 const current = computed(() =>
-  status.value === 'stranded' || status.value === 'loading' ? undefined : props.session.current,
+  status.value === 'stranded' || status.value === 'loading' ? undefined : session.current,
 )
-const next = computed(() => new Set(status.value === 'normal' ? props.session.next : []))
+const next = computed(() => new Set(status.value === 'normal' ? session.next : []))
+
+const OUTCOME_KEYS: Partial<Record<ChannelSessionStatus, ChannelTextKey>> = {
+  cancelled: 'sessionCancelled',
+  failed: 'sessionFailed',
+  completed: 'sessionCompleted',
+}
 
 /** The caption of a final state, from its status. */
-const outcome = computed(() => {
-  switch (props.session.status) {
-    case 'cancelled':
-      return t('sessionCancelled')
-    case 'failed':
-      return t('sessionFailed')
-    case 'completed':
-      return t('sessionCompleted')
-    default:
-      return t('sessionEnded')
-  }
-})
+const outcome = computed(() =>
+  t((session.status && OUTCOME_KEYS[session.status]) || 'sessionEnded'),
+)
 
-const failed = computed(() => props.session.status === 'failed')
-const ticked = computed(() => !failed.value && props.session.status !== 'cancelled')
-const inputRequired = computed(() => status.value === 'normal' && props.session.status === 'input_required')
-const working = computed(() => status.value === 'normal' && props.session.status === 'working')
+const failed = computed(() => session.status === 'failed')
+const ticked = computed(() => !failed.value && session.status !== 'cancelled')
+const inputRequired = computed(() => status.value === 'normal' && session.status === 'input_required')
+const working = computed(() => status.value === 'normal' && session.status === 'working')
 const waitingText = computed(() => {
-  const labels = (props.session.waitingFor ?? []).map((w) => w.label)
+  const labels = (session.waitingFor ?? []).map((w) => w.label)
   return labels.length ? strings.channelSessionWaiting({ labels }) : ''
 })
 
 const summary = computed(() =>
   strings.channelSessionSummary({
     status: status.value,
-    label: props.session.currentLabel,
+    label: session.currentLabel,
     ...(status.value === 'final' ? { outcome: outcome.value } : {}),
   }),
 )
@@ -151,13 +145,13 @@ interface ContextItem {
  */
 const contextItems = computed<ContextItem[]>(() => {
   const cur = current.value
-  if (!props.compact || cur === undefined) return []
-  const byName = new Map(props.session.states.map((s) => [s.name, s]))
+  if (!compact || cur === undefined) return []
+  const byName = new Map(session.states.map((s) => [s.name, s]))
   const items: ContextItem[] = []
-  const prev = props.session.previous ? byName.get(props.session.previous) : undefined
+  const prev = session.previous ? byName.get(session.previous) : undefined
   if (prev && prev.name !== cur) items.push({ name: prev.name, label: prev.label, role: 'previous' })
-  items.push({ name: cur, label: props.session.currentLabel, role: 'current' })
-  for (const s of props.session.states) {
+  items.push({ name: cur, label: session.currentLabel, role: 'current' })
+  for (const s of session.states) {
     if (s.name !== cur && next.value.has(s.name)) items.push({ name: s.name, label: s.label, role: 'next' })
   }
   return items
@@ -171,7 +165,7 @@ const showContext = computed(() => contextItems.value.length > 0)
 const contextShown = computed(() => showContext.value && !expanded.value)
 
 const pausedText = computed(() =>
-  t(props.session.paused === 'archived' ? 'sessionPausedArchived' : 'sessionPausedClosed'),
+  t(session.paused === 'archived' ? 'sessionPausedArchived' : 'sessionPausedClosed'),
 )
 </script>
 

@@ -31,7 +31,7 @@ export function fieldToken(
 }
 
 /** Hashes a relations map as a set, as `relationsToken` does in Go. */
-export function relationsToken(id: string, type: string, rels: Record<string, string[]>): string {
+function relationsToken(id: string, type: string, rels: Record<string, string[]>): string {
   let s = ''
   for (const t of Object.keys(rels)
     .filter((k) => rels[k]!.length > 0)
@@ -79,7 +79,7 @@ export function fieldVersionsOf(
  * does neither, so hashing its output would give a different token for any
  * map value or any string with one of those characters.
  */
-export function goJSON(value: unknown): string {
+function goJSON(value: unknown): string {
   if (value === null || value === undefined) return 'null'
   if (Array.isArray(value)) return `[${value.map(goJSON).join(',')}]`
   if (typeof value === 'object') {

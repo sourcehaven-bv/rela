@@ -4,10 +4,7 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-withDefaults(defineProps<{ size?: number; label?: string }>(), {
-  size: 15,
-  label: undefined,
-})
+const { size = 15, label } = defineProps<{ size?: number; label?: string }>()
 </script>
 
 <template>

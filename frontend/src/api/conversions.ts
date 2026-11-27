@@ -1,5 +1,4 @@
 import { api } from './client'
-import type { ConversionOffer } from '@/types'
 
 export interface ConversionResult {
   definition: string
@@ -32,7 +31,7 @@ export interface ConversionPreview {
   moves: ConversionMove[]
 }
 
-export interface ConversionMove {
+interface ConversionMove {
   source_face: string
   target_face: string
 }
@@ -50,7 +49,7 @@ export async function previewConversion(
 
 // normalizePreview turns absent or null list fields into empty arrays. Older
 // servers sent null for an empty list, and the dialog reads .length on them.
-export function normalizePreview(preview: ConversionPreview): ConversionPreview {
+function normalizePreview(preview: ConversionPreview): ConversionPreview {
   return {
     ...preview,
     required: preview.required ?? [],
@@ -69,5 +68,3 @@ export async function convertEntity(
 ): Promise<ConversionResult> {
   return api.post<ConversionResult>(`/_conversions/${encodeURIComponent(name)}`, request)
 }
-
-export type { ConversionOffer }

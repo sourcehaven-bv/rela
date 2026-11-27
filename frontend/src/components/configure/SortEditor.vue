@@ -12,37 +12,39 @@ import { newMap, type TreePath } from '@/configure/tree'
  * A `sort:` list: records sort by the first key, then by the next. Each key
  * is edited in place, so settings a key holds besides these two stay.
  */
-const props = withDefaults(
-  defineProps<{
-    file: 'schema' | 'screens'
-    /** The mapping that holds the list. */
-    path: TreePath
-    keys: SortKeyModel[]
-    /** The properties records can sort by. */
-    properties: { value: string; label: string }[]
-    listKey?: string
-    label?: string
-  }>(),
-  { listKey: 'sort', label: 'Sort order' }
-)
+const {
+  file,
+  path,
+  keys,
+  properties,
+  listKey = 'sort',
+  label = 'Sort order',
+} = defineProps<{
+  file: 'schema' | 'screens'
+  /** The mapping that holds the list. */
+  path: TreePath
+  keys: SortKeyModel[]
+  /** The properties records can sort by. */
+  properties: { value: string; label: string }[]
+  listKey?: string
+  label?: string
+}>()
 const draft = useConfigDraftStore()
 
 const directions = [
   { value: 'asc', label: 'Ascending' },
   { value: 'desc', label: 'Descending' },
 ]
-const keyPath = (index: number) => [...props.path, props.listKey, index]
+const keyPath = (index: number) => [...path, listKey, index]
 const titleOf = (property: string) =>
-  props.properties.find((p) => p.value === property)?.label ?? property
+  properties.find((p) => p.value === property)?.label ?? property
 
-const unused = computed(() =>
-  props.properties.filter((p) => !props.keys.some((k) => k.property === p.value))
-)
+const unused = computed(() => properties.filter((p) => !keys.some((k) => k.property === p.value)))
 const adding = ref('')
 
 function add() {
   if (!adding.value) return
-  draft.appendAt(props.file, props.path, props.listKey, newMap({ property: adding.value }))
+  draft.appendAt(file, path, listKey, newMap({ property: adding.value }))
   adding.value = ''
 }
 </script>

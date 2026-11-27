@@ -18,7 +18,7 @@ const EVENT_DEBOUNCE_MS = 500
  * narrowing, so the position walks exactly the rows the list shows. Built
  * from the one list-read builder, so the two cannot drift.
  */
-export function walkScope(entityType: string, params: ListParams): ScopeDescriptor {
+function walkScope(entityType: string, params: ListParams): ScopeDescriptor {
   const scope: ScopeDescriptor = { source: 'list', type: entityType }
   const filters: Record<string, string> = {}
   for (const [key, value] of Object.entries(params)) {

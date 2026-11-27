@@ -34,27 +34,28 @@ import { renderMarkdown } from '@/utils/markdown'
 import { stripSpace } from '@/stores/space'
 import { useMe } from '@/queries/me'
 
-const props = withDefaults(
-  defineProps<{
-    /**
-     * Whether to show the Shortcuts button. The sidebar resolves it from
-     * `builtins.shortcuts` (hidden, permission, hidden_on_phone). The `?` key
-     * opens the help either way.
-     */
-    showShortcuts?: boolean
-    /**
-     * Whether to show the Settings button, from `builtins.settings`. The
-     * settings page stays reachable by URL.
-     */
-    showSettings?: boolean
-    /**
-     * Whether `builtins.about` lets the About button show. It shows only
-     * when the dialog has something to say as well.
-     */
-    showAbout?: boolean
-  }>(),
-  { showShortcuts: true, showSettings: true, showAbout: true }
-)
+const {
+  showShortcuts = true,
+  showSettings = true,
+  showAbout = true,
+} = defineProps<{
+  /**
+   * Whether to show the Shortcuts button. The sidebar resolves it from
+   * `builtins.shortcuts` (hidden, permission, hidden_on_phone). The `?` key
+   * opens the help either way.
+   */
+  showShortcuts?: boolean
+  /**
+   * Whether to show the Settings button, from `builtins.settings`. The
+   * settings page stays reachable by URL.
+   */
+  showSettings?: boolean
+  /**
+   * Whether `builtins.about` lets the About button show. It shows only
+   * when the dialog has something to say as well.
+   */
+  showAbout?: boolean
+}>()
 
 const gitStore = useGitStore()
 const schemaStore = useSchemaStore()
@@ -229,7 +230,7 @@ async function handleSync() {
     </RlPopover>
 
     <RlSidebarFooterLink
-      v-if="props.showSettings"
+      v-if="showSettings"
       data-testid="footer-settings"
       :label="t('footer.settings')"
       icon="settings"
@@ -245,14 +246,14 @@ async function handleSync() {
       @click="router.push('/remotes')"
     />
     <RlSidebarFooterLink
-      v-if="props.showAbout && hasAbout"
+      v-if="showAbout && hasAbout"
       data-testid="footer-about"
       :label="t('footer.about')"
       icon="help"
       @click="aboutOpen = true"
     />
     <button
-      v-if="props.showShortcuts"
+      v-if="showShortcuts"
       type="button"
       class="footer-row shortcuts-btn status-item"
       :title="t('footer.keyboardShortcuts')"

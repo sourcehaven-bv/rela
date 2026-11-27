@@ -15,37 +15,34 @@ export interface ProgressSegment {
   tone: 'accent' | 'success' | 'warning' | 'danger' | 'neutral'
 }
 
-const props = withDefaults(
-  defineProps<{
-    /** Single-value mode: the amount done, out of `max`. */
-    value?: number
-    max?: number
-    segments?: ProgressSegment[]
-    /** Visible label above the bar. */
-    label?: string
-    /**
-     * Accessible name when there is no visible label, such as a bar inside a
-     * row that is already identified by the row's own text.
-     */
-    ariaLabel?: string
-    size?: 'sm' | 'md'
-    /** Shows the percentage, or the segment counts, beside the bar. */
-    showValue?: boolean
-  }>(),
-  { max: 100, size: 'md', showValue: false },
-)
+const { max = 100, size = 'md', showValue = false, segments, value } = defineProps<{
+  /** Single-value mode: the amount done, out of `max`. */
+  value?: number
+  max?: number
+  segments?: ProgressSegment[]
+  /** Visible label above the bar. */
+  label?: string
+  /**
+   * Accessible name when there is no visible label, such as a bar inside a
+   * row that is already identified by the row's own text.
+   */
+  ariaLabel?: string
+  size?: 'sm' | 'md'
+  /** Shows the percentage, or the segment counts, beside the bar. */
+  showValue?: boolean
+}>()
 
 const total = computed(() =>
-  props.segments ? props.segments.reduce((sum, segment) => sum + segment.value, 0) : props.max,
+  segments ? segments.reduce((sum, segment) => sum + segment.value, 0) : max,
 )
 
 const percent = computed(() =>
-  total.value > 0 ? Math.round(((props.value ?? 0) / total.value) * 100) : 0,
+  total.value > 0 ? Math.round(((value ?? 0) / total.value) * 100) : 0,
 )
 
 /** Percentages, so the segments fill the track whatever the raw counts are. */
 const widths = computed(() =>
-  (props.segments ?? []).map((segment) => ({
+  (segments ?? []).map((segment) => ({
     ...segment,
     percent: total.value > 0 ? (segment.value / total.value) * 100 : 0,
   })),
@@ -56,7 +53,7 @@ const widths = computed(() =>
  * separate progress bars would be far more tiring than one summary.
  */
 const valueText = computed(() =>
-  props.segments
+  segments
     ? widths.value.map((segment) => `${segment.value} ${segment.label}`).join(', ')
     : `${percent.value}%`,
 )

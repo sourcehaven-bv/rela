@@ -8,7 +8,7 @@ import type { Entity } from '@/types'
 import type { BoardSectionDropPosition } from 'rela-components/composables/useBoardDnd'
 
 /** The longest group title taken from a card, before it is cut with an ellipsis. */
-export const GROUP_TITLE_MAX = 40
+const GROUP_TITLE_MAX = 40
 
 /**
  * Grouping on a wall (`layout: wall` with `columns_from`, TKT-0VBQW0H).

@@ -21,23 +21,20 @@
  * page outline, and a panel that only exists while it is open has no place in
  * it.
  */
-withDefaults(
-  defineProps<{
-    /**
-     * The first line, in the body colour: a person's name, or a group label.
-     * Omit it and pass the whole block through the default slot instead.
-     */
-    label?: string
-    /**
-     * Quieter lines under the label, in order: an email, an organisation, a
-     * role. An array rather than one string because they stack, and joining
-     * them with a separator in the caller would read as one sentence to a
-     * screen reader.
-     */
-    lines?: string[]
-  }>(),
-  { label: undefined, lines: () => [] },
-)
+const { lines = [] } = defineProps<{
+  /**
+   * The first line, in the body colour: a person's name, or a group label.
+   * Omit it and pass the whole block through the default slot instead.
+   */
+  label?: string
+  /**
+   * Quieter lines under the label, in order: an email, an organisation, a
+   * role. An array rather than one string because they stack, and joining
+   * them with a separator in the caller would read as one sentence to a
+   * screen reader.
+   */
+  lines?: string[]
+}>()
 </script>
 
 <template>

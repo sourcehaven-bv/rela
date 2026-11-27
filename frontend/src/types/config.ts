@@ -6,7 +6,7 @@ import type {
 import type { SortSpec } from './schema'
 import type { ScriptError } from './scriptError'
 
-export interface ResolvedPalette {
+interface ResolvedPalette {
   light: Record<string, string>
   dark?: Record<string, string>
   darkDisabled?: boolean
@@ -97,7 +97,7 @@ export interface PilesConfig {
 }
 
 /** One `piles.toggles` entry. */
-export interface PileToggle {
+interface PileToggle {
   /** The declared pile's key. */
   pile: string
   /** Shown while the entity is off the pile; defaults to the pile's icon. */
@@ -251,7 +251,7 @@ export interface FormStep {
  */
 export type ClearWhenHidden = 'no' | 'yes' | 'confirm'
 
-export interface FormField {
+interface FormField {
   property?: string
   widget?: string
   label?: string
@@ -286,7 +286,7 @@ export interface FormField {
  * A channel message field: the [FormField] keys a composer has behaviour
  * for. The server refuses every other key at load.
  */
-export type ChannelField = Pick<
+type ChannelField = Pick<
   FormField,
   'property' | 'label' | 'placeholder' | 'help' | 'widget' | 'span' | 'hidden'
 >
@@ -326,7 +326,7 @@ export interface RelationProperty {
   required?: boolean
 }
 
-export interface FormRelation {
+interface FormRelation {
   relation: string
   direction?: 'outgoing' | 'incoming'
   target_type?: string
@@ -397,13 +397,13 @@ export interface FormFieldOrRelation {
 }
 
 /** One assigned value: a literal, or an expression the server evaluates. */
-export type AssignValueConfig = { value: string } | { expr: string }
+type AssignValueConfig = { value: string } | { expr: string }
 
 /**
  * What an item gets when it enters a list or is dropped on a page's sidebar
  * entry. The SPA never evaluates it: `/_assign` resolves and writes it.
  */
-export interface AssignConfig {
+interface AssignConfig {
   entity_type?: string
   properties?: Record<string, AssignValueConfig>
   relations?: Record<string, string>
@@ -522,7 +522,7 @@ export interface ListGroupBy {
  * computed: `id` names the section, and the server stamps it on each row as
  * `_group` from the group's `condition`.
  */
-export interface ListGroup {
+interface ListGroup {
   value?: string
   id?: string
   condition?: string
@@ -622,7 +622,7 @@ export interface ListColumn {
   other?: 'disabled' | 'hidden' | 'on'
 }
 
-export interface ListFilter {
+interface ListFilter {
   property: string
   operator?: string
   value?: string
@@ -658,7 +658,7 @@ export interface ViewConfig {
   sections: ViewSection[]
 }
 
-export interface ViewSection {
+interface ViewSection {
   type: 'properties' | 'relations' | 'content' | 'custom'
   title?: string
   properties?: string[]
@@ -736,7 +736,7 @@ export interface Summary {
   label?: string
 }
 
-export interface KanbanColumnsFrom {
+interface KanbanColumnsFrom {
   relation: string
   /** Relation from the page anchor that selects and orders the columns. */
   offered_by?: string
@@ -877,8 +877,8 @@ export interface CalendarConfig {
   filter_controls?: FilterControl[]
 }
 
-export type CalendarViewKind = 'month' | 'week'
-export type CalendarWeekStart = 'monday' | 'sunday'
+type CalendarViewKind = 'month' | 'week'
+type CalendarWeekStart = 'monday' | 'sunday'
 
 /** A named palette token; the theme owns what the colour actually is. */
 /**
@@ -927,7 +927,7 @@ export interface CalendarSourceConfig {
 
 /** CalendarEventConfig is the kanban `card:` analogue for an event chip. It has
  * no title field: the source's `summary` already names the title property. */
-export interface CalendarEventConfig {
+interface CalendarEventConfig {
   fields?: KanbanCardField[]
 }
 
@@ -960,7 +960,7 @@ export interface GanttConfig {
 
 /** GanttSourceConfig maps one entity type's properties onto the three date
  * roles; each is independently optional. */
-export interface GanttSourceConfig {
+interface GanttSourceConfig {
   start?: string
   end?: string
   committed?: string
@@ -984,7 +984,7 @@ export interface SankeyConfig {
   max_nodes: number
 }
 
-export interface SankeyTypeConfig {
+interface SankeyTypeConfig {
   where?: string[]
   label?: string
   /** Property that pins the type's node order; "id" orders by entity id. */
@@ -996,7 +996,7 @@ export interface SankeyTypeConfig {
   pips?: SankeyPipsConfig
 }
 
-export interface SankeyPipsConfig {
+interface SankeyPipsConfig {
   relation: string
   type: string
   label?: string
@@ -1004,7 +1004,7 @@ export interface SankeyPipsConfig {
   max: number
 }
 
-export interface KanbanCard {
+interface KanbanCard {
   title: string
   subtitle?: string
   fields?: KanbanCardField[]
@@ -1012,7 +1012,7 @@ export interface KanbanCard {
   style?: 'note'
 }
 
-export interface DashboardConfig {
+interface DashboardConfig {
   title?: string
   description?: string
   cards: DashboardCard[]
@@ -1030,7 +1030,7 @@ export interface DashboardConfig {
 }
 
 /** A built-in element's toggle in data-entry.yaml (TKT-31822PN). */
-export type ChromeToggle = boolean | { permission: string }
+type ChromeToggle = boolean | { permission: string }
 
 /**
  * Which built-in entity header buttons the server shows this principal
@@ -1065,7 +1065,7 @@ export interface DashboardRecords {
   stat?: 'latest' | 'avg' | 'sum' | 'min' | 'max' | 'count'
 }
 
-export interface DashboardCard {
+interface DashboardCard {
   title: string
   /**
    * A `lists:` entry (TKT-2SGPJZ). The card shows the list's rows, and the
@@ -1171,7 +1171,7 @@ export interface DashboardGroup {
 }
 
 /** One row of a table card: its column properties as the reader may see them. */
-export interface DashboardRow {
+interface DashboardRow {
   id: string
   type: string
   _title: string
@@ -1179,7 +1179,7 @@ export interface DashboardRow {
   _redacted?: string[]
 }
 
-export interface DashboardAxisValue {
+interface DashboardAxisValue {
   value: string
   label: string
 }
@@ -1588,7 +1588,7 @@ export interface PageConfig {
 }
 
 /** How a page shows its tabs (TKT-35BY3PE). */
-export type PageMode = 'tabs' | 'steps'
+type PageMode = 'tabs' | 'steps'
 
 /** The kind of view a page tab shows; the route name of its standalone view. */
 export type PageTabView = 'list' | 'kanban' | 'calendar' | 'gantt' | 'document' | 'dashboard'
@@ -1722,7 +1722,7 @@ export interface DocumentConfig {
 
 // DocumentEdit configures the Edit button on the full-page document view.
 // Both fields are required when the parent block is present (validated server-side).
-export interface DocumentEdit {
+interface DocumentEdit {
   form: string
   label: string
 }

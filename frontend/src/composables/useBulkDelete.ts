@@ -13,7 +13,7 @@ export interface DeleteTarget {
   ref: string
 }
 
-export interface BulkDeleteNoun {
+interface BulkDeleteNoun {
   singular: string
   plural?: string
 }

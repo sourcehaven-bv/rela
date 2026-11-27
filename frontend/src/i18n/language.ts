@@ -17,7 +17,7 @@ export const MESSAGES = { en, nl } as const
 
 export type UiLanguage = keyof typeof MESSAGES
 
-export const SUPPORTED_LANGUAGES = Object.keys(MESSAGES) as UiLanguage[]
+const SUPPORTED_LANGUAGES = Object.keys(MESSAGES) as UiLanguage[]
 
 /** The language every key is written in first, and the last fallback. */
 export const FALLBACK_LANGUAGE: UiLanguage = 'en'

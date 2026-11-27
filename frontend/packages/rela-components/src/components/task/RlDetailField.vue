@@ -30,44 +30,41 @@ import RlOptionSelect from '../form/RlOptionSelect.vue'
 import RlDateField from '../form/RlDateField.vue'
 import { toISODate, fromISODate } from './detailFieldDate'
 
-const props = withDefaults(
-  defineProps<{
-    field: DetailField
-    /** Turns the value into a control that can be changed in place. */
-    editable?: boolean
-    /**
-     * Choices for a status field. Each carries the colour its dot takes once
-     * chosen, so picking a status changes the dot as well as the words.
-     */
-    options?: StatusOption[]
-    /**
-     * Choices for a single-tag field such as a priority. Each is a whole tag,
-     * so the list shows the badge rather than its label alone.
-     */
-    tagOptions?: Tag[]
-    /**
-     * Puts the value under its label rather than beside it, across the full
-     * width of the row. For a value too long to read in the value column: a
-     * paragraph of text, or a list of tags that would otherwise wrap several
-     * times against the label.
-     */
-    stacked?: boolean
-  }>(),
-  { editable: false, options: () => [], tagOptions: () => [], stacked: false },
-)
+const { field, editable = false, options = [], tagOptions = [], stacked = false } = defineProps<{
+  field: DetailField
+  /** Turns the value into a control that can be changed in place. */
+  editable?: boolean
+  /**
+   * Choices for a status field. Each carries the colour its dot takes once
+   * chosen, so picking a status changes the dot as well as the words.
+   */
+  options?: StatusOption[]
+  /**
+   * Choices for a single-tag field such as a priority. Each is a whole tag,
+   * so the list shows the badge rather than its label alone.
+   */
+  tagOptions?: Tag[]
+  /**
+   * Puts the value under its label rather than beside it, across the full
+   * width of the row. For a value too long to read in the value column: a
+   * paragraph of text, or a list of tags that would otherwise wrap several
+   * times against the label.
+   */
+  stacked?: boolean
+}>()
 
 const emit = defineEmits<{
   /** The value changed. */
   'update:field': [field: DetailField]
 }>()
 
-const isTagField = computed(() => props.field.type === 'tag' || props.field.type === 'tags')
+const isTagField = computed(() => field.type === 'tag' || field.type === 'tags')
 
 /** A picker: the value comes from a list, so the control is always live. */
 const picks = computed(() => {
-  if (!props.editable) return false
-  if (props.field.type === 'status') return props.options.length > 0
-  if (props.field.type === 'tag') return props.tagOptions.length > 0
+  if (!editable) return false
+  if (field.type === 'status') return options.length > 0
+  if (field.type === 'tag') return tagOptions.length > 0
   return false
 })
 
@@ -76,33 +73,33 @@ const picks = computed(() => {
  * value stands in for one until it is clicked. Multi-tag fields are neither,
  * because picking a single value would silently drop the rest.
  */
-const swaps = computed(() => props.editable && !picks.value && props.field.type !== 'tags')
+const swaps = computed(() => editable && !picks.value && field.type !== 'tags')
 
 const isEmpty = computed(() =>
-  isTagField.value ? !props.field.tags?.length : !props.field.value,
+  isTagField.value ? !field.tags?.length : !field.value,
 )
 
-const statusValues = computed(() => props.options.map((option) => option.value))
-const tagLabels = computed(() => props.tagOptions.map((tag) => tag.label))
+const statusValues = computed(() => options.map((option) => option.value))
+const tagLabels = computed(() => tagOptions.map((tag) => tag.label))
 
 const colorOf = (value: string) =>
-  props.options.find((option) => option.value === value)?.status
+  options.find((option) => option.value === value)?.status
 
-const tagOf = (label: string) => props.tagOptions.find((tag) => tag.label === label)
+const tagOf = (label: string) => tagOptions.find((tag) => tag.label === label)
 
 /*
  * A status option's value is its label, so the picker round-trips without the
  * caller keeping a second id, and the colour comes from the matching option.
  */
 function setStatus(value: string) {
-  if (value === props.field.value) return
-  emit('update:field', { ...props.field, value, status: colorOf(value) ?? props.field.status })
+  if (value === field.value) return
+  emit('update:field', { ...field, value, status: colorOf(value) ?? field.status })
 }
 
 function setTag(label: string) {
   const tag = tagOf(label)
-  if (!tag || tag.id === props.field.tags?.[0]?.id) return
-  emit('update:field', { ...props.field, tags: [tag] })
+  if (!tag || tag.id === field.tags?.[0]?.id) return
+  emit('update:field', { ...field, tags: [tag] })
 }
 
 /*
@@ -121,12 +118,12 @@ const draftDate = computed({
 })
 
 function onEdit() {
-  draft.value = props.field.value ?? ''
+  draft.value = field.value ?? ''
 }
 
 function commit() {
-  if (draft.value === (props.field.value ?? '')) return
-  emit('update:field', { ...props.field, value: draft.value })
+  if (draft.value === (field.value ?? '')) return
+  emit('update:field', { ...field, value: draft.value })
 }
 </script>
 

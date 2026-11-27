@@ -60,7 +60,7 @@ export interface EntityTypeModel {
   relationCount: number
 }
 
-export interface OptionModel {
+interface OptionModel {
   value: string
   label: string
   color?: string
@@ -93,7 +93,7 @@ export function entityTypeNames(schema: TreeValue | undefined): string[] {
   return keys(get(schema, 'entities'))
 }
 
-export function entityTypeNode(schema: TreeValue | undefined, name: string): TreeMap | undefined {
+function entityTypeNode(schema: TreeValue | undefined, name: string): TreeMap | undefined {
   const node = getIn(schema, ['entities', name])
   return isMap(node) ? node : undefined
 }
@@ -180,10 +180,7 @@ export function entityTypes(schema: TreeValue | undefined): EntityTypeModel[] {
 }
 
 /** The colours of a choice list's options, from the screens file. */
-export function optionColors(
-  dataEntry: TreeValue | undefined,
-  list: string
-): Record<string, string> {
+function optionColors(dataEntry: TreeValue | undefined, list: string): Record<string, string> {
   const colors: Record<string, string> = {}
   for (const [value, color] of entries(getIn(dataEntry, ['styles', list]))) {
     const c = str(color)
@@ -321,7 +318,7 @@ export function ruleTitle(rule: Pick<RuleModel, 'name' | 'description' | 'index'
 
 // --- Automations (flows.yaml `triggers:`) ---
 
-export interface OutputModel {
+interface OutputModel {
   /** set, relate, create, add_to_pile, notify, check, script or other. */
   kind: string
   summary: string
@@ -490,7 +487,7 @@ export function filterProperty(clause: string): string | undefined {
 }
 
 /** The `where:` clauses of a trigger: its `on.where` and each check's `where`. */
-export function triggerWhereClauses(rule: TreeValue | undefined): string[] {
+function triggerWhereClauses(rule: TreeValue | undefined): string[] {
   return [
     ...strList(getIn(rule, ['on', 'where'])),
     ...mapItems(get(rule, 'outputs')).flatMap((o) => strList(getIn(o, ['check', 'where']))),
@@ -524,7 +521,7 @@ export function automationsUsing(
 
 // --- Screens ---
 
-export interface FieldModel {
+interface FieldModel {
   /** The field's place in the form's list. */
   index: number
   property: string

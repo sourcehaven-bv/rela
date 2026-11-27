@@ -2,7 +2,7 @@
 /** Muted "+ Add ..." affordance at the end of a list, column or section. */
 import RlIcon from './RlIcon.vue'
 
-withDefaults(defineProps<{ label: string; block?: boolean }>(), { block: false })
+const { label, block = false } = defineProps<{ label: string; block?: boolean }>()
 
 defineEmits<{ click: [event: MouseEvent] }>()
 </script>

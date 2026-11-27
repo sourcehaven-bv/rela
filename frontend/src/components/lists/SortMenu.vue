@@ -29,41 +29,36 @@ export interface SortOption {
 
 const props = defineProps<{
   options: SortOption[]
-  modelValue: SortSpec[]
 }>()
 
-const emit = defineEmits<{
-  'update:modelValue': [value: SortSpec[]]
-}>()
+const model = defineModel<SortSpec[]>({ required: true })
 
 const { t } = useI18n()
 
-const active = computed(() => props.modelValue[0])
+const active = computed(() => model.value[0])
 function labelOf(property: string): string {
   return props.options.find((o) => o.property === property)?.label ?? property
 }
 const activeLabel = computed(() => (active.value ? labelOf(active.value.property) : ''))
-const extraKeys = computed(() => props.modelValue.length - 1)
-const multi = computed(() => props.modelValue.length > 1)
+const extraKeys = computed(() => model.value.length - 1)
+const multi = computed(() => model.value.length > 1)
 
 function choose(property: string) {
   const spec = active.value
-  emit('update:modelValue', [
-    { property, direction: spec?.property === property ? spec.direction : 'asc' },
-  ])
+  model.value = [{ property, direction: spec?.property === property ? spec.direction : 'asc' }]
 }
 
 function setDirection(direction: SortSpec['direction']) {
   const spec = active.value
-  if (spec) emit('update:modelValue', [{ property: spec.property, direction }, ...props.modelValue.slice(1)])
+  if (spec) model.value = [{ property: spec.property, direction }, ...model.value.slice(1)]
 }
 
 /** Flip one key of a multi-key sort: ascending to descending, descending off. */
 function cycleKey(index: number) {
-  const next = props.modelValue.map((spec) => ({ ...spec }))
+  const next = model.value.map((spec) => ({ ...spec }))
   if (next[index].direction === 'asc') next[index].direction = 'desc'
   else next.splice(index, 1)
-  emit('update:modelValue', next)
+  model.value = next
 }
 </script>
 
@@ -93,11 +88,7 @@ function cycleKey(index: number) {
     </template>
 
     <RlMenuSection :label="t('list.sort.menuLabel')" />
-    <RlMenuItem
-      :current="!active"
-      data-testid="sort-default"
-      @click="emit('update:modelValue', [])"
-    >
+    <RlMenuItem :current="!active" data-testid="sort-default" @click="model = []">
       {{ t('list.sort.default') }}
     </RlMenuItem>
     <RlMenuItem
@@ -113,7 +104,7 @@ function cycleKey(index: number) {
       <RlMenuSeparator />
       <RlMenuSection :label="t('list.sort.keysLabel')" />
       <RlMenuItem
-        v-for="(spec, index) in modelValue"
+        v-for="(spec, index) in model"
         :key="spec.property"
         :icon="spec.direction === 'desc' ? 'arrow-down' : 'arrow-up'"
         :data-sort-key="spec.property"

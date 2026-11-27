@@ -29,7 +29,7 @@ import {
  * to RETRY_MAX_MS after each failure.
  */
 export const RETRY_BASE_MS = 5_000
-export const RETRY_MAX_MS = 60_000
+const RETRY_MAX_MS = 60_000
 
 export const useChannelSchemaStore = defineStore('channelSchema', () => {
   const channelTypes = shallowRef<ChannelTypeSchema[]>([])

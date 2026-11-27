@@ -47,7 +47,7 @@ export interface RelationCardState {
 // content-scoped edge belongs to one face of its source, so `id@face` names
 // it; every other row is its id. The widgets key their rows by this address,
 // so a RelationEntry's `id` in a RelationCardState is already the address.
-export function entryAddress(e: { id: string; face?: string }): string {
+function entryAddress(e: { id: string; face?: string }): string {
   return e.face ? `${e.id}@${e.face}` : e.id
 }
 

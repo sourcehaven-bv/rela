@@ -12,7 +12,7 @@ export interface ConflictsResponse {
   count: number
 }
 
-export interface PropertyDiff {
+interface PropertyDiff {
   property: string
   ours_value: string
   theirs_value: string

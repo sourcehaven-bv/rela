@@ -45,7 +45,7 @@ async function loadSidePanel() {
     sections.value = data
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
-    // (see BUG-6C3V and src/composables/usePageData.ts).
+    // (see BUG-6C3V).
     if (isCancelledFetch(err)) return
     console.error('Failed to load side panel:', err)
     error.value = t('form.sidePanel.loadFailed')

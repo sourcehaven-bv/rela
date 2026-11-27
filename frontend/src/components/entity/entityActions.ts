@@ -11,16 +11,9 @@
 import type { IconName } from 'rela-components/components/common/icons'
 
 /** Menu sections, in the order they are drawn. */
-export const ENTITY_ACTION_GROUPS = [
-  'command',
-  'edit',
-  'view',
-  'export',
-  'manage',
-  'danger',
-] as const
+const ENTITY_ACTION_GROUPS = ['command', 'edit', 'view', 'export', 'manage', 'danger'] as const
 
-export type EntityActionGroup = (typeof ENTITY_ACTION_GROUPS)[number]
+type EntityActionGroup = (typeof ENTITY_ACTION_GROUPS)[number]
 
 export interface EntityAction {
   /** Stable within one list, for keys and tests. */

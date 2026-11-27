@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { TagColor } from '../../types'
 
-withDefaults(defineProps<{ label: string; color?: TagColor }>(), { color: 'grey' })
+const { label, color = 'grey' } = defineProps<{ label: string; color?: TagColor }>()
 </script>
 
 <template>

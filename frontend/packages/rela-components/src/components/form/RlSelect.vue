@@ -10,24 +10,20 @@ import RlFieldShell from './RlFieldShell.vue'
 import RlIcon from '../common/RlIcon.vue'
 import type { SelectOption } from './types'
 
-withDefaults(
-  defineProps<{
-    modelValue?: string
-    label: string
-    options: SelectOption[]
-    hint?: string
-    error?: string
-    required?: boolean
-    labelHidden?: boolean
-    disabled?: boolean
-    size?: 'sm' | 'md' | 'lg'
-    /** Shown as a disabled first option while nothing is chosen. */
-    placeholder?: string
-  }>(),
-  { modelValue: '', required: false, labelHidden: false, disabled: false, size: 'md' },
-)
+const { required = false, labelHidden = false, disabled = false, size = 'md' } = defineProps<{
+  label: string
+  options: SelectOption[]
+  hint?: string
+  error?: string
+  required?: boolean
+  labelHidden?: boolean
+  disabled?: boolean
+  size?: 'sm' | 'md' | 'lg'
+  /** Shown as a disabled first option while nothing is chosen. */
+  placeholder?: string
+}>()
 
-defineEmits<{ 'update:modelValue': [value: string] }>()
+const model = defineModel<string>({ default: '' })
 </script>
 
 <template>
@@ -44,12 +40,12 @@ defineEmits<{ 'update:modelValue': [value: string] }>()
         :id="control.id"
         class="rl-control rl-select__input"
         :class="size !== 'md' && `rl-control--${size}`"
-        :value="modelValue"
+        :value="model"
         :disabled="disabled"
         :required="control.required"
         :aria-describedby="control.describedBy"
         :aria-invalid="control.invalid || undefined"
-        @change="$emit('update:modelValue', ($event.target as HTMLSelectElement).value)"
+        @change="model = ($event.target as HTMLSelectElement).value"
       >
         <option v-if="placeholder" value="" disabled>{{ placeholder }}</option>
         <option

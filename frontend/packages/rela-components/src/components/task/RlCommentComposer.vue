@@ -6,23 +6,14 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-withDefaults(
-  defineProps<{
-    placeholder?: string
-    label?: string
-    submitLabel?: string
-    cancelLabel?: string
-    /** Blocks submission and shows the pending state on the submit button. */
-    submitting?: boolean
-  }>(),
-  {
-    placeholder: undefined,
-    label: undefined,
-    submitLabel: undefined,
-    cancelLabel: undefined,
-    submitting: false,
-  },
-)
+const { placeholder, label, submitLabel, cancelLabel, submitting = false } = defineProps<{
+  placeholder?: string
+  label?: string
+  submitLabel?: string
+  cancelLabel?: string
+  /** Blocks submission and shows the pending state on the submit button. */
+  submitting?: boolean
+}>()
 
 const emit = defineEmits<{ submit: [body: string]; cancel: [] }>()
 const body = ref('')

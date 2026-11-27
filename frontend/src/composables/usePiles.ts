@@ -28,15 +28,16 @@ import { useFlyout } from '@/composables/useFlyout'
 import { pileNavId } from './pileNav'
 import { forgetPileName, rememberPileNames, resetPileNames } from './pileNames'
 import { runWhenVisible } from './visibleRefetch'
+import { ownLookup } from '@/utils/ownLookup'
 
 /** How long a burst of entity changes is left to settle before recounting. */
 export const PILES_EVENT_DEBOUNCE_MS = 1000
 
 /** How long the Undo toast after a removal stays up. */
-export const PILE_UNDO_TOAST_MS = 10000
+const PILE_UNDO_TOAST_MS = 10000
 
 /** The query-key root of every piles query, list and detail alike. */
-export const PILES_KEY_ROOT = 'piles'
+const PILES_KEY_ROOT = 'piles'
 
 /** What a mutation needs to know about a pile: its id, and its name for toasts. */
 export type PileRef = Pick<PileSummary, 'id' | 'name'>
@@ -62,7 +63,7 @@ export function resetPilesState(): void {
  * refuse the whole request, so the SPA sends the first
  * PILE_REQUEST_MAX_ITEMS and says so rather than dropping the rest silently.
  */
-export function truncationNote(selected: number): string {
+function truncationNote(selected: number): string {
   if (selected <= PILE_REQUEST_MAX_ITEMS) return ''
   return t('piles.truncated', { max: PILE_REQUEST_MAX_ITEMS, selected })
 }
@@ -73,6 +74,15 @@ function withNote(message: string, selected: number): string {
   return note ? t('piles.withNote', { message, note }) : message
 }
 
+const PILE_ERROR_KEYS: Partial<Record<string, string>> = {
+  pile_name_taken: 'piles.nameTaken',
+  pile_limit: 'piles.limit',
+  item_not_found: 'piles.itemNotFound',
+  pile_not_found: 'piles.notFound',
+  no_owner: 'piles.noOwner',
+  pile_locked: 'piles.locked',
+}
+
 /**
  * The user-facing sentence for a failed piles request.
  *
@@ -81,22 +91,8 @@ function withNote(message: string, selected: number): string {
  * `ambiguous_address` keeps the server's message, which names the faces.
  */
 export function pileErrorMessage(err: unknown, fallback: string): string {
-  switch (pileErrorCode(err)) {
-    case 'pile_name_taken':
-      return t('piles.nameTaken')
-    case 'pile_limit':
-      return t('piles.limit')
-    case 'item_not_found':
-      return t('piles.itemNotFound')
-    case 'pile_not_found':
-      return t('piles.notFound')
-    case 'no_owner':
-      return t('piles.noOwner')
-    case 'pile_locked':
-      return t('piles.locked')
-    default:
-      return getErrorMessage(err, fallback)
-  }
+  const key = ownLookup(PILE_ERROR_KEYS, pileErrorCode(err))
+  return key ? t(key) : getErrorMessage(err, fallback)
 }
 
 /**

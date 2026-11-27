@@ -24,7 +24,7 @@ import { configureRoute } from './routes'
 
 export type ChangeKind = 'added' | 'changed' | 'removed'
 
-export interface ChangeItem {
+interface ChangeItem {
   kind: ChangeKind
   label: string
   detail?: string
@@ -121,7 +121,7 @@ const SETTING_LABELS: Record<string, string> = {
   link: 'Opens the record',
 }
 
-export function settingLabel(key: string): string {
+function settingLabel(key: string): string {
   return SETTING_LABELS[key] ?? key
 }
 

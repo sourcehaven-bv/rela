@@ -9,17 +9,14 @@
 import { useId } from 'vue'
 import RlText from '../components/common/RlText.vue'
 
-withDefaults(
-  defineProps<{
-    /** What is previewed, after the word "Preview". */
-    subject: string
-    /** Content runs edge to edge, for a preview that draws its own panel. */
-    flush?: boolean
-    /** Stays in view while the editor beside it scrolls. */
-    sticky?: boolean
-  }>(),
-  { flush: false, sticky: false },
-)
+const { flush = false, sticky = false } = defineProps<{
+  /** What is previewed, after the word "Preview". */
+  subject: string
+  /** Content runs edge to edge, for a preview that draws its own panel. */
+  flush?: boolean
+  /** Stays in view while the editor beside it scrolls. */
+  sticky?: boolean
+}>()
 
 const labelId = useId()
 </script>

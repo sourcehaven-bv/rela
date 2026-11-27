@@ -42,7 +42,7 @@ export interface SankeyOptions {
   iterations?: number
 }
 
-export interface SankeyNode extends SankeyNodeIn {
+interface SankeyNode extends SankeyNodeIn {
   col: number
   x0: number
   x1: number
@@ -51,7 +51,7 @@ export interface SankeyNode extends SankeyNodeIn {
   value: number
 }
 
-export interface SankeyLink {
+interface SankeyLink {
   source: string
   target: string
   value: number
@@ -65,7 +65,7 @@ export interface SankeyLink {
   path: string
 }
 
-export interface SankeyHeading {
+interface SankeyHeading {
   type: string
   col: number
   x: number
@@ -260,7 +260,7 @@ export function orderNodes(
 }
 
 /** ribbonPath is a cubic Bézier between two x positions at the given centre heights. */
-export function ribbonPath(x0: number, sy: number, x1: number, ty: number): string {
+function ribbonPath(x0: number, sy: number, x1: number, ty: number): string {
   const xm = (x0 + x1) / 2
   return `M${x0},${sy}C${xm},${sy} ${xm},${ty} ${x1},${ty}`
 }

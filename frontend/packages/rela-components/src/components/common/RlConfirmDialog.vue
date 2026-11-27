@@ -18,35 +18,35 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    open: boolean
-    title: string
-    description?: string
-    confirmLabel?: string
-    cancelLabel?: string
-    /** `danger` for deletions; `default` for a neutral confirmation. */
-    tone?: 'default' | 'danger'
-    /** Shows the pending state on the confirm button. */
-    confirming?: boolean
-  }>(),
-  {
-    confirmLabel: undefined,
-    cancelLabel: undefined,
-    tone: 'danger',
-    confirming: false,
-  },
-)
+const {
+  open,
+  title,
+  description,
+  confirmLabel,
+  cancelLabel,
+  tone = 'danger',
+  confirming = false,
+} = defineProps<{
+  open: boolean
+  title: string
+  description?: string
+  confirmLabel?: string
+  cancelLabel?: string
+  /** `danger` for deletions; `default` for a neutral confirmation. */
+  tone?: 'default' | 'danger'
+  /** Shows the pending state on the confirm button. */
+  confirming?: boolean
+}>()
 
 const emit = defineEmits<{ confirm: []; cancel: [] }>()
 
-const confirmText = computed(() => props.confirmLabel ?? messages.chromeText({ key: 'delete' }))
-const cancelText = computed(() => props.cancelLabel ?? messages.chromeText({ key: 'cancel' }))
+const confirmText = computed(() => confirmLabel ?? messages.chromeText({ key: 'delete' }))
+const cancelText = computed(() => cancelLabel ?? messages.chromeText({ key: 'cancel' }))
 
 const cancelButton = ref<InstanceType<typeof RlButton> | null>(null)
 
 function cancel() {
-  if (props.confirming) return
+  if (confirming) return
   emit('cancel')
 }
 
@@ -56,9 +56,9 @@ function cancel() {
  * here is the close button, so this moves it afterwards.
  */
 watch(
-  () => props.open,
-  async (open) => {
-    if (!open) return
+  () => open,
+  async (isOpen) => {
+    if (!isOpen) return
     await nextTick()
     cancelButton.value?.$el?.focus()
   },

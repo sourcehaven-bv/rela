@@ -19,31 +19,33 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    title: string
-    /**
-     * How wide the panel is. `sm` is a list of names, `md` a list of rows
-     * with metadata, `lg` a reading column.
-     */
-    size?: 'sm' | 'md' | 'lg'
-    /** Hides the heading visually, leaving it for screen readers. */
-    titleHidden?: boolean
-    /** Whether the panel offers a close control. */
-    closable?: boolean
-    /**
-     * Distance from the left edge of the page to this panel's own left edge.
-     * The stack sets it so each panel clears the ones before it; on its own
-     * the panel sits against the edge.
-     */
-    offset?: string
-  }>(),
-  { size: 'md', titleHidden: false, closable: true, offset: '0px' },
-)
+const {
+  size = 'md',
+  titleHidden = false,
+  closable = true,
+  offset = '0px',
+} = defineProps<{
+  title: string
+  /**
+   * How wide the panel is. `sm` is a list of names, `md` a list of rows
+   * with metadata, `lg` a reading column.
+   */
+  size?: 'sm' | 'md' | 'lg'
+  /** Hides the heading visually, leaving it for screen readers. */
+  titleHidden?: boolean
+  /** Whether the panel offers a close control. */
+  closable?: boolean
+  /**
+   * Distance from the left edge of the page to this panel's own left edge.
+   * The stack sets it so each panel clears the ones before it; on its own
+   * the panel sits against the edge.
+   */
+  offset?: string
+}>()
 
 const emit = defineEmits<{ close: [] }>()
 
-const style = computed(() => ({ left: props.offset }))
+const style = computed(() => ({ left: offset }))
 </script>
 
 <template>

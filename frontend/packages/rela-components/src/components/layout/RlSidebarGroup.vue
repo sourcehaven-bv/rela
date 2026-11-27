@@ -20,25 +20,26 @@ import RlSidebarGroupHeader from './RlSidebarGroupHeader.vue'
 import RlSidebarNavItem from './RlSidebarNavItem.vue'
 import { useMessages } from '../../composables/useMessages'
 
-const props = withDefaults(
-  defineProps<{
-    group: NavGroup
-    activeId?: string
-    /** The id of the item whose panel is open. See `NavItem.opensFlyout`. */
-    flyoutId?: string | null
-    /**
-     * Item count past which the group splits under its subheadings. Matched
-     * to the sidebar's filter threshold, so a list that grows long gains both
-     * at once rather than arriving as two separate surprises.
-     *
-     * Set to Infinity to keep a group flat however long it gets.
-     */
-    groupThreshold?: number
-    /** Heading for items with no subgroup of their own. Defaults to the `otherGroup` chrome text. */
-    fallbackLabel?: string
-  }>(),
-  { groupThreshold: 20, fallbackLabel: undefined },
-)
+const {
+  groupThreshold = 20,
+  fallbackLabel,
+  group,
+} = defineProps<{
+  group: NavGroup
+  activeId?: string
+  /** The id of the item whose panel is open. See `NavItem.opensFlyout`. */
+  flyoutId?: string | null
+  /**
+   * Item count past which the group splits under its subheadings. Matched
+   * to the sidebar's filter threshold, so a list that grows long gains both
+   * at once rather than arriving as two separate surprises.
+   *
+   * Set to Infinity to keep a group flat however long it gets.
+   */
+  groupThreshold?: number
+  /** Heading for items with no subgroup of their own. Defaults to the `otherGroup` chrome text. */
+  fallbackLabel?: string
+}>()
 
 const emit = defineEmits<{ select: [item: NavItem]; menu: []; add: [] }>()
 const messages = useMessages()
@@ -49,8 +50,8 @@ const messages = useMessages()
  */
 const grouped = computed(
   () =>
-    (props.group.subgroups?.length ?? 0) > 0 &&
-    props.group.items.length > props.groupThreshold,
+    (group.subgroups?.length ?? 0) > 0 &&
+    group.items.length > groupThreshold,
 )
 
 /**
@@ -62,18 +63,18 @@ const grouped = computed(
  * which is worse than an untidy last heading.
  */
 const sections = computed(() => {
-  const subgroups = props.group.subgroups ?? []
+  const subgroups = group.subgroups ?? []
   const known = new Set(subgroups.map((subgroup) => subgroup.id))
 
   const named = subgroups
     .map((subgroup) => ({
       id: subgroup.id,
       label: subgroup.label,
-      items: props.group.items.filter((item) => item.groupId === subgroup.id),
+      items: group.items.filter((item) => item.groupId === subgroup.id),
     }))
     .filter((section) => section.items.length > 0)
 
-  const rest = props.group.items.filter(
+  const rest = group.items.filter(
     (item) => !item.groupId || !known.has(item.groupId),
   )
 
@@ -82,7 +83,7 @@ const sections = computed(() => {
         ...named,
         {
           id: '__rest',
-          label: props.fallbackLabel ?? messages.chromeText({ key: 'otherGroup' }),
+          label: fallbackLabel ?? messages.chromeText({ key: 'otherGroup' }),
           items: rest,
         },
       ]

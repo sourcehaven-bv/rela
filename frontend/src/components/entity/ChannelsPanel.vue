@@ -32,30 +32,32 @@ import { useSchemaStore } from '@/stores/schema'
 import ChannelsSection from './channels/ChannelsSection.vue'
 import { placementOf, typesAt, type ChannelPlacement } from './channels/channelPlacement'
 
-const props = withDefaults(
-  defineProps<{
-    entityType: string
-    /** The entity's address, face included on a faced type. */
-    entityId: string
-    /** The page world, for entity links. */
-    world?: string
-    /** Which block of the page this is. */
-    placement?: ChannelPlacement
-  }>(),
-  { world: undefined, placement: 'end' }
-)
+const {
+  entityType,
+  entityId,
+  world,
+  placement = 'end',
+} = defineProps<{
+  entityType: string
+  /** The entity's address, face included on a faced type. */
+  entityId: string
+  /** The page world, for entity links. */
+  world?: string
+  /** Which block of the page this is. */
+  placement?: ChannelPlacement
+}>()
 
 const channelSchema = useChannelSchema()
 const schema = useSchemaStore()
 
-const attached = computed(() => channelSchema.channelTypesFor(props.entityType))
+const attached = computed(() => channelSchema.channelTypesFor(entityType))
 const presentation = (name: string) => schema.channelPresentations.get(name)
 
 const types = computed(() =>
   typesAt(
     attached.value.map((ct) => ct.name),
     presentation,
-    props.placement
+    placement
   )
 )
 
@@ -71,7 +73,7 @@ const heading = computed(() => {
 
 /** The types placed above the relations, which the end block leaves out. */
 const placedAbove = computed(() =>
-  props.placement === 'end' && split.value
+  placement === 'end' && split.value
     ? typesAt(
         attached.value.map((ct) => ct.name),
         presentation,
@@ -80,14 +82,12 @@ const placedAbove = computed(() =>
     : undefined
 )
 
-const sectionKey = computed(
-  () => `${props.entityType}/${props.entityId}/${[...types.value].sort().join(',')}`
-)
+const sectionKey = computed(() => `${entityType}/${entityId}/${[...types.value].sort().join(',')}`)
 
 // A failed first load is tried again (after the store's backoff) when the
 // page moves to another entity, since EntityDetail does not remount.
 watch(
-  () => [props.entityType, props.entityId],
+  () => [entityType, entityId],
   () => void channelSchema.ensureLoaded()
 )
 </script>

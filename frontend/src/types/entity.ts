@@ -352,7 +352,7 @@ export interface TaskItemConversionOffer {
   reason?: string
 }
 
-export interface CopyOnSuccess {
+interface CopyOnSuccess {
   message?: string
   landing: { mode: 'written' | 'stay' | 'world' | 'face'; world?: string; face?: string }
 }
@@ -413,7 +413,7 @@ export interface ModernRelationsField {
 // unreadable by the holder of the entity (e.g. the file is git-crypt
 // encrypted and the key is not present locally). The SPA renders such
 // fields with a lock indicator instead of an editable widget.
-export interface InaccessibleField {
+interface InaccessibleField {
   name: string
   reason: string
 }
@@ -613,7 +613,7 @@ export interface ListParams extends ListQueryScope {
 }
 
 // Side panel types
-export interface SidePanelField {
+interface SidePanelField {
   label: string
   values?: string[]
   propType?: string
@@ -637,7 +637,7 @@ export interface SidePanelAddTarget {
 }
 
 // Add button info for side panel
-export interface SidePanelAddInfo {
+interface SidePanelAddInfo {
   relation: string
   linkAs: 'from' | 'to'
   peerId: string
@@ -645,7 +645,7 @@ export interface SidePanelAddInfo {
 }
 
 // Link existing button info for side panel
-export interface SidePanelLinkInfo {
+interface SidePanelLinkInfo {
   relation: string
   linkAs: 'from' | 'to'
   peerId: string
@@ -681,7 +681,7 @@ export interface Preconditions {
   relations?: string
 }
 
-export interface FieldConflict {
+interface FieldConflict {
   expected: string
   actual: string
 }

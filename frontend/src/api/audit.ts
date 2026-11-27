@@ -46,7 +46,7 @@ export interface ChangesPage {
 }
 
 /** A whole stored audit record (Go: audit.Record), served to audit:read only. */
-export interface AuditRecord {
+interface AuditRecord {
   time: string
   op: string
   subject?: AuditSubject

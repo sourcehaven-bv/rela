@@ -14,25 +14,22 @@ import RlText from '../common/RlText.vue'
 import RlButton from '../common/RlButton.vue'
 import RlRelatedRow from './RlRelatedRow.vue'
 
-withDefaults(
-  defineProps<{
-    title: string
-    items: T[]
-    /**
-     * The add button's label, such as "Add subtask". Absent means no button:
-     * a list that cannot take a new record must not offer to.
-     */
-    addLabel?: string
-    /**
-     * What to say when there are no items. Absent hides the whole list when
-     * it is empty, unless it offers to add one.
-     */
-    emptyLabel?: string
-    /** The heading's place in the document outline. */
-    level?: 2 | 3 | 4 | 5 | 6
-  }>(),
-  { level: 2 },
-)
+const { title, items, addLabel, emptyLabel, level = 2 } = defineProps<{
+  title: string
+  items: T[]
+  /**
+   * The add button's label, such as "Add subtask". Absent means no button:
+   * a list that cannot take a new record must not offer to.
+   */
+  addLabel?: string
+  /**
+   * What to say when there are no items. Absent hides the whole list when
+   * it is empty, unless it offers to add one.
+   */
+  emptyLabel?: string
+  /** The heading's place in the document outline. */
+  level?: 2 | 3 | 4 | 5 | 6
+}>()
 
 const emit = defineEmits<{
   select: [item: T]

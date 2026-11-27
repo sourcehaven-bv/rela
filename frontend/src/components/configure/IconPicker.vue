@@ -10,25 +10,26 @@ import { NO_ICON, iconNames, isKnownIcon } from '@/utils/icons'
  * means no icon. A stored name outside the set stays selectable, so opening
  * a screen never changes it.
  */
-const props = withDefaults(
-  defineProps<{
-    modelValue: string
-    label?: string
-    /** What empty means, such as "The list icon". */
-    defaultLabel?: string
-  }>(),
-  { label: 'Icon', defaultLabel: 'The default icon' }
-)
+const {
+  modelValue,
+  label = 'Icon',
+  defaultLabel = 'The default icon',
+} = defineProps<{
+  modelValue: string
+  label?: string
+  /** What empty means, such as "The list icon". */
+  defaultLabel?: string
+}>()
 const emit = defineEmits<{ 'update:modelValue': [value: string | undefined] }>()
 
 const options = computed(() => {
   const names = iconNames()
   const unknown =
-    props.modelValue && props.modelValue !== NO_ICON && !isKnownIcon(props.modelValue)
-      ? [{ value: props.modelValue, label: `${props.modelValue} (unknown)` }]
+    modelValue && modelValue !== NO_ICON && !isKnownIcon(modelValue)
+      ? [{ value: modelValue, label: `${modelValue} (unknown)` }]
       : []
   return [
-    { value: '', label: props.defaultLabel },
+    { value: '', label: defaultLabel },
     { value: NO_ICON, label: 'No icon' },
     ...unknown,
     ...names.map((n) => ({ value: n, label: n })),

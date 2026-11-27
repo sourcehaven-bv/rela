@@ -32,46 +32,37 @@ import RlText from '../common/RlText.vue'
 import RlHeading from '../common/RlHeading.vue'
 import type { TimelineEntry, TimelineGroup } from './timeline'
 
-const props = withDefaults(
-  defineProps<{
-    /**
-     * The entries, in the order they should read. Newest first is the usual
-     * choice for a feed and is not enforced: an audit trail read oldest first is
-     * equally valid, and reversing the caller's array would be this component
-     * overriding a decision it cannot make.
-     */
-    entries?: TimelineEntry[]
-    /**
-     * The same content grouped under headings, usually by day. Takes precedence
-     * over `entries`; pass one or the other.
-     */
-    groups?: TimelineGroup[]
-    /**
-     * The heading level the group labels render at, so the timeline fits the
-     * outline of whatever page it is on. The visual size does not change with
-     * it, which is the split `RlHeading` already draws.
-     */
-    headingLevel?: 2 | 3 | 4 | 5 | 6
-    /**
-     * Whether an entry shows its actor's avatar. Off by default: a feed where
-     * every row is the same person is a column of identical circles, and the
-     * name is already written.
-     */
-    avatars?: boolean
-    /**
-     * What to say when there is nothing. Left unset the timeline renders
-     * nothing at all, which suits a panel that has its own empty state.
-     */
-    emptyLabel?: string
-  }>(),
-  {
-    entries: () => [],
-    groups: undefined,
-    headingLevel: 3,
-    avatars: false,
-    emptyLabel: undefined,
-  },
-)
+const { entries = [], groups, headingLevel = 3, avatars = false } = defineProps<{
+  /**
+   * The entries, in the order they should read. Newest first is the usual
+   * choice for a feed and is not enforced: an audit trail read oldest first is
+   * equally valid, and reversing the caller's array would be this component
+   * overriding a decision it cannot make.
+   */
+  entries?: TimelineEntry[]
+  /**
+   * The same content grouped under headings, usually by day. Takes precedence
+   * over `entries`; pass one or the other.
+   */
+  groups?: TimelineGroup[]
+  /**
+   * The heading level the group labels render at, so the timeline fits the
+   * outline of whatever page it is on. The visual size does not change with
+   * it, which is the split `RlHeading` already draws.
+   */
+  headingLevel?: 2 | 3 | 4 | 5 | 6
+  /**
+   * Whether an entry shows its actor's avatar. Off by default: a feed where
+   * every row is the same person is a column of identical circles, and the
+   * name is already written.
+   */
+  avatars?: boolean
+  /**
+   * What to say when there is nothing. Left unset the timeline renders
+   * nothing at all, which suits a panel that has its own empty state.
+   */
+  emptyLabel?: string
+}>()
 
 /*
  * One shape internally, so the template is not written twice. A flat list
@@ -79,7 +70,7 @@ const props = withDefaults(
  * for a sectionless list.
  */
 const resolvedGroups = computed<TimelineGroup[]>(() =>
-  props.groups ?? [{ id: 'all', entries: props.entries }],
+  groups ?? [{ id: 'all', entries: entries }],
 )
 
 const isEmpty = computed(() =>

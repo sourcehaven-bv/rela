@@ -20,24 +20,21 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    /** Names what the help is about, and titles the modal. */
-    title?: string
-    /**
-     * The button's accessible name. Defaults from `title`, so a page of help
-     * buttons does not present a row of identical "Show help" controls to a
-     * screen-reader user listing them.
-     */
-    label?: string
-    size?: 'sm' | 'md' | 'lg'
-  }>(),
-  { title: undefined, size: 'sm' },
-)
+const { title, label, size = 'sm' } = defineProps<{
+  /** Names what the help is about, and titles the modal. */
+  title?: string
+  /**
+   * The button's accessible name. Defaults from `title`, so a page of help
+   * buttons does not present a row of identical "Show help" controls to a
+   * screen-reader user listing them.
+   */
+  label?: string
+  size?: 'sm' | 'md' | 'lg'
+}>()
 
 const open = ref(false)
-const titleText = computed(() => props.title ?? messages.chromeText({ key: 'help' }))
-const accessibleName = () => props.label ?? `${messages.chromeText({ key: 'help' })}: ${titleText.value}`
+const titleText = computed(() => title ?? messages.chromeText({ key: 'help' }))
+const accessibleName = () => label ?? `${messages.chromeText({ key: 'help' })}: ${titleText.value}`
 </script>
 
 <template>

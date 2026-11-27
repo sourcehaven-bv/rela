@@ -1,7 +1,7 @@
 import type { AssignSource } from '@/api/assign'
 
 /** The drag payload MIME type of list rows that can be assigned. */
-export const ASSIGN_MIME = 'application/x-rela-assign'
+const ASSIGN_MIME = 'application/x-rela-assign'
 
 export interface AssignDragPayload {
   entityType: string

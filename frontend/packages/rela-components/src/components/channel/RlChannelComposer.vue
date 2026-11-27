@@ -125,58 +125,57 @@ import type {
 } from './types'
 import { useMessages, type ChannelTextKey } from '../../composables/useMessages'
 
-const props = withDefaults(
-  defineProps<{
-    /** Every message type of the channel type. */
-    messageTypes: ChannelMessageTypeDef[]
-    /** The message types the user may post now. */
-    postable: string[]
-    presentation?: ChannelPresentation
-    /** Enum labels and colours, keyed by enum type. */
-    enumOptions?: Record<string, ChannelEnumOption[]>
-    /**
-     * Asks the app to pick an entity of one of the given types. Resolve null
-     * on cancel; never reject (a rejection is treated as a cancel).
-     */
-    pickRef?: (to: string[]) => Promise<ChannelReadableRef | null>
-    /** The message being replied to. */
-    replyTo?: ChannelReplyQuote
-    /** The message being edited; switches the composer to edit mode. */
-    editing?: ChannelEditing
-    submitting?: boolean
-    /** Field messages from the app, keyed by property name. */
-    errors?: Record<string, string>
-    /** A message that belongs to no one field. */
-    error?: string
-    /** Named under a datetime field, so the zone is never implied. */
-    timeZoneLabel?: string
-    submitShortcut?: string
-    /** The message types whose post would move the session, in order. */
-    transitions?: ChannelComposerTransition[]
-    /** Stops a submit without showing it as sending; see the header comment. */
-    blocked?: boolean
-    /** A decision that opens the composer with fixed values; see the header comment. */
-    compose?: ChannelComposeView
-    /** Types a button stands for now; left out of the picker. See the header comment. */
-    buttonTypes?: string[]
-  }>(),
-  {
-    presentation: undefined,
-    enumOptions: undefined,
-    pickRef: undefined,
-    replyTo: undefined,
-    editing: undefined,
-    submitting: false,
-    errors: undefined,
-    error: undefined,
-    timeZoneLabel: undefined,
-    submitShortcut: 'Ctrl+Enter',
-    transitions: () => [],
-    blocked: false,
-    compose: undefined,
-    buttonTypes: () => [],
-  },
-)
+const {
+  messageTypes,
+  postable,
+  presentation,
+  enumOptions,
+  pickRef,
+  replyTo,
+  editing,
+  submitting = false,
+  errors,
+  error,
+  timeZoneLabel,
+  submitShortcut = 'Ctrl+Enter',
+  transitions = [],
+  blocked = false,
+  compose,
+  buttonTypes = [],
+} = defineProps<{
+  /** Every message type of the channel type. */
+  messageTypes: ChannelMessageTypeDef[]
+  /** The message types the user may post now. */
+  postable: string[]
+  presentation?: ChannelPresentation
+  /** Enum labels and colours, keyed by enum type. */
+  enumOptions?: Record<string, ChannelEnumOption[]>
+  /**
+   * Asks the app to pick an entity of one of the given types. Resolve null
+   * on cancel; never reject (a rejection is treated as a cancel).
+   */
+  pickRef?: (to: string[]) => Promise<ChannelReadableRef | null>
+  /** The message being replied to. */
+  replyTo?: ChannelReplyQuote
+  /** The message being edited; switches the composer to edit mode. */
+  editing?: ChannelEditing
+  submitting?: boolean
+  /** Field messages from the app, keyed by property name. */
+  errors?: Record<string, string>
+  /** A message that belongs to no one field. */
+  error?: string
+  /** Named under a datetime field, so the zone is never implied. */
+  timeZoneLabel?: string
+  submitShortcut?: string
+  /** The message types whose post would move the session, in order. */
+  transitions?: ChannelComposerTransition[]
+  /** Stops a submit without showing it as sending; see the header comment. */
+  blocked?: boolean
+  /** A decision that opens the composer with fixed values; see the header comment. */
+  compose?: ChannelComposeView
+  /** Types a button stands for now; left out of the picker. See the header comment. */
+  buttonTypes?: string[]
+}>()
 
 const emit = defineEmits<{
   post: [event: ChannelPostEvent]
@@ -196,22 +195,22 @@ const form = useTemplateRef<HTMLFormElement>('form')
 const hintId = useId()
 const composeId = useId()
 
-const transitionByType = computed(() => new Map(props.transitions.map((tr) => [tr.messageType, tr])))
+const transitionByType = computed(() => new Map(transitions.map((tr) => [tr.messageType, tr])))
 
 const offered = computed(() => {
-  if (props.editing) {
-    const type = props.messageTypes.find((m) => m.name === props.editing!.type)
+  if (editing) {
+    const type = messageTypes.find((m) => m.name === editing!.type)
     return type ? [type] : []
   }
-  const allowed = new Set(props.postable)
-  const list = props.messageTypes.filter((m) => allowed.has(m.name) && (!props.replyTo || m.reply))
-  const order = props.transitions.map((tr) => tr.messageType)
+  const allowed = new Set(postable)
+  const list = messageTypes.filter((m) => allowed.has(m.name) && (!replyTo || m.reply))
+  const order = transitions.map((tr) => tr.messageType)
   const first = order.flatMap((name) => list.filter((m) => m.name === name))
   return [...first, ...list.filter((m) => !transitionByType.value.has(m.name))]
 })
 
 /** Whether the presentation keeps type out of the picker (`offer: false`). */
-const unoffered = (type: string) => props.presentation?.messages?.[type]?.offer === false
+const unoffered = (type: string) => presentation?.messages?.[type]?.offer === false
 
 /** A type kept out of the picker that `select()` selected; see `unoffered`. */
 const requested = ref('')
@@ -223,10 +222,10 @@ const requested = ref('')
  * edit offers its own type.
  */
 const pickable = computed(() => {
-  if (props.editing) return offered.value
+  if (editing) return offered.value
   const shown = offered.value.filter((m) => !unoffered(m.name) || m.name === requested.value)
-  if (!props.buttonTypes.length) return shown
-  const buttons = new Set(props.buttonTypes)
+  if (!buttonTypes.length) return shown
+  const buttons = new Set(buttonTypes)
   const list = shown.filter((m) => !buttons.has(m.name))
   return list.length ? list : shown
 })
@@ -250,7 +249,7 @@ const typeOptions = computed(() =>
 )
 
 /** An edit of a message whose type the descriptor no longer has. */
-const typeGone = computed(() => !!props.editing && offered.value.length === 0)
+const typeGone = computed(() => !!editing && offered.value.length === 0)
 
 const selected = ref('')
 // Selecting another type, by the user or by the app, lets go of the type
@@ -260,9 +259,9 @@ watch(selected, (type) => {
 })
 // The reply an Other answer opened is over, so is its request.
 watch(
-  () => props.replyTo?.seq,
+  () => replyTo?.seq,
   (seq, prev) => {
-    if (prev !== undefined && seq === undefined && !props.editing) requested.value = ''
+    if (prev !== undefined && seq === undefined && !editing) requested.value = ''
   },
 )
 const current = computed(() => {
@@ -289,7 +288,7 @@ const droppedKey = ref('')
 
 /** The compose decision a new message would apply, ignoring an edit. */
 function liveCompose(): ChannelComposeView | undefined {
-  const c = props.compose
+  const c = compose
   if (!c || c.key === droppedKey.value || !offered.value.some((m) => m.name === c.type)) return undefined
   return c
 }
@@ -298,7 +297,7 @@ function liveCompose(): ChannelComposeView | undefined {
 // an edit that ends in the same flush does not report the type the edit
 // put aside first; the app would take that as the user leaving compose.
 watch(
-  () => (props.editing ? undefined : (liveCompose()?.type ?? current.value?.name)),
+  () => (editing ? undefined : (liveCompose()?.type ?? current.value?.name)),
   (type) => {
     if (type !== undefined) emit('select', type)
   },
@@ -309,10 +308,10 @@ watch(
 // type with no compose decision naming it (the decision was cancelled, sent
 // or went stale, or an edit of that type ended).
 watch(
-  [offered, pickable, () => props.compose?.key, () => props.compose?.type],
+  [offered, pickable, () => compose?.key, () => compose?.type],
   () => {
     // An edit sets and restores the selection itself; see the editing watcher.
-    if (props.editing) return
+    if (editing) return
     if (selected.value && selectable(selected.value)) return
     selected.value = liveCompose()?.type ?? defaultType(pickable.value)
   },
@@ -348,8 +347,8 @@ watch(
 
 /** The compose decision that applies now, or undefined. */
 const composing = computed<ChannelComposeView | undefined>(() => {
-  const c = props.compose
-  if (!c || props.editing || c.key === droppedKey.value || current.value?.name !== c.type) return undefined
+  const c = compose
+  if (!c || editing || c.key === droppedKey.value || current.value?.name !== c.type) return undefined
   return c
 })
 
@@ -360,9 +359,9 @@ let appliedKey = ''
 // an edit ends, selects its type unless the user left it, and leaves the
 // focus where the edit put it.
 watch(
-  () => (props.editing || !props.compose ? '' : props.compose.key),
+  () => (editing || !compose ? '' : compose.key),
   (key) => {
-    const c = props.compose
+    const c = compose
     if (!key || !c || !offered.value.some((m) => m.name === c.type)) return
     if (key === appliedKey) {
       if (liveCompose()) selected.value = c.type
@@ -379,8 +378,8 @@ watch(
 watch(
   () => current.value?.name,
   (name) => {
-    const c = props.compose
-    if (c && !props.editing && name !== c.type) droppedKey.value = c.key
+    const c = compose
+    if (c && !editing && name !== c.type) droppedKey.value = c.key
   },
 )
 
@@ -390,7 +389,7 @@ watch(
  * some have a condition, says it may move the session.
  */
 const sessionHint = computed(() => {
-  if (props.editing || !current.value) return ''
+  if (editing || !current.value) return ''
   const c = composing.value
   if (c?.toLabel) return messages.channelSessionHint({ to: c.toLabel, guarded: false })
   const tr = transitionByType.value.get(current.value.name)
@@ -403,7 +402,7 @@ const sessionHint = computed(() => {
 
 /** Every field the presentation shows for the current type, lists included. */
 const shown = computed<ResolvedChannelField[]>(() =>
-  current.value ? resolveChannelFields(current.value, props.presentation?.messages?.[current.value.name]) : [],
+  current.value ? resolveChannelFields(current.value, presentation?.messages?.[current.value.name]) : [],
 )
 
 /** An own key of o; `in` would also find `constructor` and the like. */
@@ -417,7 +416,7 @@ const fields = computed<ResolvedChannelField[]>(() => {
   const given = composing.value?.given ?? {}
   return shown.value.filter(
     (f) =>
-      !f.property.list && !hasOwn(given, f.property.name) && !(props.editing && f.property.type === 'file'),
+      !f.property.list && !hasOwn(given, f.property.name) && !(editing && f.property.type === 'file'),
   )
 })
 
@@ -439,9 +438,9 @@ function givenText(f: ResolvedChannelField, v: ChannelFieldValue | string[]): st
   if (f.property.type === 'datetime') {
     // The field's local input form, 2026-11-01T09:00, read as the composer's zone.
     const at = v.replace('T', ' ')
-    return props.timeZoneLabel ? `${at} (${props.timeZoneLabel})` : at
+    return timeZoneLabel ? `${at} (${timeZoneLabel})` : at
   }
-  const opts = f.property.enum ? props.enumOptions?.[f.property.enum] : undefined
+  const opts = f.property.enum ? enumOptions?.[f.property.enum] : undefined
   return opts?.find((o) => o.value === v)?.label ?? v
 }
 
@@ -472,7 +471,7 @@ function seeded(type: ChannelMessageTypeDef): Values {
 }
 
 function reseed(type: string) {
-  const def = props.messageTypes.find((m) => m.name === type)
+  const def = messageTypes.find((m) => m.name === type)
   drafts[type] = def ? seeded(def) : {}
   refs[type] = {}
   files[type] = {}
@@ -497,7 +496,7 @@ const picked = computed<Files>(() => (current.value ? (files[current.value.name]
 let stashed: { selected: string; requested: string; type: string; values?: Values; refs?: Refs } | null = null
 
 watch(
-  () => (props.editing ? `${props.editing.seq}:${props.editing.type}` : ''),
+  () => (editing ? `${editing.seq}:${editing.type}` : ''),
   (_key, prevKey) => {
     localErrors.value = {}
     restricted.clear()
@@ -517,7 +516,7 @@ watch(
         else requested.value = ''
       }
     }
-    const e = props.editing
+    const e = editing
     if (!e) return
     stashed = {
       selected: selected.value,
@@ -538,7 +537,7 @@ function setValue(name: string, v: ChannelFieldValue) {
   const type = current.value
   if (!type) return
   ;(drafts[type.name] ??= seeded(type))[name] = v
-  if (!props.editing && type.persist === 'log' && !isEmpty(v)) emit('typing')
+  if (!editing && type.persist === 'log' && !isEmpty(v)) emit('typing')
   clearLocalError(name)
 }
 
@@ -587,12 +586,12 @@ function check(): Record<string, string> {
 }
 
 function errorFor(name: string): string | undefined {
-  return localErrors.value[name] ?? props.errors?.[name]
+  return localErrors.value[name] ?? errors?.[name]
 }
 
 async function submit() {
   const type = current.value
-  if (!type || props.submitting || props.blocked) return
+  if (!type || submitting || blocked) return
   localErrors.value = check()
   if (Object.keys(localErrors.value).length) {
     await nextTick()
@@ -607,8 +606,8 @@ async function submit() {
     .filter((n) => !restricted.has(n))
   const out: Values = {}
   for (const name of rendered) out[name] = values.value[name]
-  if (props.editing) {
-    emit('save', { seq: props.editing.seq, type: type.name, values: out, rendered })
+  if (editing) {
+    emit('save', { seq: editing.seq, type: type.name, values: out, rendered })
   } else {
     const sent: Files = {}
     for (const f of fields.value) {
@@ -619,7 +618,7 @@ async function submit() {
       type: type.name,
       values: out,
       rendered,
-      replyTo: props.replyTo?.seq,
+      replyTo: replyTo?.seq,
       compose: composing.value?.key,
       ...(Object.keys(sent).length ? { files: sent } : {}),
     })
@@ -661,11 +660,11 @@ function cancelEdit() {
 function reset(posted?: ChannelPostEvent | ChannelEditEvent) {
   localErrors.value = {}
   if (posted && 'seq' in posted) return
-  const type = posted?.type ?? (props.editing ? undefined : current.value?.name)
+  const type = posted?.type ?? (editing ? undefined : current.value?.name)
   if (!type) return
   // A posted message of the type `select()` asked for ends the request.
   if (posted && posted.type === requested.value) requested.value = ''
-  if (props.editing && stashed?.type === type) {
+  if (editing && stashed?.type === type) {
     // The posted draft is the one the edit put aside.
     stashed.values = undefined
     stashed.refs = undefined
@@ -699,7 +698,7 @@ function focusField() {
  * during an edit or when `type` is not offered now.
  */
 function select(type: string): boolean {
-  if (props.editing) return false
+  if (editing) return false
   const prev = requested.value
   if (unoffered(type) && offered.value.some((m) => m.name === type)) requested.value = type
   if (!selectable(type)) {

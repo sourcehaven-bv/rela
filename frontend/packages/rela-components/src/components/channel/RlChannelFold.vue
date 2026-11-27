@@ -14,25 +14,22 @@ import { computed } from 'vue'
 import RlIcon from '../common/RlIcon.vue'
 import { useMessages } from '../../composables/useMessages'
 
-const props = withDefaults(
-  defineProps<{
-    /** How many messages the run shows when expanded, not counting session notices. */
-    count: number
-    /** How many session notices the run shows when expanded. */
-    moves?: number
-    /** The type labels of those messages, in first-seen order. */
-    labels: string[]
-    expanded: boolean
-    /** The id of the expanded run's list; ignored while collapsed. */
-    controls?: string
-  }>(),
-  { controls: undefined, moves: 0 },
-)
+const { count, moves = 0, labels, controls } = defineProps<{
+  /** How many messages the run shows when expanded, not counting session notices. */
+  count: number
+  /** How many session notices the run shows when expanded. */
+  moves?: number
+  /** The type labels of those messages, in first-seen order. */
+  labels: string[]
+  expanded: boolean
+  /** The id of the expanded run's list; ignored while collapsed. */
+  controls?: string
+}>()
 
 const emit = defineEmits<{ toggle: [] }>()
 
 const strings = useMessages()
-const text = computed(() => strings.channelFold({ count: props.count, labels: props.labels, moves: props.moves }))
+const text = computed(() => strings.channelFold({ count, labels, moves }))
 </script>
 
 <template>

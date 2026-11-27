@@ -10,27 +10,24 @@
  */
 import { onBeforeUnmount, ref, watch } from 'vue'
 
-const props = withDefaults(
-  defineProps<{
-    active: boolean
-    /**
-     * Held back so a fast response never flashes a bar. Anything under this
-     * feels instant, and showing a loader for it reads as slower, not faster.
-     */
-    delay?: number
-  }>(),
-  { delay: 300 },
-)
+const { delay = 300, active } = defineProps<{
+  active: boolean
+  /**
+   * Held back so a fast response never flashes a bar. Anything under this
+   * feels instant, and showing a loader for it reads as slower, not faster.
+   */
+  delay?: number
+}>()
 
 const visible = ref(false)
 let timer: ReturnType<typeof setTimeout> | undefined
 
 watch(
-  () => props.active,
-  (active) => {
+  () => active,
+  (isActive) => {
     clearTimeout(timer)
-    if (active) {
-      timer = setTimeout(() => (visible.value = true), props.delay)
+    if (isActive) {
+      timer = setTimeout(() => (visible.value = true), delay)
     } else {
       visible.value = false
     }

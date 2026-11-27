@@ -16,25 +16,22 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-withDefaults(
-  defineProps<{
-    variant?: 'panel' | 'page'
-    showNavigation?: boolean
-    showExpand?: boolean
-    showLink?: boolean
-    showAttach?: boolean
-    /** Adds an explicit dismiss control, so the panel reads as a layer. */
-    showClose?: boolean
-  }>(),
-  {
-    variant: 'panel',
-    showNavigation: true,
-    showExpand: true,
-    showLink: false,
-    showAttach: true,
-    showClose: false,
-  },
-)
+const {
+  variant = 'panel',
+  showNavigation = true,
+  showExpand = true,
+  showLink = false,
+  showAttach = true,
+  showClose = false,
+} = defineProps<{
+  variant?: 'panel' | 'page'
+  showNavigation?: boolean
+  showExpand?: boolean
+  showLink?: boolean
+  showAttach?: boolean
+  /** Adds an explicit dismiss control, so the panel reads as a layer. */
+  showClose?: boolean
+}>()
 
 defineEmits<{
   previous: []

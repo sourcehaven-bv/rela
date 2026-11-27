@@ -5,12 +5,13 @@
  */
 import type { DashboardRecords } from '@/types'
 import type { RecordPoint } from '@/api/records'
+import { ownLookup } from '@/utils/ownLookup'
 
 /** The bucket a card uses when it names none. */
 export const DEFAULT_BUCKET = 'month'
 
 /** The statistic a card uses when it names none. */
-export const DEFAULT_STAT = 'latest'
+const DEFAULT_STAT = 'latest'
 
 /** One plotted bucket of one owner. */
 export interface SeriesPoint {
@@ -81,7 +82,7 @@ export function bucketStart(t: number, bucket: DashboardRecords['bucket']): numb
 }
 
 /** The start of the bucket after the one starting at t. */
-export function nextBucket(t: number, bucket: DashboardRecords['bucket']): number {
+function nextBucket(t: number, bucket: DashboardRecords['bucket']): number {
   const d = new Date(t)
   switch (bucket ?? DEFAULT_BUCKET) {
     case 'hour':
@@ -163,7 +164,7 @@ export function bucketStarts(series: Series[]): number[] {
 }
 
 /** The decimal places needed to write x exactly, up to 10. */
-export function decimalsOf(x: number): number {
+function decimalsOf(x: number): number {
   let d = 0
   while (d < 10 && Math.abs(Math.round(x * 10 ** d) - x * 10 ** d) > 1e-6) d++
   return d
@@ -209,6 +210,13 @@ export function tickFormatter(ticks: number[], locale: string): (v: number) => s
   return (v) => f.format(v)
 }
 
+const BUCKET_FORMATS = {
+  hour: { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' },
+  day: { day: 'numeric', month: 'short', year: 'numeric' },
+  week: { day: 'numeric', month: 'short', year: 'numeric' },
+  month: { month: 'short', year: 'numeric' },
+} satisfies Record<NonNullable<DashboardRecords['bucket']>, Intl.DateTimeFormatOptions>
+
 /**
  * Formats a bucket start for its bucket, in UTC: buckets are UTC periods, so
  * an hour bucket reads as a UTC hour.
@@ -218,17 +226,6 @@ export function formatBucket(
   bucket: DashboardRecords['bucket'],
   locale: string
 ): string {
-  const opts: Intl.DateTimeFormatOptions = { timeZone: 'UTC' }
-  switch (bucket ?? DEFAULT_BUCKET) {
-    case 'hour':
-      Object.assign(opts, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
-      break
-    case 'day':
-    case 'week':
-      Object.assign(opts, { day: 'numeric', month: 'short', year: 'numeric' })
-      break
-    default:
-      Object.assign(opts, { month: 'short', year: 'numeric' })
-  }
-  return new Intl.DateTimeFormat(locale, opts).format(new Date(t))
+  const opts = ownLookup(BUCKET_FORMATS, bucket ?? DEFAULT_BUCKET) ?? BUCKET_FORMATS.month
+  return new Intl.DateTimeFormat(locale, { timeZone: 'UTC', ...opts }).format(new Date(t))
 }

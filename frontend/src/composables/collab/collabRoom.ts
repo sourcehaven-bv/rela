@@ -41,16 +41,16 @@ import * as encoding from 'lib0/encoding'
 export const FRAGMENT = 'prosemirror'
 
 /** Close code: the client's SPA build differs from the server's. */
-export const CLOSE_STALE_BUILD = 4409
+const CLOSE_STALE_BUILD = 4409
 /** Close code: the room belongs to an earlier server process. */
-export const CLOSE_GONE = 4410
+const CLOSE_GONE = 4410
 
 /**
  * How long a client may go without hearing from the relay and still rejoin.
  * The relay keeps an empty room for five minutes (`collabRoomIdle`); the
  * margin covers a peer the relay noticed leaving later than it left.
  */
-export const EXPIRE_MS = 3 * 60_000
+const EXPIRE_MS = 3 * 60_000
 
 /**
  * How often a connected client asks the relay for its state. The relay sends
@@ -58,7 +58,7 @@ export const EXPIRE_MS = 3 * 60_000
  * hears nothing for 30 seconds; the answer keeps it open and keeps
  * `lastHeard` current.
  */
-export const KEEPALIVE_MS = 10_000
+const KEEPALIVE_MS = 10_000
 
 export type CollabStatus = 'connecting' | 'synced' | 'expired' | 'stale-build' | 'failed'
 
@@ -70,7 +70,7 @@ export interface RoomBase {
   sent?: string
 }
 
-export interface CollabUser {
+interface CollabUser {
   name: string
   color: string
 }

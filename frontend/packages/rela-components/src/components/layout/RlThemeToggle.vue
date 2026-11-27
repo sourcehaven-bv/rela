@@ -29,29 +29,31 @@ import { useMessages } from '../../composables/useMessages'
 
 export type ThemeChoice = 'system' | 'light' | 'dark'
 
-const props = withDefaults(
-  defineProps<{
-    /**
-     * The chosen theme. Left unbound the control keeps the choice itself,
-     * for the whole page rather than beyond it.
-     */
-    modelValue?: ThemeChoice
-    /**
-     * Accessible name for the group. Shown only when `iconOnly` is off.
-     * Defaults to the `colourTheme` chrome text.
-     */
-    label?: string
-    /** Shows only the icons, for a collapsed rail or a tight footer. */
-    iconOnly?: boolean
-    size?: 'sm' | 'md'
-    /**
-     * Element the theme classes are written to. Defaults to the document
-     * root, which is what `dark.css` selects on.
-     */
-    target?: HTMLElement | null
-  }>(),
-  { modelValue: undefined, label: undefined, iconOnly: false, size: 'sm', target: null },
-)
+const {
+  iconOnly = false,
+  size = 'sm',
+  target = null,
+  modelValue,
+} = defineProps<{
+  /**
+   * The chosen theme. Left unbound the control keeps the choice itself,
+   * for the whole page rather than beyond it.
+   */
+  modelValue?: ThemeChoice
+  /**
+   * Accessible name for the group. Shown only when `iconOnly` is off.
+   * Defaults to the `colourTheme` chrome text.
+   */
+  label?: string
+  /** Shows only the icons, for a collapsed rail or a tight footer. */
+  iconOnly?: boolean
+  size?: 'sm' | 'md'
+  /**
+   * Element the theme classes are written to. Defaults to the document
+   * root, which is what `dark.css` selects on.
+   */
+  target?: HTMLElement | null
+}>()
 
 const emit = defineEmits<{ 'update:modelValue': [value: ThemeChoice] }>()
 
@@ -61,8 +63,8 @@ const emit = defineEmits<{ 'update:modelValue': [value: ThemeChoice] }>()
  * `aria-checked` stays on the old option, so the theme visibly switches while
  * a screen reader still announces the previous one as selected.
  */
-const inner = ref<ThemeChoice>(props.modelValue ?? 'system')
-const current = computed<ThemeChoice>(() => props.modelValue ?? inner.value)
+const inner = ref<ThemeChoice>(modelValue ?? 'system')
+const current = computed<ThemeChoice>(() => modelValue ?? inner.value)
 
 const messages = useMessages()
 
@@ -79,7 +81,7 @@ const options = computed<SegmentOption[]>(() => [
  * safe against an element an app has already written to.
  */
 function apply(choice: ThemeChoice) {
-  const el = props.target ?? document.documentElement
+  const el = target ?? document.documentElement
   el.classList.remove('light', 'dark')
   if (choice !== 'system') el.classList.add(choice)
 }

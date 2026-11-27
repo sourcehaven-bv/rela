@@ -6,14 +6,11 @@
  * let `align` place the row. Keyboard and screen-reader users meet the
  * actions in the order they are written regardless of how they are aligned.
  */
-withDefaults(
-  defineProps<{
-    align?: 'start' | 'end' | 'between'
-    /** Stacks the buttons full-width; useful in a narrow drawer. */
-    stacked?: boolean
-  }>(),
-  { align: 'end', stacked: false },
-)
+const { align = 'end', stacked = false } = defineProps<{
+  align?: 'start' | 'end' | 'between'
+  /** Stacks the buttons full-width; useful in a narrow drawer. */
+  stacked?: boolean
+}>()
 </script>
 
 <template>

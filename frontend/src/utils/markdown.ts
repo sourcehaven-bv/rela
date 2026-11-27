@@ -22,7 +22,7 @@ let mermaidCounter = 0
  * the renderer can rewrite the code spans into in-app links without a
  * second round-trip.
  */
-export interface EntityRef {
+interface EntityRef {
   /** The id to link to, when it differs from the referenced id (a rename). */
   entityId?: string
   type: string

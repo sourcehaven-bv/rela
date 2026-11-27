@@ -5,7 +5,7 @@
 
 import { t } from '@/i18n'
 
-export type DiffOp = 'equal' | 'add' | 'del'
+type DiffOp = 'equal' | 'add' | 'del'
 
 // The history timeline's badge text per version op, as literal keys.
 const VERSION_OP_KEYS = {

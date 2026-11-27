@@ -23,25 +23,23 @@ import RlMenuItem from 'rela-components/components/overlay/RlMenuItem.vue'
 import RlMenuSeparator from 'rela-components/components/overlay/RlMenuSeparator.vue'
 import NewPileDialog from './NewPileDialog.vue'
 
-const props = withDefaults(
-  defineProps<{
-    /** The addresses to add, read when a pile is chosen. */
-    addresses: () => string[]
-    label?: string
-    /** The last entry's label: "New pile from selection…", "New pile…". */
-    newLabel?: string
-    variant?: 'primary' | 'secondary'
-    size?: 'sm' | 'md'
-    placement?: 'top' | 'bottom'
-  }>(),
-  {
-    label: undefined,
-    newLabel: undefined,
-    variant: 'secondary',
-    size: 'sm',
-    placement: 'bottom',
-  }
-)
+const {
+  addresses,
+  label,
+  newLabel,
+  variant = 'secondary',
+  size = 'sm',
+  placement = 'bottom',
+} = defineProps<{
+  /** The addresses to add, read when a pile is chosen. */
+  addresses: () => string[]
+  label?: string
+  /** The last entry's label: "New pile from selection…", "New pile…". */
+  newLabel?: string
+  variant?: 'primary' | 'secondary'
+  size?: 'sm' | 'md'
+  placement?: 'top' | 'bottom'
+}>()
 
 const emit = defineEmits<{
   /** Items went onto a pile, new or existing. */
@@ -50,19 +48,19 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const piles = usePiles()
-const labelText = computed(() => props.label ?? t('piles.addToPile'))
-const newLabelText = computed(() => props.newLabel ?? t('piles.newFromSelection'))
+const labelText = computed(() => label ?? t('piles.addToPile'))
+const newLabelText = computed(() => newLabel ?? t('piles.newFromSelection'))
 
 /** The addresses captured when "New pile…" was chosen, so the dialog shows their count. */
 const newPileItems = ref<string[] | null>(null)
 
 async function addTo(pile: PileSummary) {
-  const added = await piles.addItems(pile, props.addresses())
+  const added = await piles.addItems(pile, addresses())
   if (added !== null) emit('added', pile)
 }
 
 function startNew() {
-  newPileItems.value = props.addresses()
+  newPileItems.value = addresses()
 }
 </script>
 

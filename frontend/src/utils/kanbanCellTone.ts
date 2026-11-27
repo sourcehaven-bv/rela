@@ -7,7 +7,7 @@ import { styleTokens } from '@/utils/styleColors'
  * internal/dataentryconfig/colors.go). Only used to pick a default label: the
  * server has already resolved the colour itself to a style class.
  */
-export const CELL_TONES = ['success', 'warning', 'error', 'info', 'new'] as const
+const CELL_TONES = ['success', 'warning', 'error', 'info', 'new'] as const
 export type CellTone = (typeof CELL_TONES)[number]
 
 /**

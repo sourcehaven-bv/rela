@@ -41,32 +41,29 @@ export interface SegmentOption {
   attrs?: Record<string, unknown>
 }
 
-const props = withDefaults(
-  defineProps<{
-    modelValue: string
-    options: SegmentOption[]
-    label: string
-    size?: 'sm' | 'md'
-    /** Shows only icons, with the label as the accessible name. */
-    iconOnly?: boolean
-  }>(),
-  { size: 'md', iconOnly: false },
-)
+const { modelValue, options, label, size = 'md', iconOnly = false } = defineProps<{
+  modelValue: string
+  options: SegmentOption[]
+  label: string
+  size?: 'sm' | 'md'
+  /** Shows only icons, with the label as the accessible name. */
+  iconOnly?: boolean
+}>()
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
 const root = ref<HTMLElement | null>(null)
 
-const linked = computed(() => props.options.some((o) => o.as && o.as !== 'button'))
+const linked = computed(() => options.some((o) => o.as && o.as !== 'button'))
 
 /** The option that takes Tab: the checked one, else the first enabled one. */
 const tabStop = computed(() => {
-  if (props.options.some((o) => o.value === props.modelValue && !o.disabled)) return props.modelValue
-  return props.options.find((o) => !o.disabled)?.value
+  if (options.some((o) => o.value === modelValue && !o.disabled)) return modelValue
+  return options.find((o) => !o.disabled)?.value
 })
 
 function move(direction: 1 | -1) {
-  const usable = props.options.filter((option) => !option.disabled)
+  const usable = options.filter((option) => !option.disabled)
   // With nothing checked, move from the tab stop, which holds the focus.
   const current = usable.findIndex((option) => option.value === tabStop.value)
   const next = usable[(current + direction + usable.length) % usable.length]

@@ -17,30 +17,27 @@ import RlModal from 'rela-components/components/overlay/RlModal.vue'
 import RlTextarea from 'rela-components/components/form/RlTextarea.vue'
 import RlTextField from 'rela-components/components/form/RlTextField.vue'
 
-const props = withDefaults(
-  defineProps<{
-    title: string
-    description?: string
-    label: string
-    /** An empty value is refused in the dialog. */
-    required?: boolean
-    multiline?: boolean
-    confirmLabel: string
-    pendingLabel: string
-    danger?: boolean
-    busy?: boolean
-    /** The server's refusal of the last submit. */
-    error?: string
-  }>(),
-  {
-    description: undefined,
-    required: false,
-    multiline: false,
-    danger: false,
-    busy: false,
-    error: undefined,
-  }
-)
+const {
+  description,
+  required = false,
+  multiline = false,
+  danger = false,
+  busy = false,
+  error,
+} = defineProps<{
+  title: string
+  description?: string
+  label: string
+  /** An empty value is refused in the dialog. */
+  required?: boolean
+  multiline?: boolean
+  confirmLabel: string
+  pendingLabel: string
+  danger?: boolean
+  busy?: boolean
+  /** The server's refusal of the last submit. */
+  error?: string
+}>()
 
 const emit = defineEmits<{ close: []; submit: [text: string] }>()
 const { t } = useI18n()
@@ -50,14 +47,14 @@ const text = ref('')
 /** Set once the user tried to submit, so an empty field is not an error on open. */
 const attempted = ref(false)
 
-const missing = computed(() => props.required && text.value.trim() === '')
+const missing = computed(() => required && text.value.trim() === '')
 const fieldError = computed(() =>
-  attempted.value && missing.value ? t('channels.required') : props.error
+  attempted.value && missing.value ? t('channels.required') : error
 )
 
 function submit() {
   attempted.value = true
-  if (missing.value || props.busy) return
+  if (missing.value || busy) return
   emit('submit', text.value.trim())
 }
 </script>

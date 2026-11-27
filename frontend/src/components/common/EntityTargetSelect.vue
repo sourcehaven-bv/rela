@@ -30,35 +30,25 @@ import { useI18n } from 'vue-i18n'
 import { entityDisplayTitle, entityDisplayTitleWithId } from '@/utils/entityDisplay'
 import type { TargetCandidate } from '@/types'
 
-const props = withDefaults(
-  defineProps<{
-    /** Resolved candidate entities to choose among. */
-    candidates: TargetCandidate[]
-    /** Committed value: the bare display title of the chosen candidate (or ''). */
-    modelValue: string
-    /** Widget shape. */
-    mode: 'select' | 'typeahead'
-    /** Accessible id for the control (label `for=`). */
-    controlId?: string
-    /** Placeholder for the typeahead search box / empty select option. */
-    placeholder?: string
-    /** Label for the empty (no-filter) choice in select mode. */
-    allLabel?: string
-  }>(),
-  {
-    controlId: undefined,
-    placeholder: undefined,
-    allLabel: undefined,
-  }
-)
+const { candidates, mode, controlId, placeholder, allLabel } = defineProps<{
+  /** Resolved candidate entities to choose among. */
+  candidates: TargetCandidate[]
+  /** Widget shape. */
+  mode: 'select' | 'typeahead'
+  /** Accessible id for the control (label `for=`). */
+  controlId?: string
+  /** Placeholder for the typeahead search box / empty select option. */
+  placeholder?: string
+  /** Label for the empty (no-filter) choice in select mode. */
+  allLabel?: string
+}>()
+
+/** Committed value: the bare display title of the chosen candidate (or ''). */
+const model = defineModel<string>({ required: true })
 
 const { t } = useI18n()
-const placeholderText = computed(() => props.placeholder ?? t('shell.targetSelect.search'))
-const allText = computed(() => props.allLabel ?? t('shell.targetSelect.all'))
-
-const emit = defineEmits<{
-  'update:modelValue': [value: string]
-}>()
+const placeholderText = computed(() => placeholder ?? t('shell.targetSelect.search'))
+const allText = computed(() => allLabel ?? t('shell.targetSelect.all'))
 
 // Candidates sorted by display title, case-insensitive. De-duplicated by the
 // bare title so two entities sharing a DisplayTitle collapse to one option
@@ -73,13 +63,13 @@ const emit = defineEmits<{
 const sortedOptions = computed(() => {
   // First pass: count how many candidates resolve to each title.
   const titleCounts = new Map<string, number>()
-  for (const c of props.candidates) {
+  for (const c of candidates) {
     const value = entityDisplayTitle(c)
     titleCounts.set(value, (titleCounts.get(value) ?? 0) + 1)
   }
   const seen = new Set<string>()
   const opts: { value: string; label: string }[] = []
-  for (const c of props.candidates) {
+  for (const c of candidates) {
     const value = entityDisplayTitle(c)
     if (seen.has(value)) continue
     seen.add(value)
@@ -98,17 +88,8 @@ const sortedOptions = computed(() => {
 // filter (RR-5GU270). We surface it as an explicit option so the control always
 // reflects the committed value.
 const missingSelectedValue = computed(() => {
-  if (!props.modelValue) return ''
-  return sortedOptions.value.some((o) => o.value === props.modelValue) ? '' : props.modelValue
-})
-
-// --- select mode -----------------------------------------------------------
-
-// A local mirror so v-model on the native <select> stays a one-liner while the
-// canonical value is still the parent's modelValue.
-const selectValue = computed({
-  get: () => props.modelValue,
-  set: (v: string) => emit('update:modelValue', v),
+  if (!model.value) return ''
+  return sortedOptions.value.some((o) => o.value === model.value) ? '' : model.value
 })
 
 // --- typeahead mode --------------------------------------------------------
@@ -119,7 +100,7 @@ const searchQuery = ref('')
 const showDropdown = ref(false)
 
 // The label to show in the closed typeahead: the committed selection, or empty.
-const committedLabel = computed(() => props.modelValue)
+const committedLabel = computed(() => model.value)
 
 const filteredOptions = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
@@ -135,7 +116,7 @@ function openTypeahead() {
 }
 
 function commit(value: string) {
-  emit('update:modelValue', value)
+  model.value = value
   searchQuery.value = ''
   showDropdown.value = false
 }
@@ -170,7 +151,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="entity-target-select">
     <!-- select mode: native <select> of titles -->
-    <select v-if="mode === 'select'" :id="controlId" v-model="selectValue">
+    <select v-if="mode === 'select'" :id="controlId" v-model="model">
       <option value="">{{ allText }}</option>
       <!-- Active committed value not covered by the loaded candidates (deep
            link beyond the fetch cap, or pre-load). Keeps the control honest
@@ -229,7 +210,9 @@ onBeforeUnmount(() => {
         >
           {{ opt.label }}
         </div>
-        <div v-if="filteredOptions.length === 0" class="dropdown-empty">{{ t('shell.targetSelect.noMatches') }}</div>
+        <div v-if="filteredOptions.length === 0" class="dropdown-empty">
+          {{ t('shell.targetSelect.noMatches') }}
+        </div>
       </div>
     </div>
   </div>

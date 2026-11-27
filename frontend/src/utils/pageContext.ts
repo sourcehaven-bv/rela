@@ -9,7 +9,7 @@ import type { LocationQuery, RouteLocationNormalizedLoaded } from 'vue-router'
  * navigation and cannot also name the page: one list can be a tab of several
  * pages, and the same list opened on its own has no page at all.
  */
-export const FROM_PAGE_KEY = 'from_page'
+const FROM_PAGE_KEY = 'from_page'
 
 /** The shape of a page id and a tab id, as the server validates them. */
 const SEGMENT = '[a-z][a-z0-9_-]{0,31}'

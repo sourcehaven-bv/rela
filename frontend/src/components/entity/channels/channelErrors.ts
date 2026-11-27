@@ -20,8 +20,8 @@ import { t } from '@/i18n'
  * does that, inside useChannel, per shouldDropHeldContent: a write the
  * server refuses says nothing about whether the user may still read.
  */
-export type ChannelErrorPlace = 'form' | 'toast'
-export type ChannelErrorThen = 'none' | 'refetch' | 'list' | 'schema'
+type ChannelErrorPlace = 'form' | 'toast'
+type ChannelErrorThen = 'none' | 'refetch' | 'list' | 'schema'
 
 export interface ChannelErrorRule {
   place: ChannelErrorPlace

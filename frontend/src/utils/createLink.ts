@@ -15,7 +15,7 @@
  */
 
 /** The role the NEWLY created entity takes in the relation. */
-export type LinkAs = 'from' | 'to'
+type LinkAs = 'from' | 'to'
 
 export interface CreateLinkParams {
   /** Relation type the new entity is linked by. */

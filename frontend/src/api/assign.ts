@@ -10,7 +10,7 @@ import { api } from './client'
 /** Names one block: a list, or a page plus the entry's entity id. */
 export type AssignSource = { list: string } | { page: string; target: string }
 
-export interface AssignPeer {
+interface AssignPeer {
   type: string
   id: string
 }

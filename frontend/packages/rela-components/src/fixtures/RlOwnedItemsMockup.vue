@@ -42,10 +42,8 @@ import type { IconName } from '../components/common/icons'
 import type { TableColumn, RowMove } from '../components/table/types'
 import type { DetailField, StatusOption } from '../types'
 
-const props = withDefaults(defineProps<{ pattern?: 'all' | 'table' | 'blocks' | 'related' }>(), {
-  pattern: 'all',
-})
-const show = (p: 'table' | 'blocks' | 'related') => props.pattern === 'all' || props.pattern === p
+const { pattern = 'all' } = defineProps<{ pattern?: 'all' | 'table' | 'blocks' | 'related' }>()
+const show = (p: 'table' | 'blocks' | 'related') => pattern === 'all' || pattern === p
 
 const { toasts, dismiss, show: toast } = useToasts()
 /** Deletes `item` from `list` at once and offers to put it back. */

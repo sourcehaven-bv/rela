@@ -6,6 +6,8 @@
  * when there is none.
  */
 
+import { ownLookup } from '@/utils/ownLookup'
+
 /**
  * A machine name from a label, for something new: `Due date` → `due_date`.
  * `separator` follows the file's own habit for the kind of thing named.
@@ -54,34 +56,26 @@ export const OPTION_COLORS = [
 
 export type TagColor = 'grey' | 'blue' | 'green' | 'amber' | 'yellow' | 'teal' | 'red' | 'purple'
 
+const HUE_TAG_COLORS: Partial<Record<string, TagColor>> = {
+  blue: 'blue',
+  green: 'green',
+  yellow: 'yellow',
+  teal: 'teal',
+  red: 'red',
+  purple: 'purple',
+  orange: 'amber',
+}
+
 /**
  * A style colour as the library's tag draws it. A shade draws as its hue's
  * tag; an operator colour and an unknown name draw grey.
  */
 export function tagColor(style: string | undefined): TagColor {
-  const hue = style?.split('/')[0]
-  switch (hue) {
-    case 'blue':
-    case 'green':
-    case 'yellow':
-    case 'teal':
-    case 'red':
-    case 'purple':
-      return hue
-    case 'orange':
-      return 'amber'
-    default:
-      return 'grey'
-  }
+  return ownLookup(HUE_TAG_COLORS, style?.split('/')[0] ?? '') ?? 'grey'
 }
 
 export function colorLabel(style: string | undefined): string {
   return style || 'No colour'
-}
-
-/** `1617` → `1,617 records`. */
-export function countOf(n: number, one: string, many: string): string {
-  return `${n.toLocaleString('en')} ${n === 1 ? one : many}`
 }
 
 /** Colour presets for an entity type: a light fill and a darker border. */

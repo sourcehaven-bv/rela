@@ -24,17 +24,14 @@ import type { Entity } from '@/types'
  * "could not load". Either way it stays saved until the user changes or
  * clears it.
  */
+/** The saved target id, or '' for none. */
+const model = defineModel<string>({ required: true })
+
 const props = defineProps<{
-  /** The saved target id, or '' for none. */
-  modelValue: string
   /** The relation's declared target types. */
   types: readonly string[]
   /** The relation name, for the accessible names. */
   label: string
-}>()
-
-const emit = defineEmits<{
-  'update:modelValue': [id: string]
 }>()
 
 const { t } = useI18n()
@@ -102,7 +99,7 @@ async function resolveTitle(id: string, types: readonly string[]): Promise<void>
   state.value = 'missing'
 }
 
-watch([() => props.modelValue, () => props.types], ([id, types]) => void resolveTitle(id, types), {
+watch([model, () => props.types], ([id, types]) => void resolveTitle(id, types), {
   immediate: true,
 })
 
@@ -110,16 +107,16 @@ onBeforeUnmount(() => abort?.abort())
 
 function handleSelect(id: string, entity: Entity): void {
   picked = entity
-  emit('update:modelValue', id)
+  model.value = id
 }
 </script>
 
 <template>
   <div class="relation-default-picker" data-testid="relation-default-picker">
-    <span v-if="!modelValue" :id="valueId" class="relation-default-none">
+    <span v-if="!model" :id="valueId" class="relation-default-none">
       {{ t('settings.relationDefault.none') }}
     </span>
-    <span v-else :id="valueId" class="relation-default-value" :title="modelValue">
+    <span v-else :id="valueId" class="relation-default-value" :title="model">
       <span class="relation-default-title">{{ state === 'loading' ? '' : title }}</span>
       <span v-if="state === 'missing'" class="relation-default-mark">
         {{ t('settings.relationDefault.notFound') }}
@@ -133,22 +130,22 @@ function handleSelect(id: string, entity: Entity): void {
       size="sm"
       :disabled="types.length === 0"
       :aria-label="
-        modelValue
+        model
           ? t('settings.relationDefault.changeFor', { relation: label })
           : t('settings.relationDefault.chooseFor', { relation: label })
       "
       :aria-describedby="valueId"
       @click="pickerOpen = true"
     >
-      {{ modelValue ? t('settings.relationDefault.change') : t('settings.relationDefault.choose') }}
+      {{ model ? t('settings.relationDefault.change') : t('settings.relationDefault.choose') }}
     </RlButton>
     <RlButton
-      v-if="modelValue"
+      v-if="model"
       variant="ghost"
       size="sm"
       :aria-label="t('settings.relationDefault.clearFor', { relation: label })"
       :aria-describedby="valueId"
-      @click="emit('update:modelValue', '')"
+      @click="model = ''"
     >
       {{ t('settings.relationDefault.clear') }}
     </RlButton>

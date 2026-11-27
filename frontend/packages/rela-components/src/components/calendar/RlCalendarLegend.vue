@@ -14,26 +14,23 @@
 import { computed } from 'vue'
 import type { CalendarSource } from './types'
 
-const props = withDefaults(
-  defineProps<{
-    sources: CalendarSource[]
-    /** Ids of the sources currently hidden. */
-    hidden?: string[]
-    /**
-     * Draw the legend even for a single source. Off by default: a lone entry
-     * beside its own grid names something nothing else is competing with.
-     */
-    showSingle?: boolean
-  }>(),
-  { hidden: () => [], showSingle: false },
-)
+const { sources, hidden = [], showSingle = false } = defineProps<{
+  sources: CalendarSource[]
+  /** Ids of the sources currently hidden. */
+  hidden?: string[]
+  /**
+   * Draw the legend even for a single source. Off by default: a lone entry
+   * beside its own grid names something nothing else is competing with.
+   */
+  showSingle?: boolean
+}>()
 
 const emit = defineEmits<{ toggle: [id: string] }>()
 
-const visible = computed(() => props.showSingle || props.sources.length > 1)
+const visible = computed(() => showSingle || sources.length > 1)
 
 function isHidden(id: string): boolean {
-  return props.hidden.includes(id)
+  return hidden.includes(id)
 }
 </script>
 

@@ -52,7 +52,7 @@ export function navId(item: SidebarItem): string {
  * link: `RouterLink` resolves `to: ''` against the current location, so the
  * row would steal the active highlight on every route.
  */
-export function isNavigable(item: SidebarItem): boolean {
+function isNavigable(item: SidebarItem): boolean {
   return Boolean(item.action) || Boolean(item.pile) || Boolean(item.href)
 }
 
@@ -158,13 +158,13 @@ export type GeneratedItemHref = (group: SidebarGroup, entry: NavItemEntry) => st
  * Where a generated entry goes: the group's entity page for the entry's row,
  * which opens on its first tab, or else the entity itself.
  */
-export function generatedItemHref(group: SidebarGroup, entry: NavItemEntry): string {
+function generatedItemHref(group: SidebarGroup, entry: NavItemEntry): string {
   if (group.items_page) return `/p/${group.items_page}/${encodeURIComponent(entry.id)}`
   return entityDetailHref(entry)
 }
 
 /** Where a child entry goes: the group's child page, or else the entity itself. */
-export function generatedChildHref(group: SidebarGroup, entry: NavItemEntry): string {
+function generatedChildHref(group: SidebarGroup, entry: NavItemEntry): string {
   if (group.items_child_page) return `/p/${group.items_child_page}/${encodeURIComponent(entry.id)}`
   return entityDetailHref(entry)
 }
@@ -306,7 +306,7 @@ export const PILE_NAME_NAV_PREFIX = 'pile-name:'
  * The row id of a `pile:` entry. Keyed on the name, since the pile may not
  * exist yet and a name is all the config holds.
  */
-export function pileNameNavId(name: string): string {
+function pileNameNavId(name: string): string {
   return `${PILE_NAME_NAV_PREFIX}${name}`
 }
 
@@ -332,7 +332,7 @@ export function pileSummaryStatus(p: PileSummary): NavItemStatus | undefined {
 }
 
 /** The count marker a pile row shows; none for an empty pile. */
-export function pileStatus(count: number): NavItemStatus | undefined {
+function pileStatus(count: number): NavItemStatus | undefined {
   return count > 0
     ? { tone: 'info', label: t('piles.itemCount', { n: count }, count), count }
     : undefined
@@ -356,7 +356,7 @@ export function pilesNavGroup(piles: readonly PileSummary[]): NavGroup {
 }
 
 /** The id of the sidebar group holding the declared piles. */
-export const DECLARED_PILES_GROUP_ID = 'group:declared-piles'
+const DECLARED_PILES_GROUP_ID = 'group:declared-piles'
 
 /**
  * The declared piles (favorites, notifications): an unlabelled group of their

@@ -2,7 +2,7 @@
 import type { StatusColor } from '../../types'
 import RlStatusDot from './RlStatusDot.vue'
 
-withDefaults(defineProps<{ label: string; color?: StatusColor }>(), { color: 'green' })
+const { label, color = 'green' } = defineProps<{ label: string; color?: StatusColor }>()
 </script>
 
 <template>

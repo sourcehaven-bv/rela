@@ -1,7 +1,7 @@
 import type { RouteLocationRaw } from 'vue-router'
 
 /** The scope query that walks a pile: `?from=pile&pile=<id>`, plus the world. */
-export function pileScopeQuery(pileId: string, world?: string): Record<string, string> {
+function pileScopeQuery(pileId: string, world?: string): Record<string, string> {
   return world ? { from: 'pile', pile: pileId, world } : { from: 'pile', pile: pileId }
 }
 

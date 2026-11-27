@@ -15,24 +15,20 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    modelValue?: File[]
-    label: string
-    /** Hides the label visually, keeping it for assistive technology. */
-    labelHidden?: boolean
-    hint?: string
-    error?: string
-    required?: boolean
-    disabled?: boolean
-    multiple?: boolean
-    /** Native accept list, such as `image/*` or `.pdf,.docx`. */
-    accept?: string
-  }>(),
-  { required: false, labelHidden: false, disabled: false, multiple: false },
-)
+const { required = false, labelHidden = false, disabled = false, multiple = false } = defineProps<{
+  label: string
+  /** Hides the label visually, keeping it for assistive technology. */
+  labelHidden?: boolean
+  hint?: string
+  error?: string
+  required?: boolean
+  disabled?: boolean
+  multiple?: boolean
+  /** Native accept list, such as `image/*` or `.pdf,.docx`. */
+  accept?: string
+}>()
 
-const emit = defineEmits<{ 'update:modelValue': [value: File[]] }>()
+const model = defineModel<File[]>()
 
 const dragging = ref(false)
 const input = ref<HTMLInputElement | null>(null)
@@ -40,19 +36,19 @@ const input = ref<HTMLInputElement | null>(null)
 function setFiles(list: FileList | null) {
   if (!list) return
   const incoming = Array.from(list)
-  emit('update:modelValue', props.multiple ? [...(props.modelValue ?? []), ...incoming] : incoming)
+  model.value = multiple ? [...(model.value ?? []), ...incoming] : incoming
 }
 
 function onDrop(event: DragEvent) {
   dragging.value = false
-  if (props.disabled) return
+  if (disabled) return
   setFiles(event.dataTransfer?.files ?? null)
 }
 
 function remove(index: number) {
-  const next = [...(props.modelValue ?? [])]
+  const next = [...(model.value ?? [])]
   next.splice(index, 1)
-  emit('update:modelValue', next)
+  model.value = next
   // The input keeps its own selection, so clear it or re-picking the same
   // file fires no change event.
   if (input.value) input.value.value = ''
@@ -104,8 +100,8 @@ function readableSize(bytes: number): string {
       </RlText>
     </label>
 
-    <ul v-if="modelValue?.length" class="rl-file__list">
-      <li v-for="(file, index) in modelValue" :key="`${file.name}-${index}`" class="rl-file__item">
+    <ul v-if="model?.length" class="rl-file__list">
+      <li v-for="(file, index) in model" :key="`${file.name}-${index}`" class="rl-file__item">
         <RlIcon name="file" :size="16" aria-hidden="true" />
         <RlText size="sm" truncate class="rl-file__name">{{ file.name }}</RlText>
         <RlText size="xs" tone="subtle">{{ readableSize(file.size) }}</RlText>

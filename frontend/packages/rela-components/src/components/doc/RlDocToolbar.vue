@@ -4,10 +4,7 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-withDefaults(defineProps<{ shareLabel?: string; starred?: boolean }>(), {
-  shareLabel: undefined,
-  starred: false,
-})
+const { shareLabel, starred = false } = defineProps<{ shareLabel?: string; starred?: boolean }>()
 
 defineEmits<{
   openNav: []

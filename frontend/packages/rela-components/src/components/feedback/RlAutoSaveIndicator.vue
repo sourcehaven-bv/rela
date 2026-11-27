@@ -15,22 +15,19 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    state: 'idle' | 'saving' | 'saved' | 'error'
-    /** Shown in the error state, such as `Offline. Retrying.` */
-    errorText?: string
-  }>(),
-  { errorText: undefined },
-)
+const { errorText, state } = defineProps<{
+  state: 'idle' | 'saving' | 'saved' | 'error'
+  /** Shown in the error state, such as `Offline. Retrying.` */
+  errorText?: string
+}>()
 
 const label = computed(() =>
   ({
     idle: '',
     saving: messages.chromeText({ key: 'saving' }),
     saved: messages.chromeText({ key: 'saved' }),
-    error: props.errorText ?? messages.chromeText({ key: 'couldNotSave' }),
-  })[props.state],
+    error: errorText ?? messages.chromeText({ key: 'couldNotSave' }),
+  })[state],
 )
 </script>
 

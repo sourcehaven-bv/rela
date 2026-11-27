@@ -10,51 +10,46 @@
 import { nextTick, ref, watch } from 'vue'
 import RlFieldShell from './RlFieldShell.vue'
 
-const props = withDefaults(
-  defineProps<{
-    modelValue?: string
-    label: string
-    hint?: string
-    error?: string
-    required?: boolean
-    labelHidden?: boolean
-    disabled?: boolean
-    readonly?: boolean
-    placeholder?: string
-    rows?: number
-    autoGrow?: boolean
-    /** Shows a live character count and caps input at this length. */
-    maxlength?: number
-  }>(),
-  {
-    modelValue: '',
-    required: false,
-    labelHidden: false,
-    disabled: false,
-    readonly: false,
-    rows: 3,
-    autoGrow: false,
-  },
-)
+const {
+  required = false,
+  labelHidden = false,
+  disabled = false,
+  readonly = false,
+  rows = 3,
+  autoGrow = false,
+} = defineProps<{
+  label: string
+  hint?: string
+  error?: string
+  required?: boolean
+  labelHidden?: boolean
+  disabled?: boolean
+  readonly?: boolean
+  placeholder?: string
+  rows?: number
+  autoGrow?: boolean
+  /** Shows a live character count and caps input at this length. */
+  maxlength?: number
+}>()
 
-const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
+const model = defineModel<string>({ default: '' })
 
 const field = ref<HTMLTextAreaElement | null>(null)
 
 function resize() {
   const el = field.value
-  if (!el || !props.autoGrow) return
+  if (!el || !autoGrow) return
   el.style.height = 'auto'
   el.style.height = `${el.scrollHeight}px`
 }
 
 function onInput(event: Event) {
-  emit('update:modelValue', (event.target as HTMLTextAreaElement).value)
+  model.value = (event.target as HTMLTextAreaElement).value
   resize()
 }
 
 // Also resize when the value is changed from outside, such as a form reset.
-watch(() => props.modelValue, () => nextTick(resize))
+watch(model, () => nextTick(resize))
 </script>
 
 <template>
@@ -71,7 +66,7 @@ watch(() => props.modelValue, () => nextTick(resize))
       ref="field"
       class="rl-control rl-control--multiline"
       :class="{ 'rl-textarea--auto': autoGrow }"
-      :value="modelValue"
+      :value="model"
       :rows="rows"
       :placeholder="placeholder"
       :disabled="disabled"
@@ -87,7 +82,7 @@ watch(() => props.modelValue, () => nextTick(resize))
       keystroke, and announcing each change would drown out the typing.
     -->
     <span v-if="maxlength" class="rl-textarea__count" role="status">
-      {{ modelValue.length }} / {{ maxlength }}
+      {{ model.length }} / {{ maxlength }}
     </span>
   </RlFieldShell>
 </template>

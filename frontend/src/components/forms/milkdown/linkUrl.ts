@@ -85,14 +85,14 @@ const BARE_HOST = new RegExp(
 )
 
 /** Why a URL was refused. Shown to the user, so it names the rule, not the input. */
-export type LinkUrlRejection =
+type LinkUrlRejection =
   | 'empty'
   | 'protocol-relative'
   | 'not-absolute'
   | 'unparseable'
   | 'blocked-scheme'
 
-export interface LinkUrlAccepted {
+interface LinkUrlAccepted {
   ok: true
   /** The normalized, storable value. Never the raw input. */
   url: string
@@ -105,7 +105,7 @@ export interface LinkUrlAccepted {
   strippedParams?: boolean
 }
 
-export interface LinkUrlRejected {
+interface LinkUrlRejected {
   ok: false
   reason: LinkUrlRejection
   /** Human-readable, safe to render: describes the rule, never echoes input. */

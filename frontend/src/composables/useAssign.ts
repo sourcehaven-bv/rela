@@ -9,7 +9,7 @@ import { assignTargetForHref, hasAssignDrag, readAssignDrag } from '@/utils/assi
  * Applies an `assign:` block to entities and reports the outcome in one
  * toast: refused rows, and rows that still do not match the list's condition.
  */
-export function useAssign() {
+function useAssign() {
   const uiStore = useUIStore()
   async function assign(src: AssignSource, addresses: string[]): Promise<boolean> {
     try {

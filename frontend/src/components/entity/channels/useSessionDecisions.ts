@@ -48,7 +48,7 @@ export interface DecisionChannel {
 }
 
 /** The composer, as a decision that opens the form drives it. */
-export interface DecisionComposer {
+interface DecisionComposer {
   /** A message is being edited. */
   editing(): boolean
   /** Ends the edit, after the user agreed to discard it. */
@@ -66,7 +66,7 @@ export interface DecisionComposer {
 }
 
 /** How the panel talks to the user. */
-export interface DecisionUI {
+interface DecisionUI {
   confirm(o: {
     title: string
     message: string

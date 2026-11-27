@@ -1,7 +1,7 @@
 import { api } from './client'
 
 /** The person entity the current principal resolves to, as the principal may read it. */
-export interface MePerson {
+interface MePerson {
   type: string
   id: string
   title: string
@@ -14,7 +14,7 @@ export interface MePerson {
  * host-absolute path or an https URL, opened as a full page load: the proxy,
  * not rela, handles CSRF and confirmation there.
  */
-export interface MeLinks {
+interface MeLinks {
   sign_out?: string
   account?: string
   switch_org?: string

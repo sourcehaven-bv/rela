@@ -20,7 +20,7 @@ import type { Scheduler } from 'fast-check'
 
 import type { FakeRequest, FakeResponse, FakeServer } from './server'
 
-export interface RecordedRequest extends FakeRequest {
+interface RecordedRequest extends FakeRequest {
   /** Order in which the client sent it, from 0. */
   sent: number
   /** The answer, once the fake has run the request; undefined while held or when aborted first. */

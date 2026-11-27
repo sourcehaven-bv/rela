@@ -10,7 +10,7 @@
 // Conventions for catch sites:
 //   - user-facing message      → getErrorMessage(err, 'context fallback')
 //   - script-error routing     → getScriptError(err) → scriptErrorStore
-//   - suppress cancellations   → isCancelledFetch (usePageData) delegates here
+//   - suppress cancellations   → isCancelledFetch
 //   - field-level validation   → (err as ApiError).validationErrors
 import axios, { type AxiosError } from 'axios'
 import type { ScriptError } from '@/types/scriptError'

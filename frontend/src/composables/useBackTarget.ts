@@ -9,7 +9,7 @@ import { pageTabPath, readFromPage } from '@/utils/pageContext'
  * composable so we don't couple a generic navigation helper to the
  * data-entry schemaStore (see TKT-JIEKC RR-RV4LA).
  */
-export type LabelHint = { kind: 'list'; id: string } | { kind: 'page'; id: string }
+type LabelHint = { kind: 'list'; id: string } | { kind: 'page'; id: string }
 
 export interface BackTarget {
   /** Validated same-origin path to push via vue-router. */

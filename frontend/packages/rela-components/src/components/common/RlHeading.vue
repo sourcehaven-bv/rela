@@ -4,21 +4,25 @@
  * props so a heading can sit correctly in the document outline without being
  * forced to a particular size, which is what WCAG 1.3.1 asks for.
  */
-withDefaults(
-  defineProps<{
-    /** Heading level in the document outline. */
-    level?: 1 | 2 | 3 | 4 | 5 | 6
-    /** Visual size. Defaults to the size that matches `level`. */
-    size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl'
-    weight?: 'normal' | 'medium' | 'semibold'
-    tone?: 'default' | 'muted'
-    /** Tight suits display titles; normal suits headings inside running text. */
-    lineHeight?: 'tight' | 'normal'
-    /** Truncates to a single line with an ellipsis. */
-    truncate?: boolean
-  }>(),
-  { level: 2, weight: 'semibold', tone: 'default', lineHeight: 'tight', truncate: false },
-)
+const {
+  level = 2,
+  size,
+  weight = 'semibold',
+  tone = 'default',
+  lineHeight = 'tight',
+  truncate = false,
+} = defineProps<{
+  /** Heading level in the document outline. */
+  level?: 1 | 2 | 3 | 4 | 5 | 6
+  /** Visual size. Defaults to the size that matches `level`. */
+  size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl'
+  weight?: 'normal' | 'medium' | 'semibold'
+  tone?: 'default' | 'muted'
+  /** Tight suits display titles; normal suits headings inside running text. */
+  lineHeight?: 'tight' | 'normal'
+  /** Truncates to a single line with an ellipsis. */
+  truncate?: boolean
+}>()
 
 const sizeForLevel = { 1: 'xl', 2: 'lg', 3: 'md', 4: 'md', 5: 'sm', 6: 'sm' } as const
 </script>

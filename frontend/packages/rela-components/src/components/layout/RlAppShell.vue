@@ -29,43 +29,41 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    navOpen?: boolean
-    panelOpen?: boolean
-    panelMode?: 'inline' | 'overlay'
-    /**
-     * Current sidebar width in pixels. Set it to make the sidebar draggable;
-     * leave it unset and the sidebar keeps taking `--rl-sidebar-width` and no
-     * handle is drawn.
-     *
-     * The shell reports changes through `update:sidebarWidth` and stores
-     * nothing. Clamp the stored value at render rather than keeping one width
-     * per breakpoint; see `RlResizer`.
-     */
-    sidebarWidth?: number
-    /** Narrowest the sidebar may be dragged. */
-    sidebarMinWidth?: number
-    /** Widest the sidebar may be dragged. */
-    sidebarMaxWidth?: number
-    /** Width a double-click or Enter returns the sidebar to. */
-    sidebarDefaultWidth?: number
-    /**
-     * Presenting to a room: the sidebar is not drawn and the main pane is
-     * enlarged by `--rl-app-shell-present-zoom` (1.25 by default), so a
-     * screen across the room stays readable.
-     */
-    presenting?: boolean
-  }>(),
-  {
-    navOpen: false,
-    presenting: false,
-    panelOpen: false,
-    panelMode: 'inline',
-    sidebarMinWidth: 200,
-    sidebarMaxWidth: 420,
-  },
-)
+const {
+  navOpen = false,
+  presenting = false,
+  panelOpen = false,
+  panelMode = 'inline',
+  sidebarMinWidth = 200,
+  sidebarMaxWidth = 420,
+  sidebarWidth,
+} = defineProps<{
+  navOpen?: boolean
+  panelOpen?: boolean
+  panelMode?: 'inline' | 'overlay'
+  /**
+   * Current sidebar width in pixels. Set it to make the sidebar draggable;
+   * leave it unset and the sidebar keeps taking `--rl-sidebar-width` and no
+   * handle is drawn.
+   *
+   * The shell reports changes through `update:sidebarWidth` and stores
+   * nothing. Clamp the stored value at render rather than keeping one width
+   * per breakpoint; see `RlResizer`.
+   */
+  sidebarWidth?: number
+  /** Narrowest the sidebar may be dragged. */
+  sidebarMinWidth?: number
+  /** Widest the sidebar may be dragged. */
+  sidebarMaxWidth?: number
+  /** Width a double-click or Enter returns the sidebar to. */
+  sidebarDefaultWidth?: number
+  /**
+   * Presenting to a room: the sidebar is not drawn and the main pane is
+   * enlarged by `--rl-app-shell-present-zoom` (1.25 by default), so a
+   * screen across the room stays readable.
+   */
+  presenting?: boolean
+}>()
 
 const emit = defineEmits<{
   'update:navOpen': [value: boolean]
@@ -73,7 +71,7 @@ const emit = defineEmits<{
   'update:sidebarWidth': [value: number]
 }>()
 
-const resizable = computed(() => props.sidebarWidth !== undefined)
+const resizable = computed(() => sidebarWidth !== undefined)
 
 /*
  * The shell binds the width it was given, so one rule decides how wide the
@@ -85,8 +83,8 @@ const sidebarStyle = computed(() =>
   resizable.value
     ? {
         '--rl-sidebar-width': `${Math.min(
-          props.sidebarMaxWidth,
-          Math.max(props.sidebarMinWidth, props.sidebarWidth as number),
+          sidebarMaxWidth,
+          Math.max(sidebarMinWidth, sidebarWidth as number),
         )}px`,
       }
     : undefined,
@@ -102,7 +100,7 @@ function onKeydown(event: KeyboardEvent) {
 
 // Escape closes the drawer, and the page behind it must not scroll.
 watch(
-  () => props.navOpen,
+  () => navOpen,
   (open) => {
     if (typeof document === 'undefined') return
     document.body.style.overflow = open ? 'hidden' : ''

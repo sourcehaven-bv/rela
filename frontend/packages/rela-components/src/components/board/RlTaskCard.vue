@@ -7,7 +7,7 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-withDefaults(defineProps<{ task: Task; selected?: boolean }>(), { selected: false })
+const { selected = false } = defineProps<{ task: Task; selected?: boolean }>()
 const emit = defineEmits<{ click: [task: Task] }>()
 </script>
 

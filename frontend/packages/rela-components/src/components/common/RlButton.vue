@@ -13,62 +13,63 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    variant?: 'primary' | 'secondary' | 'ghost' | 'subtle'
-    /** `danger` recolours any variant for destructive actions. */
-    tone?: 'default' | 'danger'
-    size?: 'sm' | 'md' | 'lg'
-    /** Shorthand for a leading icon; the `icon` slot overrides it. */
-    icon?: IconName
-    /** Swaps the leading icon for a spinner and blocks interaction. */
-    loading?: boolean
-    loadingLabel?: string
-    /**
-     * Replaces the label while loading, such as `Save` becoming `Saving`.
-     * This is the explicit-action pending indicator: the change is on the
-     * control the user just pressed, so there is no doubt what is working.
-     *
-     * Write it out rather than expecting it to be derived from the label:
-     * turning `Save` into `Saving` breaks on the first irregular verb or
-     * translated string, and a wrong pending verb is worse than an explicit
-     * one.
-     */
-    pendingLabel?: string
-    /**
-     * How long `loading` must hold before the pending label appears, and the
-     * minimum it stays once it does. Both default to the explicit-action
-     * timings, so a fast response shows nothing at all.
-     */
-    pendingDelay?: number
-    pendingMinDuration?: number
-    disabled?: boolean
-    block?: boolean
-    /** Set `submit` to use the button inside a form. */
-    type?: 'button' | 'submit' | 'reset'
-    /**
-     * What to render. A navigation action that goes somewhere is a link, not
-     * a button: only a real `a` or router link gives the user the middle
-     * click, the modifier click and the status bar they expect from one.
-     *
-     * Pass the router link component itself rather than a name, so this
-     * library does not depend on a router. The pending props do not apply,
-     * because a link has no in-flight state to report.
-     */
-    as?: 'button' | 'a' | Component
-  }>(),
-  {
-    variant: 'ghost',
-    tone: 'default',
-    size: 'md',
-    loading: false,
-    loadingLabel: undefined,
-    disabled: false,
-    block: false,
-    type: 'button',
-    as: 'button',
-  },
-)
+const {
+  variant = 'ghost',
+  tone = 'default',
+  size = 'md',
+  icon,
+  loading = false,
+  loadingLabel,
+  pendingLabel,
+  pendingDelay,
+  pendingMinDuration,
+  disabled = false,
+  block = false,
+  type = 'button',
+  as = 'button',
+} = defineProps<{
+  variant?: 'primary' | 'secondary' | 'ghost' | 'subtle'
+  /** `danger` recolours any variant for destructive actions. */
+  tone?: 'default' | 'danger'
+  size?: 'sm' | 'md' | 'lg'
+  /** Shorthand for a leading icon; the `icon` slot overrides it. */
+  icon?: IconName
+  /** Swaps the leading icon for a spinner and blocks interaction. */
+  loading?: boolean
+  loadingLabel?: string
+  /**
+   * Replaces the label while loading, such as `Save` becoming `Saving`.
+   * This is the explicit-action pending indicator: the change is on the
+   * control the user just pressed, so there is no doubt what is working.
+   *
+   * Write it out rather than expecting it to be derived from the label:
+   * turning `Save` into `Saving` breaks on the first irregular verb or
+   * translated string, and a wrong pending verb is worse than an explicit
+   * one.
+   */
+  pendingLabel?: string
+  /**
+   * How long `loading` must hold before the pending label appears, and the
+   * minimum it stays once it does. Both default to the explicit-action
+   * timings, so a fast response shows nothing at all.
+   */
+  pendingDelay?: number
+  pendingMinDuration?: number
+  disabled?: boolean
+  block?: boolean
+  /** Set `submit` to use the button inside a form. */
+  type?: 'button' | 'submit' | 'reset'
+  /**
+   * What to render. A navigation action that goes somewhere is a link, not
+   * a button: only a real `a` or router link gives the user the middle
+   * click, the modifier click and the status bar they expect from one.
+   *
+   * Pass the router link component itself rather than a name, so this
+   * library does not depend on a router. The pending props do not apply,
+   * because a link has no in-flight state to report.
+   */
+  as?: 'button' | 'a' | Component
+}>()
 
 const emit = defineEmits<{ click: [event: MouseEvent] }>()
 
@@ -77,16 +78,16 @@ const emit = defineEmits<{ click: [event: MouseEvent] }>()
  * of the button-only attributes, and its activation is the browser's to
  * handle rather than ours.
  */
-const isButton = computed(() => props.as === 'button')
+const isButton = computed(() => as === 'button')
 
 const iconSize = { sm: 14, md: 15, lg: 16 } as const
 
-const showPending = useDelayedPending(() => props.loading, {
-  delay: props.pendingDelay,
-  minDuration: props.pendingMinDuration,
+const showPending = useDelayedPending(() => loading, {
+  delay: pendingDelay,
+  minDuration: pendingMinDuration,
 })
 
-const showPendingLabel = computed(() => showPending.value && !!props.pendingLabel)
+const showPendingLabel = computed(() => showPending.value && !!pendingLabel)
 
 /*
  * With a pending label, the spinner waits for the same gate as the label, so a
@@ -96,7 +97,7 @@ const showPendingLabel = computed(() => showPending.value && !!props.pendingLabe
  * as `loading` is set: gating it would leave a press with no acknowledgement.
  */
 const showSpinner = computed(() =>
-  props.pendingLabel ? showPending.value : props.loading,
+  pendingLabel ? showPending.value : loading,
 )
 
 /*
@@ -112,12 +113,12 @@ const showSpinner = computed(() =>
 const slots = useSlots()
 
 const reservesSpinner = computed(
-  () => !!props.pendingLabel && !props.icon && !slots.icon,
+  () => !!pendingLabel && !icon && !slots.icon,
 )
 
 const spinnerSlotStyle = computed(() => ({
-  width: `${iconSize[props.size]}px`,
-  height: `${iconSize[props.size]}px`,
+  width: `${iconSize[size]}px`,
+  height: `${iconSize[size]}px`,
 }))
 
 /*
@@ -132,7 +133,7 @@ const spinnerSlotStyle = computed(() => ({
  * focus-preserving contract the element no longer honours.
  */
 const ariaDisabled = computed(() =>
-  props.loading && !props.disabled ? 'true' : undefined,
+  loading && !disabled ? 'true' : undefined,
 )
 
 /*
@@ -147,7 +148,7 @@ function onClick(event: MouseEvent) {
    * user asked for, including the modifier and middle clicks that are the
    * reason to render a link at all.
    */
-  if (isButton.value && (props.loading || props.disabled)) {
+  if (isButton.value && (loading || disabled)) {
     event.preventDefault()
     return
   }
@@ -161,7 +162,7 @@ function onClick(event: MouseEvent) {
  * enough.
  */
 function onKeydown(event: KeyboardEvent) {
-  if (!props.loading && !props.disabled) return
+  if (!loading && !disabled) return
   if (event.key === 'Enter' || event.key === ' ') event.preventDefault()
 }
 </script>

@@ -10,16 +10,13 @@
 import { computed, ref, useId } from 'vue'
 import { useAnchoredPanel } from '../../composables/useAnchoredPanel'
 
-const props = withDefaults(
-  defineProps<{
-    text: string
-    /** Preferred side. The bubble flips when that side has no room. */
-    placement?: 'top' | 'bottom' | 'left' | 'right'
-    /** Milliseconds before it appears, so a pointer crossing the page is quiet. */
-    delay?: number
-  }>(),
-  { placement: 'top', delay: 200 },
-)
+const { placement = 'top', delay = 200 } = defineProps<{
+  text: string
+  /** Preferred side. The bubble flips when that side has no room. */
+  placement?: 'top' | 'bottom' | 'left' | 'right'
+  /** Milliseconds before it appears, so a pointer crossing the page is quiet. */
+  delay?: number
+}>()
 
 const id = useId()
 const visible = ref(false)
@@ -32,7 +29,7 @@ let timer: ReturnType<typeof setTimeout> | undefined
  * and the bubble is small enough that flipping always finds room.
  */
 const { floatingStyles } = useAnchoredPanel(root, bubble, {
-  placement: computed(() => props.placement),
+  placement: computed(() => placement),
   gap: 8,
   clampHeight: false,
 })
@@ -44,7 +41,7 @@ function show(immediate = false) {
    * control, so the delay that filters out a passing pointer only gets in
    * their way.
    */
-  timer = setTimeout(() => (visible.value = true), immediate ? 0 : props.delay)
+  timer = setTimeout(() => (visible.value = true), immediate ? 0 : delay)
 }
 
 function hide() {

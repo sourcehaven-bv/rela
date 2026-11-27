@@ -51,7 +51,7 @@ export interface MentionMenuSnapshot<T> {
  * Nil: a rejection other than an abort is reported to the user as a failed
  * search; an abort is swallowed.
  */
-export type MentionSearchFn<T> = (query: string, signal?: AbortSignal) => Promise<T[]>
+type MentionSearchFn<T> = (query: string, signal?: AbortSignal) => Promise<T[]>
 
 export interface MentionMenuMachine<T> {
   readonly state: Readonly<MentionMenuSnapshot<T>>

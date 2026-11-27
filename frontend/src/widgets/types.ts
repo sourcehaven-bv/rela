@@ -5,12 +5,12 @@ import type { PropertyDef, AttachmentInfo } from '@/types'
 // Kept as a named alias so widget entries can declare which property
 // types they support; if PropertyDef['type'] gains a member, widgets
 // that need updating surface as type errors here.
-export type PropertyType = PropertyDef['type']
+type PropertyType = PropertyDef['type']
 
 // Widget render mode. Strict union: `'inline-edit'` is reserved for
 // TKT-IHCY7 and is not part of this contract yet — widening the union
 // when it lands forces every widget consumer to be re-examined.
-export type WidgetMode = 'display' | 'edit'
+type WidgetMode = 'display' | 'edit'
 
 // WidgetProps is the contract every property widget accepts. Cross-cutting
 // concerns (disabled, error, etc.) are first-class so widgets never reach

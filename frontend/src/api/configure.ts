@@ -10,7 +10,7 @@ import { ApiError } from './errors'
  * principal lacks the `config:edit` permission.
  */
 
-export type TreeScalar = string | number | boolean | null
+type TreeScalar = string | number | boolean | null
 
 /**
  * A YAML mapping. It arrives as `{"$m": [[key, value], ...]}` so its key
@@ -99,7 +99,7 @@ export interface ConfigMigrationStep {
   count: number
 }
 
-export interface ConfigMigration {
+interface ConfigMigration {
   file: string
   title: string
   steps: ConfigMigrationStep[]

@@ -31,17 +31,14 @@ import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
 
-const props = withDefaults(
-  defineProps<{
-    anchor: CommentAnchor
-    /** This anchor's comments, already filtered by the caller. */
-    comments?: AnchoredComment[]
-    /** Which edge of the badge the popover lines up with. */
-    align?: 'start' | 'end'
-    submitting?: boolean
-  }>(),
-  { comments: () => [], align: 'start', submitting: false },
-)
+const { anchor, comments = [], align = 'start', submitting = false } = defineProps<{
+  anchor: CommentAnchor
+  /** This anchor's comments, already filtered by the caller. */
+  comments?: AnchoredComment[]
+  /** Which edge of the badge the popover lines up with. */
+  align?: 'start' | 'end'
+  submitting?: boolean
+}>()
 
 const emit = defineEmits<{
   add: [comment: NewComment]
@@ -57,19 +54,19 @@ const panel = ref<HTMLElement | null>(null)
 const composer = ref<InstanceType<typeof RlCommentComposerBox> | null>(null)
 
 const { floatingStyles, containsTarget } = useAnchoredPanel(root, panel, {
-  placement: computed(() => `bottom-${props.align}` as const),
+  placement: computed(() => `bottom-${align}` as const),
   gap: 6,
 })
 
 // No scroll lock: a popover beside a field should not freeze the page.
 const { push, pop, isTop } = useOverlayStack({ scrollLock: false })
 
-const total = computed(() => props.comments.length)
-const unresolvedCount = computed(() => props.comments.filter((c) => !c.resolved).length)
+const total = computed(() => comments.length)
+const unresolvedCount = computed(() => comments.filter((c) => !c.resolved).length)
 const allResolved = computed(() => total.value > 0 && unresolvedCount.value === 0)
-const detached = computed(() => props.comments.some((c) => c.detached))
+const detached = computed(() => comments.some((c) => c.detached))
 
-const anchorName = computed(() => props.anchor.label ?? props.anchor.ref)
+const anchorName = computed(() => anchor.label ?? anchor.ref)
 
 const label = computed(() => {
   if (total.value === 0) return messages.commentOnAnchor({ anchor: anchorName.value })
@@ -121,7 +118,7 @@ function onFocusOut(event: FocusEvent) {
 }
 
 function onAdd(body: string) {
-  emit('add', { anchor: props.anchor, body })
+  emit('add', { anchor, body })
 }
 </script>
 

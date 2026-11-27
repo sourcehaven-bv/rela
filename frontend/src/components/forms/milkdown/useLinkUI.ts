@@ -17,7 +17,7 @@ import type { EditorState } from '@milkdown/kit/prose/state'
 import { TextSelection } from '@milkdown/kit/prose/state'
 import { findLinkAt, type LinkAtSelection } from './linkSelection'
 
-export interface LinkDialogState {
+interface LinkDialogState {
   open: boolean
   initialUrl: string
   initialText: string
@@ -25,7 +25,7 @@ export interface LinkDialogState {
   editing: boolean
 }
 
-export interface LinkSubmitPayload {
+interface LinkSubmitPayload {
   url: string
   text: string
   strippedParams: boolean

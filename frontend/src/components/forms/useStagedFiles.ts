@@ -3,7 +3,7 @@ import { uploadAttachment, attachmentErrorReason } from '@/api/attachments'
 import { t } from '@/i18n'
 
 /** A staged file the server refused, with the reason it gave. */
-export interface StagedFailure {
+interface StagedFailure {
   file: string
   message: string
 }

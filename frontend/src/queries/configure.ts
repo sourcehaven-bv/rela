@@ -1,7 +1,7 @@
 import { useQuery } from '@pinia/colada'
 import { getConfigure } from '@/api/configure'
 
-export const configureKeys = {
+const configureKeys = {
   snapshot: ['configure'] as const,
 }
 

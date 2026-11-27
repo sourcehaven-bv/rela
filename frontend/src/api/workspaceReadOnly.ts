@@ -55,7 +55,7 @@ export function trackWorkspaceReadOnly(
 }
 
 /** How long the start-up read waits before the app loads without it. */
-export const STATUS_TIMEOUT_MS = 2000
+const STATUS_TIMEOUT_MS = 2000
 
 /**
  * Reads the tenant status endpoint: sets {@link workspaceReadOnly}, and

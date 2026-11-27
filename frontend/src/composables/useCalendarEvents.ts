@@ -17,7 +17,6 @@ import {
   type DateKind,
 } from '@/utils/calendarGrid'
 
-export type { ResolvedCardField } from '@/components/common/CardFieldList.vue'
 
 /**
  * An entity placed on the grid.
