@@ -263,6 +263,18 @@ func TestSeqIndexesExist(t *testing.T) {
 	require.Equal(t, 3, n, "all three seq indexes must exist in this schema after migration")
 }
 
+// TestSearchTsvIndexDropped pins migration 0014: nothing queries a tsvector
+// over search_text, so its GIN index must not come back (TKT-ZZL53L).
+func TestSearchTsvIndexDropped(t *testing.T) {
+	pool := newScopedPool(t)
+	var n int
+	require.NoError(t, pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM pg_indexes
+		 WHERE schemaname = current_schema()
+		   AND (indexname = 'entities_search_tsv_idx' OR indexdef ILIKE '%to_tsvector%')`).Scan(&n))
+	require.Zero(t, n, "no tsvector index may exist on the migrated schema")
+}
+
 // TestCatchUpRecoversMissedDelete is the headline regression: with the live
 // NOTIFY disabled, a delete on writer A reaches writer B ONLY via the safety-net
 // catch-up. Before tombstones the catch-up was delete-blind (it scanned live
