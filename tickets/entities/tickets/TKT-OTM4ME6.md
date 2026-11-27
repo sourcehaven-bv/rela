@@ -5,7 +5,7 @@ title: 'Public atomic create of several entities and their relations (GitHub #19
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -31,3 +31,7 @@ must not claim all-or-nothing writes there.
 not survive a rolled-back write.
 - Start with a small surface: entity creates plus relation creates, bounded in
 size.
+
+## Closed as wont-fix
+
+Shipped as `POST /api/v1/_batch` (2e2c65f46), backed by `entitymanager.CreateBatch`. The research is bd8534c23. Remaining gaps are TKT-H46UGLM and TKT-41YLNDP.

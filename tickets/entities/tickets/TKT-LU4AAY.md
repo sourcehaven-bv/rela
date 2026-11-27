@@ -5,7 +5,7 @@ title: 'Automation-triggered mail: send_mail action with entity context and load
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -90,3 +90,7 @@ criterion 6 pins whichever way it goes.
 - **ACL** — an automation runs on the actor's ctx (DEC-O59WM4), so the scoping
 from TKT-U2R7GU applies unchanged. Criterion 7 makes that explicit rather than
 assumed.
+
+## Closed as wont-fix
+
+Covered by TKT-VVDY2RM. Schema automations were replaced by flows.yaml triggers (TKT-GWOBH2U), so the automation `Action` union this ticket extends no longer exists. Reactive mail belongs to a flows `kind: mail` job step (TKT-VVDY2RM) or a background Lua trigger action with the `mail` capability. If the load-time `{{entity}}` check still matters, add it to TKT-VVDY2RM.

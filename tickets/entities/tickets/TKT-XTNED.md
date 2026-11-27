@@ -5,7 +5,7 @@ title: Add Lua backend to data-entry commands
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: wont-fix
 ---
 
 ## Description
@@ -84,3 +84,7 @@ hand.
 - A Lua command that raises surfaces as an error SSE event and marks the command as failed
 - All existing shell command behavior is unchanged (regression tests still pass)
 - Tests cover each acceptance criterion including one end-to-end test per `context` type (entity, list, view, global)
+
+## Closed as wont-fix
+
+Data-entry actions already run a Lua `script:` from detail pages, list bulk actions, toolbar buttons and the sidebar (`internal/dataentryconfig/config.go`). That gives the portability and direct graph access this ticket asked for. Only streamed `rela.emit` output is missing; file that as its own small ticket if needed.
