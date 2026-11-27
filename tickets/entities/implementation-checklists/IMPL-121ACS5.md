@@ -31,6 +31,8 @@ status: done
 - [x] ~~Edge cases manually verified~~ (N/A: edge cases are covered by tests, not by hand)
 
 **Verification Evidence:**
+The godoc of writeRelationTriggerSet was trimmed to pass the commentbody cap.
+
 relation_trigger_checks_test.go: rule refusal, strict-mode refusal, advisory save, guard denial (403 + denied-write row), decimals as text, edge-dependent rule on create, relation_removed refusal; each runs via trigger and via PatchEntity on memstore and sqlite; the trigger cases fail on origin/develop. sqlite checks the relation write rolls back.
 
 ## Quality

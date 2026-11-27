@@ -162,22 +162,13 @@ func relationSourceRows(
 
 // writeRelationTriggerSet applies the property writes of res to stored, a
 // row read on the transaction view ctx carries, and returns the row as
-// written. It runs the checks [Manager.PatchEntity] runs on the values an
-// update automation writes: computed, external-ref and file properties are
-// refused, decimals are stored as text, validation errors refuse the write
-// as the deployment's [ValidationMode] says, and the state machine judges
-// the move from stored. A guard denial is a 403 with a denied-write record,
-// as on an update. Unique, write-enforced and relation rules run through
-// [writeChecked], which joins view, so a relation rule judges the written
-// row against the edges the relation write leaves. The write is pinned to
-// the version read, which nothing else can change inside the transaction.
-// Its audit record names the rule that wrote.
-//
-// Two things an update does are left out on purpose. The field gate does
-// not judge the values, as it does not judge an update automation's: they
-// are system writes. And the write raises no entity_updated event, so an
-// update automation does not run on it. This keeps a relation write from
-// starting a chain of updates inside its transaction.
+// written. It runs the checks [Manager.PatchEntity] runs on an update
+// automation's values, including validation per [ValidationMode], the
+// state machine (a guard denial is a 403 with a denied-write record) and,
+// through [writeChecked], relation rules judged against the edges the
+// relation write leaves. The write is pinned to the version read. Like an
+// update automation it skips the field gate, and it raises no
+// entity_updated event, so a relation write starts no chain of updates.
 func writeRelationTriggerSet(
 	ctx context.Context, deps Deps, stored *entity.Entity, res *triggers.Result,
 ) (*entity.Entity, error) {

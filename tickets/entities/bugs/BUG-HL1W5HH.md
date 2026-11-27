@@ -2,7 +2,7 @@
 id: BUG-HL1W5HH
 type: bug
 title: Relation trigger writes skip relation rules and strict validation
-description: 'A set written by a relation_created or relation_removed trigger skipped write-enforced relation rules, strict validation mode and decimal-as-text storage that PatchEntity applies (issue #2636).'
+description: 'A set written by a relation_created or relation_removed trigger skipped write-enforced relation rules, strict validation mode and decimal-as-text storage that PatchEntity applies (GitHub issue #2636).'
 priority: high
 effort: s
 why1: writeRelationTriggerSet called writeChecked with a nil txCheck and applied only structural validation errors.
