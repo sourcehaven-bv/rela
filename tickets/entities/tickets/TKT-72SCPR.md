@@ -194,3 +194,7 @@ stays blocked; narrow it or sequence it behind view support.
 - `RELA_ENTITY_ID` / `RELA_ENTITY_TYPE` are absent (not empty) for global-context input
 - No command buttons render under `rela-server --read-only` (**requires TKT-MJ02AO**)
 - Frontend unit tests per surface, plus e2e specs clicking a command button on dashboard and on list
+
+## Note (2026-11-27)
+
+TKT-P32PL3 was merged into this ticket. The `view` context stays deferred until TKT-2FDTJE read-gates view-context payloads.

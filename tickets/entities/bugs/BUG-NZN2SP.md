@@ -20,3 +20,14 @@ version that changes a field the `fields:` policy makes read-only.
 
 Diff the resolved entity against the stored one and run `validateFieldWrite` on
 the changed and removed properties before the write, as PATCH does.
+
+## Merged from TKT-KL5PGO (2026-11-27)
+
+Conflict resolution also skips the affordance gates. A relation file skips `relationSources`, `relationOpDenial` and `relationMetaDenial`; an entity file skips the field affordance gate. The conflict parser (`internal/conflict/parse.go`, `docToRelation`) drops the edge's tail face, so the ACL judges a faced source on every declared face.
+
+Also required:
+
+- The parser keeps the tail face.
+- A resolved relation file runs the same relation affordance gate as `PATCH /relations/...`; a resolved entity file runs the field gate.
+- Denials do not name hidden faces.
+- Tests through the resolve route, in the style of `relation_sibling_paths_test.go`.
