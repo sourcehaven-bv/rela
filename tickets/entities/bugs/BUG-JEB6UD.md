@@ -4,7 +4,7 @@ type: bug
 title: 'TestMemoryLocker_AbandonedAcquireReleases is flaky: asserts map eviction that happens asynchronously'
 description: 'TestMemoryLocker_AbandonedAcquireReleases asserts map eviction that happens asynchronously: close(acquired) proves only that rel2() was CALLED, so the entry-count assertion reads the map mid-eviction. Fails 6 of 8 runs on unmodified develop at 5f04ec38. The lock itself is fine — the wedge guard above it passes every time; only the bookkeeping assertion is unstable.'
 priority: medium
-status: backlog
+status: wont-fix
 ---
 
 `go test ./internal/lock/ -run TestMemoryLocker_AbandonedAcquireReleases
@@ -59,3 +59,7 @@ fails more often there than locally.
 
 Found incidentally while running the full `./internal/...` suite during
 TKT-VAKI0Q; unrelated to that work.
+
+## Closed as wont-fix (2026-11-27)
+
+Duplicate of BUG-KSEQ3T, fixed in d10161d86 (#1605): the test polls `MemoryLockerEntries` until it reaches 0. 200 runs under `-race` pass.

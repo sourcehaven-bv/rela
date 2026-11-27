@@ -3,7 +3,9 @@ id: TKT-5K0HM0
 type: ticket
 title: Add archplan just recipes
 kind: chore
-status: backlog
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 ## Description

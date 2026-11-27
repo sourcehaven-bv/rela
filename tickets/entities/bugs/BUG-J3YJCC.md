@@ -8,7 +8,7 @@ effort: s
 why1: e2e_test.go calls NewApp with 9 arguments; the current signature takes 12 (store.VersionService, search.VisibleSearcher and state.KV were added since).
 why2: Nothing compiles the e2e build tag — the default build excludes the file, so the drift produced no failing signal when NewApp's signature changed.
 why3: CI has no job that builds or vets with -tags e2e, so a tag-guarded file can rot indefinitely while every visible gate stays green.
-status: backlog
+status: wont-fix
 ---
 
 Found incidentally during the TKT-NS3XPE code review; **pre-existing on
@@ -50,3 +50,7 @@ clean.
 
 **Prevention is the real fix:** add a CI step that builds/vets the `e2e` tag,
 otherwise this drifts again the next time `NewApp` gains a parameter.
+
+## Closed as wont-fix (2026-11-27)
+
+Already fixed. #1574 (TKT-1CH5AX) deleted `internal/dataentry/e2e_test.go` and added the CI step "Compile build-tag-gated files" (`scripts/check-tagged-tests.sh`), which compiles every tag-gated file.

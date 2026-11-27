@@ -8,5 +8,10 @@ effort: xs
 why1: Hook checks git diff --diff-filter=A (Added only) when looking for a ticket entity in the push.
 why2: Added-only filter assumes every code-changing PR is the one that originally files the ticket.
 why3: The workflow supports ticket lifecycles that span multiple PRs (ticket filed in PR N, implemented in PR N+1) but the hook does not model this lifecycle.
-status: backlog
+status: wont-fix
 ---
+
+
+## Closed as wont-fix (2026-11-27)
+
+Already fixed by TKT-8T78Z (04490e463, #366): `scripts/pre-push` uses `--diff-filter=AM`, so a modified ticket file counts. CI uses the same filter.

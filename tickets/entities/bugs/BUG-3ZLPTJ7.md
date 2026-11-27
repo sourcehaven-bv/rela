@@ -4,7 +4,7 @@ type: bug
 title: useAutoSave two-tab property test fails at random on its coverage floor
 description: 'useAutoSave.twoClients.prop.test.ts > merges what can be merged and reports the rest failed on PR 2081 (job 126009304990): saves out of attempts expected 28 to be greater than or equal to 30. The property itself held; the effect floors (exhausted >= numRuns / 10 and the others) depend on fast-check''s unseeded random runs, so a run can fall short. No seed in the log: fc.assert only prints one on a property failure. Fix: pin a seed for the floor assertions, or lower the floors to a bound the run meets with margin.'
 priority: low
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -27,3 +27,7 @@ has no seed, because `fc.assert` prints one only when the property fails.
 
 - Pass a fixed `seed` to `fc.assert` for this test, so the floors are checked on a known run set.
 - Or keep the random runs and set each floor to a bound the runs meet with margin, measured over many seeds.
+
+## Closed as wont-fix (2026-11-27)
+
+Duplicate of BUG-33B3JCH, fixed in 83519c885 (#2123): the exhaust fault is bound to one save and the floor test is seeded. Seeds 1 to 60 at 300 runs each all pass.

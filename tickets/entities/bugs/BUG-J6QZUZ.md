@@ -5,7 +5,7 @@ title: apps.spec.ts toolbar-active assertions are flaky
 description: 'Two apps.spec.ts tests for the sandboxed app editor toolbar fail intermittently — reproduced 3 times in 20 runs on unmodified develop (bbce47a0). Both read toolbar active-state immediately after a click, racing ProseMirror update cycle instead of waiting for it. Surfaced on PR #1664, whose diff touches neither the spec nor src/app-editor/.'
 priority: medium
 effort: s
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -38,3 +38,7 @@ the button's pressed state) would wait for the cycle instead of racing it.
 
 It fails unrelated PRs, which trains reviewers to re-run red CI without reading
 it — the habit that lets a real failure through.
+
+## Closed as wont-fix (2026-11-27)
+
+Already fixed by TKT-ME8LEI (8f47ae83e, #1731): `apps.spec.ts` uses the retrying `expectEditorCommandActive()` and `expectEditorCommandUnavailable()` helpers.
