@@ -54,3 +54,14 @@ Waiting on the sink for the expected frames with a deadline fixes the tests that
 assert a frame arrived, but not the negative checks: they expect no frame, so
 there is nothing to wait for. A manual clock lets them read the sink after a
 flush has provably run.
+
+## Resolution
+
+The tests now wait on a signal from the stream instead of a manual clock. Each
+test connection pings every 5 ms, and a ping carries the resume token of the
+flushed feed position. `runSSELoop` advances that position only after the
+changes up to it are gated and their frames written. `drain` waits until a ping
+token reaches the number of feed events the test sent, so a negative check reads
+the sink after the hidden event has provably been processed. Broker frames wait
+for their own frames. The debounce tests use a 1 s flush window so a burst on a
+loaded runner still lands in one window.
