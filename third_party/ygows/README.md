@@ -1,7 +1,7 @@
 # ygows
 
 A fork of the WebSocket relay in
-[ygo](https://github.com/reearth/ygo) `provider/websocket` v1.55.0, with
+[ygo](https://github.com/reearth/ygo) `provider/websocket` v1.57.1, with
 the internal packages it needs (`relaylane`, `roomname`, `updatecheck`). The
 upstream `crdt`, `sync`, `awareness`, `encoding`, `persistence` and `cluster`
 packages are still imported from `github.com/reearth/ygo`. The code is under

@@ -8,5 +8,5 @@ package websocket
 // fails until both agree. See README.md, "Keeping the fork current".
 const (
 	UpstreamModule  = "github.com/reearth/ygo"
-	UpstreamVersion = "v1.55.0"
+	UpstreamVersion = "v1.57.1"
 )
