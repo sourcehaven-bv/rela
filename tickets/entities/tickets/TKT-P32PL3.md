@@ -5,7 +5,7 @@ title: Surface list/view/dashboard command contexts in the SPA (only entity cont
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -105,3 +105,7 @@ fixing alongside.
 ## Version
 
 Reproduced on `f25fa238` and current `develop` — both affected.
+
+## Closed as wont-fix
+
+Duplicate of TKT-72SCPR. The `view` context it also covers stays deferred there until TKT-2FDTJE read-gates view payloads.

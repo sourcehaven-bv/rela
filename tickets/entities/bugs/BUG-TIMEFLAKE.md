@@ -96,3 +96,6 @@ the timeout:
 - It blocks the whole package, so one slow test's budget overrun is reported as
   `FAIL internal/dataentry` with no named culprit in the summary line.
 
+## Merged from BUG-7ZG8Q6 (2026-11-27)
+
+The worlds-manual CI step fails the same way. `internal/docscapture/capture.go` bounds one navigate, render and capture with `perCaptureTimeout = 30 * time.Second`. The step runs last in the E2E job, on a runner loaded by the full Playwright suite and a postgres container. The first `screenshot{}` also pays the SPA's first-load cost inside the same budget. A re-run with no code change passes (run 35185989373). Omitting the sweep env vars locally fails at a second deadline, the version-sweep wait (`manual:936`).

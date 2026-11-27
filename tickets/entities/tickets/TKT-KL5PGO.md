@@ -3,7 +3,7 @@ id: TKT-KL5PGO
 type: ticket
 title: 'conflict resolve: run the affordance gates and keep the tail face'
 kind: chore
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -28,3 +28,7 @@ the save allows.
 - Denials do not name hidden faces.
 - Tests through the resolve route, in the style of
 `relation_sibling_paths_test.go`.
+
+## Closed as wont-fix
+
+Duplicate of BUG-NZN2SP. Both are gaps in conflict-resolve authorization; its acceptance criteria moved there.
