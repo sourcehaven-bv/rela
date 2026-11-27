@@ -6,7 +6,8 @@ kind: chore
 priority: low
 effort: m
 started: "2026-11-27"
-status: review
+completed: "2026-11-27"
+status: done
 ---
 
 ## Description
