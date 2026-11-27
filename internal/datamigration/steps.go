@@ -94,6 +94,11 @@ func parseStep(node *yaml.Node) (Step, error) {
 	if err := refuseManagedTargets(body); err != nil {
 		return nil, fmt.Errorf("%s: %w", kind, err)
 	}
+	if kind == "rename_entity_type" {
+		if err := refuseNullFilter(body); err != nil {
+			return nil, fmt.Errorf("%s: %w", kind, err)
+		}
+	}
 	return step, nil
 }
 
@@ -113,6 +118,21 @@ func refuseManagedTargets(body *yaml.Node) error {
 		key, val := body.Content[i].Value, body.Content[i+1]
 		if stepTargetKeys[key] && val.Kind == yaml.ScalarNode && entity.IsManagedName(val.Value) {
 			return fmt.Errorf("%s: %q is managed by rela and cannot be migrated", key, val.Value)
+		}
+	}
+	return nil
+}
+
+// refuseNullFilter refuses an empty `where:` or `ids:` key. YAML decodes it to
+// nil, which would read as "no filter" and rename every entity of the type.
+func refuseNullFilter(body *yaml.Node) error {
+	if body.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(body.Content); i += 2 {
+		key, val := body.Content[i].Value, body.Content[i+1]
+		if (key == "where" || key == "ids") && val.ShortTag() == "!!null" {
+			return fmt.Errorf("%s: is empty; give a value or remove the key", key)
 		}
 	}
 	return nil
@@ -202,6 +222,17 @@ func (s *renamePropertyStep) Run(ctx context.Context, x *Exec) (StepResult, erro
 type renameEntityTypeStep struct {
 	From string `yaml:"from"`
 	To   string `yaml:"to"`
+
+	// Where and IDs select a subset of From (see renamesplit.go). Nil for
+	// the plain rename of every entity.
+	Where renameWhere `yaml:"where,omitempty"`
+	IDs   []string    `yaml:"ids,omitempty"`
+
+	// split is set by validateSplits when the file renames only part of From
+	// in some step. toRelations is the to-schema's relation shapes, read in
+	// Validate for the edge check of a split.
+	split       bool
+	toRelations map[string]metamodel.RelationShape
 }
 
 func (s *renameEntityTypeStep) Kind() string   { return "rename_entity_type" }
@@ -231,6 +262,10 @@ func (s *renameEntityTypeStep) Validate(from, to metamodel.ShapeProjection) erro
 				"rename or migrate those faces first (`rename_face`, `migrate_face`)",
 			s.From, strings.Join(orphaned, ", "), s.To)
 	}
+	if err := s.validateFilter(from); err != nil {
+		return err
+	}
+	s.toRelations = to.Relations
 	return nil
 }
 
@@ -261,6 +296,9 @@ func (s *renameEntityTypeStep) Run(ctx context.Context, x *Exec) (StepResult, er
 	// type-change-on-update contract pinned in storetest), relations keep
 	// their endpoints, and the version sweep captures the change as a
 	// normal update on an unbroken lineage.
+	if s.split {
+		return s.runSplit(ctx, x)
+	}
 	res := StepResult{Kind: s.Kind(), Target: s.Target()}
 	err := x.forEachEntity(ctx, s.From, func(e *entity.Entity) (bool, error) {
 		e.Type = s.To

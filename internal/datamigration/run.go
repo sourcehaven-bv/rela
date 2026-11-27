@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -236,6 +237,30 @@ type Exec struct {
 	Computed *computed.Set
 	capture  *capturer
 	comments CommentThreads
+
+	// claimed holds, per entity type, the ids a filtered rename_entity_type
+	// would move in a dry run. A later step of the same split leaves them
+	// out, so its count is the one it would have on apply. Unused on apply,
+	// where the moved ids simply no longer have the old type.
+	claimed map[string]map[string]bool
+}
+
+// unclaimed returns ids without those claimed for typ.
+func (x *Exec) unclaimed(typ string, ids []string) []string {
+	return slices.DeleteFunc(ids, func(id string) bool { return x.claimed[typ][id] })
+}
+
+// claim records ids as taken from typ by a dry-run step.
+func (x *Exec) claim(typ string, ids []string) {
+	if x.claimed == nil {
+		x.claimed = map[string]map[string]bool{}
+	}
+	if x.claimed[typ] == nil {
+		x.claimed[typ] = map[string]bool{}
+	}
+	for _, id := range ids {
+		x.claimed[typ][id] = true
+	}
 }
 
 // forEachEntity runs fn over every entity of typ (collect-then-write, the
@@ -296,6 +321,11 @@ func (x *Exec) forEachEntity(
 	if !x.Apply {
 		return nil
 	}
+	return x.writeBatches(ctx, changed)
+}
+
+// writeBatches writes changed back in Tx batches of updateBatchSize rows.
+func (x *Exec) writeBatches(ctx context.Context, changed []*entity.Entity) error {
 	for start := 0; start < len(changed); start += updateBatchSize {
 		batch := changed[start:min(start+updateBatchSize, len(changed))]
 		err := x.Store.Tx(ctx, func(s store.Store) error {
