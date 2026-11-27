@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -161,12 +162,13 @@ func relationSourceRows(
 
 // writeRelationTriggerSet applies the property writes of res to stored, a
 // row read on the transaction view ctx carries, and returns the row as
-// written. It checks what an entity update checks of an automation's values: computed, external-ref and file
-// properties are refused, structural validation errors refuse, and the
-// state machine judges the move from stored. Unique and write-enforced
-// rules run through [writeChecked], which joins view. The write is pinned
-// to the version read, which nothing else can change inside the
-// transaction. Its audit record names the rule that wrote.
+// written. It runs the checks [Manager.PatchEntity] runs on an update
+// automation's values, including validation per [ValidationMode], the
+// state machine (a guard denial is a 403 with a denied-write record) and,
+// through [writeChecked], relation rules judged against the edges the
+// relation write leaves. The write is pinned to the version read. Like an
+// update automation it skips the field gate, and it raises no
+// entity_updated event, so a relation write starts no chain of updates.
 func writeRelationTriggerSet(
 	ctx context.Context, deps Deps, stored *entity.Entity, res *triggers.Result,
 ) (*entity.Entity, error) {
@@ -182,22 +184,25 @@ func writeRelationTriggerSet(
 	}
 	next := stored.Clone()
 	writes.Apply(next)
+	storeDecimalsAsText(deps.Meta, next.Type, next.Properties)
 	if err := deps.Computed.Evaluate(ctx, next); err != nil {
 		return nil, err
 	}
 	v := metamodel.NewValidator(deps.Meta)
-	if hard := structuralErrors(v.ValidateEntity(next.ID, next.Type, next.Properties)); len(hard) > 0 {
+	hard, _ := partitionValidationErrors(deps.ValidationMode, v.ValidateEntity(next.ID, next.Type, next.Properties))
+	if len(hard) > 0 {
 		return nil, newValidationError(hard)
 	}
+	m := &Manager{deps: deps, cascadeWrite: true}
 	err := deps.Transitions.EnforceUpdate(ctx, stored, next, deps.TransitionGuard, deps.TransitionGraph)
 	if err != nil {
-		return nil, err
+		return nil, m.mapTransitionError(ctx, acl.NewEntitySubject(next.Type, next.ID, next.Face), err)
 	}
 	ctx = setByCtx(ctx, res.SetBy)
-	m := &Manager{deps: deps, cascadeWrite: true}
 	pinned := store.UpdateCondition{ExpectedVersion: store.VersionOf(stored)}
 	summary := updateEntitySummary(stored, next)
-	err = writeChecked(ctx, deps, next, next.ID, nil, func(ctx context.Context, st store.Store) error {
+	txCheck := relationRuleCheck(deps, stored, next)
+	err = writeChecked(ctx, deps, next, next.ID, txCheck, func(ctx context.Context, st store.Store) error {
 		if _, uErr := st.UpdateEntityIf(ctx, next, pinned); uErr != nil {
 			return uErr
 		}
