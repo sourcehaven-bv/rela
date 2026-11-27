@@ -728,26 +728,9 @@ func relationWriteSubject(
 ) acl.RelationSubject {
 	s := acl.RelationSubject{Type: relType, FromType: source.typ, FromID: from, FromFace: tail}
 	if tail.IsImplicit() {
-		s.FamilyFaces = declaredFaces(meta, source.typ)
+		s.FamilyFaces = metamodel.FacesOf(meta, source.typ)
 	}
 	return s
-}
-
-// declaredFaces returns the faces typ declares, in declaration order; nil for
-// a faceless or unknown type.
-func declaredFaces(meta *metamodel.Metamodel, typ string) []entity.Face {
-	if typ == "" {
-		return nil
-	}
-	names := metamodel.FaceOrderOf(meta, typ)
-	if len(names) == 0 {
-		return nil
-	}
-	faces := make([]entity.Face, len(names))
-	for i, n := range names {
-		faces[i] = entity.Face(n)
-	}
-	return faces
 }
 
 // RelationCreateRequest is the authorization request [Manager.CreateRelation]

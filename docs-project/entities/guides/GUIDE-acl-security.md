@@ -1388,7 +1388,13 @@ Key properties:
   from `schema.yaml` while its files remain) is hidden from
   search rather than leaked.
 - **The result limit applies after visibility.** `/_search` returns
-  up to 1000 results; the bound counts *visible* hits. A
+  at most one page: `limit` rows, or 1000 without a `limit`, for free
+  text and structured queries alike. `page` reads the next page;
+  `meta.total` counts the visible matches and `meta.has_more` says a
+  later page holds rows. Free text ranks only its 1000 best hits, so
+  its `meta.total` is a lower bound; `meta.capped` is set when a page
+  reaches the 1000th hit and more hits matched.
+  The bound counts *visible* hits. A
   pre-visibility cap would starve restricted principals — the top
   candidates may all be hidden while their own matches rank below.
   Both gate placement and limit placement are pinned by conformance
@@ -1580,7 +1586,11 @@ group's `items_key`. The entries are the rows the list shows that principal:
 rows are gated, each row is redacted before its title is taken, and
 `truncated` is computed after that filtering. A letter badge taken from a
 related entity appears only when the principal may read that entity and its
-title. The response is `no-store`.
+title. The response is `no-store`. Child entries and counts
+(`items_from.children`, `items_from.status`) follow the same rule: a relation
+query only narrows the candidates, and the rows themselves pass the child or
+counted list's row gate before they are shown or counted. A hidden row is
+never counted, and a child count covers only the shown children.
 
 **Backlinks are gated per source.** The "Mentioned by" panel and a view's
 `mentioned_by` step list only the sources the principal may read, each at
@@ -1835,7 +1845,9 @@ field. A condition may be an AND of:
 
 - property equalities: `entity.status == 'open'`,
   `entity.assignee == current_user.id`, `is_current_user(entity.assignee)`;
-- `related(...)` terms.
+- `related(...)` terms. A constraint whose value is the target property's
+  schema default also matches a target on which the property is unset or empty,
+  as described under [`related(...)` in a grant's `when:`](#related-in-a-grants-when).
 
 Refused in `visible:`: `or`, `not`, ordered comparisons, `~=`,
 `has_role`, `has_global_role`, `has_relation`, `count_relations` and
@@ -1945,6 +1957,26 @@ reveals one bit to a principal who cannot read the related entities: whether
 the grant applies. Keep such conditions to facts you are willing to disclose
 that way. A traversal that compares a property some role cannot see through
 `visible:` earns a startup warning naming the grant.
+
+A constraint whose value is the target property's schema default also matches
+a target on which the property is unset or empty: missing, null, an empty
+string or an empty list. The schema says such a target holds the default, so
+the grant follows the value the schema defines. A boolean compares with
+`true` or `false`, written without quotes. When the target type or the
+property is not declared, there is no default and the constraint matches only
+a value that is written. On PostgreSQL, a boolean constraint gets no derived
+index, so it reads every target of its type. Prefer a string or enum property
+on a large type.
+
+**Upgrading.** Before this change, a constraint on a default matched only
+targets that had the value written. Existing grants, `visible:` rules, query
+scopes and list conditions that compare with a default now also match
+targets on which the property is unset or empty. A grant can therefore apply
+to more entities than before. A negated term narrows instead:
+`not related(..., { p = default })` now matches fewer rows, so a grant or a
+`visible:` rule built on it applies to fewer entities than before. Review any
+`when:` that compares with a default and, if the old behaviour was intended,
+write the value on the targets or remove the `default:` from the schema.
 
 A state-machine transition's `when:` works the same way. Whether a transition
 is performable is served to principals in `_transitions`, so it carries the
@@ -2613,6 +2645,13 @@ the key; this section covers what it means for `acl.yaml`.
   user and the session's `triggered_by`.
 
 ## What still leaks (deferred)
+
+- **A scoped relation shows whether a target is in scope.** The check of a
+  `within:` relation reads ownership from the stored graph, including owning
+  edges the caller cannot read. Whether a write is accepted or refused with
+  422 therefore tells the caller whether a target is owned by its scope. This
+  is the same one-bit channel as the other write-enforced relation rules. The
+  refusal names the rule, never an entity.
 
 - **A captured figure crosses principals.** A `capture:` task stores a
   figure computed for its `run_as` on an owner whose readers may read fewer

@@ -2,8 +2,12 @@ package conditionlint
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -45,6 +49,12 @@ const (
 	// output (TKT-4USH1HO), keyed by dataentryconfig.LLMCandidateConditionID:
 	// one program per target type of the relation.
 	ViewConditionLLMCandidate ViewConditionKind = "llm_candidates"
+
+	// ViewConditionListGroup is the `condition:` of one computed group of a
+	// list's `group_by` (TKT-QS024L0), keyed by
+	// dataentryconfig.ListGroupConditionID. It is compiled against the list's
+	// entity type.
+	ViewConditionListGroup ViewConditionKind = "list_groups"
 )
 
 // ViewConditionKey identifies one compiled view condition.
@@ -92,6 +102,16 @@ func CompileViewConditions(
 		key := ViewConditionKey{ViewConditionList, id}
 		compileOne(ev, meta, key, key.String(), v.EntityType, v.Condition, programs, &problems)
 	}
+	for id, v := range cfg.Lists {
+		if !v.GroupBy.Computed() {
+			continue
+		}
+		for _, g := range v.GroupBy.Groups {
+			key := ViewConditionKey{ViewConditionListGroup, dataentryconfig.ListGroupConditionID(id, g.ID)}
+			name := fmt.Sprintf("lists[%q].group_by.groups[%s]", id, g.ID)
+			compileOne(ev, meta, key, name, v.EntityType, g.Condition, programs, &problems)
+		}
+	}
 	for id, v := range cfg.Kanbans {
 		key := ViewConditionKey{ViewConditionKanban, id}
 		compileOne(ev, meta, key, key.String(), v.EntityType, v.Condition, programs, &problems)
@@ -115,6 +135,7 @@ func CompileViewConditions(
 	compileActionConditions(ev, meta, cfg, programs, &problems)
 	compileLLMCandidateConditions(ev, meta, cfg, programs, &problems)
 	compileTraverseConditions(ev, meta, cfg, programs, &problems)
+	problems = append(problems, assignExprProblems(cfg, meta)...)
 
 	sort.Strings(problems)
 	if len(programs) == 0 {
@@ -320,19 +341,18 @@ func (m *ViewConditionMatcher) EntityType() string { return m.entityType }
 // keyed by (kind, id) — the pair the config uses, since a list and a kanban
 // may share an id.
 //
-// Returns nil when any condition fails to compile: the same config was
-// already refused by validation, so a partial set would only be reachable in
-// a deployment that skipped it, and evaluating SOME conditions while silently
-// ignoring others is worse than evaluating none.
+// The lookup holds every condition that compiled, even when others did not,
+// and the problems name the ones that did not. A surface whose condition
+// failed is absent, so a caller must not read absence as "no constraint"
+// for a surface its config gives a condition: it fails closed instead. One
+// broken condition then disables only its own surface. Nil when nothing
+// compiled.
 func ViewConditionMatchers(
 	cfg *dataentryconfig.Config, meta *metamodel.Metamodel,
 ) (lookup func(kind, id string) (*ViewConditionMatcher, bool), problems []string) {
 	programs, problems := CompileViewConditions(cfg, meta)
-	if len(problems) > 0 {
-		return nil, problems
-	}
 	if len(programs) == 0 {
-		return nil, nil
+		return nil, problems
 	}
 	ev := predicatefns.NewEvaluator(meta).LoweringSemantics()
 	matchers := make(map[ViewConditionKey]*ViewConditionMatcher, len(programs))
@@ -342,7 +362,7 @@ func ViewConditionMatchers(
 	return func(kind, id string) (*ViewConditionMatcher, bool) {
 		m, ok := matchers[ViewConditionKey{ViewConditionKind(kind), id}]
 		return m, ok
-	}, nil
+	}, problems
 }
 
 // entityTypeFor reads back the entity type a key's view declares. Compilation
@@ -354,6 +374,8 @@ func entityTypeFor(cfg *dataentryconfig.Config, key ViewConditionKey) string {
 		return cfg.Lists[key.ID].EntityType
 	case ViewConditionKanban:
 		return cfg.Kanbans[key.ID].EntityType
+	case ViewConditionListGroup:
+		return cfg.Lists[dataentryconfig.ListGroupConditionList(key.ID)].EntityType
 	case ViewConditionAction:
 		_, et, _ := dataentryconfig.SplitActionConditionID(key.ID)
 		return et
@@ -410,4 +432,103 @@ func compileOne(
 		return
 	}
 	programs[key] = prog
+}
+
+// compileAssignExpr compiles an `assign:` value expression (TKT-FGE5G3I) for
+// one property. It takes no entity: the value is the same for every item, so
+// `entity` and `related(...)` are unavailable.
+func compileAssignExpr(meta *metamodel.Metamodel, def *metamodel.PropertyDef, expr string) (*predicate.Program, error) {
+	typ, ok := predicatefns.ScalarTypeForProp(meta, def)
+	if !ok {
+		return nil, fmt.Errorf("property type %q is not supported by expressions", def.Type)
+	}
+	env := predicate.NewEnv()
+	if err := predicatefns.Declare(env); err != nil {
+		return nil, err
+	}
+	prog, err := predicate.CompileValue(env, expr, predicate.ValueProfile(typ))
+	if err != nil {
+		return nil, err
+	}
+	if len(prog.Traversals()) > 0 {
+		return nil, fmt.Errorf("%s(...) is not available in an assign expression", predicate.FuncRelated)
+	}
+	return prog, nil
+}
+
+// assignExprProblems compiles every expression of every list and page
+// `assign:`, so one that does not compile fails the load.
+func assignExprProblems(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []string {
+	var problems []string
+	check := func(at, itemType string, a *dataentryconfig.Assign) {
+		if a == nil {
+			return
+		}
+		def, ok := meta.GetEntityDef(itemType)
+		if !ok {
+			return // reported by dataentryconfig
+		}
+		for _, prop := range slices.Sorted(maps.Keys(a.Properties)) {
+			v := a.Properties[prop]
+			pd, ok := def.Properties[prop]
+			if v.Expr == "" || !ok {
+				continue
+			}
+			if _, err := compileAssignExpr(meta, &pd, v.Expr); err != nil {
+				problems = append(problems, fmt.Sprintf("%s: property %q: expr does not compile: %v", at, prop, err))
+			}
+		}
+	}
+	for _, id := range slices.Sorted(maps.Keys(cfg.Lists)) {
+		l := cfg.Lists[id]
+		check(fmt.Sprintf("list %q: assign", id), l.EntityType, l.Assign)
+	}
+	for _, id := range slices.Sorted(maps.Keys(cfg.Pages)) {
+		p := cfg.Pages[id]
+		if p.Assign != nil {
+			check(fmt.Sprintf("pages[%s]: assign", id), p.Assign.EntityType, p.Assign)
+		}
+	}
+	return problems
+}
+
+// EvalAssignExpr evaluates an `assign:` value expression with the clock now,
+// the one list conditions use, so an assigned today() and a list's today()
+// agree. The result is in the property's wire form; a date is formatted in
+// the property's date format, and nil means unset.
+func EvalAssignExpr(
+	ctx context.Context, meta *metamodel.Metamodel, def *metamodel.PropertyDef, expr string, now time.Time,
+) (any, error) {
+	prog, err := compileAssignExpr(meta, def, expr)
+	if err != nil {
+		return nil, err
+	}
+	b := predicate.NewBindings()
+	if bindErr := predicatefns.Bind(b, now); bindErr != nil {
+		return nil, bindErr
+	}
+	v, err := prog.Eval(ctx, b)
+	if err != nil {
+		return nil, err
+	}
+	switch x := v.(type) {
+	case predicate.Nil:
+		return nil, nil //nolint:nilnil // nil is the value "unset", not a missing result
+	case predicate.String:
+		return x.String(), nil
+	case predicate.Int:
+		return x.Int64(), nil
+	case predicate.Bool:
+		return x.Bool(), nil
+	case predicate.Date:
+		return x.Time().Format(def.GetDateFormat()), nil
+	case predicate.Decimal:
+		text, ok := x.Text()
+		if !ok {
+			return nil, errors.New("decimal result has no finite form")
+		}
+		return text, nil
+	default:
+		return nil, fmt.Errorf("unsupported result %T", v)
+	}
 }

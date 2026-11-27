@@ -1,0 +1,381 @@
+/**
+ * Maps rela's operator-authored sidebar config onto the component library's
+ * `NavGroup[]` / `NavItem[]`.
+ *
+ * The two models disagree on identity, which is why this is a module with
+ * tests rather than an inline `.map()`. A `SidebarItem` has no id: it carries
+ * a `label` plus EITHER an `href` or an `action`, and rela's old template
+ * keyed rows on `label + (href || action)`. `NavItem.id` is required and is
+ * what `activeId` matches against, so it has to be synthesised.
+ *
+ * A wrong id fails SILENTLY, the same way a wrong table column key does: a
+ * duplicate highlights two rows at once, and an unstable one loses the active
+ * highlight whenever the list re-renders. Neither raises anything from
+ * vue-tsc, eslint or a unit test that only checks rows exist. Hence `navId` is
+ * pinned by its own tests and collisions are asserted impossible.
+ */
+import type { Component } from 'vue'
+import type { NavGroup, NavItem, NavItemStatus } from 'rela-components/types'
+import type { SidebarGroup, SidebarItem } from '@/types'
+import type { NavItemEntry, NavItemList } from '@/api/navItems'
+import { entityDetailHref } from '@/utils/entityRoute'
+import type { NavEntitiesLookup } from '@/composables/useNavEntities'
+import type { NavDropAttrs } from '@/composables/useAssign'
+import { pileNavId } from '@/composables/pileNav'
+import type { PileSummary } from '@/api/piles'
+import { pileIcon } from '@/components/piles/pileIcon'
+import { t } from '@/i18n'
+import { stripSpace } from '@/stores/space'
+
+/**
+ * The stable identifier for a nav row.
+ *
+ * Prefixed by kind so a link and an action that share a label cannot collide,
+ * and built from the target rather than the label so that retitling an entry
+ * in config keeps its identity (and therefore its active highlight).
+ *
+ * An entry with neither href nor action is malformed config rather than a
+ * shape to support. It gets a stable placeholder so the sidebar still renders,
+ * and `toNavGroups` makes repeats unique.
+ */
+export function navId(item: SidebarItem): string {
+  if (item.action) return `action:${item.action}`
+  if (item.pile) return pileNameNavId(item.pile)
+  if (item.href) return `href:${item.href}`
+  return 'item:unnamed'
+}
+
+/**
+ * Whether an entry has somewhere to go. The server sends `href: ""` for a
+ * nav entry whose kind it does not recognise, so an empty href means "no
+ * destination", not "the root path". Such an entry must not render as a
+ * link: `RouterLink` resolves `to: ''` against the current location, so the
+ * row would steal the active highlight on every route.
+ */
+export function isNavigable(item: SidebarItem): boolean {
+  return Boolean(item.action) || Boolean(item.pile) || Boolean(item.href)
+}
+
+/**
+ * Converts one rela sidebar group to the library's.
+ *
+ * `as` carries the COMPONENT for a link, never a name to resolve at render
+ * time — the same boundary the icon registry holds. A config string must not
+ * be able to choose what gets mounted, so the router link is supplied by the
+ * caller (which imports it) rather than named in config.
+ */
+export function toNavGroups(
+  groups: ShownGroup[],
+  routerLink: Component,
+  onFlyoutClick?: FlyoutClickHandler,
+  statusFor?: NavStatusLookup,
+  dropAttrs?: NavDropAttrs
+): NavGroup[] {
+  const seen = new Set<string>()
+
+  return groups.map((group, index) => ({
+    id: group.group ? `group:${group.group}` : `group:${index}`,
+    label: group.group,
+    ...(group.items_create
+      ? { addLabel: t('nav.newItem', { label: group.items_create.label }) }
+      : {}),
+    ...(group.items_empty ? { emptyLabel: t('nav.emptyGroup') } : {}),
+    items: group.items
+      .filter(isNavigable)
+      .map((item) => toNavItem(item, routerLink, seen, onFlyoutClick, statusFor, dropAttrs)),
+  }))
+}
+
+/**
+ * Receives the click on an entry that opens a flyout (`open: flyout`). Bound
+ * in the capture phase, so it runs before the link's own navigation and can
+ * cancel it; see shouldDeferToBrowser for which clicks it must leave alone.
+ */
+export type FlyoutClickHandler = (item: SidebarItem, id: string, event: MouseEvent) => void
+
+/** Resolves an entry's `status_key` to its current marker, if it has one. */
+export type NavStatusLookup = (key: string | undefined) => NavItemStatus | undefined
+
+function toNavItem(
+  item: SidebarItem,
+  routerLink: Component,
+  seen: Set<string>,
+  onFlyoutClick?: FlyoutClickHandler,
+  statusFor?: NavStatusLookup,
+  dropAttrs?: NavDropAttrs
+): NavItem {
+  let id = navId(item)
+  if (seen.has(id)) {
+    let n = 2
+    while (seen.has(`${id}:${n}`)) n += 1
+    id = `${id}:${n}`
+  }
+  seen.add(id)
+  const status = item.status ?? statusFor?.(item.status_key)
+  const drop = !item.action && !item.pile && item.href ? dropAttrs?.(item.href) : undefined
+  const children = item.children
+    ?.filter(isNavigable)
+    .map((child) => toNavItem(child, routerLink, seen, onFlyoutClick, statusFor, dropAttrs))
+
+  return {
+    id,
+    label: item.label,
+    icon: item.icon,
+    ...(item.action || item.pile
+      ? { as: 'button' as const }
+      : { as: routerLink, attrs: { to: item.href, ...drop } }),
+    ...(item.pile ? { opensFlyout: true } : {}),
+    ...(item.flyout && onFlyoutClick
+      ? {
+          opensFlyout: true,
+          attrs: {
+            to: item.href,
+            ...drop,
+            onClickCapture: (event: MouseEvent) => onFlyoutClick(item, id, event),
+          },
+        }
+      : {}),
+    ...(status ? { status } : {}),
+    ...(item.initial ? { initial: item.initial } : {}),
+    ...(children?.length ? { children } : {}),
+  }
+}
+
+/** Resolves a generated group's `items_key` to its entries, if they have loaded. */
+export type NavItemsLookup = (key: string) => NavItemList | undefined
+
+/** The unprefixed href a generated entry opens. */
+/**
+ * A sidebar group as the client shows it. `items_empty` is set here, not by
+ * the server: the group's entries have loaded and there are none, so the
+ * group says so under its heading.
+ */
+export type ShownGroup = SidebarGroup & { items_empty?: boolean }
+
+export type GeneratedItemHref = (group: SidebarGroup, entry: NavItemEntry) => string
+
+/**
+ * Where a generated entry goes: the group's entity page for the entry's row,
+ * which opens on its first tab, or else the entity itself.
+ */
+export function generatedItemHref(group: SidebarGroup, entry: NavItemEntry): string {
+  if (group.items_page) return `/p/${group.items_page}/${encodeURIComponent(entry.id)}`
+  return entityDetailHref(entry)
+}
+
+/** Where a child entry goes: the group's child page, or else the entity itself. */
+export function generatedChildHref(group: SidebarGroup, entry: NavItemEntry): string {
+  if (group.items_child_page) return `/p/${group.items_child_page}/${encodeURIComponent(entry.id)}`
+  return entityDetailHref(entry)
+}
+
+/**
+ * Fills each generated group (`items_key`) with its entries, so the rest of
+ * the mapping treats them as ordinary items.
+ *
+ * The ids follow from the hrefs like any other row's, so an entry keeps its
+ * highlight while its title changes, and the highlight covers every tab of
+ * its page because the tab paths extend the entry's href.
+ *
+ * A group with no entries is left out, whether its list is empty for this
+ * principal or its entries have not loaded or were dropped: a heading over
+ * nothing reads as a fault. A group that offers a create stays, since its
+ * "+" is how the first entry gets made. When the list holds more rows than the group
+ * shows, a last entry links to the whole list.
+ */
+export function expandGeneratedItems(
+  groups: SidebarGroup[],
+  lookup: NavItemsLookup,
+  hrefFor: GeneratedItemHref = generatedItemHref,
+  childHrefFor: GeneratedItemHref = generatedChildHref
+): ShownGroup[] {
+  const out: ShownGroup[] = []
+  for (const group of groups) {
+    if (!group.items_key) {
+      out.push(group)
+      continue
+    }
+    const list = lookup(group.items_key)
+    if (!list?.entries.length) {
+      if (group.items_create)
+        out.push({ ...group, items: [], ...(list ? { items_empty: true } : {}) })
+      continue
+    }
+    const items: SidebarItem[] = list.entries.map((entry) => ({
+      label: entry.label,
+      href: hrefFor(group, entry),
+      ...(entry.initial ? { initial: entry.initial } : {}),
+      ...(entry.status ? { status: entry.status } : {}),
+      ...(entry.children?.length
+        ? { children: generatedChildren(group, entry, childHrefFor) }
+        : {}),
+    }))
+    if (list.truncated && group.items_list) {
+      items.push({ label: t('nav.showAll'), href: `/list/${group.items_list}`, icon: 'list' })
+    }
+    out.push({ ...group, items })
+  }
+  return out
+}
+
+/**
+ * The child rows of a generated entry. When the entry has more children than
+ * it shows, a last row links to the entry itself, where they all are.
+ */
+function generatedChildren(
+  group: SidebarGroup,
+  entry: NavItemEntry,
+  hrefFor: GeneratedItemHref
+): SidebarItem[] {
+  const items: SidebarItem[] = (entry.children ?? []).map((child) => ({
+    label: child.label,
+    href: hrefFor(group, child),
+    ...(child.status ? { status: child.status } : {}),
+  }))
+  if (entry.children_truncated) {
+    items.push({ label: t('nav.showAll'), href: generatedItemHref(group, entry), icon: 'list' })
+  }
+  return items
+}
+
+/**
+ * Replaces each `entities:` entry with one link per matching entity, so the
+ * rest of the mapping treats them as ordinary items.
+ *
+ * A group left with no items is dropped when it held an `entities:` entry,
+ * whether nothing matched or the rows have not loaded: a heading over nothing
+ * reads as a fault.
+ */
+export function expandEntityEntries(
+  groups: SidebarGroup[],
+  lookup: NavEntitiesLookup
+): SidebarGroup[] {
+  const out: SidebarGroup[] = []
+  for (const group of groups) {
+    if (!group.items.some((item) => item.entities)) {
+      out.push(group)
+      continue
+    }
+    const items = group.items.flatMap((item): SidebarItem[] => {
+      if (!item.entities) return [item]
+      return (lookup(item.entities) ?? []).map((row) => ({
+        label: row.title,
+        href: row.href,
+        icon: item.icon,
+      }))
+    })
+    if (items.length) out.push({ ...group, items })
+  }
+  return out
+}
+
+/**
+ * The id of the row matching the current route, for `activeId`.
+ *
+ * Mirrors rela's old `isActive`: a prefix match, so `/list/features/TKT-1`
+ * still highlights the `/list/features` row. Longest match wins, since a
+ * prefix match alone would light up `/` for every route. A space's home
+ * row (`/s/<space>`) matches only its own page too: every page of the space
+ * lies beneath it, and a page with no row of its own, such as a run page,
+ * must leave nothing highlighted.
+ *
+ * Nil: undefined when no row matches, which leaves nothing highlighted.
+ */
+export function activeNavId(groups: NavGroup[], path: string): string | undefined {
+  let best: { id: string; length: number } | undefined
+
+  const flat = (items: NavItem[]): NavItem[] =>
+    items.flatMap((item) => [item, ...flat(item.children ?? [])])
+  for (const item of groups.flatMap((group) => flat(group.items))) {
+    const to = item.attrs?.to
+    if (typeof to !== 'string') continue
+    if (path !== to && (stripSpace(to) === '/' || !path.startsWith(`${to}/`))) continue
+    if (!best || to.length > best.length) best = { id: item.id, length: to.length }
+  }
+
+  return best?.id
+}
+
+/** The id of the sidebar's Piles group. */
+export const PILES_GROUP_ID = 'group:piles'
+
+/** The id prefix of a `pile:` entry's row; the rest is the pile's name. */
+export const PILE_NAME_NAV_PREFIX = 'pile-name:'
+
+/**
+ * The row id of a `pile:` entry. Keyed on the name, since the pile may not
+ * exist yet and a name is all the config holds.
+ */
+export function pileNameNavId(name: string): string {
+  return `${PILE_NAME_NAV_PREFIX}${name}`
+}
+
+/**
+ * The pile a `pile:` entry names, if the user has it: a declared pile by its
+ * key, else any pile by name. Names ignore case.
+ */
+export function pileNamed(piles: readonly PileSummary[], name: string): PileSummary | undefined {
+  const byKey = piles.find((p) => p.key && p.key === name)
+  if (byKey) return byKey
+  const wanted = name.toLowerCase()
+  return piles.find((p) => p.name.toLowerCase() === wanted)
+}
+
+/**
+ * The count marker of a pile row: its unread items on a pile with read
+ * state, else all its items. None when that is zero.
+ */
+export function pileSummaryStatus(p: PileSummary): NavItemStatus | undefined {
+  if (!p.read_state) return pileStatus(p.count)
+  const n = p.unread ?? 0
+  return n > 0 ? { tone: 'info', label: t('piles.unreadCount', { n }, n), count: n } : undefined
+}
+
+/** The count marker a pile row shows; none for an empty pile. */
+export function pileStatus(count: number): NavItemStatus | undefined {
+  return count > 0
+    ? { tone: 'info', label: t('piles.itemCount', { n: count }, count), count }
+    : undefined
+}
+
+/**
+ * The Piles group (TKT-K3RJLH): one row per pile, with its icon and its count
+ * of readable items, and an add control for a new pile.
+ *
+ * A row opens the pile in the flyout rather than navigating, so it is a
+ * button that claims `opensFlyout`. The sidebar leaves the group out until
+ * the user has a pile of their own.
+ */
+export function pilesNavGroup(piles: readonly PileSummary[]): NavGroup {
+  return {
+    id: PILES_GROUP_ID,
+    label: t('nav.piles'),
+    addLabel: t('nav.newPile'),
+    items: piles.map(pileNavItem),
+  }
+}
+
+/** The id of the sidebar group holding the declared piles. */
+export const DECLARED_PILES_GROUP_ID = 'group:declared-piles'
+
+/**
+ * The declared piles (favorites, notifications): an unlabelled group of their
+ * own, outside the Piles group, so they read as part of the app rather than
+ * as something the user made. None when there are none to show.
+ */
+export function declaredPilesNavGroup(piles: readonly PileSummary[]): NavGroup | null {
+  if (piles.length === 0) return null
+  return { id: DECLARED_PILES_GROUP_ID, items: piles.map(pileNavItem) }
+}
+
+function pileNavItem(p: PileSummary) {
+  const status = pileSummaryStatus(p)
+  return {
+    id: pileNavId(p.id),
+    label: p.name,
+    icon: pileIcon(p.icon),
+    as: 'button' as const,
+    opensFlyout: true,
+    ...(status ? { status } : {}),
+  }
+}

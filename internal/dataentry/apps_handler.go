@@ -10,39 +10,15 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 )
 
-// appCSP returns the path-scoped Content-Security-Policy for an app. It is the
-// whole security boundary for an app: the app loads from /api/v1/_apps/<id>/
-// (so it is same-origin with the API), and this header is what stops it from
-// reaching anything but its own files plus the bridge.
+// appCSP returns the path-scoped Content-Security-Policy for an app, which is
+// its whole security boundary. base must be an absolute scheme://host/path/
+// prefix; a host-less source is ignored by browsers.
 //
-// base MUST be an absolute scheme://host/path/ prefix (e.g.
-// "http://127.0.0.1:8099/api/v1/_apps/dash/"), NOT a bare path: a CSP source
-// expression without a host is invalid and browsers ignore it, falling back to
-// default-src 'none' (which silently blocks the app's own scripts). We build it
-// from the request scheme+host.
-//
-//   - Resource directives are scoped to the app's own absolute subpath, NOT
-//     'self': 'self' would include /api/, letting `<img src="/api/v1/tickets/x">`
-//     pull data. Scoping to the app's path confines resource loads to the app.
-//   - connect-src 'none' blocks the app's own fetch/XHR/WebSocket — so there is
-//     no CROSS-ORIGIN egress and the only way to the API is the host
-//     MessageChannel bridge (a message post, not a network connection, so it is
-//     unaffected). (img-src still permits data:/blob: for inline images; those
-//     are not a cross-origin channel.)
-//   - form-action 'none' + the iframe sandbox (no allow-top-navigation) block
-//     form-POST and navigation exfiltration.
-//   - script-src/style-src carry NO 'unsafe-inline', so an app's scripts and
-//     styles must be separate files. This is not part of the data boundary —
-//     an app already runs with allow-scripts and could execute anything it
-//     ships. It is defense in depth AGAINST THE APP'S OWN BUGS: if an app
-//     builds DOM from entity data with innerHTML, a <script> smuggled through
-//     that data is blocked here rather than executed. `rela apps new`
-//     scaffolds separate app.css/app.js so a generated app works under this
-//     unchanged (TKT-JO125X); an app author who inlines gets a CSP violation
-//     in the console, not silent breakage of the host.
-//
-// Note this also blocks style="" attributes, which would need 'unsafe-hashes'
-// to permit. Apps use classes instead.
+// Resource directives are scoped to the app's subpath, not 'self', which would
+// include /api/. connect-src 'none' leaves the MessageChannel bridge as the
+// only way to the API; form-action 'none' and the sandbox block form and
+// navigation exfiltration. No 'unsafe-inline' (which also blocks style=""),
+// as defense against an app's own injection bugs.
 func appCSP(base string) string {
 	return strings.Join([]string{
 		"default-src 'none'",
@@ -84,19 +60,12 @@ func appBaseURL(r *http.Request, id string) (string, bool) {
 	return scheme + "://" + r.Host + "/api/v1/_apps/" + id + "/", true
 }
 
-// handleV1App serves a custom app's files for embedding in a sandboxed iframe.
-// Endpoints under GET /api/v1/_apps/<id>/...:
+// handleV1App serves a custom app's files under GET /api/v1/_apps/<id>/: the
+// index.html, sibling files, and the reserved bridge SDK `_rela.js`.
 //
-//   - /api/v1/_apps/<id>/            → the app's index.html
-//   - /api/v1/_apps/<id>/<path>      → a sibling file from the app directory
-//   - /api/v1/_apps/<id>/_rela.js    → the in-iframe bridge SDK (reserved)
-//
-// Apps are folder-discovered: an app is apps/<id>/ containing index.html (no
-// config registry). The app loads from this real URL (so its sub-resources
-// resolve) and is same-origin with the API; the path-scoped CSP header is what
-// keeps it confined to its own files + the bridge. The app inherits the
-// logged-in user's permissions — it talks to the API only through the host
-// MessageChannel bridge, so it can do nothing the user couldn't already do.
+// An app is a folder apps/<id>/ with an index.html. It is same-origin with the
+// API, so the path-scoped CSP header confines it. It reaches the API only
+// through the host bridge, with the logged-in user's permissions.
 //
 //archplan:auth=required reason="serves app files; the app's API calls run as the user"
 func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
@@ -106,7 +75,6 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Path shape: /api/v1/_apps/<id>[/<entry...>]
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/_apps/")
 	id, entry, _ := strings.Cut(rest, "/")
 	if !dataentryconfig.ValidAppID(id) {
@@ -114,9 +82,6 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A bare /_apps/<id> (no trailing slash) would make the app's relative
-	// asset URLs resolve against /_apps/ instead of /_apps/<id>/. Redirect to
-	// the canonical trailing-slash form.
 	if !strings.Contains(rest, "/") {
 		http.Redirect(w, r, "/api/v1/_apps/"+id+"/", http.StatusMovedPermanently)
 		return
@@ -129,8 +94,6 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 
 	base, ok := appBaseURL(r, id)
 	if !ok {
-		// Host header isn't a clean host[:port] — refuse rather than splice an
-		// unsafe value into the CSP. A normal browser never triggers this.
 		writeV1Error(w, r, http.StatusBadRequest, "bad_host", "Invalid Host header", "")
 		return
 	}
@@ -139,7 +102,6 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 	h.Set("Content-Security-Policy", appCSP(base))
 	h.Set("X-Content-Type-Options", "nosniff")
 
-	// Reserved endpoints — served from the binary, not the app's files.
 	if entry == appSDKEntry {
 		h.Set("Content-Type", "text/javascript; charset=utf-8")
 		_, _ = w.Write([]byte(appSDKSource()))
@@ -151,9 +113,6 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if entry == appEditorEntry {
-		// ETag + revalidate so the bundle isn't re-transferred on every
-		// iframe (re)load. appContentTypes[".js"] is the single source for the
-		// content-type so it can't drift.
 		serveCachedAsset(w, r, appContentTypes[".js"], appEditorJSETag(), appEditorSource())
 		return
 	}
@@ -164,8 +123,6 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 	if entry == "" {
 		entry = appIndexFile
 	}
-	// Disallow serving reserved (underscore-prefixed) entry names from the
-	// app's own files, so an app can't shadow _rela.js.
 	if strings.HasPrefix(entry, "_") {
 		writeV1Error(w, r, http.StatusNotFound, "app_entry_not_found", "Not found", "")
 		return
@@ -177,10 +134,6 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The index document declares the bridge contract it was written against
-	// (<meta name="rela-app:bridge-version">). Refuse to serve an app that
-	// omits it or asks for a newer bridge than we provide — fail loudly here
-	// rather than let the app load and call methods that don't exist.
 	if entry == appIndexFile {
 		if reason := validateBridgeVersion(parseAppMeta(body).BridgeVersion); reason != "" {
 			slog.Warn("refusing app with invalid bridge version", "app", id, "reason", reason)

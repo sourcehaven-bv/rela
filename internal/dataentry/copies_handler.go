@@ -190,33 +190,13 @@ type copyInvokeRequest struct {
 	TargetID string `json:"target_id,omitempty"`
 }
 
-// invoke executes a declared copy.
-//
-// # It does NOT re-check the guard, and that is the point
-//
-// [entitymanager.Manager.CopyState] authorizes internally — a read gate on the
-// source, the definition's `guard:` resolved per-entity, and a create check on
-// a cross-entity target — and it fails closed when a guarded definition has no
-// guard wired. Adding a second check here would create two authorization sites
-// that can disagree, which is strictly worse than one: the divergence would be
-// invisible, since both would look plausible.
-//
-// So this handler's whole job on the security axis is to call the kernel and
-// TRANSLATE its verdict. The mapping is deliberately asymmetric:
-//
-//   - [acl.ForbiddenError] -> 403, naming the rule. A copy definition and its
-//     guard permission are operator-authored config, so saying which
-//     permission was missing helps the operator and conceals nothing.
-//   - [entitymanager.ErrCopySourceMissing] -> 404, INDISTINGUISHABLE from a
-//     genuinely absent entity. The kernel already collapses "denied" into this
-//     error for exactly that reason; rendering it as a 403 here would undo the
-//     read gate's work and turn this endpoint into an existence oracle.
-//   - the kernel's request-shape sentinels (unknown definition, missing or
-//     disallowed target id, target of another type) and a validation
-//     failure -> 422, the ordinary "coherent request this surface cannot
-//     satisfy", with the kernel's own text (it names config and caller ids).
-//   - everything else -> 500 with a generic detail; the real error is logged,
-//     because a wrapped store error in the body leaks backend internals.
+// invoke executes a declared copy. It does not re-check the guard:
+// [entitymanager.Manager.CopyState] authorizes internally, and a second check
+// could disagree. It translates the verdict: [acl.ForbiddenError] is 403
+// naming the rule; [entitymanager.ErrCopySourceMissing] is 404,
+// indistinguishable from an absent entity, so this is no existence oracle;
+// request-shape sentinels and validation failures are 422; anything else is a
+// logged 500 with a generic detail, so backend internals do not leak.
 func (h *copiesHandler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 	if strings.Contains(name, "/") {
 		writeV1Error(w, r, http.StatusNotFound, "not_found",
@@ -246,10 +226,6 @@ func (h *copiesHandler) invoke(w http.ResponseWriter, r *http.Request, name stri
 	}
 
 	if res == nil || res.Entity == nil {
-		// Unreachable through the concrete manager, which never returns
-		// (nil, nil). Guarded because copyService is an INTERFACE: a stub or a
-		// future implementation that returns an empty success would panic an
-		// HTTP handler on the request path, and two lines prevent that.
 		writeV1Error(w, r, http.StatusInternalServerError, "copy_failed",
 			"Copy returned no result", "")
 		return
@@ -261,8 +237,6 @@ func (h *copiesHandler) invoke(w http.ResponseWriter, r *http.Request, name stri
 		Created:    res.Created,
 	}
 	if res.FollowUpErr != nil {
-		// The copy is written, so the answer is a success: an error would
-		// make the client retry a copy that already happened.
 		logInternalError(r, "copy_follow_up_failed", res.FollowUpErr)
 		out.Warnings = append(out.Warnings, v1.Warning{
 			Code:   warnCopyFollowUpFailed,
@@ -289,24 +263,15 @@ func writeCopyError(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	if errors.Is(err, entitymanager.ErrCopySourceMissing) {
-		// Byte-identical to a genuinely missing entity. Do NOT "improve" this
-		// into a 403 naming the source: the kernel folds a denied read into
-		// this error precisely so a caller cannot tell absent from forbidden,
-		// and a more helpful status here would reopen that.
 		writeV1Error(w, r, http.StatusNotFound, "not_found",
 			entityNotFoundTitle, "")
 		return
 	}
 	if errors.Is(err, entitymanager.ErrEntityAlreadyExists) {
-		// A target id that is taken by a row the caller cannot read. The
-		// answer is the one a create with that id gets, and names no type.
 		writeV1Error(w, r, http.StatusConflict, "conflict",
 			"Copy could not be applied", "the target id is already taken")
 		return
 	}
-	// Request-shape refusals the kernel names with a sentinel: coherent
-	// requests this definition cannot satisfy. Their text is safe — it names
-	// the definition and the ids the caller supplied, never store internals.
 	for _, sentinel := range []error{
 		entitymanager.ErrUnknownCopy, entitymanager.ErrCopyTargetRequired,
 		entitymanager.ErrCopyTargetNotAllowed, entitymanager.ErrCopyTargetTypeMismatch,
@@ -323,10 +288,6 @@ func writeCopyError(w http.ResponseWriter, r *http.Request, err error) {
 			"Copy target fails validation", verr.Error())
 		return
 	}
-	// Anything else is an infrastructure failure inside the kernel or the
-	// store. The detail is generic and the real error is logged: a wrapped
-	// backend error in a client-visible body is how store internals leak, and
-	// it is a 500, not a 422 — the request was fine, the server was not.
 	slog.Error("dataentry: copy invoke failed", "err", err)
 	writeV1Error(w, r, http.StatusInternalServerError, "copy_failed",
 		"Copy could not be applied", "check server logs")

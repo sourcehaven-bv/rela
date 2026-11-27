@@ -354,6 +354,37 @@ export class MobileLayoutPage extends BasePage {
     });
   }
 
+  /** The create dialog's panel, a full-screen sheet on a phone. */
+  get createSheet(): Locator {
+    return this.page.locator(".inline-create-panel");
+  }
+
+  /**
+   * Open the list's create dialog from the Add button under its rows and
+   * wait for its body editor, the widest thing in the form.
+   */
+  async openCreateSheet(listId: string) {
+    await this.openList(listId);
+    await this.page.getByRole("button", { name: "Add", exact: true }).click();
+    await expect(this.createSheet.locator(".milkdown-editor-shell")).toBeVisible();
+  }
+
+  /**
+   * The sheet's box and how far its body can scroll sideways. A body wider
+   * than its box can be swiped or scrolled by the caret, which moves the form
+   * left and cuts off its left edge.
+   */
+  async createSheetGeometry(): Promise<{ left: number; right: number; viewport: number; sideways: number }> {
+    return this.createSheet.evaluate((panel) => {
+      const box = panel.getBoundingClientRect();
+      const body = panel.querySelector<HTMLElement>(".rl-modal__body")!;
+      body.scrollLeft = 1000;
+      const sideways = body.scrollLeft;
+      body.scrollLeft = 0;
+      return { left: box.left, right: box.right, viewport: window.innerWidth, sideways };
+    });
+  }
+
   /** Whether the main pane is wider than the screen (scrolls sideways). */
   async paneScrollsSideways(): Promise<boolean> {
     return this.mainPane.evaluate((pane) => pane.scrollWidth > pane.clientWidth + 1);

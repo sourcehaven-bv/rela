@@ -71,8 +71,6 @@ func (af attachFiler) AttachFile(ctx context.Context, req lua.AttachFileRequest)
 		return lua.AttachedFile{}, err
 	}
 	s := af.a.State()
-	// Refused before the preflight and the upload slot, as the upload route
-	// refuses a body whose declared length is over the cap.
 	if limit := maxAttachmentBytes(s); int64(len(req.Content)) > limit {
 		return lua.AttachedFile{}, fmt.Errorf("attach_file: the file exceeds the %d byte attachment limit", limit)
 	}
@@ -85,8 +83,6 @@ func (af attachFiler) AttachFile(ctx context.Context, req lua.AttachFileRequest)
 	if err != nil {
 		return lua.AttachedFile{}, err
 	}
-	// The bytes are already in memory, but the slot still bounds how many
-	// attachment writes (and scans) run at once, as for an HTTP upload.
 	release, admitted := af.a.attachments.uploads.TryAcquire()
 	if !admitted {
 		return lua.AttachedFile{}, errors.New("attach_file: too many uploads in progress; retry later")
@@ -97,8 +93,6 @@ func (af attachFiler) AttachFile(ctx context.Context, req lua.AttachFileRequest)
 	if err != nil {
 		return lua.AttachedFile{}, err
 	}
-	// The type a download of the file serves, without its parameters, like
-	// the type rela.attach_render reports.
 	served, _, err := mime.ParseMediaType(contentTypeForFilename(written.FileName))
 	if err != nil {
 		served = "application/octet-stream"

@@ -16,21 +16,11 @@ import (
 const mentionStepPages = 10
 
 // collectBacklinks fills a `mentioned_by` step's collection with the entry's
-// backlinks (TKT-HF0D5W).
-//
-// Sources come from [visibility.Resolver.MentionedBy] on the view reader, so
-// each one is row-gated and served at the face the world admits. Their ids
-// are then reloaded as raw headers through [viewsHandler.loadViewEntities],
-// like every other traversal: `where:` filters raw values, and the view
-// redacts each collection exactly once, on the way out.
-//
-// `where:` runs page by page, so the step limit counts matching sources.
-// The collection is marked incomplete when more matching sources may exist.
-//
-// A gate or store fault, in the index read or in the reload, fails the view as
-// a [gateFaultError]. Returning an empty or short collection would
-// read as "nothing mentions this", while the view hides the built-in panel
-// that could have shown otherwise.
+// backlinks. Sources come from [visibility.Resolver.MentionedBy], row-gated
+// at the world's face, and are reloaded as raw headers through
+// [viewsHandler.loadViewEntities]. The step limit counts matching sources,
+// and the collection is marked incomplete when more may exist. A gate or
+// store fault fails the view as a [gateFaultError].
 func (h *viewsHandler) collectBacklinks(ctx context.Context, rule ViewTraverse, result *viewResult, w viewWorld) error {
 	limit := dataentryconfig.MentionedByStepLimit
 	collected := []*entity.Entity{}
@@ -58,7 +48,7 @@ func (h *viewsHandler) collectBacklinks(ctx context.Context, rule ViewTraverse, 
 			return &gateFaultError{err: err}
 		}
 		if found, err = result.filter.narrow(ctx, rule, found); err != nil {
-			return err // a bad where: is refused at load; reaching here is a config bug
+			return err
 		}
 		for _, e := range found {
 			if len(collected) == limit {

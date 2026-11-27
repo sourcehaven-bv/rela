@@ -18,15 +18,43 @@
  *   arrive.
  * A row with no value goes in a trailing "(none)" section, shown only when a
  * row needs it.
+ *
+ * A computed grouping (`groups:` with conditions and no property) is decided
+ * by the server, which stamps each row's `_group`. Its sections come in
+ * declared order, empty ones left out; a row in no group goes in a trailing
+ * "Other" section.
  */
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import { useRelationColumns, OTHER_COLUMN } from '@/composables/useRelationColumns'
 import type { DotColor } from 'rela-components/types'
+import { namedColor } from '@/utils/styleColors'
 import { useUIStore } from '@/stores'
 import { formatCellValue } from '@/utils/format'
-import { BUCKET_ORDER, bucketDate, bucketOf, defaultBucketLabel } from '@/utils/dateBuckets'
+import {
+  BUCKET_ORDER,
+  WEEK_BUCKET_ORDER,
+  bucketDate,
+  bucketOf,
+  defaultBucketLabel,
+} from '@/utils/dateBuckets'
+import {
+  calendarBucketDate,
+  calendarBucketOf,
+  calendarBucketColor,
+  calendarBucketTitle,
+  compareCalendarBuckets,
+  type CalendarBucket,
+} from '@/utils/calendarBuckets'
 import { t } from '@/i18n'
-import type { DateBucket, Entity, EntityType, ListGroupBy, ListResponse, PageScope } from '@/types'
+import type {
+  CalendarBuckets,
+  DateBucket,
+  Entity,
+  EntityType,
+  ListGroupBy,
+  ListResponse,
+  PageScope,
+} from '@/types'
 
 export interface ListSection {
   id: string
@@ -95,6 +123,11 @@ function isEmptyValue(value: unknown): boolean {
   return value === undefined || value === null || value === ''
 }
 
+/** Mirrors ListGroupBy.Computed on the server. */
+function isComputedGroupBy(groupBy: ListGroupBy): boolean {
+  return !groupBy.property && !groupBy.relation
+}
+
 /** Splits rows into sections. See the file comment for the rules. */
 export function groupRows(
   rows: Entity[],
@@ -102,8 +135,12 @@ export function groupRows(
   entityType: EntityType | undefined,
   options: GroupOptions
 ): ListSection[] {
+  if (isComputedGroupBy(groupBy)) return computedSections(rows, groupBy)
   const property = groupBy.property ?? ''
   const def = entityType?.properties[property]
+  if (groupBy.buckets && typeof groupBy.buckets === 'object') {
+    return calendarSections(rows, groupBy, groupBy.buckets, options, def?.type === 'date')
+  }
   if (groupBy.buckets) return bucketSections(rows, groupBy, options, def?.type === 'date')
 
   const declared = def?.values ?? []
@@ -115,7 +152,7 @@ export function groupRows(
     byKey.set(value, {
       id: `value:${value}`,
       title: override?.label || def?.labels?.[value] || value,
-      color: override?.color,
+      color: namedColor(override?.color),
       prefill: { [property]: value },
       items: [],
     })
@@ -131,9 +168,6 @@ export function groupRows(
     const key = String(value)
     let section = byKey.get(key)
     if (!section) {
-      // A value the enum does not declare (hand-edited data), or any value
-      // of a non-enum property. It gets a section of its own after the
-      // declared ones rather than disappearing.
       section = {
         id: `value:${key}`,
         title: formatCellValue(value, property, entityType, options.tz) || key,
@@ -155,6 +189,29 @@ export function groupRows(
   return sections
 }
 
+const OTHER_ID = 'other'
+
+/** Sections for a computed grouping; see the file comment. */
+function computedSections(rows: Entity[], groupBy: ListGroupBy): ListSection[] {
+  const byId = new Map<string, ListSection>()
+  for (const g of groupBy.groups ?? []) {
+    if (!g.id) continue
+    byId.set(g.id, {
+      id: `group:${g.id}`,
+      title: g.label || g.id,
+      color: namedColor(g.color),
+      items: [],
+    })
+  }
+  const other: ListSection = { id: OTHER_ID, title: t('list.group.other'), items: [] }
+  for (const row of rows) {
+    ;((row._group && byId.get(row._group)) || other).items.push(row)
+  }
+  const sections = [...byId.values()].filter((s) => s.items.length > 0)
+  if (other.items.length > 0) sections.push(other)
+  return sections
+}
+
 /**
  * `isDate` is true for a `date` property. It decides how a value is read
  * (bucketOf), and only a date's sections prefill: a datetime needs a time as
@@ -167,14 +224,15 @@ function bucketSections(
   isDate: boolean
 ): ListSection[] {
   const { now, tz } = options
+  const weeks = groupBy.buckets === 'relative_weeks'
   const byBucket = new Map<DateBucket, Entity[]>()
   for (const row of rows) {
-    const bucket = bucketOf(row.properties[groupBy.property ?? ''], now, tz, isDate)
+    const bucket = bucketOf(row.properties[groupBy.property ?? ''], now, tz, isDate, weeks)
     const items = byBucket.get(bucket) ?? []
     items.push(row)
     byBucket.set(bucket, items)
   }
-  return BUCKET_ORDER.flatMap((bucket): ListSection[] => {
+  return (weeks ? WEEK_BUCKET_ORDER : BUCKET_ORDER).flatMap((bucket): ListSection[] => {
     const items = byBucket.get(bucket)
     if (!items) return []
     const date = isDate ? bucketDate(bucket, now, tz) : undefined
@@ -182,8 +240,6 @@ function bucketSections(
       {
         id: `bucket:${bucket}`,
         title: groupBy.labels?.[bucket] || defaultBucketLabel(bucket),
-        // Overdue is the one bucket that asks for action; the rest are only
-        // a when.
         color: bucket === 'overdue' ? 'red' : undefined,
         prefill: date && groupBy.property ? { [groupBy.property]: date } : undefined,
         bucket,
@@ -191,6 +247,50 @@ function bucketSections(
       },
     ]
   })
+}
+
+/**
+ * Calendar sections (utils/calendarBuckets), empty ones left out, ordered by
+ * their start day rather than by row arrival: the server orders by instant,
+ * and a naive datetime is read as wall-clock time, so arrival order could
+ * split a day.
+ */
+function calendarSections(
+  rows: Entity[],
+  groupBy: ListGroupBy,
+  buckets: CalendarBuckets,
+  options: GroupOptions,
+  isDate: boolean
+): ListSection[] {
+  const { now, tz } = options
+  const byId = new Map<string, { bucket: CalendarBucket; items: Entity[] }>()
+  for (const row of rows) {
+    const bucket = calendarBucketOf(
+      row.properties[groupBy.property ?? ''],
+      buckets,
+      now,
+      tz,
+      isDate
+    )
+    const entry = byId.get(bucket.id) ?? { bucket, items: [] }
+    entry.items.push(row)
+    byId.set(bucket.id, entry)
+  }
+  const desc = buckets.order === 'desc'
+  return [...byId.values()]
+    .sort((a, b) => compareCalendarBuckets(a.bucket, b.bucket, desc))
+    .map(({ bucket, items }) => {
+      const date = isDate ? calendarBucketDate(bucket) : undefined
+      return {
+        id: bucket.id,
+        title:
+          (bucket.fixed && groupBy.labels?.[bucket.fixed]) || calendarBucketTitle(bucket, now, tz),
+        color: calendarBucketColor(bucket),
+        prefill: date && groupBy.property ? { [groupBy.property]: date } : undefined,
+        bucket: bucket.meta,
+        items,
+      }
+    })
 }
 
 /** Where a list's closed sections are remembered, per browser. */
@@ -205,7 +305,7 @@ function readCollapsed(listId: string): Set<string> {
       Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []
     )
   } catch {
-    // A corrupt entry costs the reader their closed sections, not the list.
+    // why: a corrupt entry costs the reader their closed sections, not the list.
     return new Set()
   }
 }
@@ -247,8 +347,6 @@ export function useListGrouping(options: {
 
   const grouped = computed(() => options.groupBy() !== undefined)
 
-  // Grouping on a relation: the sections are the relation's targets, the
-  // same ones a relation-backed board shows as columns.
   const relationColumns = useRelationColumns(
     computed(() => (options.groupBy()?.relation ? options.groupBy() : undefined)),
     computed(() => options.pageScope?.()),
@@ -270,7 +368,11 @@ export function useListGrouping(options: {
         },
       ])
     )
-    const other: ListSection = { id: `rel:${OTHER_COLUMN}`, title: t('list.group.other'), items: [] }
+    const other: ListSection = {
+      id: `rel:${OTHER_COLUMN}`,
+      title: t('list.group.other'),
+      items: [],
+    }
     for (const row of rows) {
       const column = relationColumns.columnOf(row)
       ;(byId.get(column) ?? other).items.push(row)
@@ -311,7 +413,7 @@ export function useListGrouping(options: {
     try {
       localStorage.setItem(collapsedStorageKey(options.listId()), JSON.stringify([...next]))
     } catch {
-      // Storage full or disabled: the choice holds for this visit only.
+      // why: storage full or disabled: the choice holds for this visit only.
     }
   }
 

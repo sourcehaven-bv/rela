@@ -189,6 +189,11 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 			return "1"
 		}
 		return "(" + isEmpty + " OR NOT " + equalsCond(b, alias, path, p.Value) + ")"
+	case store.PropEqualOrEmpty:
+		if p.Scalar {
+			return "(" + isEmpty + " OR " + scalarEqualCond(alias, path, b.arg(p.Value)) + ")"
+		}
+		return "(" + isEmpty + " OR " + equalsCond(b, alias, path, p.Value) + ")"
 	case store.PropGreaterEqual, store.PropLessEqual, store.PropGreater, store.PropLess:
 		switch p.Kind {
 		case store.OrderText:

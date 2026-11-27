@@ -110,7 +110,7 @@ func (d Direction) IsIncoming() bool {
 // (TKT-91BK6F), `header_buttons` (TKT-31822PN) and `list_buttons`
 // (TKT-UP0AYVN) are the most recent.
 //
-//plimsoll:max-fields=33
+//plimsoll:max-fields=34
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -182,6 +182,35 @@ type Config struct {
 	// by its realtime.yaml labels, required properties first. See
 	// [ChannelPresentation].
 	Channels map[string]ChannelPresentation `yaml:"channels,omitempty" json:"channels,omitempty"`
+
+	// QuickEntry names the form a quick capture opens (TKT-24L1H36). Nil:
+	// accepted, means no quick entry: the web shortcut does nothing and the
+	// desktop app registers no hotkey. See [QuickEntry].
+	QuickEntry *QuickEntry `yaml:"quick_entry,omitempty" json:"quick_entry,omitempty"`
+}
+
+// QuickEntry is the `quick_entry:` block: one create form, opened by a key
+// in the web app and by a global hotkey in the desktop app.
+type QuickEntry struct {
+	// Form is the form to open, a key of `forms:`.
+	Form string `yaml:"form" json:"form"`
+	// List optionally names a list whose `assign:` block fills the form's
+	// defaults, as for a row created in that list.
+	List string `yaml:"list,omitempty" json:"list,omitempty"`
+	// Shortcut is the desktop hotkey, for example "CmdOrCtrl+Shift+Space".
+	// Empty means [DefaultQuickEntryShortcut].
+	Shortcut string `yaml:"shortcut,omitempty" json:"shortcut,omitempty"`
+}
+
+// DefaultQuickEntryShortcut is the desktop hotkey when `shortcut:` is unset.
+const DefaultQuickEntryShortcut = "CmdOrCtrl+Shift+Space"
+
+// Accelerator is the desktop hotkey for this block.
+func (q *QuickEntry) Accelerator() string {
+	if q.Shortcut == "" {
+		return DefaultQuickEntryShortcut
+	}
+	return q.Shortcut
 }
 
 // EntityViewConfig declares UX bindings for a metamodel entity type.
@@ -201,6 +230,11 @@ type EntityViewConfig struct {
 	// aside when the type's view collects backlinks itself through a
 	// `mentioned_by` traverse step, so the backlinks never show twice.
 	MentionedByPanel *bool `yaml:"mentioned_by_panel,omitempty" json:"mentioned_by_panel,omitempty"`
+
+	// MentionedByHideID leaves the entity ID off the rows of the built-in
+	// "Mentioned by" panel. False keeps the ID, as before. Presentation only:
+	// the ID is still in the link and the API.
+	MentionedByHideID bool `yaml:"mentioned_by_hide_id,omitempty" json:"mentioned_by_hide_id,omitempty"`
 }
 
 // DuplicateConfig narrows what the Duplicate affordance copies from a source
@@ -264,6 +298,10 @@ type Action struct {
 	Key         string            `yaml:"key,omitempty" json:"key,omitempty"`
 	Confirm     ActionConfirm     `yaml:"confirm,omitempty" json:"confirm,omitzero"`
 	Set         map[string]string `yaml:"set,omitempty" json:"set,omitempty"`
+	// Assign names a list whose `assign:` the action applies to the selected
+	// rows, as a drop on that list's sidebar entry does. A third mode beside
+	// Set and Script, exclusive with both.
+	Assign string `yaml:"assign,omitempty" json:"assign,omitempty"`
 
 	// LLM makes this a declarative LLM action (TKT-4USH1HO), the third mode
 	// next to Set and Script. It requires AvailableOn with one entity type
@@ -496,6 +534,13 @@ type AppConfig struct {
 	// one of [SupportedUILanguages]. A region (nl-BE) is kept for date and
 	// number formatting.
 	Language string `yaml:"language,omitempty"`
+	// Languages are the interface languages a user may pick on the Settings
+	// page, as base languages from [SupportedUILanguages] ("en", "nl"). Empty
+	// means all of them. The app shows only these, whatever the browser
+	// prefers, and with a single one the Settings page offers no choice.
+	// The first is the fallback when nothing else matches. Validated at
+	// load; app.language must be one of them.
+	Languages []string `yaml:"languages,omitempty"`
 	// Logo is an image of the app for the pages shown before a workspace
 	// loads, such as a suspended workspace, where the logo uploaded on the
 	// Settings page cannot be read. A root-relative path or an https URL,
@@ -775,33 +820,16 @@ func decodeWholeNumber(value *yaml.Node, what string) (int, error) {
 // exactly and the int conversion cannot overflow.
 const maxWholeNumber = 1 << 31
 
-// ValidCalendarColors is the allowlist of palette tokens a calendar source may
-// use to distinguish its events.
-//
-// Named tokens rather than CSS literals, for the same reason ValidIconNames
-// holds names and not glyphs: a hex value written into config is unreadable in
-// whichever theme it was not chosen for, and it pins every deployment's config
-// against any future restyle. A token maps to a CSS custom property, so the
-// theme keeps ownership of what the color actually is.
-//
-// Exported so the check and its frontend-parity test share one source.
-var ValidCalendarColors = map[string]bool{
-	"blue":   true,
-	"green":  true,
-	"amber":  true,
-	"red":    true,
-	"violet": true,
-	"slate":  true,
-}
-
-// validateCalendarColor reports a config error for an unknown color token.
+// validateCalendarColor reports a config error for an unknown color name.
 // An empty value means "use the default" and is always valid.
 func validateCalendarColor(color, context string) []string {
-	if color == "" || ValidCalendarColors[color] {
+	if color == "" {
 		return nil
 	}
-	return []string{fmt.Sprintf("%s: unknown color %q (valid: %s)",
-		context, color, strings.Join(slices.Sorted(maps.Keys(ValidCalendarColors)), ", "))}
+	if _, err := ParseNamedColor(color); err != nil {
+		return []string{fmt.Sprintf("%s: %v", context, err)}
+	}
+	return nil
 }
 
 // NoIcon is the reserved name meaning "render no icon at all".
@@ -978,7 +1006,7 @@ type RelationProperty struct {
 // The plimsoll directive is the format-mirror exception documented on
 // [Config]: each exported field is one key of a list in data-entry.yaml.
 //
-//plimsoll:max-fields=22
+//plimsoll:max-fields=24
 type List struct {
 	EntityType  string `yaml:"entity_type" json:"entity"`
 	Title       string `yaml:"title" json:"title"`
@@ -1080,10 +1108,17 @@ type List struct {
 	// GroupBy splits the list into sections by one property. Nil means the
 	// list is flat and paged. See [ListGroupBy].
 	GroupBy *ListGroupBy `yaml:"group_by,omitempty" json:"group_by,omitempty"`
+	// Order is the list's `order:`. [ListOrderManual] lets each user drag
+	// the rows into their own order (TKT-AVNEX5T). Empty: the list sort.
+	Order string `yaml:"order,omitempty" json:"order,omitempty"`
 	// Suggestions switches next-action suggestions on or off for this view,
 	// overriding next_action_surfaces. Nil: accepted, means inherit. See
 	// [Config.NextActionsEnabled].
 	Suggestions *bool `yaml:"suggestions,omitempty" json:"suggestions,omitempty"`
+	// Assign is what an item gets when it enters this list: the create
+	// form's prefill, a drop on the list's sidebar entry, and an action's
+	// `assign:`. Nil: the list assigns nothing. See [Assign].
+	Assign *Assign `yaml:"assign,omitempty" json:"assign,omitempty"`
 }
 
 // ListColumn defines a column in a list view. A column is one of four
@@ -1124,6 +1159,15 @@ type ListColumn struct {
 	// other columns go. The title column always stays. Lists only: dashboard
 	// card and view section columns refuse it.
 	Primary *bool `yaml:"primary,omitempty" json:"primary,omitempty"`
+	// Widget renders a list property column as a control the user flips in
+	// place (TKT-M0AT73B): [ColumnWidgetToggle] for a checkbox,
+	// [ColumnWidgetSwitch] for a switch. On and Off name the enum values the
+	// two states write; a boolean property takes neither. Other says what a
+	// row holding a third value shows. Lists only; see checkListToggleColumn.
+	Widget string `yaml:"widget,omitempty" json:"widget,omitempty"`
+	On     string `yaml:"on,omitempty" json:"on,omitempty"`
+	Off    string `yaml:"off,omitempty" json:"off,omitempty"`
+	Other  string `yaml:"other,omitempty" json:"other,omitempty"`
 }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.
@@ -1329,15 +1373,10 @@ type Kanban struct {
 	AddColumn      bool            `yaml:"add_column,omitempty" json:"add_column,omitempty"`
 	Filters        []FilterConfig  `yaml:"filters,omitempty" json:"filters,omitempty"`
 	FilterControls []FilterControl `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
-	// Condition mirrors [List.Condition], but is NOT YET SUPPORTED on a
-	// kanban and is refused at config load.
-	//
-	// The field exists so the shape is settled and the compiler already
-	// handles both surfaces; what is missing is the board's server-side read
-	// path (it still filters client-side). Accepting the key meanwhile would
-	// validate an expression and then ignore it — the silent no-op class of
-	// BUG-F1LTV0 and BUG-MYN56J. Drop the guard in validateKanbans when the
-	// board evaluates it.
+	// Condition is [List.Condition] for a board. The SPA names the board
+	// with `kanban_id` on its collection read, and the server applies the
+	// condition on the same path a list's goes through (lowered into the
+	// store query where it can be, else on the redacted rows).
 	Condition string `yaml:"condition,omitempty" json:"condition,omitempty"`
 
 	// QueryScope names a `query_scopes:` entry on this view's entity type,
@@ -1578,7 +1617,7 @@ type CalendarSource struct {
 	// have typed anyway; set it when one type appears as two sources (the
 	// documented way to express OR) and "task" twice would be meaningless.
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
-	// Color is a named palette token (see ValidCalendarColors) distinguishing
+	// Color is a named palette token (see ColorNames) distinguishing
 	// this source's events. It is a TOKEN, never a CSS literal: a hex value
 	// baked into config is unreadable in the dark theme and pins every
 	// deployment against future restyling.
@@ -1710,7 +1749,7 @@ type GanttSource struct {
 	// Label names the property used as the bar label. Defaults to the entity
 	// type's display property.
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
-	// Color is a named palette token (see ValidCalendarColors) distinguishing
+	// Color is a named palette token (see ColorNames) distinguishing
 	// this type's bars. A TOKEN, never a CSS literal, for the same reasons as
 	// [CalendarSource.Color].
 	Color string `yaml:"color,omitempty" json:"color,omitempty"`
@@ -1941,6 +1980,58 @@ type NavItemsFrom struct {
 	// create_form, else the type's create form, and is offered only to a
 	// principal who may create the list's type.
 	Create bool `yaml:"create,omitempty" json:"create,omitempty"`
+	// Status puts a count on each entry: the rows of another list related
+	// to the entry. See [NavItemsStatus].
+	//
+	// Nil: accepted, means no count.
+	Status *NavItemsStatus `yaml:"status,omitempty" json:"status,omitempty"`
+	// Children puts one level of entries under each entry: the rows of
+	// another list related to it. See [NavItemsChildren].
+	//
+	// Nil: accepted, means a flat group.
+	Children *NavItemsChildren `yaml:"children,omitempty" json:"children,omitempty"`
+}
+
+// NavItemsChildren is the child level of a generated group: under each
+// entry, the rows of List related to the entry through Via. One level only.
+type NavItemsChildren struct {
+	// List names the list whose rows become child entries, in its order.
+	List string `yaml:"list" json:"list"`
+	// Via is the relation between a child row and its parent row.
+	Via string `yaml:"via" json:"via"`
+	// Direction is from the child row's side, inferred when left out.
+	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"`
+	// Page names an entity page for the child list's type.
+	Page string `yaml:"page,omitempty" json:"page,omitempty"`
+	// Limit caps the children per parent, as [NavItemsFrom.Limit] does.
+	Limit int `yaml:"limit,omitempty" json:"limit,omitempty"`
+	// Status puts a count on each child entry.
+	//
+	// Nil: accepted, means no count.
+	Status *NavItemsStatus `yaml:"status,omitempty" json:"status,omitempty"`
+}
+
+// EffectiveLimit returns Limit, or [NavItemsDefaultLimit] when it is zero.
+func (c NavItemsChildren) EffectiveLimit() int {
+	if c.Limit == 0 {
+		return NavItemsDefaultLimit
+	}
+	return c.Limit
+}
+
+// NavItemsStatus is the count on a generated entry: the number of rows of
+// List (its filters, scope, `condition:` and read gate) related to the entry
+// through Via. A zero count shows nothing. The counted list's own condition
+// decides what counts, so there are no per-rule conditions.
+type NavItemsStatus struct {
+	List string `yaml:"list" json:"list"`
+	Via  string `yaml:"via" json:"via"`
+	// Direction is from the counted row's side, inferred when left out.
+	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"`
+	// Tone is one of the NavStatusTone* values.
+	Tone string `yaml:"tone" json:"tone"`
+	// Label is the marker's text; {count} is the one variable.
+	Label string `yaml:"label" json:"label"`
 }
 
 // NavItemsInitial says where an entry's letter badge comes from: the first
@@ -2212,7 +2303,7 @@ type DashboardConfig struct {
 // The plimsoll directive is the format-mirror exception documented on
 // [Config]: each exported field is one key of a card in data-entry.yaml.
 //
-//plimsoll:max-fields=23
+//plimsoll:max-fields=24
 type DashboardCard struct {
 	Title string `yaml:"title" json:"title"`
 	// List names a `lists:` entry. The card shows exactly the rows that list
@@ -2420,9 +2511,9 @@ type ViewSection struct {
 	EmptyMessage string             `yaml:"empty_message,omitempty" json:"empty_message,omitempty"`
 	Link         string             `yaml:"link,omitempty" json:"link,omitempty"`
 
-	// SectionVisibility holds the keys that leave the section out of the page
-	// for some readers: hide_empty and permission.
-	SectionVisibility `yaml:",inline"`
+	// SectionPresentation holds the keys that leave the section, or parts of
+	// its rows, out of the page: hide_empty, permission, hide_type and hide_id.
+	SectionPresentation `yaml:",inline"`
 
 	// Children names a SECOND collection to nest under each row of Source,
 	// making this section two levels deep. Required by `display: nested` and
@@ -2512,6 +2603,33 @@ type ViewSection struct {
 	Sort       []SortSpec `yaml:"sort,omitempty" json:"sort,omitempty"`
 	ParentSort []SortSpec `yaml:"parent_sort,omitempty" json:"parent_sort,omitempty"`
 	ChildSort  []SortSpec `yaml:"child_sort,omitempty" json:"child_sort,omitempty"`
+}
+
+// SectionPresentation groups the inline parts of a [ViewSection] that leave
+// things out of the page. Both parts are embedded inline, so their keys sit
+// directly on the section in YAML and JSON.
+type SectionPresentation struct {
+	// SectionVisibility holds the keys that leave the section out of the page
+	// for some readers: hide_empty and permission.
+	SectionVisibility `yaml:",inline"`
+
+	// SectionRowParts holds the keys that leave parts off each row:
+	// hide_type and hide_id.
+	SectionRowParts `yaml:",inline"`
+}
+
+// SectionRowParts is the part of a [ViewSection] that leaves the entity type
+// label and the entity ID off its rows. It is embedded inline, so its keys sit
+// directly on the section in YAML and JSON.
+//
+// HideType applies to `list`, `cards` and `content` rows; HideID also to
+// `nested` rows, which show no type. False keeps the label and ID, so no
+// existing project changes. Presentation only, not access control: the type
+// and ID stay in the link and in the API. A row with no title still shows its
+// ID, so the row stays identifiable.
+type SectionRowParts struct {
+	HideType bool `yaml:"hide_type,omitempty" json:"hide_type,omitempty"`
+	HideID   bool `yaml:"hide_id,omitempty" json:"hide_id,omitempty"`
 }
 
 // SectionVisibility is the part of a [ViewSection] that decides whether the

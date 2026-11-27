@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"maps"
 	"slices"
@@ -95,8 +96,6 @@ func (s rollupSource) add(
 		})
 		r, err := visibility.NewRollups(sch.rollups, s.st, gate, s.fields())
 		if err != nil {
-			// The rows are still served, without values: the names are
-			// stripped below either way.
 			slog.WarnContext(ctx, "roll-ups not computed", "type", entityType, "error", err)
 		} else {
 			r = s.withRecords(r)
@@ -205,7 +204,16 @@ func withQueriedRollups(
 		return narrow(entities)
 	}
 	want := queriedRollups(s.schema().Meta, typeName, query)
-	if want == nil || len(entities) == 0 {
+	if want == nil {
+		return narrow(entities)
+	}
+	for _, col := range s.schema().rollups.For(typeName) {
+		if col.BodyTasks != "" && want[col.Property] {
+			return nil, fmt.Errorf("%w: %q counts body tasks and cannot be filtered or sorted on",
+				errBadFilter, col.Property)
+		}
+	}
+	if len(entities) == 0 {
 		return narrow(entities)
 	}
 	copies := make([]*entityPkg.Entity, len(entities))

@@ -1323,7 +1323,7 @@ func TestSelectCommandAuthorizer(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fired, refused := false, false
 			got, err := SelectCommandAuthorizer(
-				tc.active, tc.decl, tc.loopback, tc.override,
+				tc.active, tc.decl, CommandBind{Loopback: tc.loopback, AllowUnauthenticated: tc.override},
 				CommandAuthNotifier{
 					OnOverride: func() { fired = true },
 					OnRefuse:   func() { refused = true },

@@ -52,6 +52,8 @@ describe('ExportMenu', () => {
     await wrapper.find('button').trigger('click')
 
     expect(items().map((i) => i.textContent?.trim())).toEqual(['pdf', 'odt'])
+    // Bare format names are uppercased by this class.
+    expect(items().every((i) => i.classList.contains('export-menu-format'))).toBe(true)
   })
 
   it('navigates to the URL the parent builds for the chosen transform', async () => {
@@ -100,6 +102,8 @@ describe('ExportMenu', () => {
     await trigger.trigger('click')
 
     expect(items().map((i) => i.textContent?.trim())).toEqual(['Export as pdf'])
+    // A sentence must not get the uppercase class.
+    expect(items()[0].classList.contains('export-menu-format')).toBe(false)
   })
 
   it('hides the menu when the registry fetch fails, without throwing', async () => {

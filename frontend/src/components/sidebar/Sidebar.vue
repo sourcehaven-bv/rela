@@ -1,0 +1,667 @@
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { useSchemaStore, useUIStore } from '@/stores'
+import { getSidebar, runAction } from '@/api'
+import { isCancelledFetch } from '@/api/errors'
+import { useActionFeedback } from '@/composables/useActionFeedback'
+import { useEvents } from '@/composables/useEvents'
+import type { BuiltinRow, Entity, SidebarCreate, SidebarGroup, SidebarItem } from '@/types'
+import type { NavGroup, NavItem } from 'rela-components/types'
+import type { ThemeChoice } from 'rela-components/components/layout/RlThemeToggle.vue'
+import RlThemeToggle from 'rela-components/components/layout/RlThemeToggle.vue'
+import SidebarFooter from './SidebarFooter.vue'
+import { isInputFocused } from '@/utils/dom'
+import RlSidebar from 'rela-components/components/layout/RlSidebar.vue'
+import RlSidebarGroup from 'rela-components/components/layout/RlSidebarGroup.vue'
+import ProjectSwitcher from './ProjectSwitcher.vue'
+import SpaceSwitcher from './SpaceSwitcher.vue'
+import WorldSwitcher from './WorldSwitcher.vue'
+import AsOfPicker from './AsOfPicker.vue'
+import AccountMenu from './AccountMenu.vue'
+import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
+import { spaceOf, stripSpace, useSpaceStore, withSpace } from '@/stores/space'
+import { usePageStore } from '@/stores/pages'
+import { PILE_NAV_PREFIX } from '@/composables/pileNav'
+import {
+  activeNavId,
+  expandEntityEntries,
+  expandGeneratedItems,
+  PILE_NAME_NAV_PREFIX,
+  PILES_GROUP_ID,
+  declaredPilesNavGroup,
+  pileNamed,
+  pileSummaryStatus,
+  pilesNavGroup,
+  toNavGroups,
+} from './sidebarNav'
+import { usePiles } from '@/composables/usePiles'
+import NewPileDialog from '@/components/piles/NewPileDialog.vue'
+import { useNavStatus } from '@/composables/useNavStatus'
+import { useAssignDrop } from '@/composables/useAssign'
+import { useInboxSummary } from '@/composables/useInboxSummary'
+import { useFlowList } from '@/composables/useFlowList'
+import { useChannelSchema } from '@/stores/channelSchema'
+import { inboxStatus } from './inboxStatus'
+import { useNavItems } from '@/composables/useNavItems'
+import { useNavEntities } from '@/composables/useNavEntities'
+import { useFlyout } from '@/composables/useFlyout'
+import { useInboxNotifications } from '@/composables/useInboxNotifications'
+import { useTabTitleBadge } from '@/composables/useTabTitleBadge'
+import { shouldDeferToBrowser } from '@/utils/openIntent'
+import { usePhoneScreen } from '@/composables/usePhoneScreen'
+import { useI18n } from 'vue-i18n'
+import { apiUrl } from '@/api/base'
+import { createPile } from '@/api/piles'
+import { workspaceReadOnly } from '@/api/workspaceReadOnly'
+
+const { t } = useI18n()
+const schemaStore = useSchemaStore()
+const uiStore = useUIStore()
+const { reportResult, reportError } = useActionFeedback()
+const spaceStore = useSpaceStore()
+const pageStore = usePageStore()
+const route = useRoute()
+const router = useRouter()
+
+// Tracks which action items are currently in-flight (prevents double-click).
+const actionInFlight = ref<Set<string>>(new Set())
+
+// Sidebar data from API
+const sidebarGroups = ref<SidebarGroup[]>([])
+const sidebarAppName = ref('')
+
+const appName = computed(() => sidebarAppName.value || schemaStore.app.name)
+
+// Logo lives on the schema store so SettingsView can update it after
+// upload/remove without a sidebar refetch.
+const logoUrl = computed(() => schemaStore.logoUrl)
+
+/*
+ * The pinned entries, the config groups and the custom apps, as one nav model.
+ *
+ * All three were separate blocks of template before, each repeating the
+ * link-or-button branch. They are the same shape, so they are built as one
+ * list and the library renders them; only their PLACEMENT differs, and the
+ * pinned pair keeps its own slot.
+ */
+const appGroups = computed<SidebarGroup[]>(() => {
+  const apps = Array.from(schemaStore.apps.entries()).map(([id, app]) => ({
+    label: app.label || app.title || id,
+    href: `/app/${id}`,
+    icon: 'apps',
+  }))
+  return apps.length ? [{ group: t('nav.apps'), items: apps }] : []
+})
+
+const flyout = useFlyout()
+
+/*
+ * A plain click on an `open: flyout` entry slides its list out instead of
+ * navigating, and a second one puts it away. Every other click is the link's.
+ */
+function onFlyoutClick(item: SidebarItem, id: string, event: MouseEvent) {
+  if (shouldDeferToBrowser(event) || !item.flyout || !item.href) return
+  event.preventDefault()
+  event.stopPropagation()
+  flyout.toggle({ navId: id, title: item.label, listId: item.flyout.list, href: item.href })
+}
+
+// Counts are fetched only when some entry declares `status:` rules.
+const hasStatusRules = computed(() =>
+  sidebarGroups.value.some((group) => group.items.some((item) => item.status_key))
+)
+const navStatus = useNavStatus(hasStatusRules)
+
+// Entries of generated groups are fetched only when some group declares
+// `items_from:`; they are per principal, so the sidebar carries none.
+const hasGeneratedGroups = computed(() => sidebarGroups.value.some((group) => group.items_key))
+const navItems = useNavItems(hasGeneratedGroups)
+const navEntities = useNavEntities(sidebarGroups)
+
+/*
+ * Every nav href in the current space (TKT-GNKR5H).
+ *
+ * The router would redirect an unprefixed path anyway, but a real prefixed
+ * href keeps a modified click and the active-row match in the space.
+ */
+function inSpace<T extends SidebarGroup>(groups: T[]): T[] {
+  if (!spaceStore.enabled) return groups
+  return groups.map((group) => ({
+    ...group,
+    items: group.items.map((item) =>
+      item.href ? { ...item, href: spaceStore.href(item.href) } : item
+    ),
+  }))
+}
+
+const shownGroups = computed(() =>
+  inSpace([
+    ...expandGeneratedItems(
+      expandEntityEntries(sidebarGroups.value, navEntities.rowsFor),
+      navItems.itemsFor
+    ),
+    ...appGroups.value,
+  ])
+)
+
+// Entries whose list or page has an `assign:` accept dropped rows (TKT-FGE5G3I).
+const { dropAttrs } = useAssignDrop()
+
+const configNavGroups = computed(() =>
+  toNavGroups(shownGroups.value, RouterLink, onFlyoutClick, navStatus.statusFor, dropAttrs)
+)
+
+// The user's piles (TKT-K3RJLH), first among the groups, since they are the
+// user's own and not part of any space's configured navigation.
+const piles = usePiles()
+const creatingPile = ref(false)
+
+/*
+ * A `pile:` entry shows its pile's count like the Piles group does, and that
+ * pile leaves the group, so it is not listed twice.
+ */
+const pinnedPileIds = computed(
+  () =>
+    new Set(
+      allItems.value.flatMap((item) => {
+        const pile = item.pile ? pileNamed(piles.piles.value, item.pile) : undefined
+        return pile ? [pile.id] : []
+      })
+    )
+)
+
+const configNavGroupsWithPiles = computed(() =>
+  configNavGroups.value.map((group) => ({
+    ...group,
+    items: group.items.map((item) => {
+      if (!item.id.startsWith(PILE_NAME_NAV_PREFIX)) return item
+      const pile = pileNamed(piles.piles.value, item.id.slice(PILE_NAME_NAV_PREFIX.length))
+      const status = pile ? pileSummaryStatus(pile) : undefined
+      return status ? { ...item, status } : item
+    }),
+  }))
+)
+
+/*
+ * The Piles group goes first among the labelled groups. Unlabelled entries at
+ * the top of the config, such as My tasks, stay above it: they read as the
+ * space's own pinned rows. The declared piles that no `pile:` entry places
+ * come just before it, in a group of their own.
+ */
+const allNavGroups = computed(() => {
+  if (!navLoaded.value) return []
+  const groups = configNavGroupsWithPiles.value
+  if (!piles.available.value) return groups
+  const unpinned = (p: { id: string }) => !pinnedPileIds.value.has(p.id)
+  const declaredGroup = declaredPilesNavGroup(piles.declared.value.filter(unpinned))
+  const pilesGroup =
+    piles.collected.value.length > 0 ? pilesNavGroup(piles.collected.value.filter(unpinned)) : null
+  const lead = groups[0] && !groups[0].label ? 1 : 0
+  return [
+    ...groups.slice(0, lead),
+    ...(declaredGroup ? [declaredGroup] : []),
+    ...(pilesGroup ? [pilesGroup] : []),
+    ...groups.slice(lead),
+  ]
+})
+
+// A read-only workspace refuses every create, so no group offers its "+".
+// An empty generated group stays only for its "+", so without it the group
+// goes too: a heading over nothing reads as a fault.
+const navGroups = computed(() =>
+  workspaceReadOnly.value
+    ? allNavGroups.value
+        .map(({ addLabel: _addLabel, ...group }) => group)
+        .filter((group) => group.items.length > 0)
+    : allNavGroups.value
+)
+
+/*
+ * The "+" on a generated group's heading: the create dialog for the group's
+ * list, then the new entity's page. toNavGroups maps one to one, so the
+ * library's group finds its source by position.
+ */
+const creating = ref<{ offer: SidebarCreate; page?: string } | null>(null)
+
+function onGroupAdd(group: NavGroup) {
+  if (group.id === PILES_GROUP_ID) {
+    creatingPile.value = true
+    return
+  }
+  const source = shownGroups.value[configNavGroups.value.findIndex((g) => g.id === group.id)]
+  if (source?.items_create) creating.value = { offer: source.items_create, page: source.items_page }
+}
+
+function onCreated(entity: Entity) {
+  const page = creating.value?.page
+  creating.value = null
+  const id = encodeURIComponent(entity.id)
+  void router.push(spaceStore.href(page ? `/p/${page}/${id}` : `/entity/${entity.type}/${id}`))
+}
+
+/*
+ * The Inbox entry (TKT-9YRRM5) shows once the channel schema has loaded a
+ * channel type, so the row is there with the other pinned rows and only its
+ * badge arrives with the summary. A 404 or `no_principal` from the summary
+ * hides it. The sidebar lives as long as the app, so it owns the summary's
+ * live registration, the tab-title count and the browser notifications
+ * (TKT-48S88RB).
+ */
+const channelSchema = useChannelSchema()
+const hasChannels = computed(() => channelSchema.channelTypes.length > 0)
+const inbox = useInboxSummary(hasChannels)
+useTabTitleBadge(inbox.summary)
+useInboxNotifications(hasChannels, inbox)
+const inboxStatusFor = (key: string | undefined) =>
+  key === 'inbox' && inbox.summary.value
+    ? inboxStatus(inbox.summary.value, (k, n) => t(k, { n }, n))
+    : undefined
+
+/*
+ * The flow entries (TKT-ZAXRXND) show once `/_flows` lists a flow. The list
+ * is configuration, the same for every principal, so this gates nothing: a
+ * project without flows answers 404 and keeps the sidebar it had.
+ */
+const { hasFlows } = useFlowList()
+
+/*
+ * The built-in rows that `builtins:` leaves out for this principal, in the
+ * current space (or the top-level sidebar). The server decides, from the
+ * row's `hidden:` or `permission:`; like a navigation entry's `permission:`
+ * it is a UX filter, and the pages behind the rows stay reachable by URL.
+ */
+const hiddenBuiltins = ref<ReadonlySet<BuiltinRow>>(new Set())
+// The rows `hidden_on_phone:` leaves out on a phone-sized screen. The server
+// names them; only the browser knows the screen width.
+const phoneHiddenBuiltins = ref<ReadonlySet<BuiltinRow>>(new Set())
+const phoneScreen = usePhoneScreen()
+const showsBuiltin = (row: BuiltinRow) =>
+  !hiddenBuiltins.value.has(row) && !(phoneScreen.value && phoneHiddenBuiltins.value.has(row))
+// The as-of picker waits for the first answer, so a space that hides it does
+// not show it for a moment first.
+const builtinsKnown = ref(false)
+/*
+ * Whether the first sidebar answer is in, or has failed. Until then the
+ * sidebar draws its frame without nav rows: the built-in rows alone would
+ * show the generic Search, Flow tasks, Flow runs and Analysis for a moment
+ * before the space's own navigation replaced them (BUG-UZGMHIK). A failed
+ * load still shows the built-in rows, so the app stays navigable.
+ */
+const navLoaded = ref(false)
+
+const pinnedGroups = computed(() => {
+  if (!navLoaded.value) return []
+  const rows: { row: BuiltinRow; item: SidebarItem; when: boolean }[] = [
+    {
+      row: 'search',
+      item: { label: t('nav.search'), href: '/search', icon: 'search' },
+      when: true,
+    },
+    {
+      row: 'inbox',
+      item: { label: t('nav.inbox'), href: '/inbox', icon: 'inbox', status_key: 'inbox' },
+      when: hasChannels.value && !inbox.hidden.value,
+    },
+    {
+      row: 'flow_tasks',
+      item: { label: t('nav.flowTasks'), href: '/flows/tasks', icon: 'checklist' },
+      when: hasFlows.value,
+    },
+    {
+      row: 'flow_runs',
+      item: { label: t('nav.flowRuns'), href: '/flows/runs', icon: 'workflow' },
+      when: hasFlows.value,
+    },
+    {
+      row: 'analysis',
+      item: { label: t('nav.analysis'), href: '/analyze', icon: 'warning' },
+      when: true,
+    },
+  ]
+  const items = rows.filter((r) => r.when && showsBuiltin(r.row)).map((r) => r.item)
+  if (schemaStore.auditGlobal) {
+    items.push({ label: t('nav.audit'), href: '/audit', icon: 'history' })
+  }
+  return toNavGroups(
+    inSpace(items.length ? [{ items }] : []),
+    RouterLink,
+    undefined,
+    inboxStatusFor
+  )
+})
+
+/*
+ * The highlighted row, resolved across the pinned entries as well as the nav.
+ * They are rendered in separate slots but form one selection: two active rows
+ * at once would say the user is in two places.
+ */
+const activeId = computed(
+  () => activeNavId(pinnedGroups.value, route.path) ?? activeNavId(navGroups.value, route.path)
+)
+
+/*
+ * The theme choice, stored by rela rather than by the control.
+ *
+ * Left unbound the picker keeps the choice for the page and forgets it on
+ * reload. rela's store already persists the same three values under the
+ * `theme` key, so this binds straight onto it with no translation. The
+ * picker is rendered from the #footer slot rather than by RlSidebar itself,
+ * because rela replaces the whole band (see the slot).
+ */
+const theme = computed<ThemeChoice>({
+  get: () => uiStore.themeMode,
+  set: (value) => uiStore.setThemeMode(value),
+})
+
+// Load sidebar data. With spaces, the server resolves the route's space: an
+// unknown or hidden one falls back to the first the principal may enter, and
+// the route follows it.
+// Drops a response overtaken by a later load, so two quick config reloads
+// keep the newer navigation.
+let sidebarRequest = 0
+
+async function loadSidebar() {
+  const request = ++sidebarRequest
+  try {
+    await router.isReady()
+    const data = await getSidebar(spaceOf(route.path))
+    if (request !== sidebarRequest) return
+    spaceStore.set(data)
+    pageStore.set(data.pages)
+    if (data.space && spaceOf(route.path) !== data.space) {
+      await router.replace(withSpace(stripSpace(route.fullPath), data.space))
+    }
+    sidebarAppName.value = data.app.name
+    sidebarGroups.value = data.navigation
+    hiddenBuiltins.value = new Set(data.hidden_builtins ?? [])
+    phoneHiddenBuiltins.value = new Set(data.phone_hidden_builtins ?? [])
+    builtinsKnown.value = true
+    navLoaded.value = true
+    schemaStore.setLogoUrl(data.logoUrl ?? null)
+    schemaStore.setInlineCreate(data.inline_create ?? {})
+    schemaStore.setPiles(data)
+    schemaStore.setAudit(data.audit)
+    schemaStore.setHeaderButtons(data.header_buttons)
+    schemaStore.setListButtons(data.list_buttons)
+  } catch (err) {
+    if (request === sidebarRequest) navLoaded.value = true
+    if (isCancelledFetch(err)) return
+    console.error('Failed to load sidebar:', err)
+  }
+}
+
+// Keyboard shortcut for search.
+//
+// Defers to a search box that is already on screen rather than jumping to the
+// standalone /search page: a list view owns its own search affordance
+// (TKT-603FQ), and so does the library sidebar's own filter, which appears
+// once the nav is long enough. Taking focus away from either would surprise
+// the user mid-typing. The fallback (push /search) still applies elsewhere.
+//
+// The list's search box is matched on its own classes, not under
+// `.entity-list`: the shell draws a list's header (PageHeaderContent) outside
+// that element. A box with no client rects is hidden and does not count.
+function handleKeydown(e: KeyboardEvent) {
+  if (e.key !== '/') return
+  if (isInputFocused()) return
+  if (hasVisibleSearchBox()) return
+  if (document.querySelector('.rl-sidebar .rl-search-box input')) return
+  if (!showsBuiltin('search')) return
+  e.preventDefault()
+  router.push('/search')
+}
+
+function hasVisibleSearchBox(): boolean {
+  const boxes = document.querySelectorAll<HTMLElement>('.search-box input, .search-form input')
+  return Array.from(boxes).some((el) => el.getClientRects().length > 0)
+}
+
+// A different space has a different navigation and Create menu.
+watch(
+  () => spaceOf(route.path),
+  (next) => {
+    if (spaceStore.enabled && next !== spaceStore.current) void loadSidebar()
+  }
+)
+
+// Close mobile sidebar on route change
+watch(
+  () => route.path,
+  () => {
+    if (uiStore.sidebarMobileOpen) {
+      uiStore.closeMobileSidebar()
+    }
+  }
+)
+
+// Lock body scroll when mobile sidebar is open
+watch(
+  () => uiStore.sidebarMobileOpen,
+  (open) => {
+    document.body.style.overflow = open ? 'hidden' : ''
+  }
+)
+
+function handleKeydownAll(e: KeyboardEvent) {
+  handleKeydown(e)
+  if (e.key === 'Escape' && uiStore.sidebarMobileOpen) {
+    uiStore.closeMobileSidebar()
+  }
+}
+
+// A `refresh` is sent when data-entry.yaml reloads. Refetching keeps an
+// `entities:` entry from requesting a scope the new config removed, which
+// would otherwise show "Could not load" until a full page reload.
+const { on: onEvent } = useEvents()
+onEvent('refresh', loadSidebar)
+
+onMounted(() => {
+  document.addEventListener('keydown', handleKeydownAll)
+  loadSidebar()
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleKeydownAll)
+  document.body.style.overflow = ''
+})
+
+/*
+ * A nav row was chosen.
+ *
+ * A link navigates by itself — it is a real `RouterLink`, so the browser owns
+ * modifier-click and middle-click. Only an action needs handling here, and it
+ * is matched back by the id the mapping minted.
+ */
+function onSelect(navItem: NavItem) {
+  if (navItem.id.startsWith(PILE_NAME_NAV_PREFIX)) {
+    void openNamedPile(navItem)
+    return
+  }
+  if (navItem.id.startsWith(PILE_NAV_PREFIX)) {
+    const pileId = navItem.id.slice(PILE_NAV_PREFIX.length)
+    flyout.togglePile({ navId: navItem.id, title: navItem.label, pileId })
+    return
+  }
+  const action = navItem.id.startsWith('action:') ? navItem.id.slice('action:'.length) : undefined
+  if (!action) return
+  const item = allItems.value.find((candidate) => candidate.action === action)
+  if (item) handleAction(item)
+}
+
+/*
+ * Opens the pile a `pile:` entry names, making it first if the user has none
+ * by that name yet. A failed create leaves the panel shut; the next click
+ * tries again.
+ */
+async function openNamedPile(navItem: NavItem) {
+  const name = navItem.id.slice(PILE_NAME_NAV_PREFIX.length)
+  let pileId = pileNamed(piles.piles.value, name)?.id
+  if (!pileId) {
+    try {
+      pileId = (await createPile({ name })).id
+    } catch (err) {
+      reportError(err, null)
+      return
+    } finally {
+      await piles.refresh()
+    }
+  }
+  flyout.togglePile({ navId: navItem.id, title: navItem.label, pileId })
+}
+
+const allItems = computed<SidebarItem[]>(() =>
+  [...sidebarGroups.value, ...appGroups.value].flatMap((group) => group.items)
+)
+
+async function handleAction(item: SidebarItem, ev?: Event) {
+  if (!item.action) return
+  if (actionInFlight.value.has(item.action)) return
+
+  const triggerEl = ev && ev.currentTarget instanceof HTMLElement ? ev.currentTarget : null
+
+  actionInFlight.value.add(item.action)
+  try {
+    const response = await runAction(item.action)
+    reportResult(response)
+    if (response?.redirect) {
+      router.push(response.redirect)
+    }
+  } catch (err: unknown) {
+    reportError(err, triggerEl)
+  } finally {
+    actionInFlight.value.delete(item.action)
+  }
+}
+</script>
+
+<template>
+  <RlSidebar
+    id="main-sidebar"
+    class="sidebar"
+    :class="{ collapsed: uiStore.sidebarCollapsed }"
+    :workspace-name="appName"
+    :groups="navGroups"
+    :active-id="activeId"
+    :flyout-id="flyout.openNavId.value"
+    @select="onSelect"
+    @group-add="onGroupAdd"
+    @toggle-collapse="uiStore.toggleSidebar"
+    @close="uiStore.closeMobileSidebar"
+  >
+    <!--
+      The project picker fetches its own list and renders its own menu, so it
+      replaces the control and keeps the header's layout around it. Each
+      switcher renders only when there is more than one choice.
+    -->
+    <template #switcher>
+      <ProjectSwitcher />
+      <SpaceSwitcher :app-name="appName">
+        <template v-if="logoUrl" #logo>
+          <img :src="apiUrl(logoUrl)" :alt="appName" class="logo-img" />
+        </template>
+      </SpaceSwitcher>
+      <WorldSwitcher />
+      <AsOfPicker v-if="builtinsKnown && showsBuiltin('as_of')" />
+    </template>
+
+    <!--
+      Search, Inbox and Analysis sit above the config-driven nav and never scroll out
+      of reach, which is why they are a slot rather than a first group.
+    -->
+    <!-- Without a pinned row the band and its gap are left out too. -->
+    <template v-if="pinnedGroups.length" #pinned>
+      <RlSidebarGroup
+        v-for="group in pinnedGroups"
+        :key="group.id"
+        :group="group"
+        :active-id="activeId"
+      />
+    </template>
+
+    <!--
+      The footer is rela's chrome band: git status, the next-action chip,
+      Settings, About, Shortcuts. It replaces the library's single default
+      link, so the theme picker has to be re-rendered here — the slot takes
+      the whole band, toggle included.
+    -->
+    <template #footer>
+      <!-- Settings and About wait for the first answer, like the nav rows,
+           so a space that hides them does not flash them first. A failed
+           answer shows them. -->
+      <SidebarFooter
+        :show-shortcuts="showsBuiltin('shortcuts')"
+        :show-settings="navLoaded && showsBuiltin('settings')"
+        :show-about="navLoaded && showsBuiltin('about')"
+      />
+      <AccountMenu />
+      <RlThemeToggle v-if="!schemaStore.darkDisabled" v-model="theme" class="sidebar-theme" />
+    </template>
+  </RlSidebar>
+  <InlineCreateFormModal
+    v-if="creating"
+    :show="true"
+    :form-id="creating.offer.form"
+    :entity-type="creating.offer.type"
+    @close="creating = null"
+    @created="onCreated"
+  />
+  <NewPileDialog v-if="creatingPile" @close="creatingPile = false" />
+</template>
+
+<style scoped>
+/* Matches the library's own `.rl-sidebar__theme`: below the links, not beside
+   them — the rail is too narrow for a row. */
+.sidebar-theme {
+  margin-top: var(--rl-space-2);
+}
+
+/*
+ * The collapsed rail. The library owns the sidebar's width through
+ * `--rl-sidebar-width` and has no collapsed state of its own — it emits
+ * `toggle-collapse` and leaves the decision here — so narrowing the rail means
+ * rebinding that variable rather than setting `width` directly, which the
+ * library's own rule would otherwise win.
+ */
+.sidebar.collapsed {
+  --rl-sidebar-width: 60px;
+}
+
+/*
+ * The as-of picker takes a row of its own below the switchers (it sets its
+ * own flex-basis), so the header has to wrap. In the collapsed rail it is
+ * left out: a date does not fit, and AsOfBanner says a date is picked.
+ */
+.sidebar :deep(.rl-sidebar__header) {
+  flex-wrap: wrap;
+}
+
+/*
+ * The app or space name takes the room left beside the close and collapse
+ * buttons, and wraps within it. Without a zero basis the wrapping header
+ * would move a button to a row of its own whenever the name is longer than
+ * one line.
+ */
+.sidebar :deep(.space-switcher) {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.sidebar.collapsed :deep(.as-of-picker) {
+  display: none;
+}
+
+.logo-img {
+  max-height: 28px;
+  max-width: 100%;
+  object-fit: contain;
+}
+</style>
+
+<style>
+/* A sidebar entry a dragged row would be assigned to (TKT-FGE5G3I). */
+[data-assign-drop='over'] {
+  outline: 2px dashed var(--color-primary, currentColor);
+  outline-offset: -2px;
+}
+</style>

@@ -61,6 +61,24 @@ type Column struct {
 	// record field, Window the age limit of the rows (zero for all).
 	Records string
 	Window  time.Duration
+	// BodyTasks is the count of a roll-up over the entity's own body
+	// (TKT-SQ8O0EQ): done, open or total. It is computed in Go from the
+	// body by [CountTasks]; the relation and record fields are then empty.
+	BodyTasks string
+}
+
+// TaskCount picks the column's count from the task lines of body.
+func (c Column) TaskCount(body string) int64 {
+	done, total := CountTasks(body)
+	switch c.BodyTasks {
+	case metamodel.BodyTasksDone:
+		return int64(done)
+	case metamodel.BodyTasksOpen:
+		return int64(total - done)
+	case metamodel.BodyTasksTotal:
+		return int64(total)
+	}
+	return 0 // Compile admits no other count
 }
 
 // Hop is one step of a roll-up path before the last: the canonical relation
@@ -84,7 +102,8 @@ func (c Column) StoreFunc() store.RollupFunc {
 		return store.RollupSum
 	case metamodel.RollupLatest:
 		return store.RollupLatest
-	case metamodel.RollupCount, metamodel.RollupExists, metamodel.RollupAvg, metamodel.RollupLatestRow:
+	case metamodel.RollupCount, metamodel.RollupExists, metamodel.RollupAvg, metamodel.RollupLatestRow,
+		metamodel.RollupBodyTasks:
 	}
 	return store.RollupCount
 }
@@ -99,7 +118,7 @@ func (c Column) ValueOf(res store.RollupResult) (any, bool) {
 	case metamodel.RollupExists:
 		return res.Count > 0, true
 	case metamodel.RollupMin, metamodel.RollupMax, metamodel.RollupSum, metamodel.RollupLatest,
-		metamodel.RollupAvg, metamodel.RollupLatestRow:
+		metamodel.RollupAvg, metamodel.RollupLatestRow, metamodel.RollupBodyTasks:
 	}
 	return res.Value, res.Value != nil
 }
@@ -179,6 +198,8 @@ func compileColumn(
 		return compileRecordsColumn(meta, typeName, name, pd, at)
 	}
 	switch fn {
+	case metamodel.RollupBodyTasks:
+		return compileBodyTasksColumn(name, strings.TrimSpace(prop), pd, at)
 	case metamodel.RollupAvg, metamodel.RollupLatestRow:
 		return Column{}, []string{fmt.Sprintf("%s: %s is only valid with records", at, fn)}
 	case metamodel.RollupCount, metamodel.RollupExists, metamodel.RollupMin, metamodel.RollupMax,
@@ -262,7 +283,8 @@ func compileFunc(
 	related func(role, p string) (metamodel.PropertyDef, bool), problems *[]string, at string,
 ) {
 	switch fn {
-	case metamodel.RollupCount, metamodel.RollupExists, metamodel.RollupAvg, metamodel.RollupLatestRow:
+	case metamodel.RollupCount, metamodel.RollupExists, metamodel.RollupAvg, metamodel.RollupLatestRow,
+		metamodel.RollupBodyTasks:
 	case metamodel.RollupMin, metamodel.RollupMax:
 		if rp, ok := related(string(fn), prop); ok {
 			switch {
@@ -331,7 +353,8 @@ func isoDate(pd metamodel.PropertyDef) bool {
 }
 
 // wherePredicate is the store equality for one where entry, or why the
-// value cannot equal the property.
+// value cannot equal the property. A value that is the property's schema
+// default also matches a row without the property, which holds the default.
 func wherePredicate(
 	meta *metamodel.Metamodel, key, value string, rp metamodel.PropertyDef,
 ) (pred store.PropPredicate, problem string) {
@@ -348,25 +371,17 @@ func wherePredicate(
 		}
 		pred.Value = strconv.FormatInt(n, 10) // "+05" names the stored 5
 	case metamodel.StringShaped(meta, rp):
-		if values := enumValues(meta, rp); values != nil && !slices.Contains(values, value) {
+		if values := metamodel.EnumValues(rp, meta); len(values) > 0 && !slices.Contains(values, value) {
 			return pred, fmt.Sprintf("%q is not one of %s", value, strings.Join(values, ", "))
 		}
 		pred.Scalar = true
 	default:
 		return pred, fmt.Sprintf("type %q cannot be compared in a where", rp.Type)
 	}
+	if metamodel.IsDeclaredDefault(rp, meta, pred.Value) {
+		pred.Op = store.PropEqualOrEmpty
+	}
 	return pred, ""
-}
-
-// enumValues is the value set of an enum-shaped property, or nil.
-func enumValues(meta *metamodel.Metamodel, pd metamodel.PropertyDef) []string {
-	if len(pd.Values) > 0 {
-		return pd.Values
-	}
-	if ct, ok := meta.Types[pd.Type]; ok && len(ct.Values) > 0 {
-		return ct.Values
-	}
-	return nil
 }
 
 // sameType reports why a picked property's type differs from the roll-up's
@@ -454,4 +469,19 @@ func (c Column) RecordQuery(owners []string, now time.Time) RecordQuery {
 		q.From, q.To = now.Add(-c.Window), now
 	}
 	return q
+}
+
+// compileBodyTasksColumn is a roll-up over the entity's own body
+// (TKT-SQ8O0EQ). Nothing is related; the count and the type are checked
+// again in case the metamodel did not come through the loader.
+func compileBodyTasksColumn(name, count string, pd metamodel.PropertyDef, at string) (col Column, problems []string) {
+	switch count {
+	case metamodel.BodyTasksDone, metamodel.BodyTasksOpen, metamodel.BodyTasksTotal:
+	default:
+		problems = append(problems, fmt.Sprintf("%s: body_tasks %q is not done, open or total", at, count))
+	}
+	if pd.Type != metamodel.PropertyTypeInteger {
+		problems = append(problems, fmt.Sprintf("%s: body_tasks needs type integer, not %q", at, pd.Type))
+	}
+	return Column{Property: name, Func: metamodel.RollupBodyTasks, BodyTasks: count, Numeric: true}, problems
 }

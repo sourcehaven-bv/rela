@@ -16,27 +16,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 )
 
-// StaticShell serves the embedded SPA shell and its static assets and
-// nothing else: the `/static/` mount and the shell catch-all of
-// [App.NewRouter], without an App.
-//
-// A multi-tenant host serves it to a request that has no tenant yet, so a
-// browser can load and render a signed-out state before it presents an
-// assertion. Every byte it can return is compiled into the binary, so it
-// reads no store and no project file and cannot disclose a tenant's data,
-// whichever path it is handed. The operator's `custom/` injection is left
-// out because it reads project files; a request with a verified tenant gets
-// the tenant's full router instead.
-//
-// boot names the shared project's app in the shell (see [ShellBoot]). It is
-// read once at startup from the operator's config, not per request, so the
-// handler still reads no project file and no store.
-//
-// Panics only if the binary was built without the embedded SPA filesystem,
-// which [CheckEmbeddedSPA] reports at startup.
-//
-// A headless build has no shell, so it serves the same root as
-// [App.NewRouter] does there: a text pointer to the API at `/`, 404 elsewhere.
+// StaticShell serves the embedded SPA shell and its static assets and nothing
+// else, for a multi-tenant request that has no tenant yet. Every byte it returns
+// is compiled in, so it reads no store or project file and cannot disclose
+// tenant data; the `custom/` injection is left out for that reason. boot is read
+// once at startup. It panics only without the embedded SPA filesystem, which
+// [CheckEmbeddedSPA] reports. A headless build serves a text pointer to the API
+// at `/` and 404 elsewhere.
 func StaticShell(boot ShellBoot) http.Handler {
 	if Headless {
 		return withSpecLink(headlessRoot())
@@ -71,6 +57,10 @@ func StaticShell(boot ShellBoot) http.Handler {
 type ShellBoot struct {
 	AppName  string
 	Language string
+	// Languages is `app.languages`, comma-separated, so the pages before
+	// the config loads show only a language the app offers. A string, not a
+	// slice, so ShellBoot stays comparable.
+	Languages string
 	// Logo is `app.logo`.
 	Logo string
 	// SignOut and Account are `account.sign_out` and `account.account`.
@@ -110,6 +100,13 @@ func shellBootOf(app dataentryconfig.AppConfig, acc *dataentryconfig.AccountConf
 	if lang := strings.TrimSpace(app.Language); languageTag.MatchString(lang) {
 		b.Language = lang
 	}
+	var langs []string
+	for _, l := range app.Languages {
+		if baseLanguage.MatchString(l) {
+			langs = append(langs, l)
+		}
+	}
+	b.Languages = strings.Join(langs, ",")
 	if acc != nil {
 		b.SignOut = shellLink(acc.SignOut)
 		b.Account = shellLink(acc.Account)
@@ -162,10 +159,14 @@ func LoadShellBoot(ctx context.Context, load func(context.Context, string) ([]by
 // parts. It keeps anything else out of the lang attribute.
 var languageTag = regexp.MustCompile(`^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$`)
 
+// baseLanguage is the shape of an `app.languages` entry.
+var baseLanguage = regexp.MustCompile(`^[a-z]{2,3}$`)
+
 // The meta names the SPA reads at boot (frontend/src/i18n/bootMeta.ts).
 const (
 	metaAppName  = "rela-app-name"
 	metaLanguage = "rela-language"
+	metaLangs    = "rela-languages"
 	metaLogo     = "rela-app-logo"
 	metaSignOut  = "rela-sign-out"
 	metaAccount  = "rela-account-url"
@@ -196,6 +197,7 @@ func bootShell(shell []byte, boot ShellBoot) []byte {
 		s = insertBefore(s, "</head>", metaTag(metaLanguage, lang))
 	}
 	for _, m := range []struct{ name, value string }{
+		{metaLangs, boot.Languages},
 		{metaLogo, boot.Logo},
 		{metaSignOut, boot.SignOut},
 		{metaAccount, boot.Account},

@@ -122,7 +122,6 @@ func (o actionOps) applyProposal(ctx context.Context, p *actionproposal.Proposal
 		_, err := o.h.manager.CreateRelation(ctx, key, entityPkg.RelationOptions{})
 		switch {
 		case errors.Is(err, entitymanager.ErrRelationAlreadyExists):
-			// Made while the model was answering; what was proposed is there.
 			continue
 		case err != nil:
 			return out, fmt.Errorf("relation %q to %s: %w", r.Relation, r.To, err)
@@ -177,7 +176,6 @@ func (o actionOps) createProposed(ctx context.Context, row *entityPkg.Entity, c 
 		key = entityPkg.RelationKey{From: res.Entity.ID, FromFace: res.Entity.Face, Type: c.Relation, To: row.ID}
 	}
 	if _, err := o.h.manager.CreateRelation(ctx, key, entityPkg.RelationOptions{}); err != nil {
-		// Without its relation the new entity is an orphan nobody asked for.
 		if _, delErr := o.h.manager.DeleteEntity(ctx, res.Entity.ID, true); delErr != nil {
 			return fmt.Errorf("relation %q to new %s %s: %w; the new %s could not be removed: %w",
 				c.Relation, c.Type, res.Entity.ID, err, c.Type, delErr)
@@ -296,18 +294,11 @@ func retryableStatus(status int) bool {
 }
 
 // bindBackgroundRequest gives ctx what an API request carries and a
-// background context lacks.
-//
-// The read gate first, and it fails closed. Outside an HTTP request nothing
-// attached one, and without it [readGateFromContext] would hand back the
-// allow-all gate and every read below would be ungated. Under a declarative
-// policy the gate is built from the Request bound on ctx; with none bound the
-// call is refused.
-//
-// Then the world: world, or the declared default world when it is empty, as
-// a dashboard source does (see nextActionSourceWorld). A named world needs
-// the identity's read grant on it, checked again here because the grant may
-// have changed since the run was queued. A world already bound on ctx wins.
+// background context lacks. The read gate comes first and fails closed:
+// under a declarative policy it is built from the Request bound on ctx, and
+// with none bound the call is refused. Then the world: world, or the default
+// world when empty. A named world needs the identity's read grant, checked
+// again here. A world already bound on ctx wins.
 func bindBackgroundRequest(ctx context.Context, a *App, world string) (context.Context, error) {
 	if _, declarative := a.acl.(*acl.Declarative); declarative {
 		bound, err := attachBoundReadGate(withACLEnforced(ctx), a.acl)

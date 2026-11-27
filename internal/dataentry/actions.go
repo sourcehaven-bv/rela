@@ -46,15 +46,9 @@ func (h *writeHandler) handleV1Action(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read the body under the action's size cap and project whatever the
-	// action's `request:` block opted into (TKT-EFMRQM). Absent a request:
-	// block this reproduces the pre-existing behavior — entity_id out of the
-	// body, everything else dropped — with the cap the endpoint never had.
 	payload, err := readActionPayload(r, action)
 	if err != nil {
 		if errors.Is(err, errActionBodyTooLarge) {
-			// 413 rather than 400: a producer that reads it can shrink the
-			// payload, where a generic 400 leaves it retrying forever.
 			writeV1Error(w, r, http.StatusRequestEntityTooLarge, "body_too_large",
 				"Request body too large", "")
 			return
@@ -66,8 +60,6 @@ func (h *writeHandler) handleV1Action(w http.ResponseWriter, r *http.Request) {
 
 	resp, fail := actionOps{h: h}.run(r.Context(), s, id, action, payload, nil)
 	if fail != nil {
-		// r is the unprovisioned request; no failure writer reads the
-		// principal, so the answer is the one the provisioned request got.
 		fail.writeHTTP(w, r)
 		return
 	}
@@ -81,7 +73,6 @@ func newCorrelationID() string {
 	// timestamp fallback is unreachable
 	// in tests
 	if _, err := rand.Read(b); err != nil {
-		// Fallback to a timestamp if rand fails (extremely unlikely)
 		return "ts" + time.Now().Format("150405.000")
 	}
 	// coverage-ignore-end

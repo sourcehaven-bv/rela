@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -143,7 +144,8 @@ func bindIdentity(ctx context.Context, spec predicate.TraversalSpec) (predicate.
 // The author's property and id filters constrain the FINAL hop only;
 // intermediate hops constrain type and relation. The spec must be bound (see
 // [predicatefns.BindTraversal]): a `current_user.id` constraint has no value
-// to lower until it is.
+// to lower until it is. A constraint on the property's schema default also
+// matches an endpoint without the property; an unknown target has none.
 func Hop(meta *metamodel.Metamodel, entityType string, spec predicate.TraversalSpec) (acl.TraversalHop, error) {
 	if len(spec.Refs) > 0 {
 		return acl.TraversalHop{}, errors.New("related: the traversal reads current_user and has not been bound")
@@ -156,17 +158,17 @@ func Hop(meta *metamodel.Metamodel, entityType string, spec predicate.TraversalS
 		// coverage-ignore: invariant: the engine refuses an empty relation path at compile
 		return acl.TraversalHop{}, errors.New("related: empty relation path")
 	}
+	target, known := meta.GetEntityDef(hops[len(hops)-1].Target)
 	props := make([]store.PropPredicate, 0, len(spec.Props))
 	for _, name := range spec.PropNames() {
-		str, ok := spec.Props[name].(predicate.String)
-		if !ok {
-			// Load-time validation refuses this; guard rather than lower a
-			// comparison the store would read differently.
-			return acl.TraversalHop{}, fmt.Errorf("related: property %q must be compared against a string", name)
+		pred, err := constraintPredicate(name, spec.Props[name])
+		if err != nil {
+			return acl.TraversalHop{}, err
 		}
-		props = append(props, store.PropPredicate{
-			Property: name, Op: store.PropEqual, Value: str.String(), Scalar: true,
-		})
+		if known && metamodel.IsDeclaredDefault(target.Properties[name], meta, pred.Value) {
+			pred.Op = store.PropEqualOrEmpty
+		}
+		props = append(props, pred)
 	}
 	var endpointIDs []string
 	if spec.ID != nil {
@@ -194,6 +196,22 @@ func Hop(meta *metamodel.Metamodel, entityType string, spec predicate.TraversalS
 		next = h
 	}
 	return *next, nil
+}
+
+// constraintPredicate is the store equality for one constraint value: a
+// stored string equal to a string literal, or the text form of a boolean
+// literal, which matches a stored boolean as the roll-up `where:` does.
+// Load-time validation refuses every other value; this guards rather than
+// lowers a comparison the store would read differently.
+func constraintPredicate(name string, v predicate.Value) (store.PropPredicate, error) {
+	switch lit := v.(type) {
+	case predicate.String:
+		return store.PropPredicate{Property: name, Op: store.PropEqual, Value: lit.String(), Scalar: true}, nil
+	case predicate.Bool:
+		return store.PropPredicate{Property: name, Op: store.PropEqual, Value: strconv.FormatBool(lit.Bool())}, nil
+	default:
+		return store.PropPredicate{}, fmt.Errorf("related: property %q must be compared against a string or boolean", name)
+	}
 }
 
 // For answers a traversal for ONE row from precomputed answers.

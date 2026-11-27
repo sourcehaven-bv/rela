@@ -23,6 +23,16 @@ const (
 	// row, of one field.
 	RollupAvg       RollupFunc = "avg"
 	RollupLatestRow RollupFunc = "latest"
+	// RollupBodyTasks counts the markdown task lines in the entity's own
+	// body (TKT-SQ8O0EQ); [RollupDef.BodyTasks] says which count.
+	RollupBodyTasks RollupFunc = "body_tasks"
+)
+
+// The counts a body_tasks roll-up may name.
+const (
+	BodyTasksDone  = "done"
+	BodyTasksOpen  = "open"
+	BodyTasksTotal = "total"
 )
 
 // RollupDef declares a property whose value aggregates the entities related
@@ -41,6 +51,14 @@ const (
 //	saldo:
 //	  type: decimal
 //	  rollup: { records: boeking, sum: bedrag, window: 30d }
+//	taken_klaar:
+//	  type: integer
+//	  rollup: { body_tasks: done }
+//
+// A roll-up with `body_tasks` counts the task lines (`- [ ]`, `- [x]`) of
+// the entity's own markdown body: `done`, `open` or `total` (TKT-SQ8O0EQ).
+// It declares no other option. It has a value only where the reader may
+// read the body.
 //
 // A roll-up with `records` reads the rows of a record type owned by the
 // entity instead of related entities (TKT-VMSWSWP): `latest`, `sum` or `avg`
@@ -92,6 +110,9 @@ type RollupDef struct {
 	// field, and its value on the newest row that holds one.
 	AvgOf    string `yaml:"avg,omitempty"`
 	LatestOf string `yaml:"latest,omitempty"`
+	// BodyTasks is the count of a roll-up over the entity's own body:
+	// done, open or total.
+	BodyTasks string `yaml:"body_tasks,omitempty"`
 }
 
 // MaxRollupPath is the most relations a roll-up's via may name. Each hop is
@@ -138,7 +159,7 @@ func (r *RollupDef) Func() (fn RollupFunc, property string, ok bool) {
 		fn   RollupFunc
 		prop string
 	}{{RollupMin, r.Min}, {RollupMax, r.Max}, {RollupSum, r.Sum}, {RollupLatest, r.LatestBy},
-		{RollupAvg, r.AvgOf}, {RollupLatestRow, r.LatestOf}} {
+		{RollupAvg, r.AvgOf}, {RollupLatestRow, r.LatestOf}, {RollupBodyTasks, r.BodyTasks}} {
 		if strings.TrimSpace(c.prop) != "" {
 			found, fn, property = append(found, c.fn), c.fn, c.prop
 		}
@@ -164,6 +185,8 @@ func validateRollupShape(schemaName, propName string, pd PropertyDef, allowRollu
 		errs = append(errs, at+" is only supported on entity properties")
 	}
 	switch {
+	case r.BodyTasks != "":
+		errs = append(errs, validateBodyTasksRollupShape(at, r, pd)...)
 	case r.Records != "":
 		errs = append(errs, validateRecordsRollupShape(at, r)...)
 	case r.Window != "":
@@ -185,7 +208,7 @@ func validateRollupShape(schemaName, propName string, pd PropertyDef, allowRollu
 	}
 	fn, _, ok := r.Func()
 	if !ok {
-		errs = append(errs, at+" must declare exactly one of count, exists, min, max, sum, avg, latest or latest_by")
+		errs = append(errs, at+" must declare exactly one of count, exists, min, max, sum, avg, latest, latest_by or body_tasks")
 	}
 	latestBy, pick := strings.TrimSpace(r.LatestBy) != "", strings.TrimSpace(r.Pick) != ""
 	if latestBy && !pick {
@@ -247,6 +270,32 @@ func validateRecordsRollupShape(at string, r *RollupDef) []string {
 	}
 	if _, err := ParseRetention(r.Window); err != nil {
 		errs = append(errs, fmt.Sprintf("%s: window: %s", at, err))
+	}
+	return errs
+}
+
+// validateBodyTasksRollupShape checks a roll-up over the entity's own body:
+// one of the counts, type integer, and no relation or record option.
+func validateBodyTasksRollupShape(at string, r *RollupDef, pd PropertyDef) []string {
+	var errs []string
+	for _, c := range []struct {
+		set  bool
+		name string
+	}{
+		{len(r.Via) > 0, "via"}, {r.Type != "", "type"}, {len(r.Where) > 0, "where"},
+		{r.Records != "", "records"}, {r.Window != "", "window"},
+	} {
+		if c.set {
+			errs = append(errs, fmt.Sprintf("%s: body_tasks cannot be combined with %s", at, c.name))
+		}
+	}
+	switch strings.TrimSpace(r.BodyTasks) {
+	case BodyTasksDone, BodyTasksOpen, BodyTasksTotal:
+	default:
+		errs = append(errs, fmt.Sprintf("%s: body_tasks is %q; it must be done, open or total", at, r.BodyTasks))
+	}
+	if pd.Type != PropertyTypeInteger {
+		errs = append(errs, fmt.Sprintf("%s: body_tasks needs type integer, not %q", at, pd.Type))
 	}
 	return errs
 }

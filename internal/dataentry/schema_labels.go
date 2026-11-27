@@ -45,8 +45,6 @@ func schemaRelationLabel(meta *metamodel.Metamodel, entityType, relation string,
 		return ""
 	}
 	if dir == "" {
-		// An ambiguous binding is refused at config load; reading it as
-		// outgoing here only picks which schema label to show.
 		inferred, res := dataentryconfig.InferDirection(entityType, relation, meta)
 		if res == dataentryconfig.DirectionResolved {
 			dir = inferred

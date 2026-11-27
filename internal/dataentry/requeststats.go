@@ -21,62 +21,16 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// requestStats is the outermost middleware. When slog's default handler is
-// enabled at Debug it attaches a [store.QueryStats] to the request context,
-// so a database-backed store accounts every statement the request issues,
-// and reports the result twice: a `Server-Timing` response header
-// (`db;dur=<ms>;desc="<n> queries"`, visible in browser devtools) and one
-// `request` log record with method, path, status, wall time, query count
-// and database time.
+// requestStats is the outermost middleware. At Debug it attaches a
+// [store.QueryStats] and reports a `Server-Timing` header plus a `request` log
+// record; below Debug and without accessLog it is a pass-through. The gate is
+// security-relevant: a per-response query count can vary with rows the
+// principal may not see, so it stays an operator diagnostic.
 //
-// Below Debug, and without an access logger, it is a pass-through: nothing
-// is attached, nothing is emitted, no header is set. That gate is deliberate
-// and security-relevant, not a convenience. A per-response query count
-// varies with the rows a request touched — on a path that still loads
-// neighbors one by one it varies with rows the principal is NOT allowed to
-// see — so it is an existence side channel of the kind docs/acl-security.md
-// rules out. Wall time is already observable by any client; a
-// machine-readable statement count is not, and it stays an operator
-// diagnostic (RR-64OR7D).
-//
-// SSE responses carry no header: their WriteHeader fires before the stream
-// does any work, so the numbers would be meaningless; the log record on
-// disconnect is still emitted.
-//
-// The logged path is the route shape, not the path itself: see
-// [routeShape]. That holds for the Debug copy too; a developer who needs the
-// raw path has it in the SQL arguments `--verbose` already logs.
-//
-// accessLog (--access-log) is a separate logger that receives the same
-// `request` record at Info for every request. It is its own sink so an
-// operator can collect request timing without Debug, which would also log
-// every SQL statement with its bound arguments, and without per-request
-// lines burying the application log. Under Debug the record goes to both:
-// the Debug copy marks where a request's SQL ends in the debug stream. The
-// access log never sets the header: the record goes to the operator, the
-// header to the client, and only the header is the side channel described
-// above.
-//
-// The record is written from a defer, so a request whose handler panicked
-// is still logged, with panic=true. If the panic came before any response,
-// status is 500. That status is recorded, not sent: net/http closes the
-// connection, so the client sees a reset (a proxy in front reports 502).
-// Consumers counting failures should count it. A deliberate
-// panic(http.ErrAbortHandler) or runtime.Goexit is also logged as a panic;
-// no handler does either today, and telling them apart would need a
-// recover that rewrites the stack net/http prints.
-//
-// A request whose client went away before the handler returned is logged
-// with status 499 ("client closed request", the code Caddy and nginx use)
-// and canceled=true, whatever the handler wrote: nobody received it, and a
-// cancel is not a server fault. If the handler did write a status it is
-// kept as written_status. A panic keeps status 500 and panic=true. Event
-// streams always end with a disconnect, so they are never marked canceled
-// (TKT-T2I7P2).
-//
-// ceiling (--query-ceiling) is the number of statements above which a
-// request is logged as a warning; zero turns the check off. See
-// [warnQueryCeiling].
+// accessLog gets the same record at Info and never sets the header. The path
+// is logged as its [routeShape]. A panic logs panic=true with status 500, and
+// a client that went away logs 499 with canceled=true. Above ceiling
+// statements a request logs a warning; zero disables it ([warnQueryCeiling]).
 func requestStats(next http.Handler, accessLog *slog.Logger, words func() routeWords, ceiling int64) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		debug := slog.Default().Enabled(r.Context(), slog.LevelDebug)
@@ -367,7 +321,8 @@ func routeShape(p string, words routeWords, maxLen int) (string, bool) {
 // Anything else is logged as "*".
 var queryKeyWords = map[string]bool{
 	"page": true, "per_page": true, "cursor": true, "sort": true, "fields": true, "include": true,
-	"include_content": true, "comment_counts": true, "world": true, "list_id": true,
+	"include_content": true, "field_verdicts": true, "comment_counts": true, "world": true, "list_id": true,
+	"kanban_id":   true,
 	"query_scope": true, "scope_page": true, "scope_tab": true, "anchor": true, "relation": true,
 	"direction": true, "q": true, "type": true, "types": true, "limit": true, "offset": true,
 	"view": true, "depth": true, "last_event_id": true, "format": true, "face": true, "busy": true,
@@ -526,8 +481,6 @@ type statsResponseWriter struct {
 }
 
 func (w *statsResponseWriter) WriteHeader(code int) {
-	// 1xx responses are informational (103 Early Hints) and do not end the
-	// header phase; 101 does and is recorded like a final status.
 	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
 		w.ResponseWriter.WriteHeader(code)
 		return

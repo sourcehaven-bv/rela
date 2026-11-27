@@ -68,7 +68,6 @@ components:
   # generator that fixes it unbuildable.
   icondefs:         { in: internal/dataentryconfig/icondefs }
   conditionlint:    { in: internal/conditionlint }
-  desktop:          { in: internal/desktop }
   docs:             { in: internal/docs }
   docscapture:      { in: internal/docscapture }
   dataentrywire:    { in: internal/dataentrywire }
@@ -195,6 +194,8 @@ components:
   texthazard:       { in: internal/texthazard }
   # The YAML 1.1 boolean spellings a config key refuses unquoted.
   yamlscalar:       { in: internal/yamlscalar }
+  # The http/https scheme set every URL validator tests.
+  httpscheme:       { in: internal/httpscheme }
   # The pure three-way merge behind Lua rela.sync.merge (TKT-SM20FG): no
   # I/O, reads the metamodel only to type the synced fields.
   syncmerge:        { in: internal/syncmerge }
@@ -248,6 +249,7 @@ components:
   pgcomments:       { in: internal/comments/pgcomments }
   sqlitecomments:   { in: internal/comments/sqlitecomments }
   piles:            { in: internal/piles }
+  listorder:        { in: internal/listorder }
   kvpiles:          { in: internal/piles/kvpiles }
   pgpiles:          { in: internal/piles/pgpiles }
   filelock:         { in: internal/filelock }
@@ -355,6 +357,9 @@ components:
   # Go-side refresher (TKT-01KZSO).
   tokenstore:       { in: internal/tokenstore }
   storage:          { in: internal/storage }
+  # fsnotify file watcher behind live reload; kept out of storage so the FS
+  # abstraction carries no OS event dependency.
+  fswatch:          { in: internal/fswatch }
 
   # Shared utilities
   errors:           { in: internal/errors }
@@ -481,6 +486,7 @@ vendors:
 # -- Common (importable by all) -------------------------------------------
 commonComponents:
   - entity
+  - httpscheme
   - errors
   - natsort
   - readtime
@@ -562,7 +568,6 @@ deps:
       - dataentrywire
       # fsimport.Report: the import dialog lists the problems it found.
       - fsimport
-      - desktop
       - desktopnotify
       - git
       # hostconfig, secrets: the desktop's host config keeps secrets in the
@@ -761,6 +766,8 @@ deps:
       # The piles service (TKT-K3RJLH). Like comments, only the domain
       # package: the backend (kvpiles/pgpiles) is the wiring site's choice.
       - piles
+      # Manual list order (TKT-AVNEX5T).
+      - listorder
       # Leases (TKT-4YPG4Q): the routes speak lease's request, lease and
       # error types. The backend (kvlease/pglease) is the wiring site's choice.
       - lease
@@ -903,10 +910,6 @@ deps:
       - predicate
       - predicatefns
       - searchparser
-  desktop:
-    canUse:
-      - wails
-
   # Server protocols
   #
   # mcp takes a focused mcp.Deps struct (domain types only) from the
@@ -1669,6 +1672,7 @@ deps:
   # place so the server and the desktop cannot drift apart again.
   dataentrywire:
     mayDependOn:
+      - listorder
       - appbuild
       # audit: the remote routes require a workspace with an audit sink, so
       # resolve, dismiss and link are always recorded (TKT-0FMYPEZ).
@@ -1962,6 +1966,7 @@ deps:
       # secrets: ScriptReadable refuses the token store key in a
       # capabilities.secrets list (TKT-01KZSO). secrets is a leaf.
       - secrets
+      - fswatch
       - storage
     canUse:
       - rrulego
@@ -2061,6 +2066,11 @@ deps:
   # piles are per-user stacks of entity references (TKT-K3RJLH). Like
   # comments, not graph content: entity for the Ref type, principal for the
   # owner, and deliberately NOT store or entitymanager.
+  # Per-user manual list order (TKT-AVNEX5T), outside the graph like piles.
+  listorder:
+    mayDependOn:
+      - principal
+      - state
   piles:
     mayDependOn:
       - entity
@@ -2439,6 +2449,9 @@ deps:
       - dataentryconfig
       - filter
       - metamodel
+      # It reads data-entry.yaml through the same in-memory migration as the
+      # server, so deprecated syntax derives the indexes the server serves.
+      - migration
       - predicate
       - predicatefns
       - searchparser
@@ -2454,6 +2467,7 @@ deps:
       - mentions
       - cache
       - frontmatter
+      - fswatch
       - graphquerynaive
       - markdown
       - storage
@@ -2553,11 +2567,12 @@ deps:
   # cache: pure in-memory utility, no internal deps
   config:
     mayDependOn:
+      - fswatch
       - storage
   rootfs:
-    # Only storage, for the file watcher behind Subscribe.
+    # Only fswatch, for the file watcher behind Subscribe.
     mayDependOn:
-      - storage
+      - fswatch
 
   configsql:
     # Only config, for the Loader interface it implements. No store, no
@@ -2629,5 +2644,6 @@ deps:
       - storeutil
   storage:
     anyProjectDeps: true
+  fswatch:
     canUse:
       - fsnotify

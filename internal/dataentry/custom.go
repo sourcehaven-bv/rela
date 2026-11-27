@@ -80,23 +80,11 @@ const maxCustomFileBytes = maxAppFileBytes
 // gets a diagnostic instead of a mystery.
 var errCustomAssetNotFound = errors.New("custom asset not found")
 
-// validCustomEntry normalises a request-relative path and reports whether it may
-// be served from custom/. Returns the cleaned path and ok.
-//
-// Two independent checks, doing different jobs — do not conflate them:
-//
-//   - path.Clean + fs.ValidPath reject malformed and traversal spellings. This
-//     is what stops "../secret"; os.OpenRoot below is the real containment.
-//   - The dot-segment check rejects operator accidents (.env, .git/, .DS_Store)
-//     that are perfectly valid paths. It contributes ZERO traversal defense:
-//     path.Clean resolves ".." away BEFORE this runs, so "../secret" arrives
-//     here as "secret" with no dot segment. An earlier draft claimed otherwise.
-//
-// The dot rule is a filename-shape heuristic, not a sensitivity classifier. It
-// does NOT catch notes.md, backup.sql, id_rsa, or editor backups like
-// "custom.css~" and "#custom.css#" (only dot-prefixed swap files such as
-// .custom.css.swp). It also refuses .well-known/, the one false positive we
-// know of. Both facts are documented rather than silently assumed away.
+// validCustomEntry normalises a request-relative path and reports whether it
+// may be served from custom/. path.Clean and fs.ValidPath reject malformed
+// and traversal spellings; os.OpenRoot is the real containment. The
+// dot-segment check only rejects operator accidents such as .env or .git/;
+// it adds no traversal defense and is not a sensitivity classifier.
 func validCustomEntry(entry string) (string, bool) {
 	clean := path.Clean("/" + entry)
 	if clean == "/" {
@@ -183,8 +171,6 @@ func openCustomEntryFile(ctx context.Context, files projectAssets, entry string)
 			"entry", rel, "max_bytes", maxCustomFileBytes)
 		return nil, errCustomAssetNotFound
 	}
-	// Served as the section the Stat measured, streamed rather than
-	// buffered, so a file that grows after the check is never read past it.
 	at, ok := f.(io.ReaderAt)
 	if !ok {
 		_ = f.Close()
@@ -304,8 +290,6 @@ func insertBefore(s, marker, tag string) string {
 	if i < 0 {
 		return s
 	}
-	// Reuse the indentation preceding the marker so injected output matches
-	// the surrounding formatting.
 	indent := ""
 	if nl := strings.LastIndex(s[:i], "\n"); nl >= 0 {
 		indent = s[nl+1 : i]

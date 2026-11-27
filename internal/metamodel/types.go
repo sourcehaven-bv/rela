@@ -1617,6 +1617,16 @@ type RelationDef struct {
 	// sit on both ends (a task owning tasks) and removing the edge promotes
 	// the target to an ordinary entity without a type change.
 	Owning bool `yaml:"owning,omitempty"`
+
+	// Within makes this relation scoped (TKT-5GK80Q9): it names another
+	// relation from the same source, the scope relation. The target of an
+	// edge of this relation must be owned, through an `owning:` relation,
+	// by the entity the source's scope edge points to. See [ScopeOwner].
+	Within string `yaml:"within,omitempty"`
+
+	// OnChange says what a write that changes the scope does to a scoped
+	// edge it leaves out of scope. Required when Within is set.
+	OnChange ScopeChange `yaml:"on_change,omitempty"`
 }
 
 // OutgoingOrderProperty returns the relation-property name that holds the

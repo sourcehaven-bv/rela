@@ -278,6 +278,17 @@ func resolveHopTarget(name string, far []string, last bool, ascribed string) (st
 	}
 }
 
+// validateBooleanConstraint checks a constraint on a boolean property is a
+// true or false literal. The store compares it by text form, which a stored
+// boolean renders the same way on every backend.
+func validateBooleanConstraint(spec predicate.TraversalSpec, name, targetType string) error {
+	if _, ok := spec.Props[name].(predicate.Bool); ok {
+		return nil
+	}
+	return fmt.Errorf("related: property %q on %q is a boolean and must be compared against true or false",
+		name, targetType)
+}
+
 // validateTraversalProps checks each constrained property is declared on the
 // resolved target type and is pushdown-eligible. The `id` key is not a
 // property: the engine has already required a non-empty string for it, and
@@ -308,9 +319,15 @@ func validateTraversalProps(meta *metamodel.Metamodel, targetType string, spec p
 			return fmt.Errorf("related: property %q on %q is a list and cannot be filtered in a traversal",
 				name, targetType)
 		}
+		if pd.Type == metamodel.PropertyTypeBoolean {
+			if err := validateBooleanConstraint(spec, name, targetType); err != nil {
+				return err
+			}
+			continue
+		}
 		if !metamodel.StringShaped(meta, pd) {
 			// The store compares as a string (and the derived index is a
-			// string index); an integer or boolean would silently never
+			// string index); an integer would silently never
 			// match in SQL while matching in Go.
 			return fmt.Errorf("related: property %q on %q has type %q, which cannot be compared in a traversal",
 				name, targetType, pd.Type)
@@ -320,7 +337,7 @@ func validateTraversalProps(meta *metamodel.Metamodel, targetType string, spec p
 			// reads, and an empty value is refused when it is bound. A user
 			// id is never a declared enum value, so on an enum it would match
 			// nothing and `not related(...)` would match every row.
-			if enumValues(meta, pd) != nil {
+			if len(metamodel.EnumValues(pd, meta)) > 0 {
 				return fmt.Errorf("related: property %q on %q is an enum and cannot be compared "+
 					"against current_user", name, targetType)
 			}
@@ -339,22 +356,10 @@ func validateTraversalProps(meta *metamodel.Metamodel, targetType string, spec p
 		}
 		// A misspelled enum value would match nothing, so `not related(...)`
 		// would quietly match every row.
-		if allowed := enumValues(meta, pd); allowed != nil && !slices.Contains(allowed, str.String()) {
+		if allowed := metamodel.EnumValues(pd, meta); len(allowed) > 0 && !slices.Contains(allowed, str.String()) {
 			return fmt.Errorf("related: %q is not a declared value of %q on %q (allowed: %s)",
 				str.String(), name, targetType, strings.Join(allowed, ", "))
 		}
-	}
-	return nil
-}
-
-// enumValues returns the declared values of an enum-shaped property: inline
-// `values:` or a custom type's. Nil means the property is not an enum.
-func enumValues(meta *metamodel.Metamodel, pd metamodel.PropertyDef) []string {
-	if len(pd.Values) > 0 {
-		return pd.Values
-	}
-	if ct, ok := meta.Types[pd.Type]; ok && len(ct.Values) > 0 {
-		return ct.Values
 	}
 	return nil
 }

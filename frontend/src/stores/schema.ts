@@ -14,10 +14,12 @@ import type {
   FormConfig,
   ChannelPresentation,
   ListConfig,
+  PageConfig,
   ViewConfig,
   EntityViewConfig,
   CalendarConfig,
   GanttConfig,
+  QuickEntryConfig,
   SankeyConfig,
   KanbanConfig,
   DashboardResponse,
@@ -71,12 +73,15 @@ export const useSchemaStore = defineStore('schema', () => {
   /** data-entry.yaml `channels:`, keyed by channel type (TKT-91BK6F). */
   const channelPresentations = ref<Map<string, ChannelPresentation>>(new Map())
   const lists = ref<Map<string, ListConfig>>(new Map())
+  /** `pages:` from `/_config`, for what a drop on a page's entry assigns. */
+  const pageConfigs = ref<Map<string, PageConfig>>(new Map())
   const views = ref<Map<string, ViewConfig>>(new Map())
   // Keyed by entity TYPE, unlike `views` which is keyed by view id.
   const entityViews = ref<Map<string, EntityViewConfig>>(new Map())
   const kanbans = ref<Map<string, KanbanConfig>>(new Map())
   const calendars = ref<Map<string, CalendarConfig>>(new Map())
   const gantts = ref<Map<string, GanttConfig>>(new Map())
+  const quickEntry = ref<QuickEntryConfig>()
   const sankeys = ref<Map<string, SankeyConfig>>(new Map())
   const documents = ref<Map<string, DocumentConfig>>(new Map())
   const apps = ref<Map<string, AppEntry>>(new Map())
@@ -258,6 +263,7 @@ export const useSchemaStore = defineStore('schema', () => {
   )
   const getForm = computed(() => (id: string) => forms.value.get(id))
   const getList = computed(() => (id: string) => lists.value.get(id))
+  const getPageConfig = computed(() => (id: string) => pageConfigs.value.get(id))
   // Find the first list ID that shows entities of the given type.
   // Returns undefined if no list is configured for that type.
   const findListIdForEntityType = computed(() => (entityType: string) => {
@@ -321,6 +327,17 @@ export const useSchemaStore = defineStore('schema', () => {
       if (def.values?.length) return def.values
       const ct = def.type ? customTypes.value.get(def.type) : undefined
       return ct?.values?.length ? ct.values : undefined
+    })
+  }
+
+  function movesForProperty(
+    property: string,
+    entityType?: string | EntityType,
+  ): Record<string, string[]> | undefined {
+    return scanPropertyDefs(property, entityType, (def) => {
+      if (!def) return undefined
+      const ct = def.type ? customTypes.value.get(def.type) : undefined
+      return ct?.moves
     })
   }
 
@@ -523,11 +540,13 @@ export const useSchemaStore = defineStore('schema', () => {
       forms.value = new Map(Object.entries(configData.forms || {}))
       channelPresentations.value = new Map(Object.entries(configData.channels || {}))
       lists.value = new Map(Object.entries(configData.lists || {}))
+      pageConfigs.value = new Map(Object.entries(configData.pages || {}))
       views.value = new Map(Object.entries(configData.views || {}))
       entityViews.value = new Map(Object.entries(configData.entity_views || {}))
       kanbans.value = new Map(Object.entries(configData.kanbans || {}))
       calendars.value = new Map(Object.entries(configData.calendars || {}))
       gantts.value = new Map(Object.entries(configData.gantts || {}))
+      quickEntry.value = configData.app?.quick_entry
       sankeys.value = new Map(Object.entries(configData.sankeys || {}))
       documents.value = new Map(Object.entries(configData.documents || {}))
       apps.value = new Map(Object.entries(configData.apps || {}))
@@ -643,6 +662,7 @@ export const useSchemaStore = defineStore('schema', () => {
     kanbans,
     calendars,
     gantts,
+    quickEntry,
     sankeys,
     documents,
     apps,
@@ -668,6 +688,7 @@ export const useSchemaStore = defineStore('schema', () => {
 
     // Getters
     getEntityType,
+    movesForProperty,
     pluralLabel,
     getRelationType,
     worldReadable,
@@ -685,6 +706,7 @@ export const useSchemaStore = defineStore('schema', () => {
     getInverseName,
     getForm,
     getList,
+    getPageConfig,
     findListIdForEntityType,
     getView,
     getKanban,

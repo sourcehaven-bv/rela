@@ -25,9 +25,16 @@ import (
 //   - Groups names sections for the values of an enum property. It only
 //     restyles: every declared value still gets its section, in the enum's
 //     declared order, whether or not Groups mentions it.
-//   - Buckets sorts a date or datetime property into relative sections
-//     (overdue, today, tomorrow, and so on). The SPA computes them in the
-//     reader's display time zone, because "today" is the reader's today.
+//   - Buckets sorts a date or datetime property into date sections: relative
+//     ones (overdue, today, tomorrow, and so on) or calendar ones (one per
+//     day, week, month or year). The SPA computes them in the reader's
+//     display time zone, because "today" is the reader's today.
+//
+// With neither Property nor Relation, the list is grouped by condition
+// (computed groups, TKT-QS024L0): each entry in Groups has an ID and a
+// Condition, and the server puts each row in the first group whose condition
+// it matches. One group without a condition may come last; it takes every
+// row the others did not. See ListGroup.Condition.
 type ListGroupBy struct {
 	Property string `yaml:"property,omitempty" json:"property,omitempty"`
 	// Relation groups on a single-valued relation instead of a property:
@@ -40,8 +47,10 @@ type ListGroupBy struct {
 	// target, as on a kanban's `columns_from`.
 	StyleFrom string      `yaml:"style_from,omitempty" json:"style_from,omitempty"`
 	Groups    []ListGroup `yaml:"groups,omitempty" json:"groups,omitempty"`
-	// Buckets names the bucketing scheme. Only "relative" exists today.
-	Buckets string `yaml:"buckets,omitempty" json:"buckets,omitempty"`
+	// Buckets sorts a date property into date sections. See [ListBuckets].
+	//
+	// Nil: accepted, means the property's values are the sections.
+	Buckets *ListBuckets `yaml:"buckets,omitempty" json:"buckets,omitempty"`
 	// Labels overrides bucket titles by bucket key (see DateBucketKeys). A
 	// key left out keeps the SPA's English default.
 	Labels map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
@@ -50,13 +59,43 @@ type ListGroupBy struct {
 	MaxRows int `yaml:"max_rows,omitempty" json:"max_rows,omitempty"`
 }
 
-// ListGroup restyles the section for one value of an enum group property.
-// Color is a status color token from the component library (see
-// ValidGroupColors).
+// ListGroup restyles the section for one value of an enum group property,
+// or, in a computed grouping, declares one section by ID and Condition.
+// Color is a color name from [ColorNames].
 type ListGroup struct {
-	Value string `yaml:"value" json:"value"`
-	Label string `yaml:"label,omitempty" json:"label,omitempty"`
-	Color string `yaml:"color,omitempty" json:"color,omitempty"`
+	Value string `yaml:"value,omitempty" json:"value,omitempty"`
+	// ID names a computed group. It is what the server stamps on each row
+	// (`_group`), so it is an allowlisted slug.
+	ID string `yaml:"id,omitempty" json:"id,omitempty"`
+	// Condition is a predicate over the row, compiled at load by
+	// conditionlint (kind "list_groups") and evaluated on the served page
+	// after row-gating and redaction. today() and now() are UTC, as in
+	// every other condition.
+	Condition string `yaml:"condition,omitempty" json:"condition,omitempty"`
+	Label     string `yaml:"label,omitempty" json:"label,omitempty"`
+	Color     string `yaml:"color,omitempty" json:"color,omitempty"`
+}
+
+// Computed reports whether the grouping is by condition rather than by a
+// property or relation value.
+func (g *ListGroupBy) Computed() bool {
+	return g != nil && g.Property == "" && g.Relation == ""
+}
+
+// ListGroupConditionID is the compiled-condition key of a computed group.
+// A group id never contains "#", so the list id is the part before the last
+// one.
+func ListGroupConditionID(listID, groupID string) string {
+	return listID + "#" + groupID
+}
+
+// ListGroupConditionList returns the list id of a key built by
+// [ListGroupConditionID].
+func ListGroupConditionList(key string) string {
+	if i := strings.LastIndex(key, "#"); i >= 0 {
+		return key[:i]
+	}
+	return key
 }
 
 // listGroupByKeys are the keys the mapping form accepts. The rest of this

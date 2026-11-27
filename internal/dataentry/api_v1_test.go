@@ -5567,13 +5567,17 @@ func TestToV1CustomType_OmitsDocFields(t *testing.T) {
 	if got.Default != "todo" {
 		t.Errorf("Default = %q, want todo", got.Default)
 	}
+	// The transition edges ride as Moves (TKT-M0AT73B); their label and help do not.
+	if want := map[string][]string{"todo": {"done"}}; !reflect.DeepEqual(got.Moves, want) {
+		t.Errorf("Moves = %v, want %v", got.Moves, want)
+	}
 	// The v1.CustomType wire type has no field for the doc-only data, so this is
 	// a structural guarantee — the marshaled JSON must not mention them.
 	blob, err := json.Marshal(got)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	for _, banned := range []string{"descriptions", "transitions", "help", "not yet started"} {
+	for _, banned := range []string{"descriptions", "transitions", "help", "not yet started", "Complete"} {
 		if strings.Contains(string(blob), banned) {
 			t.Errorf("wire CustomType must not carry doc-field %q; got: %s", banned, blob)
 		}

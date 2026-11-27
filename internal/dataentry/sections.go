@@ -57,7 +57,6 @@ func propertyToStrings(v any, propType string) []string {
 func scalarToString(v any, propType string) string {
 	isDate := propType == metamodel.PropertyTypeDate
 	if propType == metamodel.PropertyTypeExternalRef {
-		// A cell shows the ref's id (TKT-SM20FG).
 		return metamodel.FormatExternalRef(v)
 	}
 	switch t := v.(type) {
@@ -133,10 +132,6 @@ func buildSectionFieldData(
 			propType, schemaLabel = pd.Type, pd.Label
 		}
 	}
-	// A label is authored, never derived (DEC-6C1NAA): an unset label falls
-	// back to the schema's label for the property, the one forms show, and
-	// then to the raw property name rather than a title-cased guess, which
-	// would bake an English convention into a language-neutral metamodel.
 	label := f.Label
 	if label == "" {
 		label = schemaLabel
@@ -145,8 +140,6 @@ func buildSectionFieldData(
 		label = f.Property
 	}
 	if f.Relation != "" {
-		// The targets and the relation's own label are filled in by
-		// resolveRelationFields, which has the store and the metamodel.
 		return SectionFieldData{
 			Relation:  f.Relation,
 			StyleFrom: f.StyleFrom,
@@ -161,16 +154,9 @@ func buildSectionFieldData(
 		Values:       propertyToStrings(e.Properties[f.Property], propType),
 		PropType:     propType,
 		Inaccessible: e.IsInaccessible(f.Property),
-		// int, not dataentryconfig.Span: the named type exists to enforce
-		// strict YAML decoding at config load. Past that boundary the value is
-		// just a number, and the wire DTO shouldn't drag a config type onto
-		// the API surface.
-		Span:   int(f.Span),
-		Render: resolveFieldRender(sectionRender, f.Render),
-		// No section-level inheritance for Widget, unlike Render — a widget is
-		// per-property, and a section-wide one would be a config error on every
-		// field of a non-matching type. See ViewSectionField's godoc.
-		Widget: f.Widget,
+		Span:         int(f.Span),
+		Render:       resolveFieldRender(sectionRender, f.Render),
+		Widget:       f.Widget,
 	}
 }
 
@@ -293,6 +279,10 @@ type SectionData struct {
 	// Unexported like hideEmpty: only the wire converter reads it.
 	totals []dataentryconfig.SectionTotal
 
+	// hide is the section's `hide_type:` and `hide_id:` as row parts,
+	// copied to the wire by viewSectionToV1.
+	hide []string
+
 	// Tree holds the parent rows of a `display: nested` section, each with its
 	// own children. Empty for every other display mode.
 	Tree []SectionTreeNode
@@ -350,20 +340,12 @@ type SectionTreeNode struct {
 	HasMoreChildren bool
 }
 
-// buildSectionEntityData composes the per-row data for a cards/list
-// view section (TKT-IHC7D). Both non-entry display modes — `properties`
-// / `list` and `content` / `cards` — call this so the typed `_props`
-// and `_fields` wire surfaces stay consistent across modes.
-//
-// Returns a value (not a face) so callers can layer on display-mode-
-// specific fields (e.g. `Content`/`HasContent` for the `content`/`cards`
-// branch) without sharing mutation across rows.
-//
-// sectionRender is the containing section's `render:` default; each field's
-// own `render:` overrides it (TKT-HOIX1).
-//
-// w is the world the containing view executed in; it labels each row's face
-// provenance (TKT-WRLDAPI item 4b) and is nil-stamped under the default world.
+// buildSectionEntityData composes the per-row data for a cards/list view
+// section, so the `_props` and `_fields` wire surfaces match across display
+// modes. It returns a value so callers can add mode-specific fields without
+// sharing mutation across rows. sectionRender is the section's `render:`
+// default; a field's own `render:` overrides it. w is the view's world and
+// labels each row's face provenance; it is nil under the default world.
 func (h *viewsHandler) buildSectionEntityData(
 	ctx context.Context, e *entity.Entity, secFields []ViewSectionField, eDef *metamodel.EntityDef,
 	sectionRender string, w viewWorld,
@@ -420,10 +402,6 @@ func (h *viewsHandler) buildTableSection(
 		}
 		return
 	}
-	// Relation columns are resolved for the WHOLE section up front —
-	// one relation query per (column, row type) and one header batch
-	// for every target — instead of one relation query plus one
-	// entity load per row per column (TKT-1U8XYN).
 	relValues := h.resolveRelationColumns(ctx, s, sec.Columns, entities)
 	editable := hasEditableColumn(sec.Columns)
 	buildRow := func(e *entity.Entity) SectionRowData {
@@ -452,10 +430,6 @@ func (h *viewsHandler) buildTableSection(
 	}
 	for _, gName := range groupOrder {
 		gd := GroupData{GroupName: gName}
-		// Grouping preserves the section's order within each
-		// group. Only re-sort by id when the author declared
-		// no `sort:` — otherwise this would discard the order
-		// they asked for, one group at a time.
 		if len(sec.Sort) == 0 {
 			sortStoreEntitiesByID(groups[gName])
 		}
@@ -499,8 +473,6 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 
 	for _, sec := range sections {
 		if !permitsGatedUIElement(ctx, aclImpl, sec.Permission) {
-			// Still appended, so later resolvers keep their index alignment
-			// with the config; omitHiddenSections drops it.
 			out = append(out, SectionData{Heading: sec.Heading, withheld: true})
 			continue
 		}
@@ -512,6 +484,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			hideEmpty:    sec.HideEmpty,
 			source:       sec.Source,
 			totals:       sec.Totals,
+			hide:         sectionHide(sec.HideType, sec.HideID),
 		}
 
 		if sec.Source == "entry" {
@@ -534,14 +507,10 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			if !exists {
 				entities = []*entity.Entity{}
 			}
-			// Sorted once for the section, before the display switch, so every
-			// flat mode honors it rather than each arm remembering to.
 			entities, sd.RelationOrder = sortSectionRows(ctx, h, sec, result, entities, s.Meta)
 			sd.IsEmpty = len(entities) == 0
 			sd.Incomplete = result.Incomplete[sec.Source]
 			ctx = primeVerdicts(ctx, h.affordances.resolver(), entities)
-			// The rows below carry `_fields` (cards, lists, editable tables).
-			// A nested section primes its own rows, children included.
 			if sec.Display != dataentryconfig.DisplayNested {
 				ctx = primeFlowRuns(ctx, h.affordances.resolver(), entities)
 			}
@@ -625,18 +594,12 @@ func (h *viewsHandler) executeSidePanel(
 		return nil
 	}
 
-	// Build a synthetic ViewConfig to reuse executeView.
 	viewCfg := ViewConfig{
 		Entry:    ViewEntry{Type: entityType},
 		Traverse: panel.Traverse,
 		Sections: panel.Sections,
 	}
 
-	// DEFAULT WORLD, named explicitly. The side panel has not been scoped for
-	// worlds (TKT-WRLDAPI item 4b covers `_views` only), and `_sidepanel` is
-	// refused a `?world=` by worldCapablePath — but a surface must DECLARE its
-	// world rather than inherit one, or scoping `_views` silently drags every
-	// executeView caller along with it.
 	result, err := h.executeView(ctx, viewCfg, entityID, defaultViewWorld())
 	if err != nil {
 		slog.Warn("dataentry: side panel traversal failed; panel left empty", "entity", entityID, "err", err)
@@ -646,18 +609,11 @@ func (h *viewsHandler) executeSidePanel(
 	return h.buildSections(ctx, panel.Sections, result)
 }
 
-// resolveSectionButtonsWithTraverse populates AddInfo and LinkInfo on
-// side-panel sections. The side panel is the only surface carrying a
-// LINK-EXISTING affordance; the entity-detail view path deliberately does not
-// call this (TKT-651W's read-only invariant), and reaches its own opt-in create
-// affordance through [viewsHandler.resolveSectionCreate] instead. The
-// `viewConfig` parameter is a synthetic ViewConfig hand-built from a form's
-// SidePanel config — it is not a generic view.
-//
-// The add targets are ACL-gated via [viewsHandler.creatableTargets] (TKT-R4BMJM).
-// Before that, this surface offered `+ Add <Type>` whenever a create form was
-// configured, with no principal involved — so a user who could not create the
-// type got a button leading to a form whose POST would be refused.
+// resolveSectionButtonsWithTraverse populates AddInfo and LinkInfo on side-panel
+// sections, the only surface with a link-existing affordance. The entity-detail
+// path does not call it; it uses [viewsHandler.resolveSectionCreate]. viewConfig
+// is synthesized from a form's SidePanel config. Add targets are ACL-gated via
+// [viewsHandler.creatableTargets].
 func (h *viewsHandler) resolveSectionButtonsWithTraverse(
 	ctx context.Context, viewConfig ViewConfig, sections []SectionData, entry *entity.Entity,
 ) {
@@ -671,16 +627,15 @@ func (h *viewsHandler) resolveSectionButtonsWithTraverse(
 				continue
 			}
 			relName := rule.Follow
-			linkAs := "to" // new entity is the target (outgoing from entry)
+			linkAs := "to"
 			if rule.FollowIncoming != "" {
 				relName = rule.FollowIncoming
-				linkAs = "from" // new entity is the source (incoming to entry)
+				linkAs = "from"
 			}
 			relDef, ok := s.Meta.GetRelationDef(relName)
 			if !ok {
 				break
 			}
-			// Determine valid target types for creation
 			var candidateTypes []string
 			if linkAs == "to" {
 				candidateTypes = relDef.To
@@ -696,7 +651,6 @@ func (h *viewsHandler) resolveSectionButtonsWithTraverse(
 					Targets:  targets,
 				}
 			}
-			// Link existing: always available when candidate types exist
 			if len(candidateTypes) > 0 {
 				sections[i].LinkInfo = &SectionLinkInfo{
 					Relation:    relName,
@@ -751,7 +705,6 @@ func resolveRelationFields(
 				continue
 			}
 			t := v1.SectionFieldTarget{ID: id, Title: svc.Meta.DisplayTitle(hd.ID, hd.Type, hd.Properties)}
-			// Headers are redacted, so a hidden style property is simply absent.
 			if f.StyleFrom != "" {
 				if v, ok := hd.Properties[f.StyleFrom].(string); ok {
 					t.Style = v
@@ -778,8 +731,6 @@ func sortSectionRows(
 	if ordering == nil {
 		return newEntitySorter(sec.Sort, rows, meta)(rows), nil
 	}
-	// A copy: the collection is shared with every other section over the
-	// same source, which must keep traversal order.
 	rows = slices.Clone(rows)
 	ordering.sort(rows)
 	return rows, ordering.wire()

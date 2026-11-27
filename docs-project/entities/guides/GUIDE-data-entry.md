@@ -446,6 +446,7 @@ app:
 | Field      | Description                                                                  |
 | ---------- | ---------------------------------------------------------------------------- |
 | `language` | A BCP 47 language tag such as `nl` or `nl-BE`. Supported languages: `en`, `nl`. |
+| `languages` | The languages users may pick, such as `[en]`. Base languages only, from the supported ones. Empty means all. |
 
 The app picks the language in this order:
 
@@ -453,6 +454,17 @@ The app picks the language in this order:
 2. `app.language`;
 3. the browser's preferred languages, first supported one wins;
 4. English.
+
+With `languages`, only those languages count at each step, and the first one
+replaces English as the last step. `app.language` must be one of them. With a
+single language the Settings page shows no language choice:
+
+```yaml
+app:
+  name: "Support Tickets"
+  language: en
+  languages: [en]
+```
 
 The language also decides how dates and numbers are written. A region in the
 tag (`nl-BE`) is used for that formatting. A tag that is not valid BCP 47, or
@@ -614,8 +626,15 @@ A color name takes one of three forms:
 | Hue and shade | `red/700` | One exact shade from the Atlas UI kit. |
 | Your own name | `risk-critical` | A color you define under `palette.colors`. |
 
-The hues are `grey` (also written `gray`), `red`, `orange`, `yellow`, `green`,
-`teal`, `blue` and `purple`. `orange` and `yellow` are two different colors.
+The hues are `grey`, `red`, `orange`, `yellow`, `green`, `teal`, `blue` and
+`purple`. `orange` and `yellow` are two different colors. Four aliases are
+accepted too: `gray` and `slate` are `grey`, `amber` is `orange`, and `violet`
+is `purple`.
+
+This is the one list of color names. Every key that takes a color accepts
+every hue and alias: `styles:`, a list group's `color`, and the `color` of a
+calendar, gantt or sankey source. Only `styles:` and the dashboard matrix also
+take a shade or your own name.
 
 Every hue except `purple` has the shades `50`, `100`, `200`, `300`, `400`,
 `500`, `600`, `700`, `800` and `900`. `50` is the lightest and `900` the
@@ -996,9 +1015,12 @@ lists:
       - property: logo
 ```
 
-The first column is the row title and link, so it cannot be an image. When
-a later column sets `link`, that column is the title and a first column such
-as `logo` shows as an ordinary column after it.
+An image column is as wide as its thumbnail, not as a text column. List the
+image column **before** the title column to show it as a leading avatar, left
+of the title; it is then part of the title cell and is not repeated as a
+column. The title column is the one with `link`, else the first column. With
+no `link` set, a first column that is an image is itself the title. An image
+column after the title is an ordinary narrow column.
 
 Attachments inherit the owning entity's permissions: if you may not update the
 entity, you may not attach to it. A `fields:` rule that makes the file field
@@ -1074,6 +1096,40 @@ searchable pickers) always take the full row, so a narrow one would break them.
 When no widget is specified, the system auto-detects from the property's type in the metamodel:
 enum types render as a `<select>`, booleans as checkboxes, dates as date pickers, `datetime`
 properties as date+time pickers, and everything else as text inputs.
+
+`widget: select` and `widget: multi-select` are deprecated on a form property field and fail
+at startup. Remove the `widget:` line from the field. The form then shows a select for a
+property with values and a multi-select for a list property. The message names the form and
+the field:
+
+```text
+form "new_task": field[1] property "status": "widget: select" is deprecated; remove the
+"widget: select" line from this field. Without it the form picks the control from the
+schema: a select for a property with values, a multi-select for a list property
+```
+
+A relation's `widget:` (`select`, `multi-select`, `cards`, `search`) is still a choice and
+is not affected.
+
+### Typing a date in words
+
+A `date` field has a text box beside its date picker. Type a date in words, in
+English or Dutch, and the picker shows the date at once. Press Enter or leave
+the box to keep it. Both languages work whatever the interface language is.
+
+| You type | Means |
+| --- | --- |
+| `today`, `tomorrow`, `yesterday`, `vandaag`, `morgen`, `overmorgen` | That day |
+| `friday`, `next friday`, `last friday`, `vrijdag`, `volgende vrijdag` | That weekday; `next` never means today |
+| `in 3 days`, `over 2 weken`, `3 days ago`, `+3d`, `-1w`, `+3` | An offset; a bare number counts days |
+| `next week`, `volgende maand`, `komende week` | The same day a week, month or year on |
+| `5 march`, `march 5`, `5 mrt 2027` | That day; without a year, the next one |
+| `5/3`, `5/3/27`, `5-3-2027` | Day first, then month |
+| `end of month`, `einde van de maand` | The last day of this month |
+
+A phrase the box does not understand changes nothing. It is marked invalid
+and a message explains what to try. A two-digit year is read only after a
+slash, so `26-11-24` is refused rather than guessed.
 
 ### Datetime fields and time zones
 
@@ -2115,6 +2171,7 @@ lists:
 | `page_size`       | int    | Rows per page (default: 25)                                 |
 | `actions`         | list   | Action IDs available as keyboard shortcuts on selected rows |
 | `toolbar_actions` | list   | Action IDs shown as buttons next to "New"; they run without a selected row (see [Buttons on a list](#buttons-on-a-list-toolbar_actions)) |
+| `assign`          | object | Values and relations an item gets when it enters the list (see [Moving items into a list](#moving-items-into-a-list-assign)) |
 | `export_render`   | string | Lua script under `scripts/` that renders this list for export instead of the built-in column table (see View Export & Transforms) |
 
 #### Header and footer info regions
@@ -2163,6 +2220,8 @@ the face each row was served in, or a busy indicator. Set exactly one of `proper
 | `direction` | string | Relation columns only: `"outgoing"` or `"incoming"`; inferred when omitted   |
 | `face`      | bool   | Shows the label of the face each row was served in; faced types only        |
 | `busy`      | string | Channel type; shows a busy indicator while a channel of this type on the row is in a working state; lists only |
+| `widget`    | string | `toggle` or `switch`: the user flips the property in place; lists only; see [Toggle columns](#toggle-columns) |
+| `on`, `off`, `other` | string | The values a toggle writes, and how a row with another value shows; see [Toggle columns](#toggle-columns) |
 | `primary`   | bool   | Keeps or drops the column on a narrow list, as on a phone; on a table section, `false` drops it from a stacked row; see [Columns on a phone](#columns-on-a-phone) |
 | `label`     | string | Column header (defaults to the schema label, then the property / relation name, `Face` or `Busy`) |
 | `sortable`  | bool   | Column can be sorted by clicking the header                                 |
@@ -2278,6 +2337,38 @@ A `display: table` section of a view takes `primary:` too. It does not drop
 columns by default: see [Table sections on a phone](#table-sections-on-a-phone).
 On a dashboard card, and on a view section that is not `display: table`,
 `primary:` is a config error, because those surfaces do not drop columns.
+
+### Toggle columns
+
+A list column with `widget: toggle` shows a checkbox, and `widget: switch` a
+switch. A click writes the property at once, so a to-do list can tick items
+off without opening them.
+
+```yaml
+columns:
+  - property: title
+  - property: status
+    widget: toggle
+    on: done          # written when the box is checked
+    off: open         # written when it is cleared
+    other: disabled   # a row with another value: disabled, hidden or on
+  - property: flagged # a boolean takes no on or off
+    widget: switch
+```
+
+- The property is a boolean or an enum. A boolean writes `true` and `false`.
+  An enum names the two values in `on` and `off`.
+- When the enum has other values, `other:` is required, or the configuration
+  fails to load. `disabled` shows a locked, empty box. `hidden` shows nothing.
+  `on` shows a checked box, and a click on it writes `off`.
+- A click is a normal save. The field permission, transition guards and
+  triggers apply. The control is disabled on a row whose reader may not
+  write the property or move it to the target value, and hidden when the
+  reader may not see the property.
+- The list reads again after a click, because a trigger may change more of
+  the row, or the row may leave the list.
+- Only list columns take `widget:`, and never the first column, which is the
+  row title.
 
 ### Static Filters
 
@@ -2399,10 +2490,20 @@ A condition may use `related(...)` to filter on related entities, for example
 traversal once per page, and only entities the reader may see count. See
 [Where `related(...)` works](metamodel.md#where-related-works).
 
-> **Lists only, for now.** A `condition:` on a `kanbans:` entry is **rejected
-> at startup** — the board still filters client-side, and a key that validated
-> and then did nothing would be exactly the silent no-op this feature exists to
-> remove. Use `filters:` on a board until this note goes away.
+A board takes `condition:` the same way. The board names itself with
+`?kanban_id=<id>` on its read, and the server applies the condition as it does
+for a list. A read may name a list or a board, not both. For example, a board
+of the tasks due today or earlier that are not done:
+
+```yaml
+kanbans:
+  today:
+    entity_type: task
+    column_property: status
+    condition: "entity.due ~= nil and days_between(today(), entity.due) >= 0 and entity.status ~= 'done'"
+    card:
+      title: title
+```
 
 **A condition that does not compile is a startup error**, naming the view and
 the offending attribute:
@@ -2417,6 +2518,11 @@ view condition errors:
 
 That is deliberate — a filter that silently matches nothing is far harder to
 notice than a server that refuses to start.
+
+A condition that stops compiling after a hot reload of `data-entry.yaml` does
+not stop the server. The problem is logged once per reload, and that list or
+kanban answers with an error (HTTP 500) until the condition is fixed. It never
+falls back to showing every row. Other lists keep their conditions.
 
 #### It is a different language from `filters:`
 
@@ -2783,8 +2889,8 @@ lists:
 | Key        | Type   | Description |
 |------------|--------|-------------|
 | `property` | string | The property to group by. Required. It must be a single value, not a `list: true` property. |
-| `groups`   | list   | Optional. Per value: `value` (required, must be one of the enum's values), `label`, and `color` (`green`, `amber`, `red`, `grey`, `blue` or `purple`). Needs an enum property. |
-| `buckets`  | string | `relative` groups a date by how far away it is. See [Date buckets](#date-buckets). |
+| `groups`   | list   | Optional. Per value: `value` (required, must be one of the enum's values), `label`, and `color` (a hue or alias from [Color names](#color-names)). Needs an enum property. |
+| `buckets`  | string or map | `relative` groups a date by how far away it is; a map such as `{ by: month }` groups it by calendar unit. See [Date buckets](#date-buckets). |
 | `labels`   | map    | Section titles for the date buckets. Only with `buckets`. |
 | `max_rows` | int    | How many rows the list loads, from 1 to 2000. Default 500. |
 
@@ -2819,6 +2925,40 @@ would lose the value.
 
 You can close a section with its arrow. The browser remembers which sections
 you closed, per list.
+
+### Computed groups
+
+A list can also be grouped by conditions instead of by one value. Leave out
+`property` and `relation`, and give each group an `id` and a `condition:`.
+The condition uses the same language as a list's `condition:`. A row goes in
+the first group whose condition it matches. One group without a condition may
+come last: it takes every row the others did not. Rows that match no group go
+in a trailing **Other** section.
+
+```yaml
+lists:
+  todos:
+    entity: todo
+    group_by:
+      groups:
+        - id: today
+          label: Today
+          condition: "entity.start_date ~= nil and entity.start_date <= today()"
+        - id: evening
+          label: This evening
+          condition: "entity.part_of_day == 'evening'"
+        - id: anytime
+          label: Anytime
+```
+
+The server evaluates the conditions on each served page, after the access
+rules have removed the fields the reader may not see. A condition over a hidden
+field sees no value, so the group a row lands in says nothing about that
+field. `today()` is the date in UTC, as in every other condition.
+
+Each `id` must match `^[a-z0-9_-]+$` and be unique, and a list may have at most
+20 groups. Empty groups are not shown. A computed grouping cannot use `buckets`
+or a group `value`.
 
 ### Date buckets
 
@@ -2861,11 +3001,91 @@ The **Add** button of **Today** and **Tomorrow** fills in that date on a `date`
 property. The other buckets span more than one day, and a `datetime` needs a
 time as well, so they fill in nothing.
 
+`buckets: relative_weeks` replaces `next_7_days` with two buckets, in this
+order: `this_week` (after tomorrow, up to and including Sunday) and `next_week`
+(the following Monday to Sunday). A week starts on Monday. `later` then holds
+everything after next week. A bucket with no rows is not shown, so on a Sunday
+there is no **This week**. `labels` takes these keys instead of `next_7_days`.
+
+### Calendar buckets
+
+A mapping under `buckets:` gives one section per calendar day, week, month or
+year:
+
+```yaml
+lists:
+  upcoming:
+    entity: todo
+    group_by:
+      property: start
+      buckets: { by: day, for: 7d, then: month }
+  logbook:
+    entity: todo
+    filters:
+      - { property: completed, operator: "!=", value: "" }
+    group_by:
+      property: completed
+      buckets: { by: month, order: desc }
+```
+
+| Key     | Description |
+|---------|-------------|
+| `by`    | `day`, `week`, `month` or `year`. Required. |
+| `for`   | A number of days, such as `7d`, from 1 to 366. Only with `by: day`. Each day from today to the last day of the window gets a section. An earlier date goes in **Overdue**. A later date goes in the `then` sections, or in one **Later** section. |
+| `then`  | `week`, `month` or `year`: the sections after the `for` window. Needs `for`. |
+| `order` | `asc` (the default) or `desc`, for newest first. `desc` cannot take `for`. |
+
+Without `for`, every date gets a section of its unit, past dates included.
+
+- A week starts on Monday. Its section is titled with its Monday, such as
+  "Week of 23 Nov".
+- A day section is titled **Today**, **Tomorrow**, or with the date, such as
+  "Thu 26 Nov". A month is titled "November 2026", a year "2026". A date in
+  another year shows its year.
+- The first `then` section can be partial: after a 7-day window it holds only
+  the rest of its month.
+- `labels:` can rename only the fixed sections: `no_date`, `today` and
+  `tomorrow` with `by: day` (no `tomorrow` with `for: 1d`), `overdue` with
+  `for`, and `later` with `for` and no `then`. Another key is a config error.
+- `{ by: day }` without `for` still names today's and tomorrow's sections
+  **Today** and **Tomorrow**, also with `order: desc`.
+- **Add** in a day section fills in that date on a `date` property.
+- Sections follow the same time zone rule as relative buckets.
+
+The list loads at most `max_rows` rows, in the order of the sections. Two
+cases can fill that with rows you did not want:
+
+- With `order: desc`, rows without a date are loaded first. Filter them out,
+  as the logbook above does, when the list is long.
+- With `for`, all overdue rows are loaded before today's. Filter old dates out
+  with a `condition:` when there can be many.
+
 > **Note**: The buckets are worked out in the browser, in the reader's time
 > zone. A `condition:` that uses `days_between(entity.due, today())` is worked
 > out on the server, in the server's time zone. Near midnight, a reader in
 > another time zone can therefore see a row under **Today** that the condition
 > counts as tomorrow, or the other way round.
+
+### Manual order
+
+`order: manual` lets each user drag the rows of a list into their own order.
+
+```yaml
+lists:
+  todo:
+    entity_type: todo
+    title: Today
+    order: manual
+```
+
+The order belongs to the user, not to the entities. It is stored outside the
+graph, so moving a row writes no entity and no audit record. Each user sees
+the rows they placed first, in their order, and the rest in the list sort.
+
+The order applies until the user sorts the list by a column. On a grouped
+list a row moves only within its section. A list grouped by a relation or by
+date buckets cannot use `order: manual`. On an entity page tab whose rows are
+in the order of an orderable relation, the relation order wins.
 
 ## Views
 
@@ -3164,6 +3384,8 @@ sections:
 | `group_by`      | string | Property to group entities by                           |
 | `empty_message` | string | Text shown when the collection is empty                 |
 | `hide_empty`    | bool   | Leave the section out when the collection is empty (see below) |
+| `hide_type`     | bool   | Leave the entity type label off the rows (`list`, `cards`, `content`; see below) |
+| `hide_id`       | bool   | Leave the entity ID off the rows (`list`, `cards`, `content`, `nested`; see below) |
 | `permission`    | string | Show the section only to holders of this permission (see below) |
 | `link`          | string | `detail` links entity titles to their detail pages      |
 | `create`        | map    | Offer a "create related entity" button (see below)      |
@@ -3359,6 +3581,32 @@ from a `recursive:` traverse rule, or from a rule that starts at another
 collection rather than `entry`, has no single entity to link the new one to;
 declaring `create:` on one is refused at config load rather than silently
 producing no button.
+
+### Hiding the type label and ID (`hide_type:`, `hide_id:`)
+
+A `list`, `cards` or `content` section over a collection shows each row's
+type label, title and entity ID. A `nested` section shows the title and ID.
+Set `hide_type: true` or `hide_id: true` to leave them off, so the title
+reads on its own. Show an ID only where people need it to refer to the record.
+
+```yaml
+sections:
+  - heading: Related decisions
+    source: decisions
+    display: cards
+    hide_type: true
+    hide_id: true
+```
+
+Both default to `false`, so existing views look as before. A row without a
+title keeps its ID so it stays identifiable. The built-in "Mentioned by" panel
+has its own switch, `entity_views.<type>.mentioned_by_hide_id`; it shows no
+type label.
+
+These keys change what the page draws. They are not access control: the type
+and ID stay in the row link and in the API response. Config load refuses them
+on a `properties` or `table` section, on `source: entry`, in a form side panel,
+and `hide_type` on a `nested` section, which shows no type label.
 
 ### Hiding empty sections
 
@@ -3800,6 +4048,7 @@ entity_views:
 | `detail_view` | string  | View name (must reference a key under `views:`) used for entities of this type |
 | `duplicate`   | mapping | Narrows what a duplicate of this type copies — see below |
 | `mentioned_by_panel` | bool | `false` hides the built-in "Mentioned by" panel on this type's page |
+| `mentioned_by_hide_id` | bool | `true` leaves the entity ID off the rows of that panel |
 
 An entry may carry any of these fields. An entry that declares none is a
 load error, since it configures nothing.
@@ -6554,8 +6803,62 @@ navigation:
 | `initial`   | A letter badge in front of each entry. Set `property` for the first letter of one of the row's properties, or `relation` for the first letter of a related entity's title, such as the owner. `direction` picks the side of the relation, and is needed only when the relation connects the type to itself. |
 | `create`    | Show a "+" on the group heading that creates a row of the list. It opens the list's `create_form:`, or else the type's create form, and then the new entity's page. It is shown only to a user who may create the type. A group that offers it stays in the sidebar when it has no entries, so the first one can be made. In a read-only workspace there is no "+", so an empty group is left out. |
 
+| `status`    | A count of related rows on each entry. See [Counts and children](#counts-and-children). |
+| `children`  | Related rows one level under each entry. See [Counts and children](#counts-and-children). |
+
 A group with `items_from` cannot also have `items`, and cannot have `status:`.
 `items_from` is only allowed on a group.
+
+#### Counts and children
+
+An entry can show a count, and can have entries of its own one level down:
+
+```yaml
+navigation:
+  - group: Areas
+    items_from:
+      list: areas
+      page: area
+      status: { list: open_todos, via: in_area, tone: info, label: "{count}" }
+      children:
+        list: active_projects
+        via: in_area
+        page: project
+        limit: 10
+        status: { list: open_todos, via: in_project, tone: info, label: "{count}" }
+```
+
+`children` has these fields:
+
+| Field       | Description |
+| ----------- | ----------- |
+| `list`      | The list whose rows become child entries, in the list's order. Required. |
+| `via`       | The relation between a child row and its parent row. Required. |
+| `direction` | The side of `via`, seen from the child row. Needed only when the relation connects a type to itself. |
+| `page`      | An entity page for the child list's type. Without it, a child opens the entity's detail view. |
+| `limit`     | The most children per entry, from 1 to 50. The default is 20. An entry with more ends with a **Show all** child that opens the entry. |
+| `status`    | A count on each child entry. |
+
+There is one child level: `children` has no `children`, `initial` or
+`create`.
+
+`status` has these fields:
+
+| Field       | Description |
+| ----------- | ----------- |
+| `list`      | The list whose rows are counted. Required. Its filters, `condition:` and scope decide which rows count. |
+| `via`       | The relation between a counted row and the entry. Required. |
+| `direction` | The side of `via`, seen from the counted row, as for `children`. |
+| `tone`      | `new`, `info`, `warning`, `error` or `success`, as for [status indicators](#status-indicators). |
+| `label`     | The marker's text. `{count}` is the only variable. |
+
+A count of zero shows nothing. Children and counts follow the same access
+rules as the entries: only rows the user may read are shown or counted. A
+child's count covers only the children the entry shows.
+
+The server reads the children and counts in a fixed number of queries per
+group, whatever the number of entries. The rows it reads grow with the number
+of related rows.
 
 The entries follow the same access rules as the list. A user sees only the rows
 the list shows them, and a title they may not read shows as the entity id. An
@@ -6575,7 +6878,10 @@ The entries are not in the sidebar response. The SPA fetches them from
   "items": {
     "1": {
       "entries": [
-        { "id": "TOPIC-1", "type": "topic", "label": "Gezondheid", "initial": "J" }
+        { "id": "TOPIC-1", "type": "topic", "label": "Gezondheid", "initial": "J",
+          "status": { "tone": "info", "label": "3", "count": 3 },
+          "children": [{ "id": "PRJ-1", "type": "project", "label": "Launch" }],
+          "children_truncated": false }
       ],
       "truncated": true
     }
@@ -7361,7 +7667,8 @@ item, and to choose which types it offers once the page's entity has loaded:
 A group with [`items_from`](#generated-items-items_from) has three more fields
 and no `items`: `items_key` names its entries in `/api/v1/_nav_items`,
 `items_list` is the list behind it, and `items_page` is the page an entry
-opens. `items_page` is left out when the user can see no tab of that page; the
+opens. `items_child_page` is the page a child entry opens, under the same rule
+as `items_page`. `items_page` is left out when the user can see no tab of that page; the
 entries then open the entity's detail view. A group with `create: true` has
 `items_create` (`type`, `label`, `form`) when the user may create the type and a
 form resolves for it. The create endpoint checks access again.
@@ -7608,6 +7915,106 @@ navigation:
 
 When clicked, the action executes. If the action script returns a `redirect`, the UI navigates
 to that path. If it returns a `message`, a toast notification is shown.
+
+### Moving items into a list (`assign`)
+
+`assign` names what an item gets when it enters a list: property values and
+relations. Three things apply it:
+
+- the list's "New" and Add buttons, which open the create form with the values
+  filled in;
+- dragging rows onto the list's sidebar entry;
+- an action with `assign: <list>`, for example on a keyboard key.
+
+```yaml
+actions:
+  move-today:
+    label: "Today"
+    key: "t"
+    assign: today          # apply the assign of list `today`
+
+lists:
+  today:
+    entity_type: todo
+    condition: "entity.status == 'open' and entity.when == 'today'"
+    assign:
+      properties:
+        when: today              # a literal
+        start_date: { expr: "today()" }   # a value expression
+      relations:
+        in_area: AREA-home       # an entity id
+```
+
+A value is a literal, or `{expr: ...}` with a predicate value expression.
+A literal is checked against the property's type at load: an integer, a
+boolean, a decimal or a date in the property's format. `{expr: "nil"}` unsets
+the property. The
+expression has no entity, so `entity` and `related(...)` are not available;
+`today()` and `now()` use the same clock as the list's condition. A relation
+that allows one outgoing edge is replaced; any other relation gets the edge
+added, so an assign never removes edges.
+
+An entity page can also take an `assign`. A row dropped on a sidebar entry
+generated from that page (`items_from: { page: ... }` or `entities:`) gets it,
+and the relation value `target` names the entry's own entity:
+
+```yaml
+pages:
+  project:
+    entity_type: project
+    assign:
+      entity_type: todo          # the type of the items dropped here
+      relations: { in_project: target }
+```
+
+An action with `assign:` is a key for the list's assign, so it takes no
+`permission:`, `available_on` or `when`: the write is gated by the rows'
+update permission, the same as a drop. Each item is written with the user's
+own permissions, like an edit. A row the
+user cannot update cannot be dragged, and a refused row is reported without
+undoing the others. When an item still does not match the list's condition
+after the write, a notice says so. Loading fails when an assign names an
+unknown property or relation, a computed property, an enum value that does not
+exist, or a relation that does not start at the item type.
+
+### Quick entry (`quick_entry`)
+
+`quick_entry` opens one create form from anywhere. Use it to capture a new
+item without leaving what you are doing.
+
+```yaml
+quick_entry:
+  form: todo-form            # a create form
+  list: inbox                # optional: the list whose assign fills the form
+  shortcut: CmdOrCtrl+Shift+Space   # optional, desktop app only
+```
+
+- In the browser, press `q` on any page, or open `/quick`. After a save the
+  form shows a message and opens empty again.
+- In the desktop app, the shortcut works even when another application is in
+  front. It opens a small window on the active project. The window closes
+  after a save. Pressing the shortcut again brings an open window to the
+  front. When you switch projects, the shortcut moves to the new project and
+  an open window closes.
+
+When `list:` is set, the form is filled in with that list's `assign`, so a new
+item lands in the list. The list must have an `assign` block and the same
+entity type as the form.
+
+The shortcut is a set of modifiers and one key joined with `+`. Modifiers are
+`CmdOrCtrl`, `Cmd`, `Ctrl`, `Alt`, `Option`, `OptionOrAlt`, `Shift` and
+`Super`. At least one modifier is required. The key is a letter, a digit,
+`F1` to `F12` or `Space`. The shortcut works in every application, so a
+letter, a digit or `Space` also needs `Shift` or `Alt`. That keeps keys such
+as `Cmd+V` free. Without `shortcut:` the desktop app uses
+`CmdOrCtrl+Shift+Space`. When another application already holds the shortcut,
+the desktop app logs a warning and `q` still works. A changed shortcut takes
+effect when the project is opened again.
+
+While `quick_entry` is set, no action may use `key: q`; loading fails if one
+does.
+
+The form is saved with your own permissions, like any create form.
 
 ### Buttons on a list (`toolbar_actions`)
 
@@ -8367,7 +8774,14 @@ any `llm:` action does. Over the API, send `{"entity_ids": [...]}` to
 
 ### Reserved Keyboard Shortcuts
 
-The following keys are reserved for built-in list navigation and cannot be used as action keys:
+The following keys are reserved for built-in list navigation and cannot be used as action keys.
+An action that declares one fails at startup. The message names the key, the action and the
+lists or boards that offer it:
+
+```text
+actions: "archive" declares key "e" and offered by list "inbox", but "e" is a reserved
+list shortcut (edit); pick a key other than j, k, o, e, n, h, l
+```
 
 | Key | Built-in Function |
 | --- | ----------------- |
@@ -8660,7 +9074,7 @@ toolbar either, because a document is one rendered entity and not a list.
 | `end_date` | no | Property ending a multi-day event. Must be the **same kind** as `date` |
 | `summary` | no | Property used as the event title (default: the type's display property) |
 | `description` | no | Property shown in the event detail |
-| `color` | no | Palette token: `blue`, `green`, `amber`, `red`, `violet`, `slate` |
+| `color` | no | A hue or alias from [Color names](#color-names) |
 | `max_span` | no | Days to look back for events starting before the visible period (default 31). Only meaningful with `end_date` |
 
 Several sources merge into one grid, so a calendar can mix `task` and `meeting`
@@ -9187,7 +9601,7 @@ Per-type options:
 | `where` | list | Filter clauses, ANDed, evaluated on the redacted entity |
 | `label` | string | Property used as the node label (default: the display property) |
 | `order` | string | Property that pins the node order, compared as text then by id; `id` orders by id |
-| `color` | string | Palette token: `blue`, `green`, `amber`, `red`, `violet` or `slate` |
+| `color` | string | A hue or alias from [Color names](#color-names) |
 | `color_by` | string | Property whose value picks the tone; equal values share a tone |
 | `pips` | object | Related entities drawn as dots beside each node, see below |
 
@@ -10739,7 +11153,7 @@ promise-based, closed set of methods that forward to the REST API over the
 | `rela.schema()` / `rela.config()` | metamodel + data-entry config |
 | `rela.list({type, params})` | list entities of a type |
 | `rela.get({type, id, params})` | fetch one entity |
-| `rela.search({query, type})` | full-text search |
+| `rela.search({query, type, page?})` | search; one page of at most 1000 rows, `meta.has_more` says a later `page` holds more |
 | `rela.analyze()` | run the analysis checks |
 | `rela.templates({type})` | entity templates |
 | `rela.position({id, scope})` | prev/next within an ordered set |

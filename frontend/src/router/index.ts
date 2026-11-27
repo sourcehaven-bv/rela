@@ -6,7 +6,7 @@ import {
   NavigationFailureType,
   type RouteRecordRaw,
 } from 'vue-router'
-import { isCancelledFetch } from '@/composables/usePageData'
+import { isCancelledFetch } from '@/api/errors'
 import { useNavigationPending } from '@/composables/useNavigationPending'
 import { relaBase } from '@/api/base'
 import { currentAsOf } from '@/api/asOf'
@@ -123,6 +123,11 @@ const routes: RouteRecordRaw[] = [
     name: 'sankey',
     component: () => import('@/views/SankeyView.vue'),
     props: true,
+  },
+  {
+    path: '/quick',
+    name: 'quick',
+    component: () => import('@/views/QuickEntryView.vue'),
   },
   {
     path: '/search',

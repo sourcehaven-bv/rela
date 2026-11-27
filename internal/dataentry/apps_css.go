@@ -96,18 +96,11 @@ html {
 }
 `
 
-// appCSSSource returns the full stylesheet served at the reserved per-app path
-// /api/v1/_apps/<id>/_rela.css: the theme tokens followed by the base controls.
-// An app opts in with <link rel="stylesheet" href="_rela.css">; theme follows
-// the host because the SDK toggles `dark` on the app's <html> (the tokens use
-// the same `:root.dark` selector as the SPA).
-//
-// When palette is non-nil, the :root / :root.dark token blocks are rendered
-// from the PROJECT's resolved palette — the same 21 CSS variables the SPA
-// derives (dataentryconfig.deriveTheme) and serves at /_palette — so an app
-// matches the host's actual theme rather than the framework defaults. This is
-// what keeps every custom app from having to re-derive the palette itself.
-// When palette is nil, the embedded default tokens (apps_tokens.css) are used.
+// appCSSSource returns the stylesheet served at /api/v1/_apps/<id>/_rela.css:
+// the theme tokens followed by the base controls. Theme follows the host via
+// the `:root.dark` selector the SDK toggles. A non-nil palette renders the
+// token blocks from the project's resolved palette, so apps match the host;
+// nil uses the embedded default tokens (apps_tokens.css).
 func appCSSSource(palette *ResolvedPalette) string {
 	var b strings.Builder
 	if palette != nil && len(palette.Light) > 0 {
@@ -117,11 +110,8 @@ func appCSSSource(palette *ResolvedPalette) string {
 			b.WriteString(renderTokenBlock(":root.dark", palette.Dark))
 		}
 	} else {
-		// No resolved palette — fall back to the embedded default tokens.
 		b.WriteString(appTokensCSS)
 	}
-	// Typography is palette-independent, so always emit it (the palette path
-	// only rewrites the color :root block).
 	b.WriteString("\n")
 	b.WriteString(appTypographyCSS)
 	b.WriteString("\n")

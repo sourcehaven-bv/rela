@@ -160,6 +160,34 @@ describe('groupRows by date buckets', () => {
     expect(sections[0].color).toBe('red')
   })
 
+  it('splits the rest of the week and next week with relative_weeks', () => {
+    const rows = [
+      task('T-1', { due: '2026-06-11' }),
+      task('T-2', { due: '2026-06-12' }),
+      task('T-3', { due: '2026-06-14' }),
+      task('T-4', { due: '2026-06-15' }),
+      task('T-5', { due: '2026-06-22' }),
+    ]
+    const sections = groupRows(
+      rows,
+      {
+        property: 'due',
+        buckets: 'relative_weeks',
+        labels: { this_week: 'Deze week' },
+        max_rows: 500,
+      },
+      taskType,
+      { now, tz }
+    )
+    expect(ids(sections)).toEqual([
+      ['bucket:tomorrow', ['T-1']],
+      ['bucket:this_week', ['T-2', 'T-3']],
+      ['bucket:next_week', ['T-4']],
+      ['bucket:later', ['T-5']],
+    ])
+    expect(sections.map((s) => s.title)).toEqual(['Tomorrow', 'Deze week', 'Next week', 'Later'])
+  })
+
   it('prefills the day for today and tomorrow on a date property', () => {
     const rows = [task('T-1', { due: '2026-06-10' }), task('T-2', { due: '2026-06-01' })]
     const sections = groupRows(rows, groupBy, taskType, { now, tz })
@@ -273,5 +301,84 @@ describe('filtersAdmit', () => {
     [{ 'filter[other][ne]': 'done' }, 'done', true],
   ])('%j admits %s: %s', (params, value, want) => {
     expect(filtersAdmit(params, 'status', value)).toBe(want)
+  })
+})
+
+describe('groupRows by condition', () => {
+  const groupBy: ListGroupBy = {
+    max_rows: 500,
+    groups: [
+      { id: 'today', label: 'Today', condition: 'entity.start_date <= today()' },
+      { id: 'later', condition: "entity.when == 'scheduled'" },
+      { id: 'rest', label: 'Anytime' },
+    ],
+  }
+
+  it('follows the server-stamped _group in declared order, dropping empty groups', () => {
+    const rows = [
+      { ...task('a', {}), _group: 'rest' },
+      { ...task('b', {}), _group: 'today' },
+      { ...task('c', {}), _group: 'rest' },
+    ]
+    const sections = groupRows(rows, groupBy, taskType, { now, tz })
+    expect(ids(sections)).toEqual([
+      ['group:today', ['b']],
+      ['group:rest', ['a', 'c']],
+    ])
+    expect(sections.map((s) => s.title)).toEqual(['Today', 'Anytime'])
+  })
+
+  it('puts a row without _group under Other', () => {
+    expect(ids(groupRows([task('a', {})], groupBy, taskType, { now, tz }))).toEqual([['other', ['a']]])
+  })
+
+  it('puts a row with an undeclared _group under Other', () => {
+    const rows = [{ ...task('b', {}), _group: 'gone' }]
+    expect(ids(groupRows(rows, groupBy, taskType, { now, tz }))).toEqual([['other', ['b']]])
+  })
+})
+
+describe('groupRows with calendar buckets', () => {
+  const rows = [
+    task('old', { due: '2026-06-01' }),
+    task('today', { due: '2026-06-10' }),
+    task('soon', { due: '2026-06-12' }),
+    task('july', { due: '2026-07-20' }),
+    task('none', {}),
+  ]
+
+  it('gives the near window by day, then months, and labels fixed sections', () => {
+    const groupBy: ListGroupBy = {
+      property: 'due',
+      buckets: { by: 'day', for: '7d', then: 'month' },
+      labels: { today: 'Vandaag' },
+      max_rows: 500,
+    }
+    const sections = groupRows(rows, groupBy, taskType, { now, tz })
+    expect(sections.map((s) => s.items.map((e) => e.id))).toEqual([
+      ['old'],
+      ['today'],
+      ['soon'],
+      ['july'],
+      ['none'],
+    ])
+    expect(sections[0].color).toBe('red')
+    expect(sections[1].title).toBe('Vandaag')
+    expect(sections[2].prefill).toEqual({ due: '2026-06-12' })
+    expect(sections[3].prefill).toBeUndefined()
+  })
+
+  it('orders months newest first with no date last', () => {
+    const groupBy: ListGroupBy = {
+      property: 'due',
+      buckets: { by: 'month', order: 'desc' },
+      max_rows: 500,
+    }
+    const sections = groupRows(rows, groupBy, taskType, { now, tz })
+    expect(sections.map((s) => s.items.map((e) => e.id))).toEqual([
+      ['july'],
+      ['old', 'today', 'soon'],
+      ['none'],
+    ])
   })
 })

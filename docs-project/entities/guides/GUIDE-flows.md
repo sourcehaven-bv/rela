@@ -21,16 +21,17 @@ The file is optional. Without it, a project has no flows and no triggers.
 `schema.yaml` never refers to it.
 
 > **Status.** This release runs flows that a person starts by hand, from
-> the web app, over MCP or with `rela flow start`, and flows that start
-> when their subject is created (`on: create`). A run writes its
-> outputs, follows `done` branches and ends in a final state. People do
-> their steps in the web app or over MCP, and a completed step takes the
-> `change` branches. Timers fire and failed steps are tried again while
-> `rela-server` or the desktop app runs. The `predicate` and
-> `schedule` triggers, `change` events from ordinary edits, retention and
-> the inbox are checked but not acted on yet; they follow in a later
-> release. See [Running flows](#running-flows) and
-> [Doing a step](#doing-a-step).
+> the web app, over MCP or with `rela flow start`, flows that start when
+> their subject is created (`on: create`), and flows that start when
+> their subject comes to match a condition (`on: predicate`). A run
+> writes its outputs, follows `done` branches and ends in a final state.
+> People do their steps in the web app or over MCP. A completed step and
+> an ordinary edit of the subject both take the `change` branches. Timers
+> fire and failed steps are tried again while `rela-server` or the
+> desktop app runs. The `schedule` trigger, retention and the inbox are
+> checked but not acted on yet; they follow in a later release. See
+> [Running flows](#running-flows), [Doing a step](#doing-a-step) and
+> [Change events from edits](#change-events-from-edits).
 
 ## Example
 
@@ -180,6 +181,27 @@ create or later through the flow worker. It limits the length of a
 chain, not its width: one run that creates several subjects starts a run
 for each.
 
+### Starting on a predicate
+
+A flow with an `on: predicate` start gets a run when an update makes its
+subject match `when:`. It needs `per_subject: one`: with `many`, each
+edit that makes `when:` true again would start another run. The condition must not have held before the
+update: an update that leaves it true starts nothing, and so does a
+subject that already matched before the flow was added. A create that
+matches starts a run too, as an `on: create` start would.
+
+It covers the same writes as [Change events from edits](#change-events-from-edits),
+and follows the rules of [Starting on create](#starting-on-create): the
+run is started by `run_as`, is stored in the write's transaction, is
+settled right after the commit, and counts toward the chain depth.
+Only a start whose `when:` reads a property the update changed is
+checked.
+
+To act on a change of a related entity, give the subject a property
+that a trigger, a rollup or a sync script keeps up to date, and test
+that property in `when:`. A `when:` reads only the subject's own
+properties.
+
 ## States
 
 | Key | Meaning |
@@ -283,6 +305,64 @@ branches in order and takes the first that applies.
 A branch has `to` (the next state, required), and optional `label`,
 `roles` and `when`. rela warns about a branch that can never be taken
 because the branch before it has no `roles` and no `when`.
+
+### Change events from edits
+
+An ordinary update of a subject fires the `change` event on each of its
+open runs. It does not matter where the update comes from: the web app,
+the API, MCP, the CLI, `rela import --mapping` or a Lua script, such as
+a sync connector or a webhook action. The move is stored in the same
+transaction as the update and is attributed to the person or script that
+made it.
+
+An edit takes a `change` branch only when all of these hold:
+
+- the branch has a `when:` that reads a property the edit changed;
+- the author holds one of the branch's `roles`, on the subject or
+  globally, or the branch names no roles;
+- the `when:` holds on the subject as written.
+
+A branch without `when:` is taken only by a completed step, never by an
+edit. This keeps an unrelated edit from moving a run.
+
+Some writes fire no event:
+
+- the run's own writes, such as its outputs and job steps;
+- a completed step, on the run whose step it completes (the step takes
+  the branch itself);
+- an edit that changes no property;
+- writes that are not updates: a rename, a conversion, a restore, a copy
+  to another face, and the writes of a trigger's cascade.
+
+If another person has claimed the step, an edit by someone else leaves
+it to them. If the run is still writing the outputs of its state, rela
+keeps the event and takes it once those outputs are done. At that point
+it checks the `when:` again on the subject as it is then, and the claim:
+if the guard no longer holds or another person has claimed the step, the
+event is dropped.
+
+Whether a run moved after an edit tells the author whether `when:`
+holds. That is why a `when:` may not read a property that a `visible:`
+grant in acl.yaml restricts: rela refuses such a flow when it loads.
+
+A script needs a role of the branch, just as a person does. Give the
+principal a sync runs as a role in acl.yaml, and name it in `roles:`.
+For example, a run that waits until an external system confirms an
+order:
+
+```yaml
+      waiting:
+        on:
+          change:
+            to: confirmed
+            roles: [integration]
+            when: "entity.external_status == 'confirmed'"
+```
+
+The author's roles are read once, before the write's transaction opens.
+An update made inside a transaction that the caller opened holds no
+roles there, so it takes only a branch without `roles`. Without
+acl.yaml every role counts as held.
 
 ### Timers
 
@@ -1228,7 +1308,7 @@ when: "entity.due == nil or days_between(entity.due, today()) <= 7"
 
 | Output | What it does |
 | ------ | ------------ |
-| `set` | Sets properties on the entity that fired the rule. |
+| `set` | Sets or removes properties on the entity that fired the rule. |
 | `relate` | Creates a relation from that entity. |
 | `create` | Creates a new entity, and optionally links it. |
 | `add_to_pile` | Puts the entity on a user's pile. |
@@ -1251,7 +1331,25 @@ outputs:
 
 `set` changes the entity that fired the rule. The values are part of the
 same write, so the save stores them with one audit record. `set` needs
-`properties:`.
+`properties:`, `unset:` or both.
+
+`unset:` lists properties to remove. This rule clears the completion date
+when a to-do is reopened:
+
+```yaml
+triggers:
+  reopen:
+    on: { entity: todo, property: status, becomes: open }
+    outputs:
+      - set:
+          unset: [completed_on]
+```
+
+The removal is part of the same write as the change that fired the rule. It
+runs after the change, so it wins over a value the same save gave the
+property. Removing a property the entity does not have does nothing. When
+several outputs name one property, the output that comes last wins: a later
+`properties:` value replaces an earlier `unset:`, and the reverse.
 
 #### relate
 
@@ -1627,14 +1725,17 @@ refuses:
   that names another `system:` identity; one file run twice in the
   background by one rule;
 - `script` without exactly one of `lua:` and `file:`, `set` without
-  `properties:`, `create` without `type:`, `create.relate.from` other than
+  `properties:` or `unset:`, `create` without `type:`, `create.relate.from` other than
   `subject`, an unknown `if_exists`, and `check` without `message:` or with a
   `severity` other than `warning` or `error`;
 - `add_to_pile` without `pile:`, and a `notify` whose pile is not declared,
   lacks `read_state: true` or does not know the `reason`, or whose path does
   not resolve;
+- an `unset:` name that is empty, listed twice, also under `properties:`, or
+  not a property of every type in `entity:` (of any type, for a rule
+  without `entity:`), and one that is required, computed or a state machine;
 - an unknown placeholder, including one with spaces inside the braces;
-- a `set` or `create` that writes a file property or an external ref, and a
+- a `set` or `create` that writes or removes a file property or an external ref, and a
   `property` key that names an external ref. Only the attachments API changes
   a file, and only a script changes a ref.
 

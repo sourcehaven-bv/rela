@@ -18,7 +18,10 @@ func init() {
 //   - re-keys the `views:` map from a free-form view ID to the view's
 //     `entry.type`,
 //   - strips `detail_view:` from list configs,
-//   - strips the top-level `entity_views:` block.
+//   - strips `detail_view:` from each `entity_views:` entry, and drops an
+//     entry, or the whole block, that is left empty. The other keys of an
+//     entry (`duplicate`, `mentioned_by_panel`, `mentioned_by_hide_id`) are
+//     live config and stay.
 //
 // Errors when more than one existing view targets the same entity type
 // — the project owner must consolidate manually. The validator enforces
@@ -30,7 +33,7 @@ func (m *ViewsByEntityTypeMigration) Name() string {
 }
 
 func (m *ViewsByEntityTypeMigration) Description() string {
-	return "Re-key views: by entity type, remove detail_view and entity_views"
+	return "Re-key views: by entity type, remove detail_view"
 }
 
 func (m *ViewsByEntityTypeMigration) FileTypes() []FileType {
@@ -49,8 +52,20 @@ func (m *ViewsByEntityTypeMigration) Detect(doc *yaml.Node) bool {
 	if m.detectDetailViewInLists(root) {
 		return true
 	}
-	if GetMapValue(root, "entity_views") != nil {
-		return true
+	return m.detectDetailViewInEntityViews(root)
+}
+
+// detectDetailViewInEntityViews reports whether an `entity_views:` entry
+// still names a `detail_view:`.
+func (m *ViewsByEntityTypeMigration) detectDetailViewInEntityViews(root *yaml.Node) bool {
+	ev := GetMapValue(root, "entity_views")
+	if ev == nil || ev.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 1; i < len(ev.Content); i += 2 {
+		if GetMapValue(ev.Content[i], "detail_view") != nil {
+			return true
+		}
 	}
 	return false
 }
@@ -103,8 +118,33 @@ func (m *ViewsByEntityTypeMigration) Apply(doc *yaml.Node) error {
 		return err
 	}
 	m.stripDetailViewFromLists(root)
-	DeleteMapKey(root, "entity_views")
+	m.stripDetailViewFromEntityViews(root)
 	return nil
+}
+
+// stripDetailViewFromEntityViews removes `detail_view:` from every
+// `entity_views:` entry. An entry left empty is removed, and so is the block
+// when no entry is left.
+func (m *ViewsByEntityTypeMigration) stripDetailViewFromEntityViews(root *yaml.Node) {
+	ev := GetMapValue(root, "entity_views")
+	if ev == nil || ev.Kind != yaml.MappingNode {
+		return
+	}
+	kept := ev.Content[:0]
+	for i := 0; i+1 < len(ev.Content); i += 2 {
+		def := ev.Content[i+1]
+		if def.Kind == yaml.MappingNode {
+			DeleteMapKey(def, "detail_view")
+			if len(def.Content) == 0 {
+				continue
+			}
+		}
+		kept = append(kept, ev.Content[i], def)
+	}
+	ev.Content = kept
+	if len(ev.Content) == 0 {
+		DeleteMapKey(root, "entity_views")
+	}
 }
 
 // rekeyViews rewrites each entry of the `views:` map so its key is the

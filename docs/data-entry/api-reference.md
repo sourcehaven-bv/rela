@@ -71,6 +71,28 @@ unchanged: they always carry `content`, as do ETags computed over it. A row
 whose entity has an empty body looks the same with or without the flag, which
 is the reason the field is omitted rather than sent empty.
 
+## Field verdicts on list rows
+
+A list row carries no `_fields` or `_redacted` by default; only per-entity
+responses do. `field_verdicts` names the properties whose verdicts each row
+should carry, comma-separated, at most 16 (TKT-M0AT73B):
+
+```text
+GET /api/v1/todos?field_verdicts=status,flagged
+```
+
+Each row then carries `_fields` (sparse, as on a per-entity response) and
+`_redacted`, both restricted to the named properties, so they are partial. Names
+past the 16th and names that are not properties are ignored. The page answers
+them from one batch of verdicts, never one query per row. A list with toggle
+columns asks for their properties. The map is a UI hint; a write is authorized
+again.
+
+A toggle also needs to know whether the state machine of an enum allows the
+move. `GET /api/v1/_schema` serves each custom type that declares
+`transitions:` with `moves`, the declared edges as value → target values.
+Transition labels, help, guards and preconditions stay off the wire.
+
 ## Comment counts on list rows
 
 `GET /api/v1/{plural}` accepts `comment_counts=true` (any value
@@ -162,9 +184,26 @@ Any other value is a `400 invalid_limit`.
 For a free-text search with no property filter and no `sort:` clause, the
 limit also bounds the search itself: the server stops after `limit` visible
 hits instead of reading up to 1000. A `type` parameter keeps this only when
-every `type:` clause in the query names that same type. In all other cases
-the limit shrinks the response, not the server's work: the query still reads
-and sorts every matching row before the cut.
+every `type:` clause in the query names that same type. A structured query
+that the server hands to the store reads only the requested page. Other
+shapes still read and sort every matching row before the cut.
+
+### Pages
+
+A search returns one page. Without `limit` a page holds 1000 rows. `page`
+(an integer from 1 to 10000, default 1) selects a later page; any other
+value is a `400 invalid_page`. The response `meta` says where the page sits:
+
+- `total`: the number of visible matches. For free text it is a lower
+  bound, because free text ranks only its 1000 best hits.
+- `page` and `per_page`: the page served and its size.
+- `has_more`: a later page holds rows. Read pages until it is false.
+- `capped`: free text matched more than 1000 hits and this page reaches
+  the 1000th. No page past that hit is served.
+
+```text
+GET /api/v1/_search?q=type:ticket&page=2
+```
 
 ```text
 GET /api/v1/_search?q=type:ticket,feature sort:modified:desc&limit=8
@@ -1537,6 +1576,8 @@ carries three extra fields:
 | Field | Where | Meaning |
 | ----- | ----- | ------- |
 | `hideMentionedByPanel` | response | `true` when the page should leave out the built-in panel: the view collects backlinks, or `entity_views.<type>.mentioned_by_panel` is `false`. Omitted otherwise. |
+| `hideMentionedByID` | response | `true` when `entity_views.<type>.mentioned_by_hide_id` is set: the panel leaves the entity ID off its rows. Omitted otherwise. |
+| `hide` | section | The row parts the section leaves off: `"type"` for `hide_type`, `"id"` for `hide_id`. Presentation only. Omitted when empty. |
 | `incomplete` | section | `true` when the section's backlinks collection holds only part of the matching sources. Omitted otherwise. |
 | `entityType`, `columns` | `groups[]` | Set on each group of a `columns_by_type` table. The group's rows are of `entityType`, and their cells are positional over the group's `columns`. |
 
@@ -2312,3 +2353,77 @@ where `record` is the stored audit record, unredacted. It needs `audit:read`
 under an ACL policy; otherwise it answers 403 `permission_required`.
 `audit.global` reports whether the caller holds it. Each page served writes
 an `audit-read` audit record.
+
+## Manual list order: POST /api/v1/_list_order
+
+Moves one row of a list with `order: manual` in the caller's own order
+(TKT-AVNEX5T). See "Manual order" in the data-entry guide for the
+configuration.
+
+A list read shows the caller's order when it names the list in `list_id` and
+sends `manual_order=1`. Its `meta.manual_order` is then true, if the caller
+is a user who can hold an order. An anonymous caller sees the list sort. Without the
+parameter the read is sorted as usual.
+
+The move takes the same query parameters as the list read on screen, so the
+server judges it against the rows the caller sees. The body names the row and
+exactly one neighbour:
+
+```json
+{ "id": "TODO-3", "before": "TODO-1" }
+```
+
+The server stores the order of the rows from the top through the moved row,
+or through the lowest row placed before, whichever is lower. Rows below keep
+the list sort. A placed row that a filter hides, or that leaves the list,
+keeps its place but takes no slot while it is not shown. Each user holds at
+most 500 placed rows per list; the lowest are dropped first. The route always
+judges the move against the stored order, so `manual_order=1` is optional.
+
+| Status | When |
+|--------|------|
+| 204 | The move was stored |
+| 400 | Invalid JSON, no neighbour, both neighbours, or the row is its own neighbour |
+| 403 | The caller has no user identity |
+| 404 | The list is not manual, or the row or neighbour is not among the caller's rows |
+| 413 | The body is larger than 4 KiB |
+
+## Assign: GET/POST /api/v1/_assign
+
+Applies a list or page `assign:` block (TKT-FGE5G3I). See "Moving items into
+a list" in the data-entry guide for the configuration.
+
+`GET ?list=ID` or `GET ?page=ID&target=ID` answers the resolved block. The SPA
+uses it as a create form's prefill:
+
+```json
+{
+  "entity_type": "todo",
+  "properties": { "when": "today", "start_date": "2026-11-24" },
+  "relations": { "in_project": { "data": [{ "type": "project", "id": "PRJ-1" }] } }
+}
+```
+
+A relation that allows one outgoing edge comes as `data` (replace); any other
+as `add`, the same wire shape as a PATCH `relations` field.
+
+`POST {"list": ID, "entities": [ADDR, ...]}`, or with `"page"` and `"target"`
+instead of `"list"`, writes the block to 1 to 100 entities. Each entity is
+written through the entity PATCH handler, so it is authorized, validated and
+audited as a PATCH. The answer is per entity:
+
+```json
+{ "results": [
+  { "id": "TODO-1", "ok": true, "status": 200, "matches": true },
+  { "id": "TODO-2", "ok": false, "status": 403, "code": "forbidden" }
+] }
+```
+
+`matches` is set for a list only: whether the entity is in the list after the
+write. A refused row leaves the others written.
+
+| Status | When |
+|--------|------|
+| 400 | Neither or both of `list` and `page`; no `target` for a `target` relation; an empty or oversized `entities` |
+| 404 `assign_not_found` | The list or page has no `assign:` (config is not secret, so the key is named) |
+| 404 `not_found` | The `target` entity, or an entity id in the block, is not readable |

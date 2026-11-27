@@ -1,4 +1,4 @@
-import type { StatusColor } from 'rela-components/types'
+import type { NavItemStatus } from 'rela-components/types'
 import type {
   ChannelMessageCards,
   ChannelMessageDisplay,
@@ -10,6 +10,12 @@ export interface ResolvedPalette {
   light: Record<string, string>
   dark?: Record<string, string>
   darkDisabled?: boolean
+}
+
+export interface QuickEntryConfig {
+  form: string
+  list?: string
+  shortcut?: string
 }
 
 export interface Config {
@@ -122,6 +128,8 @@ export interface ActionConfig {
    */
   confirm?: boolean | string
   set?: Record<string, string>
+  /** A list whose `assign:` this action applies to the selected rows. */
+  assign?: string
   script?: string
   description?: string
   params?: Record<string, string>
@@ -145,6 +153,8 @@ export interface ActionConfig {
 }
 
 export interface AppConfig {
+  /** The data-entry.yaml `quick_entry:` block (TKT-24L1H36), served under `app`. */
+  quick_entry?: QuickEntryConfig
   name: string
   description?: string
   /**
@@ -160,6 +170,11 @@ export interface AppConfig {
    * tag, or absent to follow the browser. A user's own choice wins over it.
    */
   language?: string
+  /**
+   * The interface languages a user may pick (`app.languages`), base
+   * languages such as `en`. Absent means every language the app has.
+   */
+  languages?: string[]
   // The world a request lands in when the URL names none. '' / absent means
   // the raw default faces. Presentation only — the read grant is re-checked
   // per request, so this changes which face a bare URL resolves to, not who
@@ -381,7 +396,22 @@ export interface FormFieldOrRelation {
   clear_when_hidden?: ClearWhenHidden
 }
 
+/** One assigned value: a literal, or an expression the server evaluates. */
+export type AssignValueConfig = { value: string } | { expr: string }
+
+/**
+ * What an item gets when it enters a list or is dropped on a page's sidebar
+ * entry. The SPA never evaluates it: `/_assign` resolves and writes it.
+ */
+export interface AssignConfig {
+  entity_type?: string
+  properties?: Record<string, AssignValueConfig>
+  relations?: Record<string, string>
+}
+
 export interface ListConfig {
+  /** Set when the list assigns values to items entering it. */
+  assign?: AssignConfig
   entity: string
   title?: string
   /** Markdown rendered above the list. `description` is a fallback alias. */
@@ -426,10 +456,37 @@ export interface ListConfig {
   toolbar_actions?: string[]
   /** Splits the list into sections. Absent means a flat, paged list. */
   group_by?: ListGroupBy
+  /**
+   * `manual` lets each user drag the rows into their own order
+   * (TKT-AVNEX5T). Absent means the list sort.
+   */
+  order?: typeof LIST_ORDER_MANUAL
 }
 
+/** The list `order:` value that turns on the per-user manual order. */
+export const LIST_ORDER_MANUAL = 'manual'
+
 /** The relative date buckets, in the order their sections appear. */
-export type DateBucket = 'overdue' | 'today' | 'tomorrow' | 'next_7_days' | 'later' | 'no_date'
+export type DateBucket =
+  'overdue' | 'today' | 'tomorrow' | 'next_7_days' | 'this_week' | 'next_week' | 'later' | 'no_date'
+
+/** A calendar bucket unit, finest first. */
+export type CalendarUnit = 'day' | 'week' | 'month' | 'year'
+
+/**
+ * `buckets:` in its mapping form: one section per calendar unit. `for`
+ * (`<n>d`, with `by: day`) gives the next n days one by one, then `then`
+ * sections, or one "later" section.
+ */
+export interface CalendarBuckets {
+  by: CalendarUnit
+  for?: string
+  then?: Exclude<CalendarUnit, 'day'>
+  order?: 'asc' | 'desc'
+}
+
+/** The fixed calendar sections `labels:` may rename. */
+export type CalendarFixedBucket = 'overdue' | 'today' | 'tomorrow' | 'later' | 'no_date'
 
 /**
  * A list's `group_by:`. The server always sends the mapping form, with
@@ -448,18 +505,29 @@ export interface ListGroupBy {
   style_from?: string
   /** Restyles enum values. Every declared value still gets a section. */
   groups?: ListGroup[]
-  /** Sorts a date property into relative sections. Exclusive with `groups`. */
-  buckets?: 'relative'
+  /**
+   * Sorts a date property into date sections. Exclusive with `groups`. The
+   * string is the relative scheme; the mapping is calendar sections.
+   */
+  buckets?: 'relative' | 'relative_weeks' | CalendarBuckets
   /** Bucket titles by bucket key; a key left out keeps the English default. */
-  labels?: Partial<Record<DateBucket, string>>
+  labels?: Partial<Record<DateBucket | CalendarFixedBucket, string>>
   /** How many rows a grouped list loads. A grouped list is not paged. */
   max_rows: number
 }
 
+/**
+ * One group of a list's `groups:`. With `property`, `value` names the enum
+ * value it restyles. Without `property` or `relation`, the grouping is
+ * computed: `id` names the section, and the server stamps it on each row as
+ * `_group` from the group's `condition`.
+ */
 export interface ListGroup {
-  value: string
+  value?: string
+  id?: string
+  condition?: string
   label?: string
-  color?: StatusColor
+  color?: ColorName
 }
 
 /**
@@ -542,6 +610,16 @@ export interface ListColumn {
    * the face and the busy indicator stay. Lists only.
    */
   primary?: boolean
+  /**
+   * Renders the property as a checkbox (`toggle`) or switch the user flips
+   * in place (TKT-M0AT73B). `on`/`off` are the enum values the two states
+   * write (absent for a boolean); `other` is how a row holding a third
+   * value shows. Lists only.
+   */
+  widget?: 'toggle' | 'switch'
+  on?: string
+  off?: string
+  other?: 'disabled' | 'hidden' | 'on'
 }
 
 export interface ListFilter {
@@ -590,6 +668,8 @@ export interface ViewSection {
 export interface KanbanConfig {
   entity: string
   title?: string
+  /** A predicate the server applies to the board's cards; see `kanban_id`. */
+  condition?: string
   /**
    * `wall` lays the cards out as a wrapping grid: one grid without columns,
    * or with `columns_from` a pile of loose cards above the groups.
@@ -801,7 +881,26 @@ export type CalendarViewKind = 'month' | 'week'
 export type CalendarWeekStart = 'monday' | 'sunday'
 
 /** A named palette token; the theme owns what the colour actually is. */
-export type CalendarColor = 'blue' | 'green' | 'amber' | 'red' | 'violet' | 'slate'
+/**
+ * A colour name data-entry.yaml accepts: a hue or one of its aliases. The
+ * server's ColorNames (internal/dataentryconfig/colors.go) holds the same
+ * names; NAMED_COLORS in utils/styleColors.ts maps each to its dot colour.
+ */
+export type ColorName =
+  | 'grey'
+  | 'gray'
+  | 'slate'
+  | 'red'
+  | 'orange'
+  | 'amber'
+  | 'yellow'
+  | 'green'
+  | 'teal'
+  | 'blue'
+  | 'purple'
+  | 'violet'
+
+export type CalendarColor = ColorName
 
 /**
  * CalendarSourceConfig projects one entity type onto the grid.
@@ -1342,6 +1441,13 @@ export interface SidebarItem {
    */
   status_key?: string
   /**
+   * Never in `/_sidebar`: filled in the browser from `/_nav_items` for a
+   * generated entry, whose count and children are per principal.
+   */
+  status?: NavItemStatus
+  /** Never in `/_sidebar`; see `status`. */
+  children?: SidebarItem[]
+  /**
    * The letter badge of an entry generated from a list row (`items_from:`).
    * Never on the wire from `/_sidebar`: it comes per principal from
    * `/_nav_items`.
@@ -1373,6 +1479,8 @@ export interface SidebarGroup {
   items_page?: string
   /** The list the generated entries come from, for a link to all of its rows. */
   items_list?: string
+  /** The entity page each child entry opens. Absent: a child opens the entity. */
+  items_child_page?: string
   /**
    * Set when the group offers to create a row of its list (`items_from.create`)
    * and the principal may. The server re-authorizes the create.
@@ -1452,6 +1560,8 @@ export interface SidebarData {
  * The tabs a principal may see come from the sidebar's `pages`.
  */
 export interface PageConfig {
+  /** Set when a row dropped on an entry for this page's entity gets values. */
+  assign?: AssignConfig
   label: string
   icon?: string
   entity_type?: string

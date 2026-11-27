@@ -212,8 +212,6 @@ func foldMatrix(rows []*entityPkg.Entity, in matrixInput) (m v1.DashboardMatrix,
 		r, rok, rhidden := in.rows.valueOf(e)
 		c, cok, chidden := in.columns.valueOf(e)
 		if rhidden || chidden {
-			// A hidden value never widens an axis either: the extent of an
-			// integer axis would otherwise disclose it.
 			partial = true
 			continue
 		}
@@ -308,17 +306,10 @@ func (s *observedSpan) add(n int64) {
 }
 
 // axisValues lists an axis in display order. An enum axis is every declared
-// value. An integer axis is every whole number from its low end to its high
-// end, so a value nobody uses still has its row and the grid has no holes.
-// Each end is the declared bound, else the observed extreme; with neither
-// the axis is the one declared bound, or empty.
-//
-// Config load refuses a declared range wider than
-// [dataentryconfig.MaxMatrixAxisValues]. When an end follows the rows and
-// the span is wider than that, filling it would let one outlier push every
-// real value off the axis, so the axis lists only the values that occur.
-// Those are capped at the cap from the end shown first, and truncated says
-// so.
+// value. An integer axis is every whole number between its ends, each the
+// declared bound or else the observed extreme. When an observed span is wider
+// than [dataentryconfig.MaxMatrixAxisValues], the axis lists only occurring
+// values, capped from the end shown first, and truncated is true.
 func axisValues(p axisProperty, seen observedSpan) (out []v1.DashboardAxisValue, truncated bool) {
 	var keys []int64
 	switch lo, hi, ok := integerAxisEnds(p, seen); {
@@ -394,8 +385,6 @@ func matrixColorFor(
 		if cls, ok := styles[value]; ok {
 			return cls
 		}
-		// The SPA looks a style up under the value lowercased with spaces
-		// as underscores (styleKey in styleColors.ts); match that.
 		return styles[strings.ReplaceAll(strings.ToLower(value), " ", "_")]
 	}
 }

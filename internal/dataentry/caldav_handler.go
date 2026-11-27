@@ -46,10 +46,6 @@ func newCalDAVRoutes(a *App) *caldavRoutes {
 // alias service is wired: serving collections with no way to remember
 // client-created resources would duplicate every to-do on the next sync.
 func (c *caldavRoutes) register(mux *http.ServeMux) {
-	// The backend is built PER REQUEST, not once here: it carries the base URL
-	// the client used to reach us, so deep links come out absolute and match
-	// however the request arrived (loopback, LAN, or a proxied hostname).
-	// go-webdav's Backend interface has no *http.Request to take it from.
 	mux.Handle(caldavPathPrefix, withCalDAVBodyLimit(c.withPropPatch(c.withCTag(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			h := &caldav.Handler{
@@ -121,35 +117,14 @@ func withCalDAVBodyLimit(next http.Handler) http.Handler {
 // with a bare server address and looks here first to find the real CalDAV root.
 const caldavWellKnownPath = "/.well-known/caldav"
 
-// registerWellKnown mounts the RFC 6764 discovery redirect on the OUTER
-// mux.
-//
-// It cannot live on the inner /api/ mux: the path is fixed by the RFC at the
-// site root, and a route registered on the inner mux is only reachable under
-// /api/ (BUG-F3ADZO). Without this the SPA catch-all answers the probe with
-// 200 HTML, and the client reports a generic "account verification failed" —
-// verified against a real macOS accountsd, which requests this path FIRST and
-// gives up on the HTML response.
-//
-// Deliberately NOT gated: it discloses only that this server speaks CalDAV and
-// at which path, both of which are already implied by the service existing. The
-// endpoint it points at carries the real ACL and identity gates.
+// registerWellKnown mounts the RFC 6764 discovery redirect on the OUTER mux,
+// because the path is fixed at the site root. It is not gated: it reveals
+// only that the server speaks CalDAV, and the target carries the real gates.
 func (c *caldavRoutes) registerWellKnown(mux *http.ServeMux, spa http.Handler) {
 	mux.HandleFunc(caldavWellKnownPath, func(w http.ResponseWriter, r *http.Request) {
-		// 301 rather than 308: some clients (including Apple's) follow a
-		// permanent redirect for the discovery probe but do not re-issue the
-		// original method on a 308 they have not seen before.
 		http.Redirect(w, r, caldavPathPrefix, http.StatusMovedPermanently)
 	})
 
-	// Apple additionally probes the SITE ROOT with
-	// `PROPFIND / <current-user-principal>` — verified against a real
-	// accountsd, which issues it after following the well-known redirect and
-	// gives up when the SPA catch-all answers with 200 HTML. The account then
-	// connects but shows NO collections, because the client never learned where
-	// the principal lives.
-	//
-	// Only PROPFIND is intercepted, so a browser GET / still gets the SPA.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "PROPFIND" && r.URL.Path == "/" {
 			c.serveRootPrincipalProbe(w)
@@ -159,28 +134,11 @@ func (c *caldavRoutes) registerWellKnown(mux *http.ServeMux, spa http.Handler) {
 	})
 }
 
-// serveRootPrincipalProbe answers a site-root PROPFIND with the two properties
-// a discovering client needs: where its principal lives, and where its
-// calendars live.
-//
-// Hand-written rather than delegated to go-webdav, whose handler derives a
-// resource's kind from its depth below its own Prefix — the site root is not
-// under that prefix, so it cannot answer for it.
-//
-// # Both properties, not just the principal
-//
-// Answering only current-user-principal is enough by the letter of RFC 6764
-// (the client should then PROPFIND the principal for its calendar-home-set),
-// but Apple's accountsd asks for BOTH in its single root probe and, observed
-// against a live client, never issues the follow-up when only the principal
-// comes back: the account connects and shows no lists. Answering both here ends
-// discovery in one round trip.
-//
-// Everything else in the client's prop list (schedule-inbox-URL,
-// dropbox-home-URL, email-address-set, …) is deliberately omitted. Those are
-// scheduling and CalendarServer extensions rela does not implement, and a
-// PROPFIND response that silently omits an unsupported property is exactly what
-// RFC 4918 expects — the client drops the feature rather than failing.
+// serveRootPrincipalProbe answers a site-root PROPFIND with where the
+// principal and its calendars live. It is hand-written because go-webdav
+// cannot answer outside its Prefix. It returns both properties because
+// Apple's accountsd never issues the follow-up probe. Unsupported properties
+// are omitted, as RFC 4918 allows.
 func (c *caldavRoutes) serveRootPrincipalProbe(w http.ResponseWriter) {
 	principal := caldavPathPrefix + caldavPrincipalSegment + "/"
 	home := principal + caldavHomeSegment + "/"

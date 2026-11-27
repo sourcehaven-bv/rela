@@ -83,18 +83,12 @@ func identifyConflict(paths *project.Context, meta *metamodel.Metamodel, cf *con
 		e := side.Entity
 		switch {
 		case side.Relation != nil:
-			// The parser read a relation where the directory says entity
-			// (a file named like FROM--type--TO.md). Judging it on either
-			// branch would skip the other's redaction.
 			return conflictIdentity{}
 		case e == nil:
 		case e.ID != "" && e.Type != "":
 			out.rows = append(out.rows, &entityPkg.Entity{ID: e.ID, Type: e.Type, Face: face})
 		case e.ID == "" && len(e.Properties) == 0:
-			// An empty side: the file was deleted on that branch.
 		default:
-			// A side that serves values under an identity the gate cannot
-			// ask about.
 			return conflictIdentity{}
 		}
 	}
@@ -118,7 +112,6 @@ func identifyRelationConflict(stem string, cf *conflict.ConflictedFile) conflict
 	out.rels = append(out.rels, &edge)
 	for _, side := range conflictSides(cf) {
 		if side.Entity != nil {
-			// The parser read an entity where the directory says relation.
 			return conflictIdentity{}
 		}
 		if side.Relation == nil {
@@ -261,22 +254,12 @@ var conflictConfigDirs = map[string]bool{
 	project.TemplatesDir: true, project.CustomDir: true, project.AppsDir: true,
 }
 
-// readableConflictPaths returns the paths in relPaths the principal may see,
-// in order. The paths are relative to the project root, as git reports them.
-// It is the gate of the conflict list for a surface that names conflict
-// paths without listing conflicts (BUG-197XPAU).
-//
-// It fails closed. A path is kept only when it is one of these:
-//
-//   - A file under the entity or relation directory whose identity the
-//     principal may read. A data file that does not parse as conflicted,
-//     such as one a branch deleted, is judged by the row its path names.
-//   - A file under <attachments>/<id>/ when the principal may read some face
-//     of id. The attachment of a deleted entity is left out.
-//   - A config file in [conflictConfigFiles] or under [conflictConfigDirs].
-//
-// Every other path is left out, because it may name an entity whose
-// existence is secret.
+// readableConflictPaths returns the paths in relPaths (project-relative) the
+// principal may see, in order (BUG-197XPAU). It fails closed: a path is kept
+// only when it is an entity or relation file whose identity the principal may
+// read, a file under <attachments>/<id>/ of a readable entity, or a config
+// file in [conflictConfigFiles] or [conflictConfigDirs]. Any other path may
+// name an entity whose existence is secret.
 func readableConflictPaths(
 	ctx context.Context, vr visibleReader, paths *project.Context, meta *metamodel.Metamodel, relPaths []string,
 ) ([]string, error) {
@@ -316,7 +299,6 @@ func readableConflictPaths(
 	if err := keepReadableAttachments(ctx, vr, attachOwners, keep); err != nil {
 		return nil, err
 	}
-	// Nil, not empty, when nothing is left, so an omitempty field drops it.
 	var out []string
 	for i, rel := range relPaths {
 		if keep[i] {

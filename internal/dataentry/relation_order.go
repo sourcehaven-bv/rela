@@ -133,7 +133,6 @@ func (o *relationOrdering) fold(prop string, edges []*entityPkg.Relation) {
 		if o.incoming {
 			k.Peer = e.From
 		}
-		// Two tails can join the anchor and one row; the earlier place wins.
 		if prev, seen := o.keys[k.Peer]; !seen || metamodel.CompareOrderKeys(k, prev) < 0 {
 			o.keys[k.Peer] = k
 			tails[k.Peer] = e.FromFace
@@ -307,7 +306,6 @@ func sectionOrdering(ctx context.Context, h *viewsHandler, sec ViewSection, resu
 	if ee.incoming {
 		var err error
 		if edges, err = h.visible.readableRelations(ctx, edges); err != nil {
-			// No order rather than an order from a partial answer.
 			slog.ErrorContext(ctx, "section relation order: gate failed", "section", sec.Source, "err", err)
 			return nil
 		}

@@ -2876,6 +2876,48 @@
       "reason": "Detector gap: the refusal is tested in internal/dataentry/sse_acl_test.go. Id changed when TKT-3KUIROC moved the handler to a new receiver.",
       "at": "2026-11-21T16:00:00Z",
       "title": "No test shows handleSSE refusing a caller."
+    },
+    "concepts.data_clump-86e9f1288f25": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose. The id moved when TKT-FGE5G3I added assign to ListConfig; the shared fields are unchanged.",
+      "at": "2026-11-24T12:00:00Z",
+      "title": "The fields create_form, edit_form, filter_controls, footer, header and title appear together in 5 types across 3 components."
+    },
+    "concepts.data_clump-d25c425bb7fe": {
+      "state": "accepted",
+      "reason": "Design: the wire AppConfig and the SPA type mirror app: in data-entry.yaml on purpose. BUG-YI096TR added app.languages.",
+      "at": "2026-11-23T12:45:00Z",
+      "title": "The fields about, default_world, description, language, languages and world_switcher appear together in 3 types across 3 components."
+    },
+    "boundaries.stability-190aeea237c2": {
+      "state": "accepted",
+      "reason": "Debt: expected for core packages such as metamodel and acl. Every loader of project config reads it through the in-memory migration (TKT-3JF7FSN).",
+      "at": "2026-11-25T22:00:00Z",
+      "title": "migration is in the zone of pain: 5 components depend on it, and it has few abstractions to change behind."
+    },
+    "concepts.missing_operation-86825c1ad49f": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-11-26T17:00:00Z",
+      "title": "2 components (affordances, transitions) each write their own has_relation for Value, a type of predicate."
+    },
+    "concepts.missing_operation-dc8b30c65e46": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-11-26T17:00:00Z",
+      "title": "2 components (pgstore, sqlitestore) each write their own aggregate_sql for RollupQuery, a type of store."
+    },
+    "concepts.missing_operation-86c2c2c4749b": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-11-26T17:00:00Z",
+      "title": "2 components (pgstore, sqlitestore) each write their own any_sql for FaceSelection and GraphBranch, a type of store."
+    },
+    "concepts.missing_operation-f0f613ee18e6": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-11-26T17:00:00Z",
+      "title": "2 components (triggers, validation) each write their own check_traversals for Program, a type of predicate."
     }
   },
   "labels": {},
@@ -2893,7 +2935,7 @@
       "largest_tangle": 14,
       "cycle_edges": 67,
       "upward_edges": 0,
-      "propagation_cost": 9.2
+      "propagation_cost": 9.3
     },
     "min_weight": 0,
     "at": "2026-11-17T03:00:00Z",
@@ -3309,6 +3351,17 @@
           "weight.types": [
             3975,
             4020
+          ]
+        }
+      },
+      {
+        "at": "2026-11-26T19:30:00Z",
+        "change": "loosen",
+        "reason": "Merge with develop: #2617 adds the leaf internal/httpscheme, imported across the HTTP clients, so develop's own model is at 9.3. This PR only removes comments. Only propagation_cost changes; the traced weights keep their values.",
+        "metrics": {
+          "propagation_cost": [
+            9.2,
+            9.3
           ]
         }
       }

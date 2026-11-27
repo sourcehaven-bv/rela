@@ -11,6 +11,7 @@
     "piles": "Stapels",
     "newPile": "Nieuwe stapel",
     "newItem": "Nieuw: {label}",
+    "emptyGroup": "Nog niets",
     "inbox": "Inbox",
     "inboxWaiting": "{n} wachtend | {n} wachtend",
     "inboxMentions": "{n} vermelding | {n} vermeldingen",
@@ -203,14 +204,14 @@
     },
     "notifications": {
       "title": "Browsermeldingen",
-      "description": "Meld nieuwe items in je inbox in deze browser terwijl rela op de achtergrond staat. Een melding toont wie schreef en bij welk item, nooit het bericht zelf.",
+      "description": "Meld nieuwe items in je inbox in deze browser terwijl deze app op de achtergrond staat. Een melding toont wie schreef en bij welk item, nooit het bericht zelf.",
       "enable": "Meldingen tonen",
       "mentions": "Vermeldingen en antwoorden",
       "waiting": "Sessies die op mij wachten",
       "unsupported": "Deze browser kan hier geen meldingen tonen.",
       "denied": "Meldingen zijn voor deze site geblokkeerd. Sta ze toe in de site-instellingen van je browser en zet dit daarna opnieuw aan.",
       "signedOut": "Log in om meldingen te kiezen.",
-      "noStorage": "Deze browser laat rela geen gegevens voor deze site bewaren, dus nieuwe items in je inbox zijn niet van oude te onderscheiden. Sta sitegegevens toe en probeer het opnieuw."
+      "noStorage": "Deze browser laat deze app geen gegevens voor deze site bewaren, dus nieuwe items in je inbox zijn niet van oude te onderscheiden. Sta sitegegevens toe en probeer het opnieuw."
     },
     "relationDefault": {
       "none": "Geen",
@@ -769,6 +770,13 @@
     },
     "fileCell": {
       "count": "{n} bestand | {n} bestanden"
+    },
+    "date": {
+      "natural": {
+        "label": "Datum in woorden",
+        "placeholder": "bijv. volgende vrijdag",
+        "invalid": "Deze datum begrijpen we niet. Probeer \"morgen\", \"volgende vrijdag\" of \"5 maart\"."
+      }
     }
   },
   "form": {
@@ -786,6 +794,9 @@
       "readOnly": "alleen-lezen",
       "searchPlaceholder": "{types} zoeken...",
       "noMatches": "Geen passende items gevonden",
+      "scopeEmpty": "Kies eerst {scope}",
+      "scopeLoadFailed": "De keuzes voor {scope} konden niet worden geladen",
+      "scopeStale": "Dit hoort niet meer bij {scope}. Wijzig het of houd de oude {scope}.",
       "more": "+{n} meer...",
       "newButton": "+ Nieuw: {type}",
       "loadFailed": "Relaties laden mislukt",
@@ -941,6 +952,9 @@
     "noItems": "Niets gevonden.",
     "createOne": "Aanmaken",
     "inaccessible": "niet toegankelijk",
+    "toggle": {
+      "label": "{field}: {title}"
+    },
     "moveFailed": "Kon de rij niet verplaatsen",
     "pagination": {
       "summary": "{first} - {last} van {total}"
@@ -1004,8 +1018,11 @@
       "today": "Vandaag",
       "tomorrow": "Morgen",
       "next7Days": "Komende 7 dagen",
+      "thisWeek": "Deze week",
+      "nextWeek": "Volgende week",
       "later": "Later",
-      "noDate": "Geen datum"
+      "noDate": "Geen datum",
+      "weekOf": "Week van {date}"
     },
     "summary": {
       "count": "Aantal",
@@ -1038,6 +1055,8 @@
     "introTitle": "Items zoeken",
     "introDescription": "Vind items op titel of inhoud en verfijn de resultaten met filters.",
     "resultCount": "{n} resultaat gevonden | {n} resultaten gevonden",
+    "resultCountTruncated": "De eerste {n} van {total} resultaten. Verfijn de zoekopdracht om de rest te zien.",
+    "resultCountCapped": "De {n} beste resultaten; er zijn er meer. Verfijn de zoekopdracht om ze te beperken.",
     "addResultsToPile": "Resultaten aan stapel toevoegen",
     "newPileFromResults": "Nieuwe stapel met de resultaten…",
     "inOwner": "in {title}",
@@ -1248,7 +1267,8 @@
     "editEntity": "Item bewerken",
     "deleteEntity": "Item verwijderen",
     "submit": "Opslaan / versturen",
-    "cancelBack": "Annuleren en teruggaan"
+    "cancelBack": "Annuleren en teruggaan",
+    "quickEntry": "Snel invoeren"
   },
   "piles": {
     "itemCount": "{n} item | {n} items",
@@ -1721,5 +1741,17 @@
     "title": "Pagina niet gevonden",
     "description": "Op dit adres staat geen pagina. Misschien is de pagina verplaatst, of klopt de link niet.",
     "home": "Naar de startpagina"
+  },
+  "assign": {
+    "done": "{count} item verplaatst | {count} items verplaatst",
+    "refused": "{count} item kon niet worden verplaatst | {count} items konden niet worden verplaatst",
+    "notInList": "Verplaatst, maar {count} item past niet bij de voorwaarde van de lijst | Verplaatst, maar {count} items passen niet bij de voorwaarde van de lijst",
+    "wrongType": "Dit menu-item accepteert dat soort item niet"
+  },
+  "quickEntry": {
+    "title": "Snel invoeren",
+    "saved": "Opgeslagen",
+    "notConfigured": "Snel invoeren is niet ingesteld.",
+    "noDefaults": "De standaardwaarden van de lijst konden niet worden geladen. Het nieuwe item staat misschien niet in de lijst."
   }
 }

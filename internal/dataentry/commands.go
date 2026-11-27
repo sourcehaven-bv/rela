@@ -150,16 +150,16 @@ func newGatedAuthorizer(d *acl.Declarative) (gatedAuthorizer, error) {
 	return gatedAuthorizer{d: d}, nil
 }
 
+// Authorize checks cmd's permission. View commands do not honor
+// `permission:` yet, so a grant never opens them.
+//
 //archplan:guard=authz reason="checks the command's config-declared permission; fails closed"
 func (gatedAuthorizer) Authorize(ctx context.Context, cmd CommandConfig) bool {
-	// View commands have no fine-grained control yet: `permission:` is not
-	// honored for them, so a granted permission must NOT open the gate.
-	// Deferred deliberately, not overlooked.
 	if cmd.Context == "view" {
 		return false
 	}
 	if cmd.Permission == "" {
-		return false // fail closed: a policy is configured, this command is ungoverned
+		return false
 	}
 	return readGateFromContext(ctx).HoldsPermission(ctx, cmd.Permission)
 }
@@ -187,54 +187,35 @@ type CommandAuthNotifier struct {
 	OnRefuse func()
 }
 
-// SelectCommandAuthorizer chooses the command authorizer for rela-server from
-// the active ACL, the concrete Declarative policy (nil when none), the bind
-// host, and the operator's --allow-unauthenticated-commands override. This is
-// the seam: the bind address lives here in the cmd layer, not in App, so the
-// loopback-vs-network decision cannot be made inside dataentry alone.
-//
-// Decision matrix (fail-closed by construction — the only paths to ungated are
-// loopback or an explicit override):
-//
-//   - ReadOnlyACL                       → deny  (read-only means no exec, ever)
-//   - Declarative policy present        → gated (permission must be set AND held)
-//   - NopACL + loopback bind            → ungated (pre-ACL local behavior)
-//   - NopACL + network bind + override  → ungated (operator opted in; log loudly)
-//   - NopACL + network bind, no override→ deny  (THE FIX: was ungated)
-//   - anything else / gate unbuildable  → deny
-//
-// loopback reports whether the bind host is loopback (the caller passes
-// isLoopbackHost(bind); an in-process server with no bind passes true).
-// override is the --allow-unauthenticated-commands flag.
-//
-// notify carries the two startup-log hooks. BOTH branches that change what an
-// operator gets are instrumented, deliberately symmetric: taking the override
-// is loud because it opens a network shell, and REFUSING is loud because it
-// silently breaks a previously-working deployment (buttons vanish, exec 403s)
-// with nothing on screen to say why.
+// CommandBind names how the server is bound when no ACL policy governs
+// commands.
+type CommandBind struct {
+	Loopback             bool
+	AllowUnauthenticated bool
+}
+
+// SelectCommandAuthorizer chooses the command authorizer for rela-server. It is
+// fail-closed; the only ungated paths are loopback or an explicit override:
+// ReadOnlyACL denies exec on every bind (value or pointer form); a Declarative
+// policy is gated and never falls back to the ctx read gate; NopACL is ungated
+// on loopback or with bind.AllowUnauthenticated, and denied otherwise.
+// bind.Loopback is true for an in-process server with no bind.
+// notify logs both the override and the refusal at startup.
 func SelectCommandAuthorizer(
-	active acl.ACL, declarative *acl.Declarative, loopback, override bool, notify CommandAuthNotifier,
+	active acl.ACL, declarative *acl.Declarative, bind CommandBind, notify CommandAuthNotifier,
 ) (commandAuthorizer, error) {
-	// ReadOnly is checked before anything else: it is a stronger guarantee than
-	// "no policy" and must deny exec on every bind. access.ModeOf matches the
-	// value and pointer forms, closing the &ReadOnlyACL{} bypass.
 	if access.ModeOf(active).RefusesWrites() {
 		return denyAuthorizer{}, nil
 	}
 
-	// A configured Declarative policy governs commands on any bind. Build the
-	// gated authorizer from the concrete policy — never fall back to the ctx
-	// read gate for NopACL/ReadOnly, which answers permissive there (RR-QWVG8Y).
 	if declarative != nil {
 		return newGatedAuthorizer(declarative)
 	}
 
-	// No policy (NopACL / off-metamodel). Loopback stays ungated for local
-	// desktop/dev use; a network bind refuses unless the operator opts in.
-	if loopback {
+	if bind.Loopback {
 		return ungatedAuthorizer{}, nil
 	}
-	if override {
+	if bind.AllowUnauthenticated {
 		if notify.OnOverride != nil {
 			notify.OnOverride()
 		}
@@ -263,7 +244,6 @@ func (h *commandHandler) resolveCommands(
 		return nil
 	}
 
-	// Sort command IDs for deterministic order.
 	ids := make([]string, 0, len(s.Cfg.Commands))
 	for id := range s.Cfg.Commands {
 		ids = append(ids, id)
@@ -292,12 +272,10 @@ func (h *commandHandler) resolveCommands(
 func matchesPage(cmd CommandConfig, pageType, qualifier, entityType string) bool {
 	scope := cmd.AvailableOn
 
-	// No scope restriction: show on any page that matches the command's context.
 	if scope == nil {
 		return contextMatchesPage(cmd.Context, pageType)
 	}
 
-	// Check explicit scope matches.
 	switch pageType {
 	case "view":
 		if slices.Contains(scope.Views, qualifier) {
@@ -315,8 +293,6 @@ func matchesPage(cmd CommandConfig, pageType, qualifier, entityType string) bool
 			return true
 		}
 	case "dashboard":
-		// The qualifier is the dashboard's name, "" (or "default") for the
-		// default one, as for `/_dashboard?name=`.
 		if qualifier == dataentryconfig.DefaultDashboardName {
 			qualifier = ""
 		}
@@ -405,21 +381,11 @@ func (h *commandHandler) buildEntityInput(
 	}, nil
 }
 
-// relationsForEntity returns the relations incident to e that may travel
-// with it to a command's stdin (BUG-BZQQDP, TKT-2FDTJE).
-//
-// Two rules apply:
-//
-//   - An outgoing content-scoped edge travels only with the face that owns
-//     it ([ownedByFace]). e is served at one face; another face's content
-//     edge would present that face's content as e's. An incoming content
-//     edge belongs to its source's tail face, which the next rule gates.
-//   - Both endpoints must be readable, as [visibleReader.readableRelations]
-//     decides: the peer at some face, a content-scoped tail at its own face.
-//     A hidden peer's id must not reach the script.
-//
-// The cost is two store reads for any number of edges: one relation query
-// and one header batch for every endpoint.
+// relationsForEntity returns the relations incident to e that may travel with
+// it to a command's stdin. An outgoing content-scoped edge travels only with the
+// face that owns it ([ownedByFace]). Both endpoints must be readable, as
+// [visibleReader.readableRelations] decides, so a hidden peer's id never reaches
+// the script. It costs one relation query and one header batch.
 func (h *commandHandler) relationsForEntity(
 	ctx context.Context, meta *metamodel.Metamodel, e *entity.Entity,
 ) ([]*entity.Relation, error) {
@@ -447,23 +413,23 @@ func (h *commandHandler) buildListInput(listID string, entities []*entity.Entity
 }
 
 // visibleListRows reads the rows of a list-context command: every row of
-// typeName the principal may read, with its body, redacted.
-//
-// The payload leaves the process, so it gets the treatment every other read
-// path gives its output: the gated header read (scopedHeaders) over the
-// whole type, the bodies of the admitted rows only, then field redaction
-// primed for the whole set. It does not apply the list's query scope or
-// page scope; the payload never did, and the ACL gate is what keeps it
-// safe. The list's own `filters:` run on the
-// redacted rows afterwards, so a filter on a hidden property cannot keep a
-// row because of the value the principal may not see.
+// typeName the principal may read, with its body, redacted. It runs the gated
+// header scan over the whole type, reads bodies of admitted rows only, then
+// primes field redaction for the set. The list's `filters:` run afterwards on
+// redacted rows, so a filter on a hidden property cannot keep a row.
 func (h *commandHandler) visibleListRows(ctx context.Context, typeName string) ([]*entity.Entity, error) {
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 	svc := h.services()
-	rows, _, err := scopedEntities(ctx, svc, rqr, scopeRequest{Type: typeName, Faces: rqr.Faces})
+	req := scopeRequest{Type: typeName, Faces: rqr.Faces}
+	q, errClass, withheld, err := scopedQuery(ctx, rqr, req)
+	if withheld || err != nil {
+		return nil, err
+	}
+	headers, err := scanHeaders(ctx, svc, q, errClass, req)
 	if err != nil {
 		return nil, err
 	}
+	rows := headerEntities(headers)
 	if err := loadRowContent(ctx, svc.Store, rows); err != nil {
 		return nil, fmt.Errorf("%w: %w", errListLoad, err)
 	}
@@ -528,7 +494,7 @@ func (h *commandHandler) viewRelations(
 		}
 	}
 	if len(served) == 0 {
-		return nil, nil // nil EntityIDs would read every relation
+		return nil, nil
 	}
 
 	var rels []*entity.Relation
@@ -555,11 +521,6 @@ func (h *commandHandler) buildGlobalInput() *commandInput {
 }
 
 func (h *commandHandler) projectInfo() commandProjectInfo {
-	// Report the schema file this project actually has — the value is handed
-	// to external commands, which would fail opening a name that isn't there.
-	// Read from the path resolved at discovery rather than re-statting: that
-	// keeps this off the disk on a request path and off the OS filesystem,
-	// which an injected (e.g. in-memory) FS would not have been.
 	schema := project.SchemaFile
 	if h.schemaFile != nil {
 		schema = h.schemaFile()
@@ -634,6 +595,9 @@ var (
 // buildCommandInput builds the stdin JSON for cmd from the request. When it
 // cannot, it has already written the error response and returns false; the
 // command must not run.
+//
+// The entity id is an address resolved through the row gate, the face gate and
+// redaction, on its stored type.
 func (h *commandHandler) buildCommandInput(
 	w http.ResponseWriter, r *http.Request, s *Schema, cmd CommandConfig, commandID string,
 ) (*commandInput, bool) {
@@ -641,20 +605,9 @@ func (h *commandHandler) buildCommandInput(
 	switch cmd.Context {
 	case "entity":
 		entityID := r.URL.Query().Get("entity_id")
-		// An ADDRESS, as everywhere an id is accepted: `ID` or `ID@face`,
-		// resolved through the entity GET's resolver: the row gate, then the
-		// face gate, then redaction below (BUG-G2BASF review). A command
-		// request carries no entity type, so the gates run on the stored
-		// type. Every failure is the one not-found a missing entity
-		// produces, and a gate error is a denial, not a pass.
-		//
-		// `authorizeCommand` does NOT cover this: it decides whether this
-		// COMMAND may run, not which rows it may see.
 		entityDomain, found, gerr := h.visible.untypedAddress(r.Context(), entityID)
 		if gerr != nil || !found {
 			if gerr != nil {
-				// The 404 keeps the command's answer shape; the log keeps
-				// the fault visible to the operator.
 				slog.Warn("dataentry: command entity read gate failed; answering not-found",
 					"command", commandID, "entity_id", entityID, "err", gerr)
 			}
@@ -693,13 +646,6 @@ func (h *commandHandler) buildCommandInput(
 			http.Error(w, "View not found: "+viewID, http.StatusNotFound)
 			return nil, false
 		}
-		// DEFAULT WORLD, named explicitly — and this is the call site the
-		// explicit-parameter design exists for. The viewResult below is
-		// marshaled to JSON and piped to an operator shell script's stdin, so
-		// a world applied here changes what an EXTERNAL PROCESS receives, past
-		// any layer that could observe it. Scoping the command surface for
-		// worlds is its own ticket, with its own thinking about what a
-		// world-bound command even means.
 		vr, err := h.executeView(r.Context(), viewCfg, entityID, defaultViewWorld())
 		if err != nil {
 			http.Error(w, "View error: "+err.Error(), http.StatusBadRequest)
@@ -728,6 +674,9 @@ func (h *commandHandler) buildCommandInput(
 // would let `<img src=/api/command/X>` invoke them cross-origin from any
 // browser tab, bypassing same-origin policy entirely.
 //
+// It is the authorization boundary: an unauthorized command gets 403, since
+// command names are public config.
+//
 //nolint:funlen // dispatches over every command context and argument shape inline; each branch is one command variant, and extracting them would fragment the request lifecycle.
 //archplan:auth=authz
 func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Request) {
@@ -744,10 +693,6 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Authorization boundary (TKT-MJ02AO). resolveCommands already hides
-	// unauthorized commands from the UI, but that is presentation: this is the
-	// check that actually holds. 403 rather than 404 — the command's existence
-	// is already public via config, so there is no oracle to protect.
 	if authz := h.authorizer(); !authz.Authorize(r.Context(), cmd) {
 		if off, isOff := authz.(commandRefusal); isOff {
 			errType, detail := off.refusal()
@@ -763,16 +708,8 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 		execID = fmt.Sprintf("cmd-%d", time.Now().UnixNano())
 	}
 
-	// A SECOND, server-minted key for this run, used only to group its download
-	// tokens. Deliberately not execID: that one is client-supplied (it has to
-	// be, so the client can address /api/command-cancel/), and a caller who
-	// reuses another run's id would otherwise reach into that run's token group
-	// and start its expiry clock early. This is the same hazard runningCommands
-	// records an `owner` for (RR-YZV7SY); here there is nothing to authorize
-	// against, so the key is simply not the client's to name.
 	runKey := newRunKey()
 
-	// Build stdin JSON based on context.
 	input, ok := h.buildCommandInput(w, r, s, cmd, commandID)
 	if !ok {
 		return
@@ -785,17 +722,11 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Set up SSE response. Flusher is optional — the desktop shell's asset
-	// server on macOS/Linux delivers each Write() immediately without needing Flush().
 	flusher, _ := w.(http.Flusher)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// Start the script. Use r.Context() so a client disconnect triggers cancel,
-	// but mirror handleCommandCancel's SIGINT+3s-grace contract so scripts that
-	// catch SIGINT (e.g., to flush output or commit a transaction) still get
-	// the chance rather than being SIGKILLed outright.
 	// #nosec G702 -- cmd.Script is operator-authored: it comes from the
 	// `commands:` map in the project's data-entry.yaml (dataentryconfig),
 	// selected by name via commandID. The request may only choose a
@@ -834,18 +765,13 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Register for cancellation, bound to the starting principal so only they
-	// can cancel it (RR-YZV7SY).
 	runningCommands.Store(execID, &runningCommand{
 		cmd:   proc,
 		owner: principal.From(r.Context()),
 	})
 	defer runningCommands.Delete(execID)
-	// Start the download tokens' expiry clock when the run ends. Not a delete:
-	// the user clicks Download after the file is reported (TKT-93FUCV).
 	defer h.files.release(runKey)
 
-	// Capture stderr in background.
 	var stderrBuf strings.Builder
 	stderrDone := make(chan struct{})
 	go func() {
@@ -857,7 +783,6 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 		}
 	}()
 
-	// Stream stdout as SSE events.
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -869,7 +794,6 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 		writeSSEEvent(w, flusher, msg.Type, string(data))
 	}
 
-	// Wait for stderr goroutine and process to finish.
 	<-stderrDone
 	waitErr := proc.Wait()
 
@@ -908,23 +832,15 @@ func (h *commandHandler) handleCommandCancel(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Only the principal that started the command may cancel it (RR-YZV7SY).
-	// execID is client-supplied and the registry is process-global, so without
-	// this a caller who guessed an id could kill another user's run — including
-	// a caller whose own exec attempts are being 403'd. Answer 404, identical
-	// to an unknown id, so cancel cannot be used to probe which commands are
-	// currently running under other principals.
 	if !rc.owner.Equal(principal.From(r.Context())) {
 		http.Error(w, "No running command: "+execID, http.StatusNotFound)
 		return
 	}
 
-	// Send SIGINT for graceful shutdown.
 	if rc.cmd.Process != nil {
 		_ = rc.cmd.Process.Signal(syscall.SIGINT)
 	}
 
-	// Wait briefly, then force kill.
 	go func() {
 		time.Sleep(cancelGrace)
 		if rc.cmd.Process != nil {
@@ -935,25 +851,11 @@ func (h *commandHandler) handleCommandCancel(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusOK)
 }
 
-// mintFileToken converts a `file` message from a script into one the browser
-// can act on: the raw server path is replaced by an opaque download token.
-//
-// Two things happen here, both load-bearing (TKT-93FUCV):
-//
-//   - The path is containment-checked ONCE, now, while the project root is in
-//     hand. Everything downstream works from the resolved path stored under the
-//     token, so no later step re-derives a path from anything a client said.
-//   - The token is bound to cmd, the command this run executed, so the download
-//     can re-authorize the same way exec did.
-//
-// A path that fails containment (or does not exist) yields a file message with
-// no token. The UI renders the label without a Download button, which is the
-// honest outcome: the script named something we will not serve. It is NOT an
-// error event — a script writing a file outside the project is misconfigured,
-// not failed, and failing the whole run would be a worse trade.
-//
-// The server path is dropped either way. It is meaningless to a remote user and
-// naming it in the payload is how the old launcher grew its arbitrary-path hole.
+// mintFileToken replaces a script `file` message's server path with an opaque
+// download token. The path is containment-checked once, here, and the token is
+// bound to cmd so the download re-authorizes as exec did. A path that fails
+// containment or does not exist yields a message with no token, not an error.
+// The server path is always dropped from the payload.
 func (h *commandHandler) mintFileToken(
 	runKey, commandID string, cmd CommandConfig, msg CommandMessage,
 ) CommandMessage {
@@ -969,12 +871,6 @@ func (h *commandHandler) mintFileToken(
 		return CommandMessage{Type: msg.Type, Label: label}
 	}
 
-	// Regular files only. Containment proves WHERE the path is, not WHAT it is,
-	// and a directory opens successfully — so without this a directory would
-	// mint a token, commit the download headers, and then fail the copy, giving
-	// the user a 200 and an empty file. Checked here rather than at download so
-	// the operator gets the same warning as any other unusable path, and the
-	// download path stays a straight read.
 	info, err := os.Stat(resolved.abs)
 	if err != nil || !info.Mode().IsRegular() {
 		slog.Warn("dataentry: command file is not a regular file",
@@ -984,9 +880,6 @@ func (h *commandHandler) mintFileToken(
 
 	token, err := h.files.mint(runKey, resolved, label, cmd)
 	if err != nil {
-		// Only reachable if crypto/rand fails, which means the process is in
-		// serious trouble — Error, not Warn. The cases above are operator
-		// misconfiguration; this one is not.
 		slog.Error("dataentry: minting command file token failed",
 			"err", err, "command", commandID, "run", runKey)
 		return CommandMessage{Type: msg.Type, Label: label}
@@ -995,26 +888,10 @@ func (h *commandHandler) mintFileToken(
 }
 
 // handleCommandFile handles GET /api/command-file/{token}, streaming a file a
-// command run produced.
-//
-// This replaced POST /api/open-file, which ran an OS launcher (open/xdg-open/
-// explorer) on the SERVER. That was incoherent anywhere but a desktop install:
-// on a headless deployment it silently no-opped, and had it worked it would
-// have opened the file on the server rather than for the user who asked.
-//
-// The authorization model is the point of the route, not an addition to it:
-//
-//   - The caller presents a TOKEN, never a path. A path parameter would be the
-//     same arbitrary-server-read the launcher was, in a politer wrapper.
-//   - Holding the token is not enough. The wired authorizer re-runs on every
-//     download, so a token stops working as soon as the grant that minted it
-//     goes away — a revoked permission, a policy the authorizer now denies.
-//     Validating only at mint time would let the capability outlive the policy.
-//
-// Unknown, expired and unauthorized all return 404, matching the attachment
-// handler's convention that hidden and nonexistent are indistinguishable. A 403
-// here would confirm that a token is real and names a file, to a caller who may
-// not have it.
+// command run produced. The caller presents a token, never a path. The wired
+// authorizer re-runs on every download, so a token stops working once its grant
+// goes away. Unknown, expired and unauthorized all return 404, so a probe cannot
+// confirm that a token is real.
 //
 //archplan:auth=authz
 func (h *commandHandler) handleCommandFile(w http.ResponseWriter, r *http.Request) {
@@ -1030,7 +907,6 @@ func (h *commandHandler) handleCommandFile(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// The re-check. Same authorizer, same config the run was authorized with.
 	if !h.authorizer().Authorize(r.Context(), entry.cmd) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -1038,8 +914,6 @@ func (h *commandHandler) handleCommandFile(w http.ResponseWriter, r *http.Reques
 
 	f, err := os.Open(entry.path.abs)
 	if err != nil {
-		// The script may have cleaned up after itself, or written to a temp
-		// location that has since gone. Don't echo the path or the OS error.
 		slog.Warn("dataentry: opening command file failed", "err", err)
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -1047,14 +921,9 @@ func (h *commandHandler) handleCommandFile(w http.ResponseWriter, r *http.Reques
 	defer f.Close()
 
 	setHardenedDownloadHeaders(w.Header(), contentTypeForFilename(entry.label), entry.label)
-	// no-store is set here rather than in the shared helper because the three
-	// download endpoints genuinely differ: attachments are stable stored
-	// content and set no Cache-Control at all, while these bytes and an
-	// export's are produced per request. Same line, same reason, as export.go.
 	w.Header().Set("Cache-Control", "no-store")
 
 	if _, err := io.Copy(w, f); err != nil {
-		// Headers are already written; the status can't change now.
 		slog.Warn("dataentry: streaming command file failed", "err", err)
 	}
 }
@@ -1071,16 +940,9 @@ var errPathNotFound = errors.New("path not found")
 
 // containedProjectPath cleans, resolves, and validates that filePath lives
 // inside projectRoot. The returned path is absolute and symlink-resolved.
-//
-// A TOCTOU window remains, and TKT-93FUCV widened it: the check runs when a
-// download token is minted, but the file is opened later, when someone clicks
-// Download. An attacker with local write access to the project directory could
-// swap a contained path for a symlink in between. The local filesystem is the
-// trust boundary here — someone who can write into the project root can also
-// edit the `commands:` config that decides what runs at all — so this is
-// accepted rather than mitigated. Closing it would mean holding an open file
-// descriptor from mint to download, which means holding one per emitted file
-// for the token's whole lifetime.
+// A TOCTOU window remains between token mint and download. It is accepted: the
+// local filesystem is the trust boundary, and whoever can write the project root
+// can also edit the `commands:` config.
 func containedProjectPath(projectRoot, filePath string) (string, error) {
 	if strings.ContainsRune(filePath, 0) {
 		return "", errPathOutsideProject
@@ -1106,12 +968,6 @@ func containedProjectPath(projectRoot, filePath string) (string, error) {
 
 	resolved, err := filepath.EvalSymlinks(abs)
 	if err != nil {
-		// Path does not exist (or contains a broken symlink). Distinguish
-		// "not found inside project" from "outside project" so the handler
-		// can return 404 vs 403. Verify the unresolved abs path is at
-		// least structurally inside the project root before reporting it
-		// as a 404; otherwise it's a traversal attempt against a
-		// non-existent file.
 		insideProject := abs == rootResolved ||
 			strings.HasPrefix(abs, rootResolved+string(os.PathSeparator)) ||
 			abs == rootAbs ||
@@ -1131,26 +987,14 @@ func containedProjectPath(projectRoot, filePath string) (string, error) {
 	return "", errPathOutsideProject
 }
 
+// It never passes the token key, the database DSN or a remote credential.
 func (h *commandHandler) buildCommandEnv(cmd CommandConfig, input *commandInput) []string {
-	// Never the token key, the database DSN or a remote credential; see
-	// cmdexec.Environ.
 	env := cmdexec.Environ()
 	env = append(env,
 		"RELA_PROJECT_ROOT="+h.projectRoot(),
 		"RELA_CONTEXT="+cmd.Context,
 	)
 	if input.Entity != nil {
-		// The face is a SEPARATE variable, and RELA_ENTITY_ID stays bare
-		// (BUG-G2BASF). A script that does not know about faces keeps
-		// working unchanged, and one that does can address the row it was
-		// actually invoked on without parsing an address out of the id.
-		//
-		// RELA_ENTITY_REF is what `rela update` and the HTTP API accept, so
-		// a face-aware script writes back to the face it read. Built with
-		// [entity.FormatStateRef], the inverse of the ParseStateRef the
-		// handler above uses, so the two spellings of an address cannot
-		// drift apart here. Both are always SET — an unset variable and an
-		// empty one are different things to a shell.
 		env = append(env,
 			"RELA_ENTITY_ID="+input.Entity.ID,
 			"RELA_ENTITY_TYPE="+input.Entity.Type,

@@ -104,16 +104,11 @@ func (ar attachRenderer) AttachRender(ctx context.Context, req lua.AttachRenderR
 		return lua.AttachedFile{}, err
 	}
 
-	// The write is checked before the render, so a principal who may not
-	// write the property cannot make the server run a render.
 	target, err := scriptWriteTarget(ctx, ar.a, s, opAttachRender, req.Entity, req.Property)
 	if err != nil {
 		return lua.AttachedFile{}, err
 	}
 
-	// The upload slot is taken before the render, as the HTTP upload takes
-	// it before reading the body: the rendered bytes are held in memory, and
-	// the slot bounds how many such buffers exist at once.
 	release, admitted := ar.a.attachments.uploads.TryAcquire()
 	if !admitted {
 		return lua.AttachedFile{}, errors.New("attach_render: too many uploads in progress; retry later")
@@ -134,8 +129,6 @@ func (ar attachRenderer) AttachRender(ctx context.Context, req lua.AttachRenderR
 		return lua.AttachedFile{}, err
 	}
 	source += fmt.Sprintf(" format=%q", req.Format)
-	// The subject names the face, so a faced type records which face got
-	// the file.
 	ar.a.auditSink.Record(audit.AttachRendered(ctx, target.Type, target.ID, target.Face.String(), req.Property,
 		written.FileName, written.SHA256, written.Size, source))
 	return lua.AttachedFile{
@@ -200,7 +193,6 @@ func renderFileName(name, format, produces string) (string, error) {
 // type. want is not empty.
 func fileNameWithExtension(name string, want []string) (string, bool) {
 	ext := strings.ToLower(filepath.Ext(name))
-	// A suffix no type claims is part of the name, as in `audit-v1.2`.
 	if ext == "" || (!slices.Contains(want, ext) && mime.TypeByExtension(ext) == "") {
 		return name + want[0], true
 	}
@@ -307,8 +299,6 @@ func describeWriteRefusal(op, addr, property string, err error) error {
 	)
 	switch {
 	case errors.Is(err, errWriteTargetNotFound):
-		// One message for a missing entity, a hidden one and a property it
-		// does not have or the caller cannot see.
 		return fmt.Errorf("%s: entity %q or its file property %q not found", op, addr, property)
 	case errors.As(err, &amb):
 		return fmt.Errorf("%s: %w", op, amb)
@@ -345,9 +335,6 @@ func (ar attachRenderer) renderer(
 	if !ok {
 		return nil, "", fmt.Errorf("attach_render: unknown document %q", req.Document)
 	}
-	// An elevated document reads past the caller's ACL. Its output would
-	// outlive the request as a file anyone who reads the entity can
-	// download, so it is not attached.
 	if docCfg.AllowACLBypass.Enabled() {
 		return nil, "", fmt.Errorf("attach_render: document %q reads with elevated privileges and cannot be attached",
 			req.Document)
@@ -459,8 +446,6 @@ func storeScriptFile(
 	case errors.As(err, &fe):
 		return nil, fmt.Errorf("%s: permission denied to update %q: %s", op, target.ID, fe.Decision.Reason)
 	case errors.Is(err, store.ErrNotFound):
-		// Deleted between the check and the write: the same message as any
-		// other missing target.
 		return nil, describeWriteRefusal(op, target.Ref().String(), property, errWriteTargetNotFound)
 	default:
 		slog.Warn("script attach: write failed", "binding", op, "err", err)

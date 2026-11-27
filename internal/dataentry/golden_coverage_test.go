@@ -249,6 +249,9 @@ var goldenUnsweptRoutes = map[string]string{
 // record although the route answers them, with the reason. A method of "*"
 // exempts every method of the pattern.
 var goldenMethodExemptions = map[string]string{
+	// The golden project declares no `assign:`, so every request answers the
+	// config 404; assign_handler_test.go covers the endpoint.
+	"* /api/v1/_assign":                      "no assign in the golden project; covered by assign_handler_test.go",
 	"* /api/git/status":                      exemptGit,
 	"* /api/git/sync":                        exemptGit,
 	"* /api/v1/_git/status":                  exemptGit,

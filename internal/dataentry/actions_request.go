@@ -55,18 +55,12 @@ type actionPayload struct {
 }
 
 // readActionPayload reads the request body under the action's cap and projects
-// exactly what the action's `request:` block opted into.
+// what the action's `request:` block opted into. It reads limit+1 bytes so an
+// oversized body is detected, not truncated.
 //
-// The cap is read at limit+1 bytes so an oversized body is DETECTED rather than
-// truncated (the readWebhookPayload reasoning: truncated JSON usually fails to
-// parse, but truncated form data parses fine and would have the script act on
-// quietly-wrong values).
-//
-// A body that does not parse is NOT an error for a request-scoped action: the
-// script may legitimately expect a text or vendor payload, and only it knows.
-// It gets Raw with Body left nil. The pre-existing NON-request-scoped path
-// keeps its 400 on malformed JSON, because there the body's only purpose is to
-// carry entity_id and a caller who sent garbage got nothing they asked for.
+// For a request-scoped action an unparseable body is not an error: the script
+// gets Raw with Body nil. The non-request-scoped path keeps its 400 on
+// malformed JSON.
 func readActionPayload(r *http.Request, action dataentryconfig.Action) (actionPayload, error) {
 	limit := DefaultActionMaxBodyBytes
 	if action.Request != nil && action.Request.MaxBodyBytes > 0 {
@@ -90,7 +84,6 @@ func readActionPayload(r *http.Request, action dataentryconfig.Action) (actionPa
 		if err := json.Unmarshal(raw, &body); err != nil {
 			body = nil
 			if action.Request == nil {
-				// Legacy shape: the body exists only to carry entity_id.
 				return actionPayload{}, err
 			}
 		}
@@ -145,26 +138,14 @@ func stringField(m map[string]any, key string) string {
 	return s
 }
 
-// writeActionResponse serves a script's return value.
+// writeActionResponse serves a script's return value: the SPA envelope
+// (redirect/message/message_type) by default, or the rich shape with the
+// script's status, body and content type when IsRich.
 //
-// Two shapes, discriminated by script.ActionResponse.IsRich:
-//
-//   - the SPA envelope (redirect/message/message_type), unchanged, still the
-//     default so every existing action keeps working byte for byte;
-//   - the rich shape, served with the script's status, body and content type.
-//
-// The rich body is HARDENED like an attachment or an export download, because
-// it is exactly the same kind of output: attacker-influenceable bytes served
-// same-origin with the SPA. nosniff pins the (allowlisted) declared type so a
-// browser cannot re-interpret a text/plain body as HTML; the sandbox CSP
-// neutralizes active content if it ever does; no-store keeps a response that
-// may name entity ids out of shared caches.
-//
-// There is deliberately NO Content-Disposition: unlike an export this is an API
-// response a producer reads programmatically, and an attachment disposition
-// would break every non-browser consumer. The CSP and nosniff are what carry
-// the safety, and the content-type allowlist (script.validActionContentTypes)
-// is what keeps an active type off this surface in the first place.
+// The rich body is attacker-influenceable and served same-origin, so it gets
+// nosniff, a sandbox CSP and no-store, like an export. It has no
+// Content-Disposition because programmatic consumers read it; the
+// content-type allowlist keeps active types off this surface.
 func writeActionResponse(w http.ResponseWriter, resp *script.ActionResponse) {
 	empty := resp == nil || (!resp.IsRich() && resp.Redirect == "" && resp.Message == "" &&
 		resp.Proposal == nil && resp.Batch == nil)

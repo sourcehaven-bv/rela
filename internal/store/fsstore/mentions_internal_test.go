@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/fswatch"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -47,7 +48,7 @@ func TestMentions_ExternalEditUpdatesIndex(t *testing.T) {
 	path := "/entities/tickets/T-2.md"
 	write := func(body string) {
 		require.NoError(t, fs.WriteFileExternal(path, []byte("---\nid: T-2\ntype: ticket\n---\n\n"+body+"\n"), 0o644))
-		s.handleExternalEvents([]storage.ChangeEvent{{Path: path, Op: storage.OpModify}})
+		s.handleExternalEvents([]fswatch.Event{{Path: path, Op: fswatch.OpModify}})
 	}
 	write("See `T-1`.")
 	require.Equal(t, []entity.Ref{{ID: "T-2"}}, mentionSources(t, s, "T-1"))

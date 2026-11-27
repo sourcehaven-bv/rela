@@ -223,6 +223,13 @@ export interface RelationType {
   // The target of an edge is part of its source (TKT-QO14GB): it is shown on
   // the source's page and deleted with it.
   owning?: boolean
+  // A scoped relation (TKT-5GK80Q9) may only point to targets owned by the
+  // target of its `within` relation. `on_change` says what a change of that
+  // scope does to a stale edge; `scope_owners` maps each target type to the
+  // owning relation that holds it.
+  within?: string
+  on_change?: 'clear' | 'reject'
+  scope_owners?: Record<string, string>
 }
 
 export interface RelationOrderable {
@@ -246,6 +253,9 @@ export interface CustomType {
   // Optional display labels keyed by value. Display-only; see PropertyDef.labels.
   labels?: Record<string, string>
   default?: string
+  // The declared transition edges, value → values it may move to, for a type
+  // that is a state machine (TKT-M0AT73B). A UI hint.
+  moves?: Record<string, string[]>
 }
 
 export interface SortSpec {

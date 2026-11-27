@@ -117,10 +117,6 @@ func (c *detailActionCheck) whenHolds(ctx context.Context, id string) bool {
 	if m == nil {
 		return false
 	}
-	// A when that reads a hidden property fails closed. On the redacted
-	// entity the property binds as unset, so `entity.x ~= 'y'` would pass on
-	// an entity the operator meant to exclude. Field names are not secret, so
-	// refusing reveals nothing about the value.
 	attrs, ok := m.(entityAttributeReader)
 	if !ok {
 		slog.Warn("dataentry: detail action when does not report its fields; not offering it", "action", id)
@@ -156,8 +152,9 @@ func (c *detailActionCheck) matcher(id string) ViewConditionMatcher {
 }
 
 // actionConditionLookup compiles the snapshot's conditions for judging an
-// action's when. Nil, logged, when no compiler is wired or a condition does
-// not compile; a caller treats that as "when does not hold".
+// action's when. Nil, logged, when no compiler is wired. An action whose when
+// did not compile is absent from the lookup; a caller treats a missing
+// matcher as "when does not hold".
 func (svc affordanceService) actionConditionLookup(s *Schema, id string) ViewConditionLookup {
 	var compile ViewConditionFunc
 	if svc.actionConditions != nil {
@@ -168,12 +165,7 @@ func (svc affordanceService) actionConditionLookup(s *Schema, id string) ViewCon
 			"action", id)
 		return nil
 	}
-	lookup, problems := compile(s.Cfg, s.Meta)
-	if len(problems) > 0 {
-		slog.Warn("dataentry: conditions did not compile; not offering actions with a when",
-			"problems", problems)
-		return nil
-	}
+	lookup, _ := compile(s.Cfg, s.Meta)
 	return lookup
 }
 

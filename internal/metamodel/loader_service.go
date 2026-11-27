@@ -6,6 +6,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/fswatch"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -34,18 +35,26 @@ type Subscriber interface {
 	Subscribe(ctx context.Context, onChange func()) (stop func(), err error)
 }
 
-// FSLoader loads a metamodel from a file on the given filesystem. It
-// performs a migration-detection pre-check: if the file uses deprecated
-// syntax the current code can't safely interpret, Load returns a
-// *migration.Error telling the user to run `rela migrate`.
+// FSLoader loads a metamodel from a file on the given filesystem. Deprecated
+// syntax in the root file is read through [migration.MigrateBytes] with a
+// warning, or refused with a *migration.Error by a [NewStrictFSLoader].
+// A migration that spans files is refused in both modes.
 type FSLoader struct {
-	fs   storage.FS
-	path string
+	fs     storage.FS
+	path   string
+	strict bool
 }
 
-// NewFSLoader constructs a filesystem-backed metamodel loader.
+// NewFSLoader constructs a filesystem-backed metamodel loader that reads
+// deprecated syntax through in-memory migrations and logs a warning.
 func NewFSLoader(fs storage.FS, path string) *FSLoader {
 	return &FSLoader{fs: fs, path: path}
+}
+
+// NewStrictFSLoader constructs a loader that refuses deprecated syntax with
+// a *migration.Error, as `rela validate` must.
+func NewStrictFSLoader(fs storage.FS, path string) *FSLoader {
+	return &FSLoader{fs: fs, path: path, strict: true}
 }
 
 var (
@@ -53,28 +62,44 @@ var (
 	_ Subscriber = (*FSLoader)(nil)
 )
 
-// Load runs migration detection and then parses the metamodel. Includes
-// are resolved recursively; the returned file list covers the main file
-// plus every included file.
+// Load migrates or refuses deprecated syntax in the root file, then parses
+// the metamodel. Includes are resolved recursively; the returned file list
+// covers the main file plus every included file.
 func (l *FSLoader) Load(_ context.Context) (*Metamodel, []string, error) {
-	detections, err := migration.Detect(l.path, migration.FileTypeMetamodel, l.fs)
+	data, err := l.fs.ReadFile(l.path)
 	if err != nil {
 		return nil, nil, err
 	}
-	if blocking := migration.Blocking(detections); len(blocking) > 0 {
-		return nil, nil, &migration.Error{
-			FilePath:   l.path,
-			Detections: blocking,
-		}
-	}
-	m, files, err := Load(l.path, l.fs)
+	migrated, err := l.migrate(data)
 	if err != nil {
 		return nil, nil, err
+	}
+	m, files, err := loadData(l.path, migrated.Data, l.fs)
+	if err != nil {
+		return nil, nil, migrated.Explain(err)
 	}
 	if err := l.checkIncludesMoved(files); err != nil {
 		return nil, nil, err
 	}
 	return m, files, nil
+}
+
+// migrate returns the root content to parse: data itself in strict mode,
+// which refuses any blocking detection, and otherwise the in-memory
+// migration of data, with its warning logged.
+func (l *FSLoader) migrate(data []byte) (migration.Migrated, error) {
+	if l.strict {
+		if blocking := migration.Blocking(migration.DetectBytes(data, migration.FileTypeMetamodel)); len(blocking) > 0 {
+			return migration.Migrated{}, &migration.Error{FilePath: l.path, Detections: blocking}
+		}
+		return migration.Migrated{Data: data}, nil
+	}
+	migrated, err := migration.MigrateBytes(l.path, data, migration.FileTypeMetamodel, nil)
+	if err != nil {
+		return migration.Migrated{}, err
+	}
+	migration.WarnApplied(l.path, migrated.Applied)
+	return migrated, nil
 }
 
 // checkIncludesMoved refuses an included file that still declares
@@ -123,8 +148,8 @@ func refuseAutomations(path string, data []byte) error {
 func (l *FSLoader) Subscribe(_ context.Context, onChange func()) (func(), error) {
 	files := l.resolveFiles()
 
-	var watcher *storage.Watcher
-	w, err := storage.NewWatcher(storage.WatchConfig{
+	var watcher *fswatch.Watcher
+	w, err := fswatch.New(fswatch.Config{
 		Files:      files,
 		Extensions: []string{".yaml", ".yml"},
 		Debounce:   200 * time.Millisecond,
@@ -132,7 +157,7 @@ func (l *FSLoader) Subscribe(_ context.Context, onChange func()) (func(), error)
 		// coverage-ignore-start: os-fs-event: OnChange fires only on a real debounced file-watcher event, not
 		// reachable deterministically in
 		// a unit test
-		OnChange: func(_ []storage.ChangeEvent) {
+		OnChange: func(_ []fswatch.Event) {
 			onChange()
 			// Include set may have changed — add any new files we
 			// aren't already watching. Removal is tolerated silently;
@@ -144,7 +169,7 @@ func (l *FSLoader) Subscribe(_ context.Context, onChange func()) (func(), error)
 		},
 		// coverage-ignore-end
 	})
-	if err != nil { // coverage-ignore: defensive: storage.NewWatcher does not fail for a valid config over existing
+	if err != nil { // coverage-ignore: defensive: fswatch.New does not fail for a valid config over existing
 		// files; the failure path is not reachable in tests
 		return nil, err
 	}

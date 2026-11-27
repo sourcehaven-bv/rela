@@ -287,6 +287,30 @@ func TestCompat_NoColorSchemeMetaTag(t *testing.T) {
 	}
 }
 
+// TestCompat_CardIsFluid pins that the card shrinks to a phone's width. A
+// fixed 600px table is a minimum width in most clients, so the page grew past
+// a 375px screen and the client zoomed out. Only the mso wrapper, which
+// Outlook Windows alone reads, may fix the width.
+func TestCompat_CardIsFluid(t *testing.T) {
+	t.Parallel()
+
+	html := compatSample(t)
+	card := regexp.MustCompile(`<table class="card"[^>]*>`).FindString(html)
+	require.NotEmpty(t, card, "no card table in the output")
+	require.Contains(t, card, `width="100%"`)
+	require.Contains(t, card, "max-width: 600px")
+	require.Contains(t, card, "width: 100%")
+
+	_, body, found := strings.Cut(html, "</style>")
+	require.True(t, found, "no </style> in the output")
+	body = regexp.MustCompile(`(?s)<!--\[if mso\]>.*?<!\[endif\]-->`).ReplaceAllString(body, "")
+	require.NotRegexp(t, `width="600"|[^-]width: 600px`, body,
+		"a fixed 600px width outside the mso wrapper keeps the card from shrinking on a phone")
+
+	require.Contains(t, html, "@media only screen and (max-width: 480px)",
+		"the narrow-screen padding rules must survive inlining in <head>")
+}
+
 // TestCompat_DarkModeBlockSurvivesInlining pins that the @media block reaches
 // the recipient.
 //

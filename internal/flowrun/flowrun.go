@@ -161,6 +161,26 @@ type Pending struct {
 	// Job is the attempt of the state's job step, once its outputs are
 	// written; nil before that and in a state without a job.
 	Job *JobAttempt `json:"job,omitempty"`
+	// Change is a `change` event that a write decided while the state
+	// was settling; nil when none did. The run takes it once the state's
+	// outputs and job are done and no `done` branch applies.
+	Change *DeferredChange `json:"change,omitempty"`
+}
+
+// MaxEventBranches caps [DeferredChange.Branch]: the branches of one
+// event in flows.yaml.
+const MaxEventBranches = 16
+
+// DeferredChange is the `change` branch a write chose for a state that
+// was still settling. The first write that chooses one wins.
+type DeferredChange struct {
+	// Branch is the index of the branch among the state's `change`
+	// branches, in the definition the run follows.
+	Branch int `json:"branch"`
+	// By is the principal whose write chose it.
+	By string `json:"by,omitempty"`
+	// At is when the write chose it.
+	At time.Time `json:"at"`
 }
 
 // JobPhase is where a job attempt is.
@@ -559,6 +579,11 @@ func checkPending(p *Pending) error {
 
 		return invalid("pending mark out of range")
 	}
+	if c := p.Change; c != nil && (c.Branch < 0 || c.Branch >= MaxEventBranches || len(c.By) > MaxClaimBy ||
+		!afterEpoch(c.At)) {
+
+		return invalid("deferred change out of range")
+	}
 	return checkJob(p.Job)
 }
 
@@ -893,6 +918,11 @@ func copyPending(p *Pending) *Pending {
 		j.QueuedAt, j.Deadline = flow.NormTime(j.QueuedAt), flow.NormTime(j.Deadline)
 		j.StartedAt, j.NextAt = flow.NormTime(j.StartedAt), flow.NormTime(j.NextAt)
 		cp.Job = &j
+	}
+	if p.Change != nil {
+		c := *p.Change
+		c.At = flow.NormTime(c.At)
+		cp.Change = &c
 	}
 	return &cp
 }

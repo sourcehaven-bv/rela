@@ -93,7 +93,6 @@ func (h *schemaHandler) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		Types:      make(map[string]v1.CustomType),
 		Worlds:     schemaWorlds(r.Context(), s.Meta),
 		WorldOrder: metamodel.WorldOrderOf(s.Meta),
-		// Fixed when the app is wired (TKT-ZMPDZ3R).
 		Capabilities: v1.Capabilities{
 			AtomicBatch: store.TxRollsBack(st),
 			AsOf:        store.SupportsReadInstant(st),
@@ -124,6 +123,16 @@ func (h *schemaHandler) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		}
 		if def.Scope.IsContent() {
 			rt.Scope = "content"
+		}
+		if def.Within != "" {
+			rt.Within = def.Within
+			rt.OnChange = string(def.OnChange)
+			rt.ScopeOwners = make(map[string]string, len(def.To))
+			for _, to := range def.To {
+				if owner, ok := metamodel.ScopeOwner(s.Meta, name, to); ok {
+					rt.ScopeOwners[to] = owner
+				}
+			}
 		}
 		if len(def.Properties) > 0 {
 			rt.Properties = make(map[string]v1.PropertyDef, len(def.Properties))
@@ -156,7 +165,6 @@ func (h *schemaHandler) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Requ
 
 	switch {
 	case path == "types":
-		// List entity type names
 		names := make([]string, 0, len(s.Meta.Entities))
 		for name := range s.Meta.Entities {
 			names = append(names, name)
@@ -165,7 +173,6 @@ func (h *schemaHandler) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Requ
 		writeV1JSON(w, http.StatusOK, names)
 
 	case strings.HasPrefix(path, "types/"):
-		// Get specific entity type
 		typeName := strings.TrimPrefix(path, "types/")
 		def, ok := s.Meta.Entities[typeName]
 		if !ok {
@@ -190,18 +197,12 @@ func (h *schemaHandler) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Requ
 }
 
 // resolveFormRelations returns a copy of rels with server-derived defaults
-// filled in, for both the flat and wizard-step relation lists in handleV1Config.
-//
-// Widget: an empty Widget becomes "cards" when the relation type has edge
-// properties/content.
-//
-// Direction: an absent `direction:` is inferred from the metamodel — the SPA
-// widgets test `direction === 'incoming'` literally (RelationCards.vue,
-// RelationPicker.vue), so the inference MUST happen here rather than in the
-// browser, or a to-side binding would validate clean on the server and still
-// render the wrong side. Resolving once on the way out keeps the two consumers
-// agreeing by construction. The ambiguous case (entity type on both sides) is
-// rejected by ValidateConfig at load, so it cannot reach this point.
+// filled in, for the flat and wizard-step relation lists in handleV1Config.
+// An empty Widget becomes "cards" when the relation type has edge
+// properties or content. An absent `direction:` is inferred from the
+// metamodel here, not in the browser, because the SPA widgets test
+// `direction === 'incoming'` literally. The ambiguous case is rejected by
+// ValidateConfig at load.
 func resolveFormRelations(
 	s *Schema, entityType string, rels []dataentryconfig.FormRelation,
 ) []dataentryconfig.FormRelation {
@@ -242,15 +243,9 @@ func resolveConfigDirection(
 	case dataentryconfig.DirectionResolved:
 		return inferred
 	case dataentryconfig.DirectionAmbiguous:
-		// ValidateConfig rejects an ambiguous binding at load, so the app
-		// should not have started. Reaching here means that gate was bypassed;
-		// say so rather than silently picking a side.
 		slog.Warn("relation binding direction is ambiguous but reached the config handler; serving outgoing",
 			"entity_type", entityType, "relation", relation)
 	case dataentryconfig.DirectionNoSide, dataentryconfig.DirectionUnknown:
-		// A wrong-side or unreadable binding — both already reported by
-		// validation. Serve the historical reading rather than inventing one;
-		// the SPA needs a non-empty value either way.
 	}
 	return dataentryconfig.DirectionOutgoing
 }
@@ -334,8 +329,6 @@ func resolveCalendarDirections(
 	out := make(map[string]dataentryconfig.Calendar, len(calendars))
 	for id, calendar := range calendars {
 		c := calendar
-		// A field's direction depends on the type it hangs off, so resolve
-		// against the first source that actually declares the relation.
 		if len(c.Event.Fields) > 0 {
 			fields := make([]dataentryconfig.KanbanCardField, len(c.Event.Fields))
 			copy(fields, c.Event.Fields)
@@ -416,8 +409,6 @@ func (h *schemaHandler) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	}
 	s := h.schema()
 	collab := h.collab()
-	// Resolve relation widgets: auto-detect "cards" for relations with
-	// properties/content, for both single-page (flat) and wizard (step) forms.
 	forms := make(map[string]dataentryconfig.Form, len(s.Cfg.Forms))
 	for id, form := range s.Cfg.Forms {
 		f := form
@@ -439,16 +430,16 @@ func (h *schemaHandler) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		App: v1.AppConfig{
 			Name:              s.Cfg.App.Name,
 			Description:       s.Cfg.App.Description,
+			QuickEntry:        s.Cfg.QuickEntry,
 			Language:          s.Cfg.App.Language,
+			Languages:         s.Cfg.App.Languages,
 			PlantUMLServerURL: s.Cfg.App.PlantUMLServerURL,
 			DefaultWorld:      declaredDefaultWorld(s.Meta),
 			WorldSwitcher:     worldSwitcherWire(s.Cfg.App.WorldSwitcher),
-			// The same nil check the history handler gates on, so the
-			// affordance and the endpoint cannot disagree.
-			HistoryEnabled: h.historyEnabled(),
-			CollabEnabled:  collab != nil,
-			CollabEpoch:    collabEpoch(collab),
-			About:          aboutWire(s.Cfg.App.About),
+			HistoryEnabled:    h.historyEnabled(),
+			CollabEnabled:     collab != nil,
+			CollabEpoch:       collabEpoch(collab),
+			About:             aboutWire(s.Cfg.App.About),
 		},
 		AboutDescription: aboutDescription(s),
 		Styles:           s.StyleMap,
@@ -484,7 +475,7 @@ func (h *schemaHandler) handleV1Templates(w http.ResponseWriter, r *http.Request
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
-	} // Extract entity type from path: /api/v1/_templates/{entityType}
+	}
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_templates/")
 	entityType := strings.TrimSuffix(path, "/")
 
@@ -493,7 +484,6 @@ func (h *schemaHandler) handleV1Templates(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Check if entity type exists
 	meta := h.schema().Meta
 	if _, ok := meta.Entities[entityType]; !ok {
 		writeV1Error(w, r, http.StatusNotFound, "entity_type_not_found",
@@ -541,9 +531,6 @@ func (h *schemaHandler) handleV1OpenAPI(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	// no-cache, not no-store: a client may keep the spec (it is configuration,
-	// not data) but must fetch it again before reuse, since it changes when the
-	// schema is reloaded. There is no validator, so that fetch is a full one.
 	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(data)
 }

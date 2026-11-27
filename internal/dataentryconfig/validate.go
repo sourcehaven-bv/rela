@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/httpscheme"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
@@ -53,6 +54,7 @@ var validTopLevelKeys = map[string]bool{
 	"account":              true,
 	"piles":                true,
 	"channels":             true,
+	"quick_entry":          true,
 	"header_buttons":       true,
 	"entity_panels":        true,
 	"list_buttons":         true,
@@ -121,6 +123,15 @@ var validSectionDisplayModes = map[string]bool{
 	"breakdown":    true,
 	DisplayNested:  true,
 	DisplayRelated: true,
+}
+
+// rowDisplayModes are the section displays whose rows show an entity's type
+// label or ID, the only ones where `hide_type` and `hide_id` mean something.
+var rowDisplayModes = map[string]bool{
+	"list":        true,
+	"cards":       true,
+	"content":     true,
+	DisplayNested: true,
 }
 
 // Valid render modes for a view section and its fields (TKT-HOIX1). Empty is
@@ -412,6 +423,24 @@ func hasCreateForm(cfg *Config, entityType string) bool {
 	return false
 }
 
+// validateSectionHideIdentity refuses `hide_type` and `hide_id` on a section
+// that renders no such label, so the key is never silently dead.
+func validateSectionHideIdentity(viewID string, i int, s ViewSection) []string {
+	if !s.HideType && !s.HideID {
+		return nil
+	}
+	if s.Source == "entry" || !rowDisplayModes[s.Display] {
+		return []string{fmt.Sprintf(
+			"view %q: section[%d] sets hide_type or hide_id, which only apply to a "+
+				"list, cards, content or nested section over a collection", viewID, i)}
+	}
+	if s.HideType && s.Display == DisplayNested {
+		return []string{fmt.Sprintf(
+			"view %q: section[%d] sets hide_type on a nested section, which shows no type label", viewID, i)}
+	}
+	return nil
+}
+
 // validateSectionHideEmpty refuses `hide_empty` (TKT-JT101B) where it contradicts the
 // rest of the section. Each refusal names the conflicting key, because the
 // alternative is a section that silently does one of the two things the
@@ -538,6 +567,8 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateDashboard(cfg, meta)...)
 	errs = append(errs, validateCommands(cfg, meta)...)
 	errs = append(errs, validateActions(cfg, meta)...)
+	errs = append(errs, validateAssigns(cfg, meta)...)
+	errs = append(errs, validateQuickEntry(cfg)...)
 	errs = append(errs, validateWebhooks(cfg, meta)...)
 	errs = append(errs, validateApp(cfg, meta)...)
 	errs = append(errs, validateDocuments(cfg)...)
@@ -862,6 +893,11 @@ func validateSidePanelSections(formID string, panel *SidePanelConfig) []string {
 				"form %q: side_panel section[%d] sets hide_empty, which a side panel does not support",
 				formID, i))
 		}
+		if sec.HideType || sec.HideID {
+			errs = append(errs, fmt.Sprintf(
+				"form %q: side_panel section[%d] sets hide_type or hide_id, which a side panel does not support",
+				formID, i))
+		}
 		if sec.Permission != "" {
 			errs = append(errs, fmt.Sprintf(
 				"form %q: side_panel section[%d] sets permission, which a side panel does not support",
@@ -936,6 +972,22 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 	return errs
 }
 
+// deprecatedSelectWidget refuses an explicit `widget: select` or `widget:
+// multi-select` on a form property field. The form derives both from the
+// schema, so the line can only agree with the derived control or contradict
+// it. The message says which line to remove and what the form shows instead.
+// A relation's `widget:` is a real choice and is not checked here.
+func deprecatedSelectWidget(formID, ctx string, i int, f FormField) []string {
+	if f.Widget != WidgetSelect && f.Widget != WidgetMultiSelect {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"form %q: %sfield[%d] property %q: \"widget: %s\" is deprecated; "+
+			"remove the \"widget: %s\" line from this field. Without it the form picks the control "+
+			"from the schema: a select for a property with values, a multi-select for a list property",
+		formID, ctx, i, f.Property, f.Widget, f.Widget)}
+}
+
 // validateFormField checks one form field against the metamodel. ctx is an
 // optional location prefix (e.g. "step[0] ") so wizard and flat forms share
 // the rule set while keeping distinct error messages.
@@ -952,6 +1004,7 @@ func validateFormField(
 			"form %q: %sfield[%d] property %q not in metamodel for entity %q",
 			formID, ctx, i, f.Property, entityType))
 	}
+	errs = append(errs, deprecatedSelectWidget(formID, ctx, i, f)...)
 	if len(f.Transitions) > 0 {
 		if propDef, hasProp := entDef.Properties[f.Property]; hasProp {
 			errs = append(errs, validateTransitions(formID, i, f, propDef, meta)...)
@@ -1213,7 +1266,7 @@ func validateEntityViews(cfg *Config, meta *metamodel.Metamodel) []string {
 		// declared — otherwise the error's own advice ("omit the entry") would
 		// tell an operator to delete config that is doing something.
 		if ev.DetailView == "" {
-			if ev.Duplicate == nil && ev.MentionedByPanel == nil {
+			if ev.Duplicate == nil && ev.MentionedByPanel == nil && !ev.MentionedByHideID {
 				errs = append(errs, fmt.Sprintf(
 					"entity_views[%q]: entry declares nothing (omit the entry instead)", entityType))
 			}
@@ -1293,6 +1346,7 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 		busyColumns := 0
 		for i, c := range list.Columns {
 			errs = append(errs, refuseColumnRender(fmt.Sprintf("list %q: column[%d]", listID, i), c)...)
+			errs = append(errs, checkListToggleColumn(listID, i, c, entDef, meta)...)
 			if c.Busy != "" {
 				errs = append(errs, checkListBusyColumn(listID, i, c, busyColumns > 0)...)
 				busyColumns++
@@ -1906,6 +1960,7 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			// wrong regardless of whether its source collection resolves.
 			errs = append(errs, validateSectionCreate(viewID, i, s, view, cfg, meta)...)
 			errs = append(errs, validateSectionHideEmpty(viewID, i, s)...)
+			errs = append(errs, validateSectionHideIdentity(viewID, i, s)...)
 
 			// Spans are checked unconditionally — deliberately NOT inside the
 			// `sourceType != ""` guard below, which only runs when the source
@@ -2576,18 +2631,6 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 		errs = append(errs, validateKanbanQuickAdd(kanbanID, kanban, entDef, meta)...)
 		errs = append(errs, validateKanbanAddColumn(kanbanID, kanban, entDef)...)
 
-		// `condition:` is accepted on the struct (shared with lists) but the
-		// board does not evaluate it yet — it still filters client-side. A
-		// key that validates and then does nothing is precisely the silent
-		// no-op BUG-F1LTV0 and BUG-MYN56J are both about, so refuse it here
-		// until the kanban read path lands. Remove this when it does.
-		if kanban.Condition != "" {
-			errs = append(errs, fmt.Sprintf(
-				"kanban %q: condition is not supported on a kanban yet "+
-					"(the board filters client-side); use it on a list, or filters: here",
-				kanbanID))
-		}
-
 		errs = append(errs, rollupMisuse(fmt.Sprintf("kanban %q", kanbanID), entDef,
 			kanban.Filters, kanban.FilterControls)...)
 		for _, kp := range [][2]string{
@@ -2812,29 +2855,58 @@ var actionIDRegex = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 
 // reservedListKeys are single-character keys already used by useListKeyboard.ts.
 // Action key bindings must not conflict with these.
-var reservedListKeys = map[string]bool{
-	"j": true, "k": true, // navigation
-	"o": true, "e": true, "n": true, // open, edit, new
-	"h": true, "l": true, // pagination
+var reservedListKeys = map[string]string{
+	"j": "move down", "k": "move up",
+	"o": "open", "e": "edit", "n": "new",
+	"h": "previous page", "l": "next page",
 }
+
+// reservedListKeyOrder is the reserved keys in the order the docs list them.
+var reservedListKeyOrder = []string{"j", "k", "o", "e", "n", "h", "l"}
 
 // actionKeyRegex allows a single lowercase letter or digit as a shortcut key.
 var actionKeyRegex = regexp.MustCompile(`^[a-z0-9]$`)
 
 // validateActionKey checks an action's optional shortcut key. A key is only
-// required when a list references the action.
-func validateActionKey(id, key string) []string {
+// required when a list references the action. usedBy names the lists and
+// boards that offer the action, for the message.
+func validateActionKey(id, key string, usedBy []string) []string {
 	switch {
 	case key == "":
 		return nil
 	case !actionKeyRegex.MatchString(key):
 		return []string{fmt.Sprintf(
 			"actions: %q key %q must be a single lowercase letter or digit", id, key)}
-	case reservedListKeys[key]:
-		return []string{fmt.Sprintf(
-			"actions: %q key %q conflicts with reserved list shortcut", id, key)}
 	}
-	return nil
+	meaning, reserved := reservedListKeys[key]
+	if !reserved {
+		return nil
+	}
+	where := ""
+	if len(usedBy) > 0 {
+		where = " and offered by " + strings.Join(usedBy, ", ")
+	}
+	return []string{fmt.Sprintf(
+		"actions: %q declares key %q%s, but %q is a reserved list shortcut (%s); "+
+			"pick a key other than %s", id, key, where, key, meaning, strings.Join(reservedListKeyOrder, ", "))}
+}
+
+// actionUsers names the lists and boards whose `actions:` offer an action,
+// sorted, for a message.
+func actionUsers(cfg *Config, actionID string) []string {
+	var out []string
+	for id, l := range cfg.Lists {
+		if slices.Contains(l.Actions, actionID) {
+			out = append(out, fmt.Sprintf("list %q", id))
+		}
+	}
+	for id, k := range cfg.Kanbans {
+		if slices.Contains(k.Actions, actionID) {
+			out = append(out, fmt.Sprintf("kanban %q", id))
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // validateActionStyle refuses a `style:` other than empty or danger.
@@ -2865,6 +2937,13 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 
 		hasScript := action.Script != ""
 		hasSet := len(action.Set) > 0
+		if action.Assign != "" {
+			if e := assignActionModeError(id, action); e != "" {
+				errs = append(errs, e)
+				continue
+			}
+			hasSet = true // a declarative row write, like set
+		}
 
 		if action.LLM != nil {
 			errs = append(errs, validateLLMAction(id, action, meta)...)
@@ -2900,7 +2979,7 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 		errs = append(errs, validateActionScope(id, action, hasScript, meta)...)
 		errs = append(errs, validateActionElevation(id, action, hasScript, meta)...)
 
-		errs = append(errs, validateActionKey(id, action.Key)...)
+		errs = append(errs, validateActionKey(id, action.Key, actionUsers(cfg, id))...)
 	}
 
 	// Validate list action references
@@ -3281,6 +3360,7 @@ func validateCommandScope(cmdID string, scope CommandScope, cfg *Config, meta *m
 func validateApp(cfg *Config, meta *metamodel.Metamodel) []string {
 	errs := validateDefaultWorldAlias(cfg.App.DefaultWorld, meta)
 	errs = append(errs, validateAppLanguage(cfg.App.Language)...)
+	errs = append(errs, validateAppLanguages(cfg.App.Languages, cfg.App.Language)...)
 	errs = append(errs, validateWorldSwitcher(cfg.App.WorldSwitcher)...)
 	errs = append(errs, validateAbout(cfg.App.About)...)
 	if logo := cfg.App.Logo; logo != "" {
@@ -3312,6 +3392,38 @@ func validateWorldSwitcher(v string) []string {
 // file for, one per frontend/src/i18n/locales/<lang>.json.
 // TestSupportedUILanguagesMatchLocaleFiles keeps the two in step.
 var SupportedUILanguages = []string{"en", "nl"}
+
+// validateAppLanguages checks app.languages: each entry a supported base
+// language in lower case, without a region, listed once. A default language
+// outside the list would show a language the users cannot pick, so
+// app.language must be one of them.
+func validateAppLanguages(langs []string, def string) []string {
+	if len(langs) == 0 {
+		return nil
+	}
+	var errs []string
+	seen := map[string]bool{}
+	for _, l := range langs {
+		switch {
+		case !slices.Contains(SupportedUILanguages, l):
+			errs = append(errs, fmt.Sprintf("app.languages: %q is not a supported interface language; supported: %s",
+				l, strings.Join(SupportedUILanguages, ", ")))
+		case seen[l]:
+			errs = append(errs, fmt.Sprintf("app.languages: %q is listed twice", l))
+		}
+		seen[l] = true
+	}
+	if def != "" {
+		if tag, err := language.Parse(def); err == nil {
+			base, _ := tag.Base()
+			if !seen[base.String()] {
+				errs = append(errs, fmt.Sprintf("app.language: %q is not one of app.languages (%s)",
+					def, strings.Join(langs, ", ")))
+			}
+		}
+	}
+	return errs
+}
 
 // validateAppLanguage checks app.language: a well-formed BCP 47 tag whose
 // base language has a message file. A typo would otherwise fall through to
@@ -3383,7 +3495,7 @@ func validatePlantUMLURL(raw string) []string {
 	switch {
 	case err != nil:
 		return []string{fmt.Sprintf("app.plantuml_server_url: not a valid URL: %v", err)}
-	case u.Scheme != "http" && u.Scheme != "https":
+	case !httpscheme.IsHTTP(u.Scheme):
 		return []string{fmt.Sprintf("app.plantuml_server_url: scheme must be http or https, got %q", u.Scheme)}
 	case u.Host == "":
 		return []string{"app.plantuml_server_url: must include a host"}

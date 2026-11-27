@@ -162,14 +162,6 @@ func viewBodyCollections(sections []ViewSection) viewBodies {
 func (h *viewsHandler) executeViewBodies(
 	ctx context.Context, view ViewConfig, entryRef entity.Ref, w viewWorld, bodies viewBodies,
 ) (*viewResult, error) {
-	// The entry is resolved as the VIEW's type, so a row of another type is
-	// the ordinary not-found. The resolver also row-gates it (BUG-9Z20WH).
-	// Every production caller gated the entry already (the `_views` route,
-	// the form side-panel, the command runner's `kind: view`), so this is
-	// normally the same verdict again. It is kept because executeView is a
-	// SHARED ENGINE reachable via the synthetic ViewConfig in sections.go, and
-	// a future caller must not be able to feed it an entry the principal
-	// cannot read.
 	entry, err := h.viewEntry(ctx, view.Entry.Type, entryRef, w)
 	if err != nil {
 		return nil, err
@@ -186,8 +178,6 @@ func (h *viewsHandler) executeViewBodies(
 		filter:      filter,
 	}
 
-	// Backlink steps first, and once: they read only the entry, so the
-	// fixpoint passes below would repeat the same index scan for nothing.
 	for _, rule := range view.Traverse {
 		if !rule.MentionedBy {
 			continue
@@ -197,7 +187,6 @@ func (h *viewsHandler) executeViewBodies(
 		}
 	}
 
-	// Multi-pass traversal (up to 10 passes until stable)
 	maxPasses := 10
 	for range maxPasses {
 		before := countViewEntities(result.Collections)
@@ -212,34 +201,15 @@ func (h *viewsHandler) executeViewBodies(
 	}
 	result.propagateIncomplete(view.Traverse)
 
-	// Remove internal "entry" collection
 	delete(result.Collections, "entry")
 	keepSingleRuleEntryEdges(result, view.Traverse)
 
-	// Row-gate + field-redact on the way out (DEC-ZBI39P). Traversal above runs
-	// on raw store entities on purpose: a rule's where: filter may reference a
-	// hidden property, and edges are walked by id — redacting mid-traversal
-	// would break both. Redacting here, once, gives every section builder
-	// already-redacted entities (closes BUG-9QL9XV property-value leak and
-	// BUG-R9EHKV title leak) and drops hidden neighbors from collections
-	// (Filter gates by row). The entry is already row-gated at the handler
-	// (api_v1.go, TKT-BNX2PN), so it only needs field redaction, not a re-gate
-	// that could 404 an entry the caller was just cleared to read.
-	//
-	// Residual (accepted, like the computed-path timing note in
-	// internal/visibility): a traverse rule's where: runs on raw entities above,
-	// so for a READABLE neighbor whose only hidden aspect is a field value, its
-	// presence/absence in a collection still reflects whether it matched a
-	// predicate over that hidden field. The value is redacted; membership is a
-	// one-bit inference channel, not a value disclosure.
 	result.Entry = visibility.Redact(ctx, h.redactor(), result.Entry)
 	for name, entities := range result.Collections {
 		result.Collections[name] = h.viewReader.Filter(ctx, entities)
 	}
 	h.loadViewBodies(ctx, result, w, bodies)
 
-	// Roll-ups after the gate, on the served rows only, one batch per type
-	// across the entry and every collection (TKT-6I2OPG).
 	served := []*entity.Entity{result.Entry}
 	groups := [][]*entity.Entity{served}
 	for _, entities := range result.Collections {
@@ -290,7 +260,7 @@ func (h *viewsHandler) loadViewBodies(ctx context.Context, result *viewResult, w
 		}
 		for i, e := range entities {
 			if body, ok := content[e.ID]; ok && body != e.Content {
-				completed := *e // never write through a pointer another collection shares
+				completed := *e
 				completed.Content = body
 				entities[i] = &completed
 			}
@@ -302,9 +272,8 @@ func (h *viewsHandler) applyViewTraverse(
 	ctx context.Context, rule ViewTraverse, result *viewResult, w viewWorld,
 ) error {
 	if rule.MentionedBy {
-		return nil // collected once by collectBacklinks, before the fixpoint loop
+		return nil
 	}
-	// Gather source entities
 	var sources []*entity.Entity
 	if rule.From == "*" {
 		seen := map[string]bool{}
@@ -320,27 +289,14 @@ func (h *viewsHandler) applyViewTraverse(
 		sources = entities
 	}
 
-	// Traverse from each source, collecting NEIGHBOR IDS rather than entities.
-	//
-	// Splitting id-collection from entity-loading is what makes the world path
-	// affordable: ids are cheap and the recursive walk needs them anyway to
-	// decide where to step next, while LOADING an entity under a world costs a
-	// resolution. Collect the whole rule's ids first, then resolve once.
 	maxRecursionDepth := 10
 	sourceIDs := make([]string, 0, len(sources))
-	// The face each source is SERVED at, which decides which of its
-	// content-scoped edges it owns (BUG-ISJHML). An explicitly addressed entry
-	// keeps its addressed face here, where re-resolving it through the world
-	// would pick a different one.
 	sourceFaces := make(map[string]entity.Face, len(sources))
 	for _, src := range sources {
 		sourceIDs = append(sourceIDs, src.ID)
 		sourceFaces[src.ID] = src.Face
 	}
 	var foundIDs []string
-	// byParent is the parent→child edge map, retained only for the flat walk.
-	// See the Parents field doc on [viewResult] for why the recursive walk has
-	// none and what that costs.
 	var byParent map[string][]string
 	if rule.Recursive {
 		maxD := rule.MaxDepth
@@ -349,9 +305,6 @@ func (h *viewsHandler) applyViewTraverse(
 		}
 		foundIDs = h.traverseViewBreadthFirst(ctx, sourceIDs, sourceFaces, rule, maxD, w)
 	} else {
-		// One relation query for every source at once (TKT-1U8XYN), in the
-		// same order the per-source loop produced: sources in collection
-		// order, each source's edges in store order.
 		var edges []*entity.Relation
 		foundIDs, byParent, edges = h.traverseViewMany(ctx, sourceIDs, sourceFaces, rule, w)
 		if rule.From == "entry" && rule.Follow+rule.FollowIncoming != "" {
@@ -364,27 +317,13 @@ func (h *viewsHandler) applyViewTraverse(
 		}
 	}
 
-	// ONE resolution for the whole rule application, not one per hop.
-	//
-	// The per-hop shape would be an N+1 multiplied by the 10-pass fixpoint and
-	// again by the recursive walk's depth — materially worse than the per-row
-	// cost item 4 documented as known. Batching here is a design choice made up
-	// front rather than an optimisation deferred (see the PR body).
-	found, _ := h.loadViewEntities(ctx, foundIDs, w) // a fault is logged; the step keeps what loaded
+	found, _ := h.loadViewEntities(ctx, foundIDs, w)
 
-	// Apply the step's where: and condition: filters.
-	//
-	// RULING 16: this runs against the RESOLVED FACES, because `found` now
-	// holds whatever face the world selected. A `where:` filtering on draft
-	// values while the page renders published content would contradict its own
-	// page. filterEntities itself needed no change — it reads e.Properties off
-	// whatever it is handed, so feeding it faces makes it filter faces.
 	found, err := result.filter.narrow(ctx, rule, found)
 	if err != nil {
 		return err
 	}
 
-	// Deduplicate into collection
 	if result.Collections[rule.CollectAs] == nil {
 		result.Collections[rule.CollectAs] = []*entity.Entity{}
 	}
@@ -401,13 +340,6 @@ func (h *viewsHandler) applyViewTraverse(
 		}
 	}
 
-	// Merge the edge map, deduping exactly as the collection above does.
-	//
-	// Load-bearing: executeView runs every rule up to 10 times (the fixpoint
-	// loop), so appending unconditionally would list each child once per pass
-	// and render duplicate rows. Only edges whose child SURVIVED `where:` and
-	// `condition:` filtering are recorded, so a filtered-out child cannot
-	// reappear as a nested row.
 	if len(byParent) > 0 {
 		mergeViewParents(result, rule.CollectAs, byParent, kept)
 	}
@@ -443,21 +375,12 @@ func mergeViewParents(result *viewResult, collectAs string, byParent map[string]
 }
 
 // traverseViewMany is [viewsHandler.traverseViewOnce] for many sources in ONE
-// relation query. It also returns the edges it followed. The result is ordered as the per-source calls would have
-// been concatenated: by source in the given order, then by the store's edge
-// order within a source. A source with no edges contributes nothing.
-//
-// Also returns the source→neighbor map the walk builds anyway, so a caller
-// that needs parent attribution gets it without a second query. Keyed by
-// SOURCE id, holding ids only; see [viewResult.Parents] for why those ids are
-// not yet authorized.
-//
-// A content-scoped edge is followed only when its tail face is the face its
-// source is served at (BUG-ISJHML): the walking entity's face for an outgoing
-// rule, the neighbor's face in world w for an incoming one. faces supplies
-// the served face of ids already in hand; any other tail is resolved through
-// w, the same resolution [viewsHandler.loadViewEntities] applies to the
-// neighbor it will load.
+// relation query. It returns the neighbors ordered by source, then by store
+// edge order, plus the edges followed and the source-to-neighbor id map (not
+// yet authorized; see [viewResult.Parents]). A content-scoped edge is
+// followed only when its tail face is the face its source is served at;
+// faces supplies known faces and any other tail is resolved through w, as
+// [viewsHandler.loadViewEntities] does.
 func (h *viewsHandler) traverseViewMany(
 	ctx context.Context, sourceIDs []string, faces map[string]entity.Face, rule ViewTraverse, w viewWorld,
 ) (found []string, byParent map[string][]string, edges []*entity.Relation) {
@@ -524,29 +447,9 @@ func (h *viewsHandler) traverseViewBreadthFirst(
 	}
 	all := make([]string, 0, len(frontier))
 	for depth := 0; depth < maxDepth && len(frontier) > 0; depth++ {
-		// Edge map discarded: this walk reports ids level by level and a node
-		// reached at two depths has no single parent here, so retaining it
-		// would be a partial answer worse than none. See [viewResult.Parents].
 		found, _, _ := h.traverseViewMany(ctx, frontier, faces, rule, w)
 		all = append(all, found...)
 
-		// SOURCE-GATE the frontier (BUG-9Z20WH). An id the principal cannot
-		// read is not expanded, so it cannot act as a stepping-stone to a
-		// descendant reachable only through it.
-		//
-		// This gate has to be HERE, not only at the load. The walk is
-		// id-only by design (TKT-1U8XYN) — it never materializes an entity —
-		// so a hidden node H would otherwise be expanded on ids alone and its
-		// child V collected. V is readable in its own right, so neither the
-		// load-time gate nor the out-gate (viewReader.Filter) would drop it,
-		// and the leak would survive both. Gating the frontier is the only
-		// point at which H's UNREADABILITY can stop the walk.
-		//
-		// `all` deliberately keeps the ungated ids: they are the rule's raw
-		// result and every one of them is gated again at load time, so a
-		// hidden node still never reaches a collection. What this gate
-		// changes is REACHABILITY — which nodes get to be walked THROUGH —
-		// which is the bug.
 		next := make([]string, 0, len(found))
 		for _, id := range found {
 			if visited[id] {
@@ -572,8 +475,6 @@ func (h *viewsHandler) traverseViewBreadthFirst(
 func (h *viewsHandler) ownedEdges(
 	ctx context.Context, edges []*entity.Relation, faces map[string]entity.Face, w viewWorld,
 ) []*entity.Relation {
-	// unknown maps each source not in faces to its resolved face; an entry
-	// stays unresolved (ok=false) until the batch answers for it.
 	unknown := make(map[string]*entity.Face)
 	var ids []string
 	for _, r := range edges {
@@ -617,42 +518,18 @@ func (h *viewsHandler) ownedEdges(
 }
 
 // readableViewIDs filters ids down to those the request principal may read,
-// preserving order. It is the traversal's source gate (BUG-9Z20WH).
-//
-// # Why it resolves rows the same way the loader does
-//
-// The gate takes the world and queries with the SAME `World`/`FaceIn` shape as
-// [viewsHandler.loadViewEntities]. That is load-bearing, not tidiness: a type
-// declaring `faces:` stores NO row at the zero coordinate (BUG-HC6I2T), so a
-// default-world scan returns nothing for a faced entity. Gating on such a scan
-// would drop every faced entity from the frontier even under NopACL — a silent
-// functional regression dressed up as a denial, and a gate that decides about a
-// different graph than the one being walked.
-//
-// # Both halves of the verdict
-//
-// The row gate answers per face, and each id is gated at the face the world
-// serves, together with the type-level face grant [faceReadable]
-// (TKT-O7R2A1). Without the face half a principal granted only
-// `policy@published` could walk THROUGH a draft-only entity to reach its
-// descendants — the same reachability leak this gate exists to close,
-// re-opened one coordinate down.
-//
-// Ids are resolved to their type and face with a content-free HEADER scan,
-// because the gate is keyed by (type, id) plus a face and the id-only walk has
-// neither. Headers keep the walk's "no entity loads during traversal" property.
-//
-// FAIL CLOSED throughout: a header scan that faults, an id whose header never
-// arrives (so its type is unknown), and a gate probe that errors all drop the
-// affected ids, each with a warning so an operator sees a cause rather than a
-// silently-truncated view. Under NopACL every probe permits and every face is
-// allowed, so the traversal is unchanged for a full-read principal.
+// preserving order. It is the traversal's source gate. It resolves rows with
+// the same World/FaceIn shape as [viewsHandler.loadViewEntities], because a
+// faced type has no zero-coordinate row. Each id is gated at the face the
+// world serves, together with [faceReadable], so a principal cannot walk
+// through a face it may not read. Ids are resolved with a content-free header
+// scan. It fails closed: a scan fault, a missing header or a probe error
+// drops the affected ids with a warning.
 func (h *viewsHandler) readableViewIDs(ctx context.Context, ids []string, w viewWorld) []string {
 	if len(ids) == 0 {
 		return nil
 	}
 	if w.denied {
-		// The world itself is denied; nothing in it is expandable.
 		return nil
 	}
 
@@ -664,8 +541,6 @@ func (h *viewsHandler) readableViewIDs(ctx context.Context, ids []string, w view
 	q := store.EntityQuery{IDs: ids, Faces: store.InWorld(w.scope)}
 	for hdr, err := range store.ListEntityHeaders(ctx, h.store, q) {
 		if err != nil {
-			// A header-scan fault is not "everything is hidden", but it is
-			// also not a license to expand un-gated nodes. Drop the level.
 			slog.Warn("dataentry: view traversal: source-gate header scan failed; "+
 				"frontier dropped", "world", w.name, "ids", len(ids), "err", err)
 			return nil
@@ -678,8 +553,6 @@ func (h *viewsHandler) readableViewIDs(ctx context.Context, ids []string, w view
 	for _, id := range ids {
 		h, ok := hdrs[id]
 		if !ok {
-			// No row for this id in this world: a dangling edge, or a face
-			// the world excludes. Either way it is not expandable here.
 			continue
 		}
 		byType[h.typ] = append(byType[h.typ], id)
@@ -691,8 +564,6 @@ func (h *viewsHandler) readableViewIDs(ctx context.Context, ids []string, w view
 	for typ, typeIDs := range byType {
 		verdicts, err := gate.ReadableFacesMany(ctx, typ, typeIDs)
 		if err != nil {
-			// Fail closed: none of this type is expandable. Logged loud so
-			// operators see the cause rather than a silently-short chain.
 			slog.Warn("dataentry: view traversal: source-gate probe failed; "+
 				"dropping type from frontier", "type", typ, "ids", len(typeIDs), "err", err)
 			continue
@@ -709,8 +580,6 @@ func (h *viewsHandler) readableViewIDs(ctx context.Context, ids []string, w view
 		if !permitted[id] {
 			continue
 		}
-		// The row gate cleared the ENTITY; it says nothing about which FACE
-		// this principal may read. Both halves or neither.
 		if !faceReadable(ctx, hdrs[id].typ, hdrs[id].face) {
 			continue
 		}
@@ -743,7 +612,6 @@ func filterEntities(
 
 	var result []*entity.Entity
 	for _, e := range entities {
-		// Special handling for "type" pseudo-property
 		if f.Property == "type" {
 			if filter.MatchValue(e.Type, f) {
 				result = append(result, e)
@@ -751,7 +619,6 @@ func filterEntities(
 			continue
 		}
 
-		// Regular property - use metamodel-aware matching
 		entityDef, ok := s.Meta.GetEntityDef(e.Type)
 		if !ok {
 			continue

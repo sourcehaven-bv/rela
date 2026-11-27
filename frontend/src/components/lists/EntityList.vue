@@ -13,6 +13,7 @@ import { useBatchAction, isBatchAction } from '@/composables/useBatchAction'
 import LLMBatchProposalDialog from '@/components/entity/LLMBatchProposalDialog.vue'
 import { useToolbarActions } from '@/composables/useToolbarActions'
 import { useListReorder } from '@/composables/useListReorder'
+import { useManualReorder } from '@/composables/useManualReorder'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { useWorld } from '@/composables/useWorld'
 import { useCreateTarget } from '@/composables/useCreateTarget'
@@ -21,12 +22,16 @@ import { listEntities, listAllEntities, getErrorMessage, withSortFallback, type 
 import { entityKeys } from '@/queries/entities'
 import { liveListPath } from '@/api/live'
 import { toBusyEntries } from '@/utils/busy'
+import { isToggleColumn } from '@/utils/toggleCell'
+import ListToggleCell from './ListToggleCell.vue'
 import { useLiveSubscription } from '@/composables/useLiveSubscription'
 import { beginOptimisticRemove } from '@/queries/optimisticList'
 import { filterStateToApiParams } from '@/utils/filters'
 import { defaultSortParam, groupedSort, listBaseParams, sortParam } from '@/utils/listParams'
 import { editFormRoute, entityDetailHref } from '@/utils/entityRoute'
 import { entityRef } from '@/utils/entityRef'
+import { getAssign, type AssignValues } from '@/api/assign'
+import { writeAssignDrag } from '@/utils/assignDrag'
 import { worldText } from '@/utils/worldText'
 import { safeInternalHref } from '@/utils/openIntent'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
@@ -36,7 +41,7 @@ import { getCellValue, formatCellValue } from '@/utils/format'
 import { isDenseEmpty } from '@/widgets/viewRouting'
 import { denseCell, denseEntry, type DenseCell, type DenseEntry } from '@/utils/denseCell'
 import type { Entity, ListMeta, ListParams, ListResponse, FilterState, PageScope } from '@/types'
-import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
+import { LIST_ORDER_MANUAL, viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
 import SearchBox from './SearchBox.vue'
@@ -69,8 +74,8 @@ import RlTable from 'rela-components/components/table/RlTable.vue'
 import RlBusyIndicator, {
   type BusyIndicatorEntry,
 } from 'rela-components/components/feedback/RlBusyIndicator.vue'
-import type { SortClickEvent, TableColumn } from 'rela-components/components/table/types'
-import { listColumnOf, nameColumn, toTableColumns, toTableNameColumn } from './tableColumns'
+import type { RowMove, SortClickEvent, TableColumn } from 'rela-components/components/table/types'
+import { leadingImageColumns, listColumnOf, nameColumn, toTableColumns, toTableNameColumn } from './tableColumns'
 import { fromPageQuery } from '@/utils/pageContext'
 
 const props = defineProps<{
@@ -199,6 +204,34 @@ const createPrefill = ref<{
   properties: Record<string, unknown>
   relations?: Record<string, { id: string; type: string }[]>
 }>()
+// A list `assign:` (TKT-FGE5G3I) is what a new row gets by default; a
+// section's own prefill wins over it.
+const assignDefaults = shallowRef<AssignValues>()
+watch(
+  () => (schemaStore.getList(props.listId)?.assign ? props.listId : undefined),
+  async (list) => {
+    assignDefaults.value = undefined
+    if (!list) return
+    try {
+      assignDefaults.value = await getAssign({ list })
+    } catch {
+      // The create form opens without defaults.
+    }
+  },
+  { immediate: true }
+)
+const effectivePrefill = computed(() => {
+  const a = assignDefaults.value
+  if (!a) return createPrefill.value
+  const relations: Record<string, { id: string; type: string }[]> = {}
+  for (const [rel, ops] of Object.entries(a.relations ?? {})) {
+    relations[rel] = ops.data ?? ops.add ?? []
+  }
+  return {
+    properties: { ...(a.properties ?? {}), ...(createPrefill.value?.properties ?? {}) },
+    relations: { ...relations, ...(createPrefill.value?.relations ?? {}) },
+  }
+})
 function onTableAdd(section: ListSection | { prefill?: undefined; prefillRelations?: undefined }) {
   createPrefill.value =
     section.prefill || section.prefillRelations
@@ -410,6 +443,11 @@ const { target: createFormTarget, targetWorld: createWorld } = useCreateTarget(
 
 // New opens the create form in a dialog over the list; the new entity then
 // opens in the detail panel, as if its row had been clicked.
+// A toggle's PATCH may have run triggers that changed more of the row, or
+// moved it out of the list's filter, so the page is read again.
+function refreshAfterToggle() {
+  void queryCache.invalidateQueries({ key: entityKeys.list(listConfig.value?.entity ?? '') })
+}
 function refreshAfterCreate() {
   void queryCache.invalidateQueries({ key: entityKeys.list(listConfig.value?.entity ?? '') })
 }
@@ -423,6 +461,11 @@ const tabScope = usePageTabScope(() => props.pageScope)
 const orderWithheld = ref(false)
 watch(() => props.pageScope, () => (orderWithheld.value = false))
 const relationOrdered = computed(() => tabScope.relationOrdered.value && !orderWithheld.value)
+// The reader's manual order applies: the list declares it, no relation order
+// takes precedence, and the reader has not sorted.
+const manualOrdered = computed(
+  () => listConfig.value?.order === LIST_ORDER_MANUAL && !relationOrdered.value && sortSpecs.value.length === 0
+)
 const createModal = useCreateModal(async (entity) => {
   await tabScope.linkCreated(entity)
   refreshAfterCreate()
@@ -527,6 +570,16 @@ const entityType = computed(() => {
 // The channel type of the list's busy column (TKT-TU3XH4), if it has one.
 // The load check allows at most one busy column per list.
 const busyType = computed(() => listConfig.value?.columns?.find((c) => c.busy)?.busy)
+
+// The properties of the list's toggle columns, comma-separated (TKT-M0AT73B).
+// Sent as field_verdicts, so the server answers each row's write verdict for
+// them once per page.
+const toggleProperties = computed(() =>
+  (listConfig.value?.columns ?? [])
+    .filter((c) => isToggleColumn(c) && c.property)
+    .map((c) => c.property)
+    .join(','),
+)
 
 /** The row's busy channels of the busy column's type, for the indicator. */
 function busyEntries(entity: Entity): BusyIndicatorEntry[] {
@@ -667,6 +720,9 @@ const queryParams = computed((): ListParams => {
   // flyout, which shows no busy column, does not pay for the busy read. The
   // list query, the grouped loader and the live path all read these params.
   if (busyType.value) params.busy = busyType.value
+  if (toggleProperties.value) params.field_verdicts = toggleProperties.value
+
+  if (manualOrdered.value) params.manual_order = 1
 
   Object.assign(params, tabScope.params.value)
 
@@ -881,6 +937,15 @@ const titleColumn = computed(
 const tableNameColumn = computed(() => toTableNameColumn(titleColumn.value))
 
 /**
+ * Image columns listed before the name, shown in the name cell left of the
+ * title. Taken from the same list `tableColumns` uses, so the table and the
+ * name cell agree on which columns moved.
+ */
+const leadingColumns = computed(() =>
+  leadingImageColumns(visibleListColumns.value, titleColumn.value, entityType.value?.properties)
+)
+
+/**
  * The rows, as the sections the library's table wants.
  *
  * A flat list is one section whose title is never shown. A grouped list has
@@ -901,13 +966,27 @@ const tableSections = computed(() =>
 // Dragging rows on a tab shown in relation order. Only while the reader
 // sees that order: their own sort, or a grouping, puts the rows elsewhere,
 // and a row dropped there would jump back on the next read.
-const reorder = useListReorder({
+const relationReorder = useListReorder({
   order: () => meta.value.relation_order,
   active: () => relationOrdered.value && sortSpecs.value.length === 0 && !grouping.grouped.value,
   rows: () => entities.value,
   key: () => listKey.value,
   type: () => listConfig.value?.entity ?? '',
 })
+// Dragging rows of a list with `order: manual`, inside their section.
+const manualReorder = useManualReorder({
+  active: () => manualOrdered.value && meta.value.manual_order === true,
+  rows: () => entities.value,
+  sections: () => (grouping.grouped.value ? grouping.sections.value : [{ items: entities.value }]),
+  params: () => queryParams.value,
+  key: () => listKey.value,
+  type: () => listConfig.value?.entity ?? '',
+})
+const reorder = {
+  reorderable: computed(() => relationReorder.reorderable.value || manualReorder.reorderable.value),
+  onReorder: (move: RowMove) =>
+    relationReorder.reorderable.value ? relationReorder.onReorder(move) : manualReorder.onReorder(move),
+}
 const reorderableRow = computed(() => (reorder.reorderable.value ? () => true : undefined))
 
 function onSectionCollapse(section: { id: string }, collapsed: boolean) {
@@ -944,8 +1023,24 @@ function onSortClick(column: TableColumn, event: SortClickEvent) {
  * href is not a usable key for it.
  *
  */
+const entityById = computed(() => new Map(entities.value.map((e) => [e.id, e])))
 function rowAttrs(item: { id: string }) {
-  return { 'data-entity-id': item.id }
+  const attrs: Record<string, unknown> = { 'data-entity-id': item.id }
+  // A row the user may update can be dragged onto a sidebar entry that
+  // assigns (TKT-FGE5G3I). Off while reordering, which owns the drag.
+  const row = entityById.value.get(item.id)
+  if (row && canUpdate(row) && !reorder.reorderable.value) {
+    attrs.draggable = 'true'
+    attrs.onDragstart = (e: DragEvent) => {
+      if (!e.dataTransfer) return
+      // Dragging a selected row moves the whole selection.
+      const addresses = selectedIds.value.has(row.id)
+        ? entities.value.filter((x) => selectedIds.value.has(x.id) && canUpdate(x)).map((x) => entityRef(x))
+        : [entityRef(row)]
+      writeAssignDrag(e.dataTransfer, { entityType: row.type, addresses })
+    }
+  }
+  return attrs
 }
 
 /** A table row carries the entity id, so selection maps straight across. */
@@ -1610,6 +1705,29 @@ watch(searchQuery, () => {
           Two stretched overlays would fight, which is why this slot exists.
         -->
         <template #name="{ item }">
+          <!--
+            A fixed 32px slot per leading column, whether or not the row has an
+            image, so titles line up. Decorative (the title names the row), so
+            hidden from assistive technology.
+          -->
+          <span
+            v-for="(lead, i) in leadingColumns"
+            :key="i"
+            class="entity-list__lead"
+            :class="{ 'entity-list__lead--locked': isCellInaccessible(item as Entity, lead) }"
+            :title="isCellInaccessible(item as Entity, lead) ? t('list.inaccessible') : undefined"
+            aria-hidden="true"
+          >
+            <component
+              :is="resolveCell(item as Entity, lead)!.component"
+              v-if="!isCellInaccessible(item as Entity, lead) && resolveCell(item as Entity, lead)"
+              :model-value="resolveCell(item as Entity, lead)!.modelValue"
+              :mode="'display'"
+              :property-name="resolveCell(item as Entity, lead)!.propertyName"
+              :entity-type="listConfig.entity"
+              :entity-id="entityRef(item as Entity)"
+            />
+          </span>
           <span v-if="titleColumn && isCellInaccessible(item as Entity, titleColumn)" class="inaccessible-cell" :title="t('list.inaccessible')">🔒</span>
           <RouterLink
             v-else-if="rowTargets.get(item.id)"
@@ -1653,6 +1771,13 @@ watch(searchQuery, () => {
           <RlBusyIndicator
             v-if="listColumnOf(column!)?.busy"
             :entries="busyEntries(item as Entity)"
+          />
+          <ListToggleCell
+            v-else-if="isToggleColumn(listColumnOf(column!))"
+            :entity="item as Entity"
+            :column="listColumnOf(column!)!"
+            :entity-type="listConfig.entity"
+            @changed="refreshAfterToggle"
           />
           <span
             v-else-if="listColumnOf(column!) && isCellInaccessible(item as Entity, listColumnOf(column!)!)"
@@ -1754,7 +1879,7 @@ watch(searchQuery, () => {
       :form-id="listConfig.create_form"
       :entity-type="listConfig.entity"
       :world="createWorld || undefined"
-      :prefill="createPrefill"
+      :prefill="effectivePrefill"
       :add-another="!createPrefill"
       @close="createModal.close"
       @created="createModal.created"
@@ -1908,6 +2033,26 @@ watch(searchQuery, () => {
  */
 .rl-table-row .entity-list__title-link {
   color: var(--rl-color-accent);
+}
+
+/* A leading image's fixed slot. Not shrinkable, and no row-wide overlay: only
+   the title link opens the row. */
+.rl-table-row .entity-list__lead {
+  flex: none;
+  display: block;
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  cursor: inherit;
+}
+
+.rl-table-row .entity-list__lead::after {
+  display: none;
+}
+
+/* The lock, as generated content so the string is not hard-coded text. */
+.rl-table-row .entity-list__lead--locked::before {
+  content: '\1F512';
 }
 
 .empty-state {

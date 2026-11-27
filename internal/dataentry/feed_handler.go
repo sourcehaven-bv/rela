@@ -46,10 +46,6 @@ func (a *App) handleV1Feed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Deep links must be absolute so a calendar client can open them: a
-	// relative path is useless once the .ics leaves the server. Scheme/host
-	// come from the request (matching however the client reached us — loopback,
-	// LAN, or a proxied hostname), mirroring appBaseURL.
 	base := feedBaseURL(r)
 	link := func(entityType, id string) string {
 		return base + "/entity/" + entityType + "/" + id
@@ -66,19 +62,6 @@ func (a *App) handleV1Feed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Feed bodies embed user-authored entity content (Summary/Description are
-	// read straight off entity properties in feed_provider.go), so the response
-	// must never be interpreted as HTML. Two things guarantee that:
-	//
-	//  1. The serializers escape structurally for their own grammar, not HTML:
-	//     iCalendar via calfeed.escapeText + writeLine's CRLF strip
-	//     (internal/calfeed/ical.go:166, :149), JSON via encoding/json, which
-	//     also escapes <, >, & to </>/& by default.
-	//  2. nosniff pins the declared Content-Type, so a browser cannot
-	//     MIME-sniff a text/calendar or application/json body into text/html
-	//     and execute a payload the escaping above deliberately left inert
-	//     (e.g. "<script>" inside an iCalendar SUMMARY, which is legal
-	//     iCalendar TEXT and must stay a literal string).
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
 	switch format {
@@ -148,20 +131,45 @@ type feedEntitySource struct {
 
 // listType lists all entities of a type the principal may read.
 //
-// Routes through scopedHeaders (scopedread.go), which owns the verdict switch
-// and every narrowing — this used to restate the switch by hand, which is how
-// a world or face narrowing could reach the list endpoint and not the feed.
-// Fail-closed: an unresolvable verdict withholds.
+// Reads through scopedQuery and scanHeaders (scopedread.go), which own the
+// verdict switch and every narrowing. This used to restate the switch by
+// hand, which is how a world or face narrowing could reach the list endpoint
+// and not the feed. Fail-closed: an unresolvable verdict withholds. The scan
+// grows with the type; TKT-SMUO8CS pushes the feed's `where:` into the store.
 func (s feedEntitySource) listType(ctx context.Context, entityType string) ([]*entitypkg.Entity, error) {
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, entityType)
-	entities, _, err := scopedEntities(ctx, s.app.Services(), rqr, scopeRequest{
-		Type:  entityType,
-		Faces: rqr.Faces,
+	req := scopeRequest{Type: entityType, Faces: rqr.Faces}
+	q, errClass, withheld, err := scopedQuery(ctx, rqr, req)
+	if withheld || err != nil {
+		return nil, wrapFeedList(entityType, err)
+	}
+	headers, err := scanHeaders(ctx, s.app.Services(), q, errClass, req)
+	if err != nil {
+		return nil, wrapFeedList(entityType, err)
+	}
+	return headerEntities(headers), nil
+}
+
+// listByIDs is listType narrowed to the named ids: the same verdict, world
+// and faces, at a cost that follows len(ids) rather than the type. An id the
+// principal may not read is absent from the result.
+func (s feedEntitySource) listByIDs(ctx context.Context, entityType string, ids []string) ([]*entitypkg.Entity, error) {
+	rqr := readGateFromContext(ctx).ReadQuery(ctx, entityType)
+	entities, err := scopedEntities(ctx, s.app.Services(), rqr, scopeRequest{
+		Type: entityType, Faces: rqr.Faces, ByIDs: true, IDs: ids,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("feed: list %q: %w", entityType, err)
+		return nil, wrapFeedList(entityType, err)
 	}
 	return entities, nil
+}
+
+// wrapFeedList names the feed source type in a read error; nil stays nil.
+func wrapFeedList(entityType string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("feed: list %q: %w", entityType, err)
 }
 
 // getEntity fetches one entity if the principal may read it (per-entity gate).

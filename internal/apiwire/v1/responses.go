@@ -202,6 +202,10 @@ type Activity struct {
 	// status working, which the caller may read. Nil is absent ("not
 	// served"); an empty slice is `[]` ("none busy that you may see").
 	Busy []BusyChannel `json:"_busy,omitzero"`
+	// Group is the id of the computed group (TKT-QS024L0) the row falls in,
+	// set on list rows when the request names a list whose group_by is
+	// computed. Empty means the row matched no group.
+	Group string `json:"_group,omitempty"`
 	// Updated is when the row last changed, in RFC 3339, set on the
 	// per-entity responses only. It is absent when any property of the row
 	// is hidden from or inaccessible to the caller, because the time says
@@ -481,10 +485,17 @@ type ListMeta struct {
 	Page    int  `json:"page"`
 	PerPage int  `json:"per_page"`
 	HasMore bool `json:"has_more"`
+	// Capped says a free-text /_search matched more hits than its
+	// relevance cap of 1000: Total counts the hits within the cap, and no
+	// page reaches the rest. Only /_search sets it.
+	Capped bool `json:"capped,omitempty"`
 	// RelationOrder is set when the rows are shown in relation order.
 	//
 	// Nil: the rows follow the request's sort, or no sort at all.
 	RelationOrder *RelationOrder `json:"relation_order,omitempty"`
+	// ManualOrder says the rows are in the caller's own order of a list
+	// with `order: manual` (TKT-AVNEX5T), so the reader may drag them.
+	ManualOrder bool `json:"manual_order,omitempty"`
 }
 
 // RelationOrder says that a collection lists the peers of one anchor's
@@ -841,7 +852,13 @@ type RelationType struct {
 	Symmetric   bool        `json:"symmetric,omitempty"`
 	// Owning marks a relation whose targets are shown as part of their
 	// source (TKT-QO14GB).
-	Owning      bool                   `json:"owning,omitempty"`
+	Owning bool `json:"owning,omitempty"`
+	// Within names the scope relation of a scoped relation; OnChange is
+	// "clear" or "reject". ScopeOwners maps each target type to the owning
+	// relation whose source is its owner (TKT-5GK80Q9).
+	Within      string                 `json:"within,omitempty"`
+	OnChange    string                 `json:"on_change,omitempty"`
+	ScopeOwners map[string]string      `json:"scope_owners,omitempty"`
 	MinOutgoing *int                   `json:"min_outgoing,omitempty"`
 	MaxOutgoing *int                   `json:"max_outgoing,omitempty"`
 	MinIncoming *int                   `json:"min_incoming,omitempty"`
@@ -875,6 +892,11 @@ type CustomType struct {
 	Values  []string          `json:"values"`
 	Labels  map[string]string `json:"labels,omitempty"` // Display labels keyed by value; value stays the wire identity
 	Default string            `json:"default,omitempty"`
+	// Moves maps each value to the values a declared transition may move it
+	// to (TKT-M0AT73B), for a type that is a state machine. Edges only: the
+	// labels, help, guards and preconditions stay off the wire. A UI hint;
+	// the write path enforces the machine.
+	Moves map[string][]string `json:"moves,omitempty"`
 }
 
 // Config is the JSON representation of the UI config.
@@ -952,6 +974,9 @@ type AppConfig struct {
 	// a BCP 47 tag, or empty to follow the browser. The SPA uses it when
 	// the user has chosen no language of their own.
 	Language string `json:"language,omitempty"`
+	// Languages are the interface languages a user may pick (app.languages),
+	// base languages such as "en". Empty means every language the SPA has.
+	Languages []string `json:"languages,omitempty"`
 	// PlantUMLServerURL is the configured PlantUML server base URL, or empty
 	// when PlantUML rendering is disabled. The SPA treats a non-empty value as
 	// the on switch for ```plantuml diagram rendering.
@@ -996,6 +1021,10 @@ type AppConfig struct {
 	// below the description. Absent when neither is configured. A link the
 	// server cannot serve safely is left out.
 	About *AppAbout `json:"about,omitempty"`
+	// QuickEntry is the top-level data-entry.yaml `quick_entry:` block
+	// (TKT-24L1H36). It rides in `app` because it configures the whole app,
+	// not one view, and it keeps Config at its field pin.
+	QuickEntry *dataentryconfig.QuickEntry `json:"quick_entry,omitempty"`
 }
 
 // AppAbout is [AppConfig.About].
@@ -1327,6 +1356,9 @@ type SidebarGroup struct {
 	ItemsKey  string        `json:"items_key,omitempty"`
 	ItemsPage string        `json:"items_page,omitempty"`
 	ItemsList string        `json:"items_list,omitempty"`
+	// ItemsChildPage names the entity page a child entry opens, empty when
+	// a child opens the entity itself or the group has no children.
+	ItemsChildPage string `json:"items_child_page,omitempty"`
 	// ItemsCreate is the add control on a generated group's heading
 	// (`items_from.create`), present only when this principal may create
 	// the list's type and a form resolves. A UI hint; the create endpoint
@@ -1357,6 +1389,13 @@ type NavItem struct {
 	Type    string `json:"type"`
 	Label   string `json:"label"`
 	Initial string `json:"initial,omitempty"`
+	// Status is the entry's count, absent when it is zero or not configured.
+	Status *NavStatus `json:"status,omitempty"`
+	// Children are the entries one level down, in the child list's order.
+	Children []NavItem `json:"children,omitempty"`
+	// ChildrenTruncated says the entry has more visible children than the
+	// limit.
+	ChildrenTruncated bool `json:"children_truncated,omitempty"`
 }
 
 // DashboardResponse contains the dashboard page config with the cards this
@@ -1723,9 +1762,18 @@ type ViewResponse struct {
 	// `entity_views.<type>.mentioned_by_panel` is false. Decided by the server
 	// from the view it executed, so the SPA does not re-derive view selection.
 	HideMentionedByPanel bool `json:"hideMentionedByPanel,omitempty"`
+
+	// HideMentionedByID tells the panel to leave the entity ID off its rows,
+	// from `entity_views.<type>.mentioned_by_hide_id`. Presentation only.
+	HideMentionedByID bool `json:"hideMentionedByID,omitempty"`
 }
 
 // ViewSection represents a section with resolved data.
+//
+// The plimsoll directive is a wire mirror: the section's config keys travel
+// as flat fields, and Hide raised it from 20 to 21.
+//
+//plimsoll:max-fields=21
 type ViewSection struct {
 	Heading      string         `json:"heading"`
 	SectionID    string         `json:"sectionId"`
@@ -1785,7 +1833,18 @@ type ViewSection struct {
 	// (TKT-4Q2EIVZ). The values are not repeated here: a client reads them
 	// from the entry, which is already gated for the reader.
 	Totals []SectionTotal `json:"totals,omitempty"`
+
+	// Hide names the row parts a list, cards, content or nested section
+	// leaves off: [SectionHideType] for `hide_type`, [SectionHideID] for
+	// `hide_id`. Presentation only; omitted when empty.
+	Hide []string `json:"hide,omitempty"`
 }
+
+// Values of [ViewSection.Hide].
+const (
+	SectionHideType = "type"
+	SectionHideID   = "id"
+)
 
 // SectionTotal is one line of [ViewSection.Totals].
 type SectionTotal struct {

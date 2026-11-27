@@ -60,6 +60,7 @@ type rawOutput struct {
 
 type rawSet struct {
 	Properties yaml.Node `yaml:"properties"`
+	Unset      []string  `yaml:"unset"`
 }
 
 type rawRelate struct {
@@ -282,12 +283,18 @@ func decodeOutput(at string, n *yaml.Node) (actions []Action, check *Validation,
 		if err != nil {
 			return nil, nil, []string{fmt.Sprintf("%s: set.properties: %v", at, err)}
 		}
-		if len(props) == 0 {
-			return nil, nil, []string{at + ": set needs `properties:`"}
+		if len(props) == 0 && len(o.Set.Unset) == 0 {
+			return nil, nil, []string{at + ": set needs `properties:` or `unset:`"}
 		}
-		actions := make([]Action, 0, len(props))
+		if errs := unsetErrors(at, props, o.Set.Unset); len(errs) > 0 {
+			return nil, nil, errs
+		}
+		actions := make([]Action, 0, len(props)+len(o.Set.Unset))
 		for _, kv := range props {
 			actions = append(actions, Action{Set: kv[0], Value: kv[1]})
+		}
+		for _, name := range o.Set.Unset {
+			actions = append(actions, Action{Unset: strings.TrimSpace(name)})
 		}
 		return actions, nil, nil
 	case o.Relate != nil:
@@ -320,6 +327,31 @@ func decodeOutput(at string, n *yaml.Node) (actions []Action, check *Validation,
 		}
 		return nil, &Validation{Check: c.Where, Severity: c.Severity, Message: c.Message}, nil
 	}
+}
+
+// unsetErrors refuses an `unset:` entry that is empty, named twice, or also
+// named under `properties:`. A property both set and unset has no single
+// outcome a reader of the config could predict.
+func unsetErrors(at string, props [][2]string, unset []string) []string {
+	set := make(map[string]bool, len(props))
+	for _, kv := range props {
+		set[strings.TrimSpace(kv[0])] = true
+	}
+	var errs []string
+	seen := map[string]bool{}
+	for _, raw := range unset {
+		name := strings.TrimSpace(raw)
+		switch {
+		case name == "":
+			errs = append(errs, at+": set.unset holds an empty property name")
+		case seen[name]:
+			errs = append(errs, fmt.Sprintf("%s: set.unset names %q twice", at, name))
+		case set[name]:
+			errs = append(errs, fmt.Sprintf("%s: set names %q under both `properties:` and `unset:`", at, name))
+		}
+		seen[name] = true
+	}
+	return errs
 }
 
 func decodeCreate(at string, c *rawCreate) (actions []Action, check *Validation, errs []string) {

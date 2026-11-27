@@ -3,6 +3,9 @@ package dataentry
 import (
 	"context"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -101,7 +104,7 @@ func idsOf(
 	ctx context.Context, t *testing.T, app *App, rqr acl.ReadQueryResult, req scopeRequest,
 ) []string {
 	t.Helper()
-	headers, _, err := scopedHeaders(ctx, app.Services(), rqr, req)
+	headers, _, err := readScoped(ctx, app.Services(), rqr, req)
 	if err != nil {
 		t.Fatalf("scopedHeaders: %v", err)
 	}
@@ -111,6 +114,22 @@ func idsOf(
 	}
 	sortStrings(ids)
 	return ids
+}
+
+// readScoped reads req the way production code does: a bounded request
+// through scopedHeaders, every row through scopedQuery and scanHeaders.
+func readScoped(
+	ctx context.Context, svc Services, rqr acl.ReadQueryResult, req scopeRequest,
+) ([]store.EntityHeader, bool, error) {
+	if req.ByIDs || req.Limit > 0 || req.Offset > 0 {
+		return scopedHeaders(ctx, svc, rqr, req)
+	}
+	q, errClass, withheld, err := scopedQuery(ctx, rqr, req)
+	if withheld || err != nil {
+		return nil, withheld, err
+	}
+	headers, err := scanHeaders(ctx, svc, q, errClass, req)
+	return headers, false, err
 }
 
 func sortStrings(s []string) {
@@ -128,7 +147,7 @@ func sortStrings(s []string) {
 // and disclose the whole type.
 func TestScopedHeaders_ZeroVerdictIsRefused(t *testing.T) {
 	app := newTestAppV1(t)
-	_, _, err := scopedHeaders(context.Background(), app.Services(),
+	_, _, err := readScoped(context.Background(), app.Services(),
 		acl.ReadQueryResult{}, scopeRequest{Type: "ticket"})
 	if err == nil {
 		t.Fatal("a zero ReadQueryResult was accepted; it must be refused, never treated as AllowAll")
@@ -146,7 +165,7 @@ func TestScopedHeaders_DenyAllReportsWithheld(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket"})
 
-	_, withheld, err := scopedHeaders(context.Background(), app.Services(),
+	_, withheld, err := readScoped(context.Background(), app.Services(),
 		acl.ReadQueryResult{DenyAll: true}, scopeRequest{Type: "ticket"})
 	if err != nil {
 		t.Fatalf("scopedHeaders: %v", err)
@@ -156,7 +175,7 @@ func TestScopedHeaders_DenyAllReportsWithheld(t *testing.T) {
 	}
 
 	// A permitted read that matches nothing is NOT withheld.
-	_, withheld, err = scopedHeaders(context.Background(), app.Services(),
+	_, withheld, err = readScoped(context.Background(), app.Services(),
 		acl.ReadQueryResult{AllowAll: true}, scopeRequest{
 			Type: "ticket",
 			Props: []store.PropPredicate{
@@ -182,7 +201,7 @@ func TestScopedHeaders_DoesNotMutateTheACLQuery(t *testing.T) {
 	shared := &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.TrivialScope())}
 	rqr := acl.ReadQueryResult{Query: shared}
 
-	_, _, err := scopedHeaders(context.Background(), app.Services(), rqr, scopeRequest{
+	_, _, err := readScoped(context.Background(), app.Services(), rqr, scopeRequest{
 		Type:  "ticket",
 		Props: []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
 	})
@@ -228,7 +247,7 @@ var verdictSwitchExempt = map[string]string{
 	// ganttReadVerdict classifies the verdict to choose a REDACTION path
 	// (header-only fast path vs full entities), not to build a query. Both
 	// of its arms read through the funnel: the AllowAll arm via
-	// h.scopedHeaders, the scoped arm via h.scoped (= scopedSortedEntities).
+	// h.scanTypeHeaders, the scoped arm via h.scoped (= scopedSortedEntities).
 	"gantt_handler.go": "verdict -> redaction-path classifier; both arms read through the funnel",
 }
 
@@ -305,7 +324,7 @@ func TestScopedHeaders_ScopeWithoutEvaluatorIsRefused(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket"})
 
-	_, _, err := scopedHeaders(context.Background(), app.Services(),
+	_, _, err := readScoped(context.Background(), app.Services(),
 		acl.ReadQueryResult{AllowAll: true},
 		scopeRequest{Type: "ticket", Scope: "something", ScopeFilter: nil})
 	if err == nil {
@@ -340,7 +359,7 @@ func TestScopedHeaders_ScopeErrorPropagates(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket"})
 
-	_, _, err := scopedHeaders(context.Background(), app.Services(),
+	_, _, err := readScoped(context.Background(), app.Services(),
 		acl.ReadQueryResult{AllowAll: true}, scopeRequest{
 			Type:  "ticket",
 			Scope: "identity",
@@ -502,7 +521,7 @@ func TestScopedHeaders_ByIDsKeepsTheWorldsFace(t *testing.T) {
 
 	faceRefs := func(t *testing.T, rqr acl.ReadQueryResult, req scopeRequest) string {
 		t.Helper()
-		headers, _, err := scopedHeaders(ctx, app.Services(), rqr, req)
+		headers, _, err := readScoped(ctx, app.Services(), rqr, req)
 		if err != nil {
 			t.Fatalf("scopedHeaders: %v", err)
 		}
@@ -543,4 +562,281 @@ func TestScopedHeaders_ByIDsKeepsTheWorldsFace(t *testing.T) {
 			})
 		}
 	}
+}
+
+// TestScopedHeaders_UnboundedReadIsRefused pins that the bounded read stays
+// bounded: a request with no ids and no window is an error, so a caller that
+// needs every row has to say so through scanHeaders (TKT-C5H506O).
+func TestScopedHeaders_UnboundedReadIsRefused(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket"})
+
+	for _, req := range []scopeRequest{
+		{Type: "ticket"},
+		{Type: "ticket", Offset: 5},
+		{Type: "ticket", Limit: -1},
+		{Type: "ticket", Limit: 5, Offset: -1},
+	} {
+		_, _, err := scopedHeaders(context.Background(), app.Services(), acl.ReadQueryResult{AllowAll: true}, req)
+		if !errors.Is(err, errListLoad) {
+			t.Errorf("limit %d offset %d: err = %v, want a refusal", req.Limit, req.Offset, err)
+		}
+	}
+}
+
+// TestScopedHeaders_WindowReadsOneWindow pins the window branch: rows in id
+// order, cut after the row gate.
+func TestScopedHeaders_WindowReadsOneWindow(t *testing.T) {
+	app := newTestAppV1(t)
+	for _, id := range []string{"TKT-1", "TKT-2", "TKT-3", "TKT-4"} {
+		seedEntity(app, &entity.Entity{ID: id, Type: "ticket", Properties: map[string]any{"status": "open"}})
+	}
+	seedEntity(app, &entity.Entity{ID: "TKT-0", Type: "ticket", Properties: map[string]any{"status": "hidden"}})
+	open := []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}}
+	gated := acl.ReadQueryResult{Query: &store.GraphQuery{
+		EntityType: "ticket", Props: open, Faces: store.InWorld(store.TrivialScope()),
+	}}
+	got := idsOf(context.Background(), t, app, gated, scopeRequest{Type: "ticket", Limit: 2, Offset: 1})
+	if strings.Join(got, ",") != "TKT-2,TKT-3" {
+		t.Errorf("window = %v, want [TKT-2 TKT-3]: the hidden TKT-0 must not take a slot", got)
+	}
+}
+
+// TestScanHeaders_RefusesAQueryForAnotherType pins the guard against a caller
+// that skipped the withheld check: the zero query scopedQuery returns then has
+// no type, and several backends read every type for it.
+func TestScanHeaders_RefusesAQueryForAnotherType(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket"})
+
+	req := scopeRequest{Type: "ticket"}
+	for _, q := range []store.GraphQuery{{}, {EntityType: "person"}} {
+		headers, err := scanHeaders(context.Background(), app.Services(), q, errListLoad, req)
+		if !errors.Is(err, errListLoad) || len(headers) != 0 {
+			t.Errorf("query for %q: headers %d, err = %v; want a refusal", q.EntityType, len(headers), err)
+		}
+	}
+}
+
+// TestScanHeaders_TakesItsQueryFromScopedQuery pins the call shape scanHeaders
+// relies on. The query carries the verdict, world and faces; the request
+// carries the query scope, which scanHeaders applies. A request other than
+// the one the query was built from would skip or change the scope, which is
+// the RR-GQWRLD fail-open shape. So, in every function that calls scanHeaders:
+//
+//   - the query, error class and request are plain variables named by one
+//     scopedQuery assignment in that function;
+//   - the query is assigned once, and changed after that only in its Offset
+//     or Limit;
+//   - the request is assigned at most once and never changed field by field.
+//
+// Not caught: a variable shadowed in an inner block, since names are compared
+// rather than objects. Review covers that.
+func TestScanHeaders_TakesItsQueryFromScopedQuery(t *testing.T) {
+	fset := token.NewFileSet()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			var body *ast.BlockStmt
+			switch fn := n.(type) {
+			case *ast.FuncDecl:
+				body = fn.Body
+			case *ast.FuncLit:
+				body = fn.Body
+			}
+			if body == nil {
+				return true
+			}
+			for _, call := range directCalls(body, "scanHeaders") {
+				calls++
+				if msg := scanCallProblem(body, call); msg != "" {
+					t.Errorf("%s: %s", fset.Position(call.Pos()), msg)
+				}
+			}
+			return true
+		})
+	}
+	if calls == 0 {
+		t.Fatal("found no scanHeaders call; the guard matches nothing")
+	}
+}
+
+// scanCallProblem says what is wrong with one scanHeaders call in body, or
+// returns "" when it has the shape TestScanHeaders_TakesItsQueryFromScopedQuery
+// requires.
+func scanCallProblem(body *ast.BlockStmt, call *ast.CallExpr) string {
+	if len(call.Args) != 5 {
+		return "scanHeaders with the wrong number of arguments"
+	}
+	q, class, req := identName(call.Args[2]), identName(call.Args[3]), identName(call.Args[4])
+	if q == "" || class == "" || req == "" {
+		return "scanHeaders takes its query, error class and request as plain variables"
+	}
+	var built []scopedQueryAssignment
+	for _, a := range scopedQueryAssignments(body) {
+		if a.query == q {
+			built = append(built, a)
+		}
+	}
+	switch {
+	case len(built) != 1:
+		return "the query " + q + " is not assigned by exactly one scopedQuery call in this function"
+	case built[0].class != class || built[0].req != req:
+		return "scanHeaders(" + q + ", " + class + ", " + req + ") does not take the error class and request " +
+			"of the scopedQuery call that built " + q
+	}
+	qWrites := writesTo(body, q)
+	for _, w := range qWrites {
+		if w != "" && w != "Offset" && w != "Limit" {
+			return "the query " + q + " is changed after scopedQuery (" + w + "); only Offset and Limit may be"
+		}
+	}
+	if countEmpty(qWrites) != 1 {
+		return "the query " + q + " is reassigned after scopedQuery"
+	}
+	reqWrites := writesTo(body, req)
+	if countEmpty(reqWrites) > 1 || len(reqWrites) != countEmpty(reqWrites) {
+		return "the request " + req + " is changed after it is built"
+	}
+	return ""
+}
+
+func countEmpty(ss []string) int {
+	n := 0
+	for _, s := range ss {
+		if s == "" {
+			n++
+		}
+	}
+	return n
+}
+
+// writesTo lists the writes to the variable name in body, outside nested
+// function literals: "" for an assignment or address-of of the whole
+// variable, or the field name for an assignment to one of its fields.
+func writesTo(body *ast.BlockStmt, name string) []string {
+	var out []string
+	ast.Inspect(body, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.AssignStmt:
+			for _, lhs := range n.Lhs {
+				switch l := lhs.(type) {
+				case *ast.Ident:
+					if l.Name == name {
+						out = append(out, "")
+					}
+				case *ast.SelectorExpr:
+					if identName(l.X) == name {
+						out = append(out, l.Sel.Name)
+					}
+				}
+			}
+		case *ast.UnaryExpr:
+			if n.Op == token.AND && identName(n.X) == name {
+				out = append(out, "&")
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// TestScanCallProblem checks the guard itself on the shapes it must refuse.
+func TestScanCallProblem(t *testing.T) {
+	head := "q, errClass, withheld, err := scopedQuery(ctx, rqr, req)\n"
+	for _, tc := range []struct {
+		name, body string
+		ok         bool
+	}{
+		{"the production shape", head + "scanHeaders(ctx, svc, q, errClass, req)", true},
+		{"an offset", head + "q.Offset = 5\nscanHeaders(ctx, svc, q, errClass, req)", true},
+		{"a literal request", head + "scanHeaders(ctx, svc, q, errClass, scopeRequest{Type: t})", false},
+		{"another request", head + "scanHeaders(ctx, svc, q, errClass, other)", false},
+		{"another error class", head + "scanHeaders(ctx, svc, q, errListLoad, req)", false},
+		{"no scopedQuery", "scanHeaders(ctx, svc, q, errClass, req)", false},
+		{"props dropped", head + "q.Props = nil\nscanHeaders(ctx, svc, q, errClass, req)", false},
+		{"query replaced", head + "q = store.GraphQuery{}\nscanHeaders(ctx, svc, q, errClass, req)", false},
+		{"query by pointer", head + "f(&q)\nscanHeaders(ctx, svc, q, errClass, req)", false},
+		{"two scopedQuery calls", head + head + "scanHeaders(ctx, svc, q, errClass, req)", false},
+		{"request changed", head + "req.Scope = nil\nscanHeaders(ctx, svc, q, errClass, req)", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file, err := parser.ParseFile(token.NewFileSet(), "x.go", "package x\nfunc f() {\n"+tc.body+"\n}", 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := file.Decls[0].(*ast.FuncDecl).Body
+			calls := directCalls(body, "scanHeaders")
+			if len(calls) != 1 {
+				t.Fatalf("%d scanHeaders calls", len(calls))
+			}
+			if msg := scanCallProblem(body, calls[0]); (msg == "") != tc.ok {
+				t.Errorf("problem = %q, want ok=%v", msg, tc.ok)
+			}
+		})
+	}
+}
+
+type scopedQueryAssignment struct{ query, class, req string }
+
+// scopedQueryAssignments lists the scopedQuery assignments in body, outside
+// nested function literals.
+func scopedQueryAssignments(body *ast.BlockStmt) []scopedQueryAssignment {
+	var out []scopedQueryAssignment
+	ast.Inspect(body, func(n ast.Node) bool {
+		if _, lit := n.(*ast.FuncLit); lit {
+			return false
+		}
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || len(as.Rhs) != 1 || len(as.Lhs) != 4 {
+			return true
+		}
+		call, ok := as.Rhs[0].(*ast.CallExpr)
+		if !ok || identName(call.Fun) != "scopedQuery" || len(call.Args) != 3 {
+			return true
+		}
+		out = append(out, scopedQueryAssignment{
+			query: identName(as.Lhs[0]), class: identName(as.Lhs[1]), req: identName(call.Args[2]),
+		})
+		return true
+	})
+	return out
+}
+
+// directCalls returns the calls of the package function name in body, not
+// counting those inside nested function literals, which are checked on their
+// own.
+func directCalls(body *ast.BlockStmt, name string) []*ast.CallExpr {
+	var out []*ast.CallExpr
+	ast.Inspect(body, func(n ast.Node) bool {
+		if _, lit := n.(*ast.FuncLit); lit {
+			return false
+		}
+		if call, ok := n.(*ast.CallExpr); ok && identName(call.Fun) == name {
+			out = append(out, call)
+		}
+		return true
+	})
+	return out
+}
+
+func identName(e ast.Expr) string {
+	if id, ok := e.(*ast.Ident); ok {
+		return id.Name
+	}
+	return ""
 }

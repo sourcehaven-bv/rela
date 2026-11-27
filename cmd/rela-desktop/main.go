@@ -32,7 +32,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/dataentrywire"
-	"github.com/Sourcehaven-BV/rela/internal/desktop"
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -108,7 +107,7 @@ type Desktop struct {
 	svc              *appbuild.Services // per-project services; closed on next LoadProject
 	handler          http.Handler
 	loadErr          string
-	prefs            *desktop.Preferences
+	prefs            *Preferences
 	cloneAuth        *cloneAuthState
 	lastCloneDir     string               // tracks the most recent clone for project selection
 	pendingSetupDir  string               // project dir awaiting data-entry.yaml setup
@@ -120,6 +119,7 @@ type Desktop struct {
 	menu             *menuBar             // the menu bar; nil until main builds it
 	settings         *ProjectSettings     // the Project Settings service; nil until main builds it
 	notify           *notifyHub           // notifications and Dock badge; nil in tests
+	quick            *quickEntryHotkey    // the quick entry shortcut; nil until main builds it
 	stopScheduler    context.CancelFunc
 	leasesDone       <-chan struct{} // closed once the scheduler and lease watcher stopped; nil when none runs
 }
@@ -371,6 +371,7 @@ func (d *Desktop) releaseLoadedProject() {
 	d.stopScheduler = nil
 	d.leasesDone = nil
 	d.mu.Unlock()
+	syncQuickEntry(d)
 
 	// Scheduler and lease watcher first, so no in-flight tick or poll lands
 	// on a closing store.
@@ -478,6 +479,7 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 	d.leasesDone = startBackground(schedCtx, svc, bind, cards)
 	d.mu.Unlock()
 	handedOff = true
+	syncQuickEntry(d)
 
 	// Register it so /p/<id>/ can reach it, and so a later Open Project on the
 	// same directory can focus this project rather than loading a second copy.
@@ -515,7 +517,7 @@ func openedAs(paths *project.Context, root, name string) (opened, shown string) 
 
 // rememberRecent puts a successfully opened project at the top of Open
 // Recent.
-func rememberRecent(prefs *desktop.Preferences, path, name string) {
+func rememberRecent(prefs *Preferences, path, name string) {
 	prefs.AddRecentProject(path, name)
 	if err := prefs.Save(); err != nil {
 		slog.Warn("could not save preferences", "error", err)
@@ -1079,10 +1081,10 @@ func main() {
 	}
 
 	// Load desktop preferences.
-	prefs, err := desktop.Load()
+	prefs, err := loadPreferences()
 	if err != nil {
 		slog.Warn("could not load preferences", "error", err)
-		prefs = &desktop.Preferences{}
+		prefs = &Preferences{}
 	}
 
 	d := &Desktop{prefs: prefs, registry: newProjectRegistry(), notify: newNotifyHub()}
@@ -1149,6 +1151,8 @@ func main() {
 		},
 	})
 	d.wails = app
+	d.quick = newQuickEntryHotkey(app, d)
+	syncQuickEntry(d)
 
 	d.newMainWindow(title)
 	registerContextMenus(d.wails, d.OpenWindow)
@@ -1197,7 +1201,7 @@ func configureLogging(verbose, quiet bool) {
 
 // resolveProjectDir determines which project directory to load at startup.
 // Priority: explicit -project flag > current dir if rela project > last project from preferences.
-func resolveProjectDir(flagValue string, prefs *desktop.Preferences) string {
+func resolveProjectDir(flagValue string, prefs *Preferences) string {
 	// Explicit flag or current directory is a rela project.
 	if flagValue != "." || isRelaProject(flagValue) {
 		return flagValue
@@ -1427,7 +1431,7 @@ func startBackground(
 	ctx context.Context, svc *appbuild.Services, bind func(context.Context) (context.Context, error),
 	cards scheduler.CardEvaluator,
 ) <-chan struct{} {
-	sched := scheduler.StartBackground(ctx, svc, bind, slog.Default(), scheduler.WithCards(cards))
+	sched := scheduler.StartBackground(ctx, svc.Scheduler(), bind, slog.Default(), scheduler.WithCards(cards))
 	leases := appbuild.WatchLeases(ctx, svc)
 	worker := appbuild.RunRealtimeWorker(ctx, svc)
 	flows := appbuild.RunFlowWorker(ctx, svc)

@@ -5,7 +5,7 @@ import MarkdownHelp from './MarkdownHelp.vue'
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSchemaStore, useEntitiesStore } from '@/stores'
-import { isCancelledFetch } from '@/composables/usePageData'
+import { isCancelledFetch } from '@/api/errors'
 import { getEntityRelations } from '@/api'
 import { entityDisplayTitleWithId } from '@/utils/entityDisplay'
 import type { FormFieldOrRelation, Entity, RelationEntry, RelationAffordance } from '@/types'
@@ -23,6 +23,7 @@ import { faceCandidates, mergeFamilyCandidates, offersFace, widenWorlds } from '
 import { addressedEntry } from './relationsPatch'
 import { entityRef, refBareId, refFace } from '@/utils/entityRef'
 import { isStandIn } from '@/utils/standIn'
+import { ownerQueries } from './scopedRelations'
 
 // Per-edge state emitted on the incoming-changed channel after
 // TKT-GFQK unified the save path. DynamicForm wraps this into a
@@ -47,6 +48,11 @@ const props = defineProps<{
   // `creatable === false` hides every "+ Add" affordance (search,
   // inline-create); `removable === false` hides the per-entity x.
   verdict?: RelationAffordance
+  // The current, maybe unsaved, value of this relation's `within` relation
+  // (TKT-5GK80Q9). Undefined for a relation that is not scoped.
+  scopeValue?: string[]
+  // A form-level error for this relation, such as a stale scoped edge.
+  error?: string
 }>()
 
 const emit = defineEmits<{
@@ -226,9 +232,63 @@ const selectedEntities = computed(() => resolveSelected(effectiveValue.value, kn
 // dropdown offers `candidates` only, so an out-of-page link the user can now
 // SEE and remove cannot be re-added from here. Making search hit the search
 // endpoint instead of the cached page is the real fix, and is its own change.
+// Scoped relation (TKT-5GK80Q9): only the targets the scope entity owns are
+// offered. They are read from the scope entity's owning edges through the
+// gated relations endpoint, one request per owner query, when the scope value
+// changes. `scopeAllowed` is null until that read succeeds.
+const scopeQueries = computed(() =>
+  !isIncoming.value && props.field.relation
+    ? ownerQueries(props.field.relation, Object.fromEntries(schemaStore.relationTypes))
+    : []
+)
+const isScoped = computed(() => scopeQueries.value.length > 0)
+const scopeLabel = computed(() => {
+  const within = relationType.value?.within
+  return (within && schemaStore.getRelationType(within)?.label) || within || ''
+})
+const scopeEmpty = computed(() => isScoped.value && (props.scopeValue ?? []).length === 0)
+const scopeAllowed = ref<Set<string> | null>(null)
+const scopeLoadFailed = ref(false)
+let scopeGeneration = 0
+
+async function loadScope() {
+  const generation = ++scopeGeneration
+  scopeAllowed.value = null
+  scopeLoadFailed.value = false
+  if (!isScoped.value || scopeEmpty.value) return
+  const ids = props.scopeValue ?? []
+  const reads = scopeQueries.value.flatMap((q) =>
+    ids.map(async (id) => {
+      const edges = await getEntityRelations(q.ownerType, id, q.owningRelation)
+      return edges.filter((e) => !e.type || e.type === q.targetType).map((e) => e.id)
+    })
+  )
+  const settled = await Promise.allSettled(reads)
+  if (generation !== scopeGeneration) return
+  const allowed = new Set<string>()
+  let anyRead = false
+  for (const s of settled) {
+    if (s.status === 'fulfilled') {
+      anyRead = true
+      s.value.forEach((id) => allowed.add(id))
+    }
+  }
+  // A read of the wrong owner type answers 404, so one success is enough.
+  if (!anyRead) {
+    scopeLoadFailed.value = true
+    return
+  }
+  scopeAllowed.value = allowed
+}
+
+watch(() => (props.scopeValue ?? []).join('\u0000'), loadScope, { immediate: true })
+
 const filteredCandidates = computed(() => {
   const offered = candidates.value.filter(
-    (c) => !effectiveValue.value.includes(candidateKey(c)) && (!picksFace(c.type) || offersFace(c))
+    (c) =>
+      !effectiveValue.value.includes(candidateKey(c)) &&
+      (!picksFace(c.type) || offersFace(c)) &&
+      (!isScoped.value || (scopeAllowed.value?.has(c.id) ?? false))
   )
   if (!searchQuery.value) return offered
   const query = searchQuery.value.toLowerCase()
@@ -686,9 +746,17 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- Search input (TKT-G7N5: hidden when relation is not creatable) -->
+    <div v-if="error" class="field-error" role="alert">{{ error }}</div>
+    <div v-if="canCreate && scopeEmpty" class="scope-hint">
+      {{ t('form.relation.scopeEmpty', { scope: scopeLabel }) }}
+    </div>
+    <div v-else-if="canCreate && scopeLoadFailed" class="scope-hint" role="alert">
+      {{ t('form.relation.scopeLoadFailed', { scope: scopeLabel }) }}
+    </div>
     <div v-if="canCreate" class="search-wrapper">
       <input
         v-model="searchQuery"
+        :disabled="scopeEmpty"
         type="text"
         role="combobox"
         :aria-expanded="showDropdown"
@@ -831,6 +899,16 @@ onBeforeUnmount(() => {
   margin-left: 0.35rem;
   font-size: 0.72rem;
   color: var(--rl-color-text-muted);
+}
+
+.scope-hint {
+  font-size: 0.8rem;
+  color: var(--rl-color-text-muted);
+}
+
+.field-error {
+  font-size: 0.8rem;
+  color: var(--rl-color-danger);
 }
 
 .search-wrapper {

@@ -19,6 +19,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/listorder"
 )
 
 // Services wires app to the services in svc: CalDAV aliases, comments, piles, leases,
@@ -41,7 +42,7 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 
 	// The remote routes list every remote in remotes.yaml; a project
 	// without one lists none.
-	rs, rsErr := newRemotes(svc, slog.Default())
+	rs, rsErr := newRemotes(svc.Scheduler(), slog.Default())
 	if rsErr != nil {
 		return fmt.Errorf("wire remotes: %w", rsErr)
 	}
@@ -114,6 +115,9 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 	if err := app.SetViewConditions(dataentry.AdaptViewConditions(appbuild.ViewConditions)); err != nil {
 		return fmt.Errorf("wire view conditions: %w", err)
 	}
+	if err := dataentry.SetAssignExprs(app, appbuild.AssignExpr); err != nil {
+		return fmt.Errorf("wire assign expressions: %w", err)
+	}
 	if err := app.SetQueryScopeResolver(dataentry.AdaptQueryScopes(appbuild.QueryScopes)); err != nil {
 		return fmt.Errorf("wire query scopes: %w", err)
 	}
@@ -176,6 +180,15 @@ func wireOptionalStores(app *dataentry.App, svc *appbuild.Services) error {
 	if p := svc.Piles(); p != nil {
 		if err := app.SetPiles(p, appbuild.LuaPiles(svc)); err != nil {
 			return fmt.Errorf("wire piles: %w", err)
+		}
+	}
+	if kv := svc.State(); kv != nil {
+		lo, err := listorder.New(kv)
+		if err != nil {
+			return fmt.Errorf("wire list order: %w", err)
+		}
+		if err := dataentry.SetListOrder(app, lo); err != nil {
+			return fmt.Errorf("wire list order: %w", err)
 		}
 	}
 	// Without a lease service the lease routes 404 and no response carries

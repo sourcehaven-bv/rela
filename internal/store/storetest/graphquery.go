@@ -315,6 +315,54 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 		}
 	})
 
+	t.Run("Props_equal_or_empty_includes_unset", func(t *testing.T) {
+		s := f(t)
+		seedEntityWithProps(t, s, "task", "T-false", map[string]any{"blocked": false})
+		seedEntityWithProps(t, s, "task", "T-true", map[string]any{"blocked": true})
+		seedEntityWithProps(t, s, "task", "T-text", map[string]any{"blocked": "false"})
+		seedEntityWithProps(t, s, "task", "T-list", map[string]any{"blocked": []string{"false"}})
+		seedEntityWithProps(t, s, "task", "T-blank", map[string]any{"blocked": ""})
+		seedEntityWithProps(t, s, "task", "T-empty-list", map[string]any{"blocked": []string{}})
+		seedEntityWithProps(t, s, "task", "T-unset", nil)
+
+		for _, tc := range []struct {
+			name   string
+			value  string
+			scalar bool
+			want   []string
+		}{
+			{"false", "false", false,
+				[]string{"T-blank", "T-empty-list", "T-false", "T-list", "T-text", "T-unset"}},
+			{"true", "true", false, []string{"T-blank", "T-empty-list", "T-true", "T-unset"}},
+			{"scalar", "false", true, []string{"T-blank", "T-empty-list", "T-text", "T-unset"}},
+			{"no match", "maybe", false, []string{"T-blank", "T-empty-list", "T-unset"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				got := runGraphQuery(t, s, store.GraphQuery{
+					EntityType: "task",
+					Props: []store.PropPredicate{
+						{Property: "blocked", Op: store.PropEqualOrEmpty, Value: tc.value, Scalar: tc.scalar},
+					},
+					Faces: store.InWorld(store.TrivialScope()),
+				})
+				require.Equal(t, tc.want, got)
+			})
+		}
+
+		var err error
+		for _, e := range s.GraphQuery(context.Background(), store.GraphQuery{
+			EntityType: "task",
+			Props:      []store.PropPredicate{{Property: "blocked", Op: store.PropEqualOrEmpty}},
+			Faces:      store.InWorld(store.TrivialScope()),
+		}) {
+			if e != nil {
+				err = e
+				break
+			}
+		}
+		require.ErrorIs(t, err, store.ErrInvalidQuery, "an empty Value is refused")
+	})
+
 	// Narrowing is the caller-supplied disjunction, and the assertion that
 	// matters is that it NARROWS: it is ANDed with everything else, never
 	// OR-ed into the authorization predicates. A caller branch that became

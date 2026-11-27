@@ -287,7 +287,7 @@ func (ce *copyEngine) writeCopy(
 
 	var result CopyResult
 	if err := auditTx(writeCtx, ce.m.deps, true, func(txCtx context.Context, view store.Store) error {
-		res, cerr := applyCopy(txCtx, ce.m.deps.Meta, view, plan)
+		res, cerr := applyCopy(txCtx, ce.m.deps.Meta, ce.m.deps.scopes, view, plan)
 		if cerr != nil {
 			return cerr
 		}

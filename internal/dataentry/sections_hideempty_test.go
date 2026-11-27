@@ -43,8 +43,8 @@ func sectionHeadings(body v1ViewBody) []string {
 // renders, and a section with rows renders whatever it says.
 func TestHideEmpty_DropsOnlyEmptyOptedInSections(t *testing.T) {
 	app := hideEmptyView(t, []ViewSection{
-		{Heading: "Features", Source: "features", Display: "cards", SectionVisibility: dataentryconfig.SectionVisibility{HideEmpty: true}},
-		{Heading: "Hidden", Source: "inbound", Display: "cards", SectionVisibility: dataentryconfig.SectionVisibility{HideEmpty: true}},
+		{Heading: "Features", Source: "features", Display: "cards", SectionPresentation: dataentryconfig.SectionPresentation{SectionVisibility: dataentryconfig.SectionVisibility{HideEmpty: true}}},
+		{Heading: "Hidden", Source: "inbound", Display: "cards", SectionPresentation: dataentryconfig.SectionPresentation{SectionVisibility: dataentryconfig.SectionVisibility{HideEmpty: true}}},
 		{Heading: "Shown", Source: "inbound", Display: "cards"},
 	})
 	body := fetchView(context.Background(), t, app)
@@ -64,7 +64,7 @@ func TestHideEmpty_DropsOnlyEmptyOptedInSections(t *testing.T) {
 // section before it runs would attach the button to the wrong section.
 func TestHideEmpty_KeepsCreateOnLaterSection(t *testing.T) {
 	app := hideEmptyView(t, []ViewSection{
-		{Heading: "Hidden", Source: "inbound", Display: "cards", SectionVisibility: dataentryconfig.SectionVisibility{HideEmpty: true}},
+		{Heading: "Hidden", Source: "inbound", Display: "cards", SectionPresentation: dataentryconfig.SectionPresentation{SectionVisibility: dataentryconfig.SectionVisibility{HideEmpty: true}}},
 		{Heading: "Features", Source: "features", Display: "cards", Create: &dataentryconfig.SectionCreate{}},
 	})
 	body := fetchView(context.Background(), t, app)
@@ -104,7 +104,7 @@ func TestHideEmpty_FollowsReadAccess(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			app := hideEmptyView(t, []ViewSection{
-				{Heading: "Features", Source: "features", Display: "cards", SectionVisibility: dataentryconfig.SectionVisibility{HideEmpty: true}},
+				{Heading: "Features", Source: "features", Display: "cards", SectionPresentation: dataentryconfig.SectionPresentation{SectionVisibility: dataentryconfig.SectionVisibility{HideEmpty: true}}},
 			})
 			d := mustNewACL(t, &acl.Policy{
 				Roles:       map[string]acl.RoleDef{"r": {Read: tc.readable}},

@@ -27,6 +27,12 @@ type createStartEngine interface {
 	Settle(ctx context.Context, id flow.RunID) error
 }
 
+// runSettler settles a run after the write that started or moved it
+// committed.
+type runSettler interface {
+	Settle(ctx context.Context, id flow.RunID) error
+}
+
 // settleTimeout bounds the settling of the runs a create started, after
 // the create has committed. A run it cuts off keeps its pending mark, and
 // the flow worker settles it.
@@ -44,7 +50,8 @@ const settleTimeout = 30 * time.Second
 const maxCreateDepth = 8
 
 // flowCreateStarts is the manager's [entitymanager.CreateHook] for the
-// flows that start on create (`on: create`). Inside the create's store
+// flows that start on create (`on: create`, and `on: predicate` for a new
+// subject that matches). Inside the create's store
 // transaction it starts their runs on the new entity, through the run store
 // joined to that transaction where the backend has one (postgres, sqlite).
 // The header, the run and the entity then commit or roll back together, so
@@ -85,7 +92,7 @@ func newFlowCreateStarts(flows *flowcfg.Compiled, st store.Store, runs flowrun.S
 	types := map[string]bool{}
 	for _, f := range flows.Flows() {
 		for _, s := range f.Starts() {
-			if s.On == flowcfg.StartCreate {
+			if s.On == flowcfg.StartCreate || s.On == flowcfg.StartPredicate {
 				types[f.Subject()] = true
 			}
 		}
@@ -118,8 +125,8 @@ func (h *flowCreateStarts) setEngine(eng *flowengine.Engine, policy *acl.Declara
 	h.eng.Store(&createStartEngineBox{e: flowengine.NewOnCreate(eng), policy: policy, as: as})
 }
 
-// errFlowEngineNotReady is a watched create before the engine was set.
-var errFlowEngineNotReady = errors.New("flows: the flow engine is not ready; a flow starts on this create")
+// errFlowEngineNotReady is a watched write before the engine was set.
+var errFlowEngineNotReady = errors.New("flows: the flow engine is not ready; a flow watches this write")
 
 // Watches implements [entitymanager.CreateHook].
 func (h *flowCreateStarts) Watches(typ string) bool { return h.types[typ] }
@@ -193,7 +200,7 @@ func (h *flowCreateStarts) EntityCreated(
 	}
 	// The settle runs on its own ctx as the flow principal, not on the
 	// creator's (RR-G0JC9QS).
-	return func(context.Context) { settleStarted(box.e, ids) }, nil //nolint:contextcheck // see above
+	return func(c context.Context) { settleStarted(c, box.e, ids) }, nil
 }
 
 // createDepth returns the depth of a run started by the create on ctx: 0
@@ -235,20 +242,35 @@ func depthOf(v any) int {
 	}
 }
 
-// settleStarted settles ids after the create committed. It runs on a ctx
-// of its own, not the creator's: it does not depend on the creator staying
-// connected, and it carries no value of the creator's request (their
+// settleStarted settles ids after the write committed. It runs on a ctx
+// of its own, not the writer's: it does not depend on the writer staying
+// connected, and it carries no value of the writer's request (their
 // Request, read world or read time). A failure only leaves the run to the
-// flow worker, so it is logged rather than returned.
-func settleStarted(eng createStartEngine, ids []flow.RunID) {
-	ctx, cancel := context.WithTimeout(context.Background(), settleTimeout)
+// flow worker, so it is logged rather than returned. A write made while a
+// run settles leaves its runs to the flow worker, so a request waits for
+// one round of settling, not for a chain of them.
+func settleStarted(ctx context.Context, eng runSettler, ids []flow.RunID) {
+	if ctx.Value(settlingKey{}) != nil {
+		slog.DebugContext(ctx, "flows: runs a settling run's write started or moved are left to the flow worker",
+			"runs", len(ids))
+		return
+	}
+	settleDetached(eng, ids) //nolint:contextcheck // detached: it outlives the request and carries none of its values
+}
+
+// settleDetached settles ids on a ctx of its own, as the flow principal.
+func settleDetached(eng runSettler, ids []flow.RunID) {
+	ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), settlingKey{}, true), settleTimeout)
 	defer cancel()
 	ctx = principal.With(ctx, flowPrincipal)
 	for _, id := range ids {
 		if err := eng.Settle(ctx, id); err != nil {
-			slog.WarnContext(ctx, "flows: a run started on create did not settle; the flow worker retries it",
+			slog.WarnContext(ctx, "flows: a run a write started or moved did not settle; the flow worker retries it",
 				"run", id)
 			slog.DebugContext(ctx, "flows: settle error", "run", id, "error", err)
 		}
 	}
 }
+
+// settlingKey marks the ctx of settleStarted.
+type settlingKey struct{}

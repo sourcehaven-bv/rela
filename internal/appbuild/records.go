@@ -95,8 +95,10 @@ func newRecordsService(
 		Store:  backend,
 		Owners: owners,
 		Meta:   meta,
-		Lock:   recordLock(st, backend),
-		Audit:  sink,
+
+		Permissions: recordPermissions{policy: d},
+		Lock:        recordLock(st, backend),
+		Audit:       sink,
 	})
 }
 
@@ -409,4 +411,21 @@ func scriptRecordError(err error) error {
 	}
 	slog.Warn("records: script read failed", "err", err)
 	return errors.New("records request failed; check the server log")
+}
+
+// recordPermissions answers the `permissions:` of record types from the
+// Request bound at the request edge. Permissions are global, so one check
+// serves a whole list or fold.
+//
+// With no declarative policy it is inert and allows, like the transition
+// guard; with one, a ctx without a usable Request is refused.
+type recordPermissions struct{ policy *acl.Declarative }
+
+// Holds implements [records.Permissions].
+func (p recordPermissions) Holds(ctx context.Context, perm string) bool {
+	req, inert := requestFor(ctx, p.policy)
+	if req == nil {
+		return inert
+	}
+	return req.HoldsPermission(ctx, perm)
 }

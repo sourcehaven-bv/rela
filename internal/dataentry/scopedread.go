@@ -72,7 +72,8 @@ type scopeRequest struct {
 
 	// Limit and Offset read one window of the type's rows in id order, the
 	// order an unpaged read returns them in, so a caller that keeps only a
-	// prefix reads only that prefix (TKT-CKLZMWB). Limit 0 reads every row.
+	// prefix reads only that prefix (TKT-CKLZMWB). Limit 0 with no ids is
+	// refused: a read of every row goes through scanHeaders.
 	//
 	// A window is refused alongside Scope: Scope filters after the store
 	// read, so a window of the store's rows is not a window of the result.
@@ -131,70 +132,25 @@ type QueryScopeLower func(
 	gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
 ) (frag store.GraphQuery, empty, ok bool)
 
-// scopedHeaders is the ONE place a data-entry collection read resolves the
-// ACL verdict into a store query.
-//
-// # Why this exists
-//
-// Four handlers used to make this decision independently, and every
-// narrowing dimension had to be threaded through all four by hand. Twice it
-// was not, and both times the result was a FAIL-OPEN: RR-GQWRLD (a world
-// carried on only the ACL-gated branch, so the AllowAll population silently
-// fell back to the default world) and TKT-O7R2A1 (the same for faces,
-// leaving the most privileged population with no face narrowing).
-//
-// The shape of that bug is what this function's structure prevents: the
-// verdict switch and the narrowings are in one scope, so a new dimension
-// added to [scopeRequest] is applied to both branches or neither.
-//
-// # The branches
-//
-// DenyAll yields nothing. AllowAll reads the type directly. A zero verdict
-// is REFUSED rather than treated as AllowAll — a zero [acl.ReadQueryResult]
-// would otherwise alias the most permissive branch, so the defensive error
-// is the difference between a misconfiguration and a silent full disclosure.
-// Otherwise the ACL's own query is copied and stamped.
-//
-// The copy is load-bearing: the ACL layer may cache a ReadQueryResult per
-// principal, so stamping *rqr.Query in place would leak one request's
-// narrowing into the next caller's.
-//
-// # Reading by ids
-//
-// With ByIDs the stamped query is answered for those ids alone
-// ([headersByIDs]), so a page scope or a `?q=` search costs reads that follow
-// its own size, not the size of the type (TKT-F2EJQY8). Without it the read
-// scans the type, which is what a caller that needs the whole filtered set
-// (totals, a Go-side sort, a condition or scope that does not lower) pays.
-//
-// # Withheld vs empty
-//
-// withheld=true means the read was refused outright — a denied world or a
-// DenyAll verdict — as opposed to a permitted read that matched nothing.
-// The two are identical ON THE WIRE and must stay so, but a caller needs to
-// tell them apart INTERNALLY to skip downstream work: running a free-text
-// search for a principal who may read nothing lets them probe backend
-// latency and induce load through `?q=` (RR-X56H, pinned by
-// TestACLList_DenyAllSearchShortCircuit).
-//
-// # The one sanctioned duplicate
-//
-// [planListPushdown] (listpushdown.go) builds the SAME narrowed query in the
-// paged shape the store can serve directly — ordering, limit, offset — so it
-// cannot route through here and return a slice. The two serve one endpoint by
-// different routes: a narrowing added to this function and not to that one
-// makes a list's pushed-down page disagree with its Go-filtered page, which
-// looks like a paging bug and is not one. Change both. A query scope reaches
-// the pushed path only through [QueryScopeLower], whose contract is that it
-// selects exactly the rows [applyScope] keeps.
-//
-// Returns content-free headers (rowcontent.go); a caller that needs bodies
-// loads them for the served page only.
+// scopedHeaders is the bounded data-entry collection read. With [scanHeaders]
+// it takes its query from [scopedQuery], which holds the one verdict switch,
+// so a new narrowing applies to both branches or neither.
+// A zero verdict is refused rather than aliased to AllowAll, and the ACL's
+// cached query is copied before stamping. Reads are bounded by ids or by a
+// window (Limit > 0); others are refused. withheld=true means the read was
+// refused, which callers use to skip work such as `?q=` (RR-X56H) while the
+// wire stays identical. [planListPushdown] builds the same query in paged
+// shape; change both together. Returns content-free headers.
 func scopedHeaders(
 	ctx context.Context, svc Services, rqr acl.ReadQueryResult, req scopeRequest,
 ) (headers []store.EntityHeader, withheld bool, err error) {
-	if (req.Limit > 0 || req.Offset > 0) && (req.Scope != nil || req.ByIDs) {
+	switch {
+	case req.Limit < 0 || req.Offset < 0:
+		return nil, false, fmt.Errorf("%w: a negative read window on %q", errListLoad, req.Type)
+	case (req.Limit > 0 || req.Offset > 0) && (req.Scope != nil || req.ByIDs):
 		return nil, false, fmt.Errorf("%w: a read window with a query scope or ids on %q", errListLoad, req.Type)
+	case !req.ByIDs && req.Limit == 0:
+		return nil, false, fmt.Errorf("%w: an unbounded read of %q; use scanHeaders", errListLoad, req.Type)
 	}
 
 	q, errClass, withheld, err := scopedQuery(ctx, rqr, req)
@@ -203,14 +159,11 @@ func scopedHeaders(
 	}
 
 	var out []store.EntityHeader
-	switch {
-	case req.ByIDs:
+	if req.ByIDs {
 		out, err = headersByIDs(ctx, svc, q, req.IDs, errClass)
-	case rqr.AllowAll && len(q.Props) == 0 && req.Limit == 0 && req.Offset == 0:
-		// No extra conjuncts and no window, so the cheaper type-scan serves it.
-		out, err = typeHeaders(ctx, svc, store.EntityQuery{Type: q.EntityType, Faces: q.Faces, FaceIn: q.FaceIn})
-	default:
-		out, err = collectHeaders(ctx, svc, windowed(q, req), errClass)
+	} else {
+		q.Limit, q.Offset = req.Limit, req.Offset
+		out, err = collectHeaders(ctx, svc, q, errClass)
 	}
 	if err != nil {
 		return nil, false, err
@@ -219,80 +172,60 @@ func scopedHeaders(
 	return out, false, err
 }
 
-// scopedQuery is the verdict half of [scopedHeaders]: the store query one
-// collection read of req.Type runs for this principal, with every narrowing
-// that lives in the query stamped on. errClass is the error a failure of that
-// query is reported as: errListLoad for an allow-all read, errACLListQuery for
-// the ACL's own query. withheld is as for scopedHeaders.
-//
-// req.Scope is NOT in the query: it runs in Go after the read
-// ([applyScope]). A caller that pages or counts the query itself, rather
-// than reading it whole through scopedHeaders, must therefore not pass a
-// Scope: a page of the store's rows is not a page of the scoped result.
-//
-// Props is always a fresh slice, so a caller may append to it without
-// writing into the ACL layer's cached verdict or into req.
+// scanHeaders reads every row q admits, then applies req's query scope in Go.
+// q, errClass and req must come from one [scopedQuery] call, as pinned by
+// TestScanHeaders_TakesItsQueryFromScopedQuery. The read is unpaged and
+// charged to the caller by the unpaged-read guard; new code should page
+// through [scopedHeaders]. A query with no type is refused, since it is the
+// zero query a withheld verdict returns.
+func scanHeaders(
+	ctx context.Context, svc Services, q store.GraphQuery, errClass error, req scopeRequest,
+) ([]store.EntityHeader, error) {
+	if q.EntityType == "" || q.EntityType != req.Type {
+		return nil, fmt.Errorf("%w: a scan of %q with a query for %q", errListLoad, req.Type, q.EntityType)
+	}
+	out, err := collectHeaders(ctx, svc, q, errClass)
+	if err != nil {
+		return nil, err
+	}
+	return applyScope(ctx, svc, out, req)
+}
+
+// scopedQuery is the verdict half of [scopedHeaders] and [scanHeaders]: the
+// store query one collection read of req.Type runs for this principal, with
+// every query-level narrowing stamped on. errClass is errListLoad for an
+// allow-all read and errACLListQuery otherwise; withheld is as for
+// scopedHeaders. req.Scope is not in the query, so a caller that pages or
+// counts it directly must not pass a Scope. Props is always a fresh slice.
 func scopedQuery(
 	ctx context.Context, rqr acl.ReadQueryResult, req scopeRequest,
 ) (q store.GraphQuery, errClass error, withheld bool, err error) {
-	// A denied world yields nothing, via the SAME empty-result path a
-	// genuinely-empty world takes — so the two are identical on the wire.
 	if readWithheld(ctx, rqr) {
-		return q, nil, true, nil // q is the zero query: there is none to run
+		return q, nil, true, nil
 	}
 
 	switch {
 	case rqr.AllowAll:
-		// Extra conjuncts or a read window must be carried HERE as well as
-		// on the ACL-gated branch below. Props on only one branch is the
-		// same fail-open shape as RR-GQWRLD: the AllowAll population would
-		// get an unnarrowed read while everyone else got a narrowed one.
 		q = store.GraphQuery{EntityType: req.Type, Props: append([]store.PropPredicate(nil), allProps(req)...)}
 		errClass = errListLoad
 
 	case rqr.Query == nil:
-		// Defensive: a zero ReadQueryResult would otherwise alias AllowAll.
-		// Fail loud instead of silently widening the read.
 		return q, nil, false,
 			fmt.Errorf("%w: zero ReadQueryResult for type %q", errACLListQuery, req.Type)
 
 	default:
-		// COPY before stamping — see the scopedHeaders doc comment.
 		q = *rqr.Query
 		q.Props = append(append([]store.PropPredicate(nil), q.Props...), allProps(req)...)
 		errClass = errACLListQuery
 	}
-	// Stamping the world on every branch is the RR-GQWRLD invariant; note
-	// store.TrivialScope() is the zero value, so a surface with no world in
-	// ctx pays nothing for it.
 	return stampScope(ctx, q, req), errClass, false, nil
 }
 
-// typeHeaders drains a type scan, failing loud like [collectHeaders].
-func typeHeaders(ctx context.Context, svc Services, q store.EntityQuery) ([]store.EntityHeader, error) {
-	var out []store.EntityHeader
-	for h, err := range store.ListEntityHeaders(ctx, svc.Store, q) {
-		if err != nil {
-			return nil, fmt.Errorf("%w: %w", errListLoad, err)
-		}
-		out = append(out, h)
-	}
-	return out, nil
-}
-
 // headersByIDs answers q for the candidate ids only: one MatchingFaces call
-// decides which rows of those ids q admits, and one header read per matched
-// face loads them. Its cost follows len(ids), never the size of the type.
-//
-// q is the fully stamped query, so the verdict, the world, the face
-// allowlist and the props apply exactly as on the scanning branches. The
-// rows come back sorted by id, then face, so the order does not depend on
-// the backend.
-//
-// The verdict and the header read are two statements, the same two-step
-// [loadRowContent] takes for bodies. A write that lands between them can
-// serve a row's newer header; a read never waits for writes, so the scan
-// branches give no stronger guarantee across a request either.
+// decides which rows q admits, and one header read per matched face loads
+// them. Its cost follows len(ids). q is fully stamped, so verdict, world,
+// faces and props apply as on a scan. Rows are sorted by id, then face. A
+// write between the two statements can serve a newer header.
 func headersByIDs(
 	ctx context.Context, svc Services, q store.GraphQuery, ids []string, errClass error,
 ) ([]store.EntityHeader, error) {
@@ -314,7 +247,6 @@ func headersByIDs(
 		eq := store.EntityQuery{Type: q.EntityType, IDs: byFace[face], Faces: store.AtFaces(face)}
 		for h, err := range store.ListEntityHeaders(ctx, svc.Store, eq) {
 			if err != nil {
-				// A plain load, not the gate query: errListLoad on both branches.
 				return nil, fmt.Errorf("%w: %w", errListLoad, err)
 			}
 			out = append(out, h)
@@ -396,19 +328,9 @@ func allProps(req scopeRequest) []store.PropPredicate {
 }
 
 // applyScope runs the query scope's predicate over rows the store returned.
-//
-// This is the AUTHORITATIVE filter. ScopeProps may have narrowed the read
-// already, but only to conjuncts the store can evaluate — a scope using `~=`,
-// an ordered comparison or a disjunction reaches here unnarrowed, and dropping
-// this pass would serve those rows.
-//
-// A nil filter alongside a non-nil scope is an ERROR, not a skip: skipping
-// serves the unscoped set, which is the failure direction a scope exists to
-// prevent.
-//
-// A `related(...)` in the scope is authorized by the request's own read gate
-// and answered with the same world and faces as the read that produced the
-// candidates, so a traversal cannot see further than the list it filters.
+// It is the authoritative filter: ScopeProps narrows only what the store can
+// evaluate. A nil filter with a non-nil scope is an error, not a skip. A
+// `related(...)` in the scope uses the request's read gate, world and faces.
 func applyScope(
 	ctx context.Context, svc Services, headers []store.EntityHeader, req scopeRequest,
 ) ([]store.EntityHeader, error) {
@@ -424,9 +346,6 @@ func applyScope(
 	out, err := req.ScopeFilter(ctx, req.Scope, req.Type, headers,
 		traversalGateFromContext(ctx).GateTraversal, match)
 	if err != nil {
-		// Surfaced, never swallowed into a non-match: an identity scope
-		// with no principal must fail loudly rather than render an empty
-		// page that reads as "you have nothing".
 		return nil, fmt.Errorf("%w: query scope on %q: %w", errListLoad, req.Type, err)
 	}
 	return out, nil
@@ -443,14 +362,6 @@ func stampScope(ctx context.Context, q store.GraphQuery, req scopeRequest) store
 	if len(req.Faces) > 0 {
 		q.FaceIn = req.Faces
 	}
-	return q
-}
-
-// windowed applies req's read window to a stamped row query. Kept out of
-// stampScope, whose result also answers applyScope's traversal matches,
-// which a window must not cut.
-func windowed(q store.GraphQuery, req scopeRequest) store.GraphQuery {
-	q.Limit, q.Offset = req.Limit, req.Offset
 	return q
 }
 
@@ -473,16 +384,24 @@ func collectHeaders(
 // scopedEntities is [scopedHeaders] adapted to the header-entity shape most
 // callers want. Separate rather than a flag because the header form is the
 // one new code should reach for.
+//
+// It drops the withheld flag: a withheld read returns no rows, and none of
+// its callers skips work on it.
 func scopedEntities(
 	ctx context.Context, svc Services, rqr acl.ReadQueryResult, req scopeRequest,
-) (entities []*entity.Entity, withheld bool, err error) {
-	headers, withheld, err := scopedHeaders(ctx, svc, rqr, req)
+) ([]*entity.Entity, error) {
+	headers, _, err := scopedHeaders(ctx, svc, rqr, req)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
+	return headerEntities(headers), nil
+}
+
+// headerEntities converts content-free headers to header entities.
+func headerEntities(headers []store.EntityHeader) []*entity.Entity {
 	out := make([]*entity.Entity, 0, len(headers))
 	for _, h := range headers {
 		out = append(out, headerEntity(h))
 	}
-	return out, withheld, nil
+	return out
 }

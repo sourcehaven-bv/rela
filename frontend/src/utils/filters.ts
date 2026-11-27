@@ -87,15 +87,28 @@ export function buildFilterKey(property: string, operator: string | undefined): 
 const FILTER_KEY_RE = /^filter\[([^\]]+)\](?:\[([^\]]+)\])?(\[\])?$/
 
 /**
- * Allowlist for property names. Accepts identifier-style names only:
- * alphanumeric + underscore, leading letter or underscore. This is narrower
- * than what the metamodel technically permits but deliberately so — anything
- * outside this set from a URL query is almost certainly a bug or an
- * injection attempt (e.g., `__proto__`, names with brackets, Unicode
- * confusables). Rejecting here short-circuits prototype pollution and makes
- * the parser's behavior predictable across engines.
+ * Characters a property or relation name may not contain. Mirrors
+ * `metamodel.ValidateSchemaName`: single quotes, backslashes and control
+ * characters. JS `trim()` and Go `strings.TrimSpace` differ only on U+FEFF and
+ * U+0085, which no real name uses.
+ * Names otherwise use dashes, dots, spaces and non-ASCII letters, as
+ * `belongs-to` does, so an identifier-only allowlist drops valid deep links.
  */
-const PROPERTY_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
+// eslint-disable-next-line no-control-regex
+const UNSAFE_NAME_CHAR_RE = /['\\\x00-\x1f\x7f]/
+
+/** The one key that replaces a plain object's prototype on assignment. */
+const PROTO_KEY = '__proto__'
+
+/** Reports whether a URL filter key names a property the metamodel could declare. */
+function isFilterPropertyName(name: string): boolean {
+  return (
+    name !== '' &&
+    name.trim() === name &&
+    !UNSAFE_NAME_CHAR_RE.test(name) &&
+    name !== PROTO_KEY
+  )
+}
 
 /**
  * Parse a Vue Router LocationQuery into a FilterState. Skips null/empty values.
@@ -116,10 +129,7 @@ export function parseFilterQueryParams(query: LocationQuery): FilterState {
     if (!match) continue
 
     const property = match[1]
-    if (!PROPERTY_NAME_RE.test(property)) {
-      // Reject non-identifier property names. See PROPERTY_NAME_RE above.
-      continue
-    }
+    if (!isFilterPropertyName(property)) continue
     const apiOp = match[2]
     const isArray = match[3] === '[]'
 

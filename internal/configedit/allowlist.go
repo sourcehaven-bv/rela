@@ -159,6 +159,7 @@ var editable = map[File][]string{
 		"triggers.*.on.when",
 		"triggers.*.on.where.[]",
 		"triggers.*.outputs.[].set.properties.*",
+		"triggers.*.outputs.[].set.unset.[]",
 		"triggers.*.outputs.[].create.properties.*",
 		"triggers.*.outputs.[].create.relate.from",
 		"triggers.*.outputs.[].create.relate.type",
@@ -190,6 +191,7 @@ var editable = map[File][]string{
 		"app.name",
 		"app.description",
 		"app.language",
+		"app.languages.[]",
 		"app.world_switcher",
 
 		"styles.*.*",
@@ -230,6 +232,12 @@ var editable = map[File][]string{
 		"lists.*.columns.[].link",
 		// Which columns stay on a phone (TKT-3VLKP3D); display only.
 		"lists.*.columns.[].primary",
+		// Toggle columns (TKT-M0AT73B) place a control whose flip is an
+		// ordinary PATCH; the field permission and transitions still apply.
+		"lists.*.columns.[].widget",
+		"lists.*.columns.[].on",
+		"lists.*.columns.[].off",
+		"lists.*.columns.[].other",
 		"lists.*.columns.[].property",
 		"lists.*.columns.[].relation",
 		"lists.*.columns.[].sortable",
@@ -237,6 +245,10 @@ var editable = map[File][]string{
 		"piles.toggles.[].**",
 		"lists.*.condition",
 		"lists.*.create_form",
+
+		// Quick entry (TKT-24L1H36) names a form, a list and a desktop hotkey;
+		// it runs no code and grants nothing the form does not.
+		"quick_entry.**",
 		"lists.*.description",
 		"lists.*.edit_form",
 		"lists.*.empty_message",
@@ -246,6 +258,7 @@ var editable = map[File][]string{
 		"lists.*.footer",
 		"lists.*.group_by.**",
 		"lists.*.header",
+		"lists.*.order",
 		"lists.*.page_size",
 		"lists.*.query_scope",
 		"lists.*.sort.[].**",
@@ -382,7 +395,7 @@ var locked = map[File][]string{
 		"copies.**", "conversions.**", "task_item_conversions.**", "default_world", "worlds.**", "entities.*.faces.**",
 		"entities.*.properties.*.computed", "relations.*.properties.*.computed",
 		"entities.*.properties.*.rollup.**", "relations.*.properties.*.rollup.**",
-		"relations.*.scope", "relations.*.owning",
+		"relations.*.scope", "relations.*.owning", "relations.*.within", "relations.*.on_change",
 		"validations.[].faces.**",
 	},
 	FlowsFile: {
@@ -434,6 +447,8 @@ var locked = map[File][]string{
 		"dashboard.entity_type", "dashboards.*.entity_type",
 		"dashboard.cards.[].scope.*", "dashboards.*.cards.[].scope.*",
 		"lists.*.actions.**", "lists.*.toolbar_actions.**", "lists.*.export_render",
+		// Not in the Configure space yet: list assign defaults (TKT-FGE5G3I).
+		"lists.*.assign.**",
 		// A board's header actions (TKT-I2SRNWR), like a list's.
 		"kanbans.*.actions.**",
 		// The pile menu's actions and export transforms, like a list's.
@@ -462,6 +477,11 @@ var locked = map[File][]string{
 		"dashboard.cards.[].columns.[].busy", "dashboards.*.cards.[].columns.[].busy",
 		// So is primary (TKT-3VLKP3D).
 		"dashboard.cards.[].columns.[].primary", "dashboards.*.cards.[].columns.[].primary",
+		// So are toggle columns (TKT-M0AT73B).
+		"dashboard.cards.[].columns.[].widget", "dashboards.*.cards.[].columns.[].widget",
+		"dashboard.cards.[].columns.[].on", "dashboards.*.cards.[].columns.[].on",
+		"dashboard.cards.[].columns.[].off", "dashboards.*.cards.[].columns.[].off",
+		"dashboard.cards.[].columns.[].other", "dashboards.*.cards.[].columns.[].other",
 		// Editable columns are view-table-only (TKT-4Q2EIVZ); the load refuses them here.
 		"lists.*.columns.[].render", "dashboard.cards.[].columns.[].render",
 		"dashboards.*.cards.[].columns.[].render",

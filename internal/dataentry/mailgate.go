@@ -37,31 +37,11 @@ const mailSendNeedle = "mail.send"
 // project on disk (CLAUDE.md: interfaces at the call site).
 type scriptReader func(projectRoot, scriptPath string) (string, error)
 
-// collectUngatedMailActions names the actions whose script calls mail.send
-// without a `mail:` capability grant.
-//
-// # This is a HINT, not the control
-//
-// It is a substring scan over the script source, so it is wrong in both
-// directions and is designed to be wrong in the harmless one:
-//
-//   - It OVER-reports. `-- we used to mail.send here` warns. That costs an
-//     operator one glance at a config file.
-//   - It UNDER-reports. `local m = mail; m.send{...}`, or a call built by
-//     string concatenation, is invisible to it. That costs nothing, because
-//     the runtime gate is exact and is what actually denies the send. A missed
-//     hint means an operator learns from the denial instead of from the log.
-//
-// Writing a real Lua parse to close the second gap would be building a second,
-// weaker enforcement mechanism beside the working one — and the moment it looks
-// authoritative, someone will rely on its silence. A warning that is honest
-// about being a heuristic is more useful than one that invites false
-// confidence, which is why the log line says "appears to call".
-//
-// Actions with no `script:` (set-only) are skipped: there is no body to scan.
-// A script that cannot be read is skipped silently — startup already failed on
-// a missing script by the time this runs, and a lint must not be the thing that
-// takes an app down.
+// collectUngatedMailActions names the actions whose script appears to call
+// mail.send without a `mail:` capability grant. It is a substring-scan hint,
+// not the control: it may over- or under-report, and the runtime gate is what
+// denies the send. Actions without `script:` and scripts that cannot be read
+// are skipped silently.
 func collectUngatedMailActions(
 	actions map[string]dataentryconfig.Action, projectRoot string, read scriptReader,
 ) []string {
@@ -78,8 +58,6 @@ func collectUngatedMailActions(
 			ungated = append(ungated, fmt.Sprintf("%s (%s)", id, action.Script))
 		}
 	}
-	// Sorted so the log line is stable across restarts: map iteration order
-	// would otherwise make an unchanged config look like it had changed.
 	sort.Strings(ungated)
 	return ungated
 }

@@ -82,10 +82,10 @@ func ValidateWithFS(ctx context.Context, startDir string, fs storage.FS) (*Valid
 	result := &ValidateResult{}
 	result.ProjectRoot = proj.Root
 
-	// Validate metamodel. FSLoader runs the migration check the server boot
-	// runs, so a schema the server would refuse (for example one that still
-	// declares `automations:`, TKT-GWOBH2U) is not reported valid.
-	mm, _, err := metamodel.NewFSLoader(fs, proj.SchemaPath).Load(ctx)
+	// Validate metamodel. The strict loader refuses deprecated syntax the server
+	// would migrate in memory, so CI keeps flagging files that need
+	// `rela migrate` (TKT-3JF7FSN).
+	mm, _, err := metamodel.NewStrictFSLoader(fs, proj.SchemaPath).Load(ctx)
 	switch {
 	case err != nil:
 		result.MetamodelError = err
@@ -287,10 +287,10 @@ func validateDataEntry(path string, mm *metamodel.Metamodel, fs storage.FS) erro
 // `rela validate` does: structure, references, and every condition the
 // server compiles.
 //
-// Deprecated syntax is reported as a [*migration.Error], the error type the
-// server returns when it loads the file: a config that rela-server refuses
-// must not pass. Like the server, it stops there, so other errors in the file
-// show only after `rela migrate`, which rewrites the deprecated syntax.
+// Deprecated syntax is reported as a [*migration.Error]. This is stricter
+// than the server, which reads it through an in-memory migration with a
+// warning, so CI keeps flagging files that need `rela migrate`. It stops
+// there, so other errors in the file show only after the migration.
 func CheckDataEntry(data []byte, mm *metamodel.Metamodel) error {
 	if detections := migration.DetectBytes(data, migration.FileTypeDataEntry); len(detections) > 0 {
 		return &migration.Error{FilePath: dataentryconfig.ConfigFile, Detections: detections}

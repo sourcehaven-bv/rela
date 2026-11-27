@@ -55,7 +55,7 @@ type TemplateLoader interface {
 //   - Create: createCore (validate → write) → triggers.Process →
 //     apply property changes → re-write if changed → cascade.
 //     Engine.Process runs here (not inside Runner) because
-//     PropertiesSet must land on the entity and be persisted before
+//     the property writes must land on the entity and be persisted before
 //     cascade dispatches.
 //   - Update: validate → engine.Process(if oldEntity != nil) →
 //     apply property changes → write → cascade.
@@ -239,17 +239,20 @@ var _ autocascade.Mutator = (*Manager)(nil)
 // convert interpolation. It is a seam value like ValidationMode, so it has
 // no sub-struct to join either.
 //
-// 23 -> 24 (TKT-XI7IDBS): [Deps.RenameGuard], so a subject an unfinished
+// 23 -> 24 (TKT-XI7IDBS): RenameGuard, so a subject an unfinished
 // flow run holds keeps its id. Like AnchorGuard it must run inside the
 // rename's transaction, which no post-commit hook can do. The optional-hook
 // sub-struct named above would take it along.
 //
-// 24 -> 25 (FEAT-J0O10QI `on: create`): [Deps.CreateHook], so a flow that
+// 24 -> 25 (FEAT-J0O10QI `on: create`): CreateHook, so a flow that
 // starts on create stores its run in the create's transaction. Like
 // RenameGuard it must run inside that transaction; the same sub-struct
 // would take it along.
 //
-//plimsoll:max-fields=25
+// 25 -> 24 (TKT-GYXOTQC): RenameGuard and CreateHook moved into
+// [Deps.TxHooks], which also takes the new [TxHooks.UpdateHook].
+//
+//plimsoll:max-fields=24
 type Deps struct {
 	// Store is the authoritative persistence layer. Required.
 	Store store.Store
@@ -409,18 +412,8 @@ type Deps struct {
 	// channels does.
 	AnchorGuard AnchorGuard
 
-	// RenameGuard refuses a rename that state kept outside the graph under
-	// the old id forbids (see [RenameGuard]).
-	//
-	// Nil: accepted — no such state, as a build without flows has.
-	RenameGuard RenameGuard
-
-	// CreateHook is told of each new entity inside the create's store
-	// transaction (see [CreateHook]).
-	//
-	// Nil: accepted — nothing watches creates, as a build without a flow
-	// that starts on create has.
-	CreateHook CreateHook
+	// TxHooks are told of writes inside their store transaction.
+	TxHooks TxHooks
 
 	// ValidationMode is the deployment's validation policy (DEC-OYV2AK).
 	// The zero value is [ValidationAdvisory].
@@ -437,6 +430,10 @@ type Deps struct {
 	// writeRules is the compiled `enforce: write` validation rules of Meta.
 	// [New] compiles it, so no wiring site can forget it.
 	writeRules *writerule.Set
+
+	// scopes is the compiled `within:` relations of Meta (TKT-5GK80Q9).
+	// [New] compiles it. Nil: accepted — the schema declares none.
+	scopes *scopeIndex
 }
 
 // FieldWriteGate answers whether the ctx principal may write the named
@@ -456,7 +453,7 @@ type Deps struct {
 // should carry whatever structured denial detail the surface needs.
 //
 // **Scope: caller-authored changes only.** Automation-derived properties
-// ([triggers.Result.PropertiesSet]) are system writes and are
+// ([triggers.Result.Writes]) are system writes and are
 // deliberately NOT passed through this gate. The gate enforces parity with
 // what the affordance resolver would surface to this principal on a read —
 // and automation is the system acting, not the principal. Gating it would
@@ -673,6 +670,7 @@ func New(d Deps) (*Manager, error) {
 		return nil, fmt.Errorf("entitymanager: New: %w", err)
 	}
 	d.writeRules = rules
+	d.scopes = newScopeIndex(d.Meta)
 	if d.FieldGate == nil {
 		return nil, errors.New(
 			"entitymanager: New: FieldGate is required (use entitymanager.AllowAllFieldGate{} to opt out)")
@@ -1121,7 +1119,7 @@ func createFollowUps(
 		Type:   triggers.EventEntityCreated,
 		Entity: created,
 	})
-	if len(autoResult.PropertiesSet) > 0 {
+	if autoResult.HasWrites() {
 		// A compare-and-swap onto the stored row, not a write of `created`:
 		// a concurrent patch that landed after createCore must survive. The
 		// unique constraint is re-enforced against the POST-automation values
@@ -1134,7 +1132,7 @@ func createFollowUps(
 		// `enforce: write` that the automation's values break) leaves the
 		// row createCore stored, without the automation's values. The error
 		// says so, so a caller does not retry and create a second row.
-		written, err := writeAutomationProperties(ctx, m.deps, created, autoResult.PropertiesSet, nil)
+		written, err := writeAutomationProperties(ctx, m.deps, created, autoResult.Writes(), nil)
 		if err != nil {
 			return result, &KeptEntityError{Entity: created, Err: err}
 		}
@@ -1232,8 +1230,8 @@ func (m *Manager) ValidateCreate(
 // when an old state is available, applies property changes, persists,
 // and dispatches the cascade.
 //
-// **Caller-entity mutation.** When automation sets properties via
-// [triggers.Result.PropertiesSet], UpdateEntity mutates the supplied
+// **Caller-entity mutation.** When automation sets or removes properties via
+// [triggers.Result.Writes], UpdateEntity mutates the supplied
 // `*entity.Entity` in place before writing. Callers that need to
 // preserve the pre-call state should clone first.
 //
@@ -1747,7 +1745,7 @@ func (m *Manager) updateCore(
 		return nil, err
 	}
 	if ranAutomation {
-		if len(autoResult.PropertiesSet) > 0 {
+		if autoResult.HasWrites() {
 			// Properties changed — validate the post-automation state.
 			finalErrs = metaValidator.ValidateEntity(e.ID, e.Type, e.Properties)
 		}
@@ -1766,10 +1764,10 @@ func (m *Manager) updateCore(
 	// the fixed write pipeline, so no update path can skip legality/guard/
 	// precondition. An empty enforcer (metamodel with no transitions) is a
 	// no-op.
-	if err := m.deps.Transitions.EnforceUpdate(
+	if terr := m.deps.Transitions.EnforceUpdate(
 		ctx, oldEntity, e, m.deps.TransitionGuard, m.deps.TransitionGraph,
-	); err != nil {
-		return nil, m.mapTransitionError(ctx, acl.NewEntitySubject(e.Type, e.ID, e.Face), err)
+	); terr != nil {
+		return nil, m.mapTransitionError(ctx, acl.NewEntitySubject(e.Type, e.ID, e.Face), terr)
 	}
 
 	// Enforce `unique: true` natural-key constraints against the final
@@ -1785,25 +1783,24 @@ func (m *Manager) updateCore(
 	// zero condition: an unconditional write, for a caller that owns the
 	// whole entity (UpdateEntity).
 	txCheck = chainTxChecks(txCheck, relationRuleCheck(m.deps, oldEntity, e))
-	summary := updateEntitySummary(oldEntity, e)
-	write := func(ctx context.Context, st store.Store) error {
-		if _, werr := st.UpdateEntityIf(ctx, e, store.UpdateCondition{
-			ExpectedVersion: store.EntityVersion(expectedVersion),
-		}); werr != nil {
-			return werr
-		}
-		// The record joins the write's transaction (DEC-U78WD7Y), before
-		// the cascade runs.
-		return m.recordEntityAudit(ctx, st, audit.OpUpdateEntity, e, summary)
+	ctx, op, txCheck, err := beginUpdate(ctx, m.deps, oldEntity, e, txCheck)
+	if err != nil {
+		return nil, err
 	}
+	summary := updateEntitySummary(oldEntity, e)
+	write := updateWrite(m, e, oldEntity, expectedVersion, summary)
 	// A replace joined to this update (PatchWithRelations) is checked and
 	// written in the same transaction.
 	joined := joinedFor(ctx, e.ID)
 	if joined != nil {
-		txCheck = chainTxChecks(txCheck, joined.check)
+		// The replace is checked first, so the update's relation rules see the
+		// edges its scope check clears (afterEdges).
+		txCheck = chainTxChecks(joined.check, txCheck)
 		write = joined.after(write)
 	}
-	if err := writeChecked(ctx, m.deps, e, e.ID, txCheck, write); err != nil {
+	err = writeChecked(ctx, m.deps, e, e.ID, txCheck, write)
+	defer op.finish(ctx, m.deps, err)
+	if err != nil {
 		var invalid *ValidationError
 		if errors.As(err, &invalid) {
 			return nil, err
@@ -1859,22 +1856,48 @@ func (m *Manager) processUpdateAutomation(
 		Entity:    e,
 		OldEntity: oldEntity,
 	})
-	if len(result.PropertiesSet) == 0 {
+	if !result.HasWrites() {
 		return result, true, nil
 	}
-	if err := rejectComputedPresent(m.deps, e.Type, stringMapAny(result.PropertiesSet)); err != nil {
+	writes := result.Writes()
+	if err := rejectComputedPresent(m.deps, e.Type, writeNames(writes)); err != nil {
 		return nil, true, err
 	}
-	if err := rejectExternalRefPresent(m.deps.Meta, e.Type, stringMapAny(result.PropertiesSet)); err != nil {
+	if err := rejectExternalRefPresent(m.deps.Meta, e.Type, writeNames(writes)); err != nil {
 		return nil, true, err
 	}
-	for prop, val := range result.PropertiesSet {
-		e.SetString(prop, val)
-	}
+	// Folded into the write in flight: e is the entity this update persists,
+	// already merged against the raw stored row, so a removal here is the
+	// same MetaUnset a caller's patch would carry. It runs after the caller's
+	// changes, so the automation wins over a caller who set the property.
+	writes.Apply(e)
 	if err := m.deps.Computed.Evaluate(ctx, e); err != nil {
 		return nil, true, err
 	}
 	return result, true, nil
+}
+
+// updateWrite returns the store write of updateCore: the row, its audit
+// record and the update hook, in one transaction where there is one.
+func updateWrite(m *Manager, e, oldEntity *entity.Entity, expectedVersion, summary string,
+) func(context.Context, store.Store) error {
+	return func(ctx context.Context, st store.Store) error {
+		prior, perr := priorRow(ctx, m.deps, st, e, oldEntity)
+		if perr != nil {
+			return perr
+		}
+		if _, werr := st.UpdateEntityIf(ctx, e, store.UpdateCondition{
+			ExpectedVersion: store.EntityVersion(expectedVersion),
+		}); werr != nil {
+			return werr
+		}
+		// The record joins the write's transaction (DEC-U78WD7Y), before
+		// the cascade runs.
+		if aerr := m.recordEntityAudit(ctx, st, audit.OpUpdateEntity, e, summary); aerr != nil {
+			return aerr
+		}
+		return runUpdateHook(ctx, m.deps, st, prior, e)
+	}
 }
 
 // authorizeCascadeRelations checks the principal may delete every relation
@@ -2362,7 +2385,7 @@ func (m *Manager) authorizeRename(
 	ctx context.Context, id string, family []*entity.Entity, authorized familyAuthorization,
 ) error {
 	for _, e := range family {
-		if len(declaredFaces(m.deps.Meta, e.Type)) == 0 {
+		if len(metamodel.FacesOf(m.deps.Meta, e.Type)) == 0 {
 			if err := m.authorizeFamily(ctx, acl.OpRename, id, []*entity.Entity{e}, authorized); err != nil {
 				return err
 			}
@@ -3373,23 +3396,44 @@ func (m *Manager) CreateRelation(
 	// create is the real guard, and a conflict surfaces as
 	// ErrRelationAlreadyExists (BUG-ZWTDH9).
 	ruled := relationWritesChecked(m.deps, key)
+	scoped := m.deps.scopes.touches(key)
+	adds := []entity.RelationKey{key}
+	var clears scopeClears
+	if scoped {
+		if err := clears.prepass(ctx, m, adds, nil); err != nil {
+			return nil, err
+		}
+	}
 	create := func(ctx context.Context, st store.Store) error {
-		if ruled {
-			if err := checkRelationRules(ctx, m.deps, st, []entity.RelationKey{key}, nil); err != nil {
+		var cleared []entity.RelationKey
+		if scoped {
+			var err error
+			if cleared, err = clears.decide(ctx, m, st, adds, nil); err != nil {
+				return err
+			}
+		}
+		if ruled || relationWritesChecked(m.deps, cleared...) {
+			if err := checkRelationRules(ctx, m.deps, st, adds, cleared); err != nil {
 				return err
 			}
 		}
 		if err := writeRelationCreate(ctx, st, m.deps.Meta, key, rel, nil); err != nil {
 			return err
 		}
-		return m.recordRelationAudit(ctx, st, audit.OpCreateRelation, rel, "created")
+		if err := m.recordRelationAudit(ctx, st, audit.OpCreateRelation, rel, "created"); err != nil {
+			return err
+		}
+		return clears.apply(ctx, m, st)
 	}
 	// An owning edge reads its neighbors' edges to decide whether it may
-	// exist, and a relation rule reads the ends' edges, so the reads and the
-	// write share one Tx for the same reason.
+	// exist, and a relation rule or a scope reads the ends' edges, so the
+	// reads and the write share one Tx for the same reason.
 	inTx := relTypeIsOrdered(m.deps.Meta, key.Type) || relTypeHasMax(m.deps.Meta, key.Type) ||
-		metamodel.IsOwning(m.deps.Meta, key.Type) || ruled
+		metamodel.IsOwning(m.deps.Meta, key.Type) || ruled || scoped
 	createErr := auditTx(ctx, m.deps, inTx, create)
+	if createErr == nil {
+		clears.version(ctx, m)
+	}
 	if createErr != nil {
 		if errors.Is(createErr, store.ErrConflict) {
 			return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists,
@@ -3698,7 +3742,7 @@ func deleteRelation(ctx context.Context, m *Manager, key entity.RelationKey, exp
 	}
 	// A sink that records in the transaction takes the transactional path,
 	// which reads, deletes and records on one view.
-	if expect != "" || relationWritesChecked(m.deps, key) || auditsInTx(m.deps) {
+	if expect != "" || relationWritesChecked(m.deps, key) || m.deps.scopes.touches(key) || auditsInTx(m.deps) {
 		return deleteRelationIfVersion(ctx, m, key, expect)
 	}
 	// Fetch pre-delete AFTER authz (BUG-K6FEVB: a denied delete must return

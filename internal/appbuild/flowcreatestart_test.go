@@ -105,7 +105,7 @@ func TestFlowCreateStart_Lua(t *testing.T) {
 	svc := createStartServices(t)
 	ctx := flowUser(t, svc, "clerk")
 	var out strings.Builder
-	rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out, lua.WithContext(ctx),
+	rt := lua.NewWriter(svc.Scheduler().ScheduledLuaWriteDeps(), &out, lua.WithContext(ctx),
 		lua.WithPrincipal(principal.From(ctx)))
 	defer rt.Close()
 	require.NoError(t, rt.RunString(
@@ -192,7 +192,8 @@ func headerDepth(hdr *entity.Entity) int {
 }
 
 // TestFlowCreateStart_ChainIsBounded: a chain of create starts stops at
-// the depth bound instead of running without end. The depth is stored on
+// the depth bound instead of running without end. The create settles the
+// first run; a due round settles the runs a settling run started. The depth is stored on
 // each header, so the bound holds whoever settles the run that makes the
 // next create.
 func TestFlowCreateStart_ChainIsBounded(t *testing.T) {
@@ -212,6 +213,13 @@ func TestFlowCreateStart_ChainIsBounded(t *testing.T) {
 	task.SetString("title", "first")
 	_, err = svc.EntityManager().CreateEntity(flowUser(t, svc, "clerk"), task, entity.CreateOptions{})
 	require.NoError(t, err)
+	for range 20 {
+		advanced, dErr := appbuild.FlowEngine(svc).Due(context.Background())
+		require.NoError(t, dErr)
+		if advanced == 0 {
+			break
+		}
+	}
 
 	var depths []int
 	tasks := 0

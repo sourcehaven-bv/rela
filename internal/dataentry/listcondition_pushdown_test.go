@@ -174,8 +174,8 @@ func conditionGoPath(
 		t.Fatal(err)
 	}
 	ctx = primeVerdicts(ctx, app.fieldResolver, all)
-	m := viewCondition(app.viewConditions, app.State(), viewKindList, list)
-	if m == nil {
+	m, err := viewCondition(app.viewConditions, app.State(), viewKindList, list)
+	if err != nil || m == nil {
 		t.Fatalf("list %q has no compiled condition", list)
 	}
 	kept, err := applyViewCondition(ctx, all, m, suggestionRedactor(app.affordances), app.Services().Store)

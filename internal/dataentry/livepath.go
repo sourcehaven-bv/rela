@@ -69,8 +69,8 @@ var (
 	// no key.
 	liveInboxKeys = keySet("limit", "kinds")
 	liveListKeys  = keySet(
-		"page", "per_page", "cursor", "sort", "fields", "include", "comment_counts", "busy",
-		"world", "list_id", "query_scope", "scope_page", "scope_tab", "anchor",
+		"page", "per_page", "cursor", "sort", "fields", "field_verdicts", "include", "comment_counts", "busy",
+		"world", "list_id", "kanban_id", "query_scope", "scope_page", "scope_tab", "anchor",
 		"relation", "direction",
 	)
 	// liveFilterKey matches the list filter parameters, filter[prop] and
@@ -99,8 +99,6 @@ func parseLivePath(raw string, meta *metamodel.Metamodel) (livePath, error) {
 	if u.Scheme != "" || u.Host != "" || u.User != nil || u.Opaque != "" || u.Fragment != "" {
 		return livePath{}, fmt.Errorf("%w: must be a relative path", errLivePath)
 	}
-	// RawPath is set only when the path holds an escape that matters, such
-	// as %2F. Refusing it keeps the segments below exactly what was sent.
 	if u.RawPath != "" {
 		return livePath{}, fmt.Errorf("%w: escaped characters in path", errLivePath)
 	}

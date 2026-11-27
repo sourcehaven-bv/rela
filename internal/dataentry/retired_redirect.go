@@ -9,36 +9,14 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
-// redirectRetired answers a read of an id that a rename or a conversion
-// retired with a 307 to the entity that took its place (TKT-2F1AUZ). It
-// returns true when it wrote the redirect. On false the caller writes its
-// own miss response.
-//
-// Call it only on a miss, so a live read pays nothing for it. It never runs
-// for a write: a write sent to an old id must not land on an entity the
-// caller did not name.
-//
-// The successor comes from [visibility.Resolver.Successor], which applies
-// the row gate, the face gate and the world. A successor the caller may not
-// read is no successor, so the caller then answers exactly as for an id
-// that never existed. The mapping from a readable successor back to the old
-// id is already served by mention resolution, so the redirect discloses
-// nothing new. A store without store.RetiredIDs never redirects.
-//
-// A failed lookup is logged and answered as a miss: the redirect is a
-// convenience, and the caller's miss answer is always a correct one.
-//
-// The redirect is temporary and not cached (`Cache-Control: no-store`):
-// whether it applies depends on the principal and can change when the
-// successor is renamed again or its read grant changes. A cached permanent
-// redirect would outlive both.
-//
-// segment maps the successor's type to its path segment (the type name for
-// `_views`, the plural for the entity routes). Location is relative to the
-// request path, `../{segment}/{id}`, so a prefix in front of `/api` stays in
-// place, and it keeps the request's query (the world). The old address's face
-// is not carried over: the successor's type need not declare it, and the
-// world still picks the face.
+// redirectRetired answers a read miss on an id retired by a rename or
+// conversion with a 307 to its successor, returning true when it wrote one.
+// Call it only on a read miss, never for a write. The successor comes from
+// [visibility.Resolver.Successor], which applies the row, face and world gates;
+// an unreadable successor is no successor. A failed lookup is logged and
+// treated as a miss. The redirect is `Cache-Control: no-store`. segment maps
+// the successor's type to its path segment; Location is relative,
+// `../{segment}/{id}`, and keeps the query but not the old face.
 func redirectRetired(
 	w http.ResponseWriter, r *http.Request, vis visibility.Reader, id string,
 	segment func(entityType string) string,

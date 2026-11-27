@@ -35,26 +35,12 @@ func readsPastInstant(ctx context.Context) bool {
 }
 
 // attachAsOf binds `?as_of=` to the request context, refusing every
-// combination this surface cannot serve.
-//
-// It runs inside attachWorld, so identity, the ACL request and the world are
-// already bound. Identity and policy are today's: the instant changes the rows
-// the gate reads, not who is asking or what the policy says (DEC-TDEF3GD).
-//
-// Field visibility follows the history endpoint's rules
-// ([affordances.WithHistoricalSubject]): a past row's relations and the roles
-// conferred on it are not today's, so only roles held globally show fields,
-// and a `visible:` grant whose condition reads a relation hides its field.
-// Search applies the same rules through its field scope.
-//
-// As-of reads are read-only. A write method is refused here, and the store
-// refuses any write made under the instant as a second line.
-//
-// A read of the past is a history read, so it needs [acl.PermHistoryRead]. A
-// past state holds content the live graph no longer has (an entity or
-// relation deleted since), which the history endpoint shows only to holders
-// of that permission. The 403 names it: the permission is configuration,
-// not a secret.
+// combination this surface cannot serve. It runs inside attachWorld, and
+// identity and policy stay today's (DEC-TDEF3GD).
+// Field visibility follows the history endpoint
+// ([affordances.WithHistoricalSubject]). As-of reads are read-only: write
+// methods are refused here and by the store. A read of the past needs
+// [acl.PermHistoryRead]; the 403 names it.
 func attachAsOf(next http.Handler, a *App) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		values, present := r.URL.Query()[AsOfParam]
@@ -123,40 +109,26 @@ func asOfCapablePath(path string) bool {
 	if trimmed == "" {
 		return false
 	}
-	// The entity view reads the entity, its relations and its neighbors
-	// through the visibility resolver over the store.
 	if isWorldCapableViewPath(trimmed) {
 		return true
 	}
-	// A dashboard card is a list read through the list pipeline.
 	if trimmed == "_dashboard/card" {
 		return true
 	}
-	// Search answers from the store snapshot under an instant: pgstore's
-	// search reads through the seam, and search.Service scans the store
-	// instead of its live index.
 	if trimmed == "_search" {
 		return true
 	}
-	// A document's script and command renders read through the store, and
-	// the disk cache and Lua cache are bypassed or keyed by the instant.
 	if strings.HasPrefix(trimmed, "_documents/") {
 		return true
 	}
-	// An entity's relations read the entry, its edges and its neighbors
-	// through the store readers.
 	if parts := strings.Split(trimmed, "/"); len(parts) == 3 && parts[0] != "" && parts[1] != "" &&
 		!strings.HasPrefix(parts[0], "_") && !strings.HasPrefix(parts[1], "_") && parts[2] == "relations" {
 
 		return true
 	}
-	// A gantt chart or a sankey diagram reads its nodes and edges through the
-	// store.
 	if isGanttPath(trimmed) || isSankeyPath(trimmed) {
 		return true
 	}
-	// `{plural}` (lists, kanban and calendar read it) and `{plural}/{id}`.
-	// `{plural}/_export` and other `_` sub-routes are not admitted.
 	if strings.HasPrefix(trimmed, "_") || strings.Contains(trimmed, "/_") {
 		return false
 	}

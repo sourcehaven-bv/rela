@@ -68,6 +68,7 @@ type outputKind int
 
 const (
 	outputSet outputKind = iota
+	outputUnset
 	outputRelate
 	outputPile
 	outputNotify
@@ -235,6 +236,9 @@ func compileOutputs(ai int, act *Action) []output {
 	if act.Set != "" {
 		add(outputSet)
 	}
+	if act.Unset != "" {
+		add(outputUnset)
+	}
 	if act.CreateRelation != nil {
 		add(outputRelate)
 	}
@@ -395,6 +399,14 @@ func (e *Engine) renderOutput(o output, name string, event Event, result *Result
 			break
 		}
 		result.PropertiesSet[act.Set] = e.interpolate(act.Value, event)
+		result.PropertiesUnset = slices.DeleteFunc(result.PropertiesUnset, func(p string) bool { return p == act.Set })
+	case outputUnset:
+		// The output rendered last wins, so a name is never both set and
+		// removed.
+		delete(result.PropertiesSet, act.Unset)
+		if !slices.Contains(result.PropertiesUnset, act.Unset) {
+			result.PropertiesUnset = append(result.PropertiesUnset, act.Unset)
+		}
 	case outputRelate:
 		targetID := e.interpolate(act.CreateRelation.To, event)
 		if targetID != "" && event.Entity != nil {

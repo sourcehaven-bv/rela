@@ -48,18 +48,9 @@ type meDeps struct {
 }
 
 // handleV1Me serves GET /api/v1/_me: who the request principal is, for the
-// SPA's account menu (TKT-MJTD12). See [v1.MeResponse].
-//
-// POST /api/v1/_me answers the same, after running the provision seam: under
-// `unmatched_principal: provision` a verified principal with no user entity
-// gets its stub now rather than on its first change. The SPA posts when a GET
-// says `provisionable`, so a member who has only looked around is listed
-// among the people too (BUG-WS7QF2K). It stays a POST because provisioning
-// writes; a GET never provisions. A read-only workspace refuses the POST
-// before it gets here.
-//
-// A package function taking the App rather than a method: App is at its
-// plimsoll load line, and this needs only what it names.
+// SPA's account menu. See [v1.MeResponse]. POST answers the same after
+// running the provision seam, so a verified principal without a user entity
+// gets its stub now. A GET never provisions.
 func handleV1Me(a *App, w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -82,7 +73,6 @@ func handleV1Me(a *App, w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	ctx := r.Context()
-	// Per principal; writeV1JSON marks every v1 response no-store.
 	me := buildMe(ctx, principal.From(ctx), deps)
 	me.Provisionable = provisionable(ctx, d)
 	me.CanConfigure = a.configure != nil && mayConfigure(a, r)
@@ -138,8 +128,6 @@ func mePerson(ctx context.Context, userID string, d meDeps) *v1.MePerson {
 	}
 	e, ok, err := d.people.Get(ctx, typ, userID)
 	if err != nil {
-		// The menu still works without the person; a gate fault is logged
-		// and the person omitted, never served ungated.
 		slog.WarnContext(ctx, "dataentry: _me: person read failed", "err", err)
 		return nil
 	}
@@ -179,8 +167,6 @@ func avatarURL(meta *metamodel.Metamodel, e *entityPkg.Entity, prop string) stri
 		if file == "" {
 			return ""
 		}
-		// The stored value is the attachment path
-		// (attachments/<id>/<prop>/<file>); the endpoint takes the file name.
 		return "/api/v1/" + def.GetPlural(e.Type) + "/" + url.PathEscape(e.ID) +
 			"/_attachments/" + url.PathEscape(prop) + "/" + url.PathEscape(path.Base(file))
 	case metamodel.PropertyTypeString:
@@ -264,7 +250,7 @@ func checkAvatarUserType(acc *dataentryconfig.AccountConfig, aclImpl acl.ACL, me
 	}
 	def, ok := meta.GetEntityDef(pol.UserEntityType)
 	if !ok {
-		return nil // acl.yaml validation reports an unknown user type
+		return nil
 	}
 	pd, ok := def.Properties[acc.AvatarProperty]
 	if !ok || !dataentryconfig.AvatarPropertyType(pd.Type) {

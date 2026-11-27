@@ -259,6 +259,8 @@ const tabScope = usePageTabScope(() => props.pageScope)
 // board (BUG-5OAQUG).
 const boardParams = computed<ListParams | undefined>(() => {
   const params: ListParams = {}
+  // The board's `condition:` is applied by the server, as a list's is.
+  if (kanbanConfig.value?.condition) params.kanban_id = props.id
   if (hasRelationFields.value) params.include = '*'
   if (hasCommentCounts.value) params.comment_counts = true
   if (busyType.value) params.busy = busyType.value

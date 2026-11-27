@@ -67,6 +67,15 @@ function optStr(params: Record<string, unknown>, key: string): string | undefine
   return v
 }
 
+function optPage(params: Record<string, unknown>): number | undefined {
+  const v = params.page
+  if (v === undefined || v === null) return undefined
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) {
+    throw new BridgeError('invalid_params', '"page" must be a positive integer')
+  }
+  return v
+}
+
 export class BridgeError extends Error {
   constructor(
     public code: string,
@@ -85,7 +94,8 @@ export const BRIDGE_METHODS: Record<string, Handler> = {
   list: (p) => listEntities(str(p, 'type'), p.params as ListParams | undefined),
   get: (p) =>
     getEntity(str(p, 'type'), str(p, 'id'), p.params as { include?: string; fields?: string } | undefined),
-  search: (p) => searchEntities(str(p, 'query'), { type: optStr(p, 'type') }),
+  // One page of at most 1000 rows; `page` reads the next while meta.has_more.
+  search: (p) => searchEntities(str(p, 'query'), { type: optStr(p, 'type'), page: optPage(p) }),
   analyze: () => analyze(),
   templates: (p) => getTemplates(str(p, 'type')),
   position: (p) => getEntityPosition(str(p, 'id'), p.scope as ScopeDescriptor),

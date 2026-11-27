@@ -331,8 +331,6 @@ func (h *remotesHandler) conflicts(w http.ResponseWriter, r *http.Request, name 
 	page, perPage := parseV1Pagination(r.URL.Query())
 	out := remoteConflictPage{Data: []remoteEntryWire{}, Total: len(visible), Page: page, PerPage: perPage,
 		Counts: counts}
-	// A page past the end is empty. The comparison is made in pages, so a
-	// huge page number cannot overflow the offset.
 	if page-1 < (len(visible)+perPage-1)/perPage {
 		start := (page - 1) * perPage
 		for _, e := range visible[start:min(start+perPage, len(visible))] {
@@ -452,7 +450,6 @@ func (h *remotesHandler) act(w http.ResponseWriter, r *http.Request, name, op st
 	case remoteAllowed:
 	}
 	if e.Field == "" {
-		// The checks above covered these fields; the write covers no other.
 		key.Fields = append([]string{}, e.Fields...)
 	}
 	h.apply(w, r, name, op, key, req)

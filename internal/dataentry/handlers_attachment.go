@@ -74,17 +74,12 @@ func (h *attachmentHandler) handleV1AttachmentFileRoute(
 //
 //	GET /api/v1/{plural}/{address}/_attachments/{property}/{fileName}
 //
-// The address (`ID` or `ID@face`) is resolved through the gated resolver
-// BEFORE any store lookup, so a hidden face and a nonexistent one are
-// indistinguishable (404, no body difference — the RR-NGMI invariant of
-// handleV1GetEntity).
-//
-// Bytes are shared by the entity's faces, so the face gate is the face's
-// own property value: the file name must be one it references, else the
-// same 404 (BUG-CTUW2N). A face therefore never serves another face's
-// upload. The fileName from the URL is a display name: it is resolved to a
-// storage key through the face's own value ([attachment.StorageKey]), never
-// used as a key or a filesystem path itself.
+// The address resolves through the gated resolver before any store lookup,
+// and the property must be a declared, visible `file` property whose value on
+// THIS face references the file. Every miss is the same 404, so a hidden face,
+// property or another face's upload is indistinguishable from a missing one.
+// fileName maps to a storage key through the face's own value, never used as
+// a key or path itself.
 //
 //archplan:auth=authz
 func (h *attachmentHandler) handleV1GetAttachment(
@@ -98,10 +93,6 @@ func (h *attachmentHandler) handleV1GetAttachment(
 		return
 	}
 
-	// The property must be a declared `file`-type property on this entity
-	// type, visible to this viewer, and must reference the file on THIS
-	// face. Anything else 404s — we never reveal whether some other (or
-	// hidden) property, path or face's file exists.
 	key, referenced := attachment.StorageKey(entity, property, fileName)
 	if !isFileProperty(s, typeName, property) || h.isPropertyHidden(ctx, entity, property) || !referenced {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
@@ -114,8 +105,6 @@ func (h *attachmentHandler) handleV1GetAttachment(
 			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 			return
 		}
-		// Don't leak backend error strings (table/column/path names) —
-		// same rationale as writeGateError. Log server-side, 500 client-side.
 		slog.Warn("dataentry: read attachment failed",
 			"err", err, "entity", entity.ID, "property", property)
 		writeV1Error(w, r, http.StatusInternalServerError, "attachment_read_failed",
@@ -127,8 +116,6 @@ func (h *attachmentHandler) handleV1GetAttachment(
 	setHardenedDownloadHeaders(w.Header(), contentTypeForFilename(fileName), fileName)
 
 	if _, err := io.Copy(w, rc); err != nil {
-		// Headers (and likely some bytes) are already written; we can't
-		// change the status now. Log and move on.
 		slog.Warn("dataentry: streaming attachment failed",
 			"err", err, "entity", entity.ID, "property", property)
 	}
@@ -151,9 +138,6 @@ func (h *attachmentHandler) handleV1PutAttachment(
 ) {
 	r = h.withProvision(r)
 	ctx := r.Context()
-	// Capture the state snapshot once: the cap the handler enforces and the
-	// cap the attachment service enforces must come from the same metamodel
-	// (CLAUDE.md "capture state once per operation").
 	s := h.schema()
 	limit := maxAttachmentBytes(s)
 
@@ -161,13 +145,10 @@ func (h *attachmentHandler) handleV1PutAttachment(
 	if !ok {
 		return
 	}
-	// An image property has a smaller cap than other files.
 	if filePropertyDef(s, entity.Type, property).IsImage() {
 		limit = min(limit, metamodel.ImageMaxBytes)
 	}
 
-	// Take an upload slot before reading the body, which is when the bytes
-	// start to use memory and disk.
 	releaseUpload, admitted := h.uploads.TryAcquire()
 	if !admitted {
 		writeAttachmentBusy(w, r, attachment.ErrBusy)
@@ -181,11 +162,6 @@ func (h *attachmentHandler) handleV1PutAttachment(
 	}
 	defer upload.close()
 
-	// Delegate the cap / suffix / write-order / re-stamp policy to the
-	// shared attachment service so the HTTP and CLI paths apply identical
-	// rules (and the same data-loss-safe attach-then-delete ordering).
-	// The reader is capped at the configured limit (which clamps ≤ the store
-	// backstop) so an under-declared multipart part still can't exceed it.
 	written, err := h.storeUpload(ctx, s, entity, property, upload.fileName, upload.body, limit)
 	if errors.Is(err, errAttachmentServiceUnavailable) {
 		slog.Warn("dataentry: attachment service unavailable", "err", err)
@@ -199,9 +175,6 @@ func (h *attachmentHandler) handleV1PutAttachment(
 	}
 	entity = written.Entity
 
-	// The written face's own edges, through the neighbor-gated seam the GET
-	// uses (BUG-ISJHML), so the response names no neighbor the caller
-	// cannot read.
 	rels, visibleNeighbors, rerr := h.faceEdges.read(ctx, entity)
 	if rerr != nil {
 		writeGateError(w, r, rerr)
@@ -219,18 +192,11 @@ type uploadBody struct {
 }
 
 // readUploadBody extracts the file from an upload request and writes the
-// error response itself when it cannot. Two encodings are accepted:
-//
-//   - multipart/form-data with the file in field "file" (the SPA);
-//   - any other Content-Type, where the request body IS the file and the name
-//     comes from `?filename=` or, failing that, a Content-Disposition
-//     filename. This is what a generic HTTP client (curl -T, restish) sends,
-//     so a file can be uploaded without a multipart envelope.
-//
-// Both are capped at limit at ingress, so an oversize upload is refused
-// before it is buffered; the store backends keep their own cap as a backstop.
-// The raw name is passed on unsanitized, like a multipart one: the attachment
-// service reduces every name to a safe base name ([store.NormalizeFileName]).
+// error response itself when it cannot. It accepts multipart/form-data with
+// the file in field "file", or any other Content-Type where the body IS the
+// file and the name comes from `?filename=` or Content-Disposition.
+// Both are capped at limit at ingress. The raw name is passed on unsanitized;
+// the attachment service reduces it to a safe base name.
 func readUploadBody(w http.ResponseWriter, r *http.Request, limit int64) (uploadBody, bool) {
 	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if mediaType == "multipart/form-data" {
@@ -248,8 +214,6 @@ func readUploadBody(w http.ResponseWriter, r *http.Request, limit int64) (upload
 			"Missing file name", "pass ?filename= or a Content-Disposition filename with a raw upload body")
 		return uploadBody{}, false
 	}
-	// The bytes are stored as sent, so a compressed body would be stored
-	// compressed under the plain name. Refuse it rather than guess.
 	if ce := r.Header.Get("Content-Encoding"); ce != "" && !strings.EqualFold(ce, "identity") {
 		writeV1Error(w, r, http.StatusUnsupportedMediaType, "unsupported_content_encoding",
 			"Unsupported content encoding", "send the file uncompressed")
@@ -259,15 +223,12 @@ func readUploadBody(w http.ResponseWriter, r *http.Request, limit int64) (upload
 		writeAttachmentTooLarge(w, r, limit)
 		return uploadBody{}, false
 	}
-	// No multipart envelope, so no headroom: the body is exactly the file.
 	body := http.MaxBytesReader(w, r.Body, limit)
 	return uploadBody{fileName: name, body: body, close: func() { _ = body.Close() }}, true
 }
 
 // readMultipartUpload is the multipart arm of readUploadBody.
 func readMultipartUpload(w http.ResponseWriter, r *http.Request, limit int64) (uploadBody, bool) {
-	// MaxBytesReader makes ParseMultipartForm and the FormFile read fail with
-	// *http.MaxBytesError once the limit is crossed, which we map to 413.
 	r.Body = http.MaxBytesReader(w, r.Body, limit+maxAttachmentUploadHeadroom)
 	if err := r.ParseMultipartForm(limit + maxAttachmentUploadHeadroom); err != nil {
 		if isMaxBytesError(err) {
@@ -279,9 +240,6 @@ func readMultipartUpload(w http.ResponseWriter, r *http.Request, limit int64) (u
 		return uploadBody{}, false
 	}
 
-	// Clean up any on-disk temp files the multipart parser spilled past its
-	// in-memory threshold. Go's server removes them when the request body
-	// closes, but for a 64 MiB upload path being explicit is cheap insurance.
 	removeForm := func() {
 		if r.MultipartForm != nil {
 			_ = r.MultipartForm.RemoveAll()
@@ -296,9 +254,6 @@ func readMultipartUpload(w http.ResponseWriter, r *http.Request, limit int64) (u
 		return uploadBody{}, false
 	}
 
-	// The ingress MaxBytesReader bounds the whole multipart request, but its
-	// envelope headroom means it doesn't precisely cap the file *content*.
-	// header.Size is the part's declared length — reject early when it's over.
 	if header.Size > limit {
 		_ = file.Close()
 		removeForm()
@@ -315,33 +270,17 @@ func readMultipartUpload(w http.ResponseWriter, r *http.Request, limit int64) (u
 	}, true
 }
 
-// auditRejectedUpload records an upload the attachment processor refused —
-// a disallowed MIME type, or a failed/positive scan (TKT-6O8D0L, CONTROL-8-15).
-//
-// A refused upload is a security-relevant exception: it may be an attempt to
-// place a disallowed file type or malware into the project, and "what did this
-// user try to upload that they weren't allowed to?" is exactly the forensic
-// question the audit log exists to answer. The ACL denial on this same handler
-// was already recorded; this closes the gap for the policy denial beside it.
-//
-// Deliberately the SAME op as the ACL denial (OpDeniedWrite) rather than a new
-// one: an operator filtering `op == "denied-write"` should see both kinds of
-// refused upload without knowing there are two. The Summary distinguishes them.
-//
-// Records ONLY ErrRejected. A size cap, an at-capacity property or a transient
-// I/O failure are ordinary client or server errors, not security events, and
-// auditing them would dilute the signal this record carries.
-//
-// Lives at the call site rather than inside writeAttachmentWriteError because
-// that helper is a package function with neither the audit sink nor the entity
-// in scope — and the record needs both.
+// auditRejectedUpload records an upload the attachment processor refused (a
+// disallowed MIME type, or a failed or positive scan) as a security event.
+// It uses the same op as the ACL denial (OpDeniedWrite), so one filter finds
+// both; the Summary tells them apart. Only ErrRejected is recorded: size caps
+// and I/O failures are not security events.
 func (h *attachmentHandler) auditRejectedUpload(
 	ctx context.Context, e *entityPkg.Entity, property, fileName string, err error,
 ) {
 	if !errors.Is(err, attachment.ErrRejected) {
 		return
 	}
-	// The normalized name, so a client-chosen name cannot bloat the log.
 	h.audit().Record(audit.AttachmentRejected(ctx, e.Type, e.ID, property, attachment.DisplayName(fileName),
 		attachment.RejectionReason(err)))
 }
@@ -352,8 +291,6 @@ func (h *attachmentHandler) auditRejectedUpload(
 // field write refused inside the write transaction), or 422 (validation /
 // other).
 func writeAttachmentWriteError(w http.ResponseWriter, r *http.Request, limit int64, err error) {
-	// A raw body without a Content-Length reaches the service unchecked, so
-	// the ingress MaxBytesReader can trip while the service spools it.
 	if isAttachmentTooLarge(err) || isMaxBytesError(err) {
 		writeAttachmentTooLarge(w, r, limit)
 		return
@@ -366,8 +303,6 @@ func writeAttachmentWriteError(w http.ResponseWriter, r *http.Request, limit int
 			"Property already holds the maximum number of attachments", "")
 		return
 	}
-	// A processor rejection (disallowed MIME type, failed/positive scan) is a
-	// client error, not a server fault: 422 with the reason, not a 500.
 	if errors.Is(err, attachment.ErrRejected) {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "attachment_rejected",
 			"Attachment rejected", attachment.RejectionReason(err))
@@ -408,27 +343,15 @@ type sandboxReporter interface {
 	SandboxErr() error
 }
 
-// warnIfScanCannotRun warns when the metamodel configures a virus scan that this
-// host cannot actually run, because every upload to a scanned property will then
-// be REJECTED (scanning is fail-closed) rather than silently stored unscanned.
-//
-// The operator otherwise learns this from a 422 on someone's first upload, and
-// the confinement line alone does not connect the two facts: it reports the
-// sandbox posture without knowing a scan was configured.
-//
-// Nil: a nil runner means the constructor failed — one of the two states warned
-// about, so it is accepted rather than rejected, and buildErr carries the reason.
-// The two causes stay distinct in the message: a failed constructor is not a
-// sandbox problem, and blaming systemd for it would send the operator to the
-// wrong file.
+// warnIfScanCannotRun warns when the metamodel configures a virus scan that
+// this host cannot run, because scanning is fail-closed and every upload to a
+// scanned property will then be rejected.
+// Nil: a nil runner is accepted; it means the constructor failed, and buildErr
+// carries the reason, reported apart from sandbox problems.
 func warnIfScanCannotRun(meta *metamodel.Metamodel, runner sandboxReporter, buildErr error) {
 	if !metamodel.NewAttachmentPolicy(meta).HasConfiguredScan() {
-		return // nothing would be scanned; a broken sandbox rejects nothing
+		return
 	}
-	// Both messages are spelled out in full rather than composed from a shared
-	// prefix: TestSlogMessagesAreConstant requires a literal, since a computed
-	// message is the log-injection sink it guards against. The duplication is
-	// the price of that check, and it is the safer trade.
 	if runner == nil {
 		slog.Warn("attachments: a virus scan is configured but the command runner could not "+
 			"be built, so EVERY upload to a scanned property will be rejected",
@@ -443,20 +366,11 @@ func warnIfScanCannotRun(meta *metamodel.Metamodel, runner sandboxReporter, buil
 }
 
 // warnIfNoSandboxReadPaths warns at startup, per [cmdexec.Purpose], when
-// commands of that purpose are configured and confined but the operator listed
-// no read paths for it on Linux, where a confined command can then read only
-// the system binary and library directories. A scanner then cannot reach
-// clamd, and a converter such as xelatex fails, or silently falls back to other
-// fonts. rela ships no default paths, so this is the moment an upgraded host
-// learns it needs them. macOS does not confine reads, other platforms do not
-// sandbox at all, and an operator who chose unconfined commands has no read
-// restriction to warn about.
-//
-// Logged at most once per purpose per process: a multi-tenant server builds
-// one App per tenant, and the host setting is the same for all of them.
-//
-// goos, paths and confined are parameters so every branch is testable on any
-// host.
+// commands of that purpose are configured and confined on Linux but the
+// operator listed no read paths, so a scanner or converter cannot reach what
+// it needs. It logs at most once per purpose per process, since a
+// multi-tenant server builds one App per tenant. goos, paths and confined are
+// parameters so every branch is testable on any host.
 func warnIfNoSandboxReadPaths(meta *metamodel.Metamodel, docs map[string]dataentryconfig.DocumentConfig,
 	goos string, paths map[cmdexec.Purpose][]string, confined bool,
 ) {
@@ -591,9 +505,7 @@ func (h *attachmentHandler) attachmentService(s *Schema) (*attachment.Service, e
 		EntityManager: h.owner,
 		Locker:        h.owner,
 		Authorizer:    aclAttachmentAuthorizer{acl: h.acl(), audit: h.audit()},
-		// Native MIME allowlist + (when a command runner is wired) scan/
-		// transform. h.runner is nil out-of-box → MIME validation only.
-		Processor: attachment.NewPolicyProcessor(s.Meta, h.runner()),
+		Processor:     attachment.NewPolicyProcessor(s.Meta, h.runner()),
 	})
 }
 
@@ -679,24 +591,16 @@ func (h *attachmentHandler) attachmentWritePreflight(
 }
 
 // attachmentWriteCheck is the shared front matter for an attachment write,
-// without the response, so the upload route and rela.attach_render run one
-// chain. It resolves the face the address names, as every content write does
-// ([visibleReader.writeTarget]: one miss for a hidden, denied or absent face,
-// [*visibility.AmbiguousAddressError] for a bare id on a faced type),
-// validates that the property is a declared `file` property the caller can
-// see, rejects a locked (inaccessible) entity, and authorizes the `update`
-// write on that face UP FRONT so a deny never reaches the store.
-//
-// The error is [errWriteTargetNotFound] for every miss (an undeclared or
-// hidden property included, so it cannot be told from a missing entity),
-// [errEntityLocked], an [*acl.ForbiddenError], an [AffordanceDenialError],
-// the ambiguous-address error, or a gate error. Both denials are audited
-// here.
+// used by the upload route and rela.attach_render. It resolves the write
+// target face, checks the property is a declared `file` property the caller
+// can see, rejects a locked entity, and authorizes `update` up front so a deny
+// never reaches the store. Every miss, including a hidden property, is
+// [errWriteTargetNotFound]; other errors are [errEntityLocked],
+// [*acl.ForbiddenError], [AffordanceDenialError], the ambiguous-address error
+// or a gate error. Both denials are audited here.
 func (h *attachmentHandler) attachmentWriteCheck(
 	ctx context.Context, s *Schema, typeName, addr, property string,
 ) (*entityPkg.Entity, error) {
-	// Read first: a hidden, denied or nonexistent face yields one uniform
-	// miss (RR-NGMI), the same as the read path.
 	entity, err := h.visible.writeTarget(ctx, typeName, addr)
 	if err != nil {
 		return nil, err
@@ -708,18 +612,12 @@ func (h *attachmentHandler) attachmentWriteCheck(
 		return nil, errEntityLocked
 	}
 
-	// Authorize the `update` write up front (mirrors authorizeConflictResolve)
-	// so an ACL deny happens before any bytes are written to the store.
 	decision := h.acl().AuthorizeWrite(ctx, translateVerb("update", entity.Type, entity.ID, entity.Face))
 	if !decision.Allow {
 		h.audit().Record(audit.AttachmentWriteDenied(ctx, entity.Type, entity.ID,
 			decision.Reason, decision.RuleKind, decision.RuleID))
 		return nil, &acl.ForbiddenError{Decision: decision}
 	}
-	// An upload or detach sets the property, so a `fields:` policy that
-	// freezes it refuses the write, as on PATCH (GitHub #1760). The audit
-	// record is the attachment one, so it carries op=attachment-write like
-	// the ACL denial above.
 	if denial := h.affordances.validateFieldWrite(ctx, entity, map[string]any{property: nil}, nil); denial != nil {
 		reason := denial.Reason
 		if denial.Attribution != "" {

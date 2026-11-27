@@ -126,11 +126,10 @@ func (h *sankeyHandler) filterNodes(
 ) ([]v1.SankeyNode, *ganttError) {
 	entDef, ok := s.Meta.GetEntityDef(typeName)
 	if !ok {
-		return nil, nil // validated at load; a raced schema change degrades, not panics
+		return nil, nil
 	}
 	filters, err := parseWhereAt(t.Where, now)
 	if err != nil {
-		// Unreachable after load validation; refuse rather than widen.
 		return nil, &ganttError{http.StatusInternalServerError, "internal", "Invalid sankey filter", ""}
 	}
 	label := t.Label

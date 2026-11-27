@@ -12,7 +12,7 @@ import PageLayout from '@/components/common/PageLayout.vue'
 import PageTitle from '@/components/common/PageTitle.vue'
 import { getAuditLog, describeSubject, type AuditEntry } from '@/api/audit'
 import { ApiError, getErrorMessage, shouldDropHeldContent } from '@/api/errors'
-import { isCancelledFetch } from '@/composables/usePageData'
+import { isCancelledFetch } from '@/api/errors'
 import { formatInstant } from '@/components/flows/flowView'
 
 const { t } = useI18n()

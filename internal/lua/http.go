@@ -57,6 +57,8 @@ import (
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
+
+	"github.com/Sourcehaven-BV/rela/internal/httpscheme"
 )
 
 // httpMaxResponseBytes caps the response body to prevent OOM.
@@ -672,7 +674,7 @@ func validateURL(raw string) (*url.URL, error) {
 		return nil, errors.New("invalid URL: it does not parse")
 	}
 	switch u.Scheme {
-	case "http", "https":
+	case httpscheme.HTTP, httpscheme.HTTPS:
 		// ok
 	case "":
 		return nil, errors.New("URL must have http or https scheme")

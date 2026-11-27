@@ -7,35 +7,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
-// resolveDirection maps a body key from the modern PATCH wire format
-// to its canonical relation type plus a flag indicating whether the
-// path entity is on the TARGET side of the underlying canonical edge
-// (incoming) or the SOURCE side (outgoing).
-//
-// Precedence: a canonical relation name always wins. Inverse-name
-// lookup happens only when the body key isn't a canonical relation.
-// The load-time validation in TKT-4VLN guarantees that an inverse
-// name cannot also be a canonical name (other than the symmetric
-// self-inverse case), so this precedence is unambiguous at runtime.
-//
-// Symmetric relations (`symmetric: true`) where the inverse name
-// equals the canonical name are always reported as outgoing — the
-// path entity is the source by convention. Callers that want to
-// inspect symmetry directly can read `relDef.Symmetric` after
-// looking up the canonical name.
-//
-// Returns:
-//
-//   - canonical: the canonical relation type, suitable for looking
-//     up `meta.Relations[canonical]`.
-//   - incoming: true iff the body key was an inverse alias and the
-//     relation is NOT symmetric. False for canonical names and for
-//     symmetric self-inverse keys.
-//   - ok: true iff the body key resolved to a known relation type.
-//     When false, the caller should surface a structural error
-//     (`unknown_relation_type` if the name matches no canonical name
-//     and isn't a known inverse; `no_inverse_defined` if it looks
-//     like an attempted inverse alias for a relation without one).
+// resolveDirection maps a PATCH body key to its canonical relation type and
+// reports whether the path entity is the target (incoming) of that edge. A
+// canonical name wins over an inverse name; load-time validation keeps them
+// disjoint. A symmetric self-inverse key is reported as outgoing. ok is false
+// when the key names no known relation; the caller then reports
+// `unknown_relation_type` or `no_inverse_defined`.
 func resolveDirection(meta *metamodel.Metamodel, bodyKey string) (canonical string, incoming, ok bool) {
 	if _, isCanonical := meta.Relations[bodyKey]; isCanonical {
 		return bodyKey, false, true
@@ -44,10 +21,6 @@ func resolveDirection(meta *metamodel.Metamodel, bodyKey string) (canonical stri
 	if !hasInverse {
 		return "", false, false
 	}
-	// Symmetric self-inverse: path entity is source by convention,
-	// not target. Callers should treat this as outgoing for write
-	// purposes; the metamodel's `symmetric: true` flag tells the
-	// reconciler the edge has no preferred direction.
 	if relDef, hasRel := meta.Relations[owner]; hasRel && relDef.Symmetric {
 		return owner, false, true
 	}
@@ -96,8 +69,6 @@ func edgeEndpoints(entityID, peerID string, incoming bool) (from, to string) {
 func detectSelfLoopShapeConflict(
 	meta *metamodel.Metamodel, entityID string, desired map[string]v1.RelationsUpdate,
 ) error {
-	// Group body keys by the canonical relation they resolve to,
-	// collecting whether they were submitted as canonical or inverse.
 	type usage struct {
 		canonicalKeys []string
 		inverseKeys   []string
@@ -112,9 +83,6 @@ func detectSelfLoopShapeConflict(
 		if relDef, hasRel := meta.Relations[canonical]; hasRel && relDef.Symmetric {
 			continue
 		}
-		// `incoming=true` here means the body key was an inverse alias
-		// of a non-symmetric relation. (Canonical names and symmetric
-		// self-inverse both report incoming=false.)
 		entry := byCanonical[canonical]
 		if entry == nil {
 			entry = &usage{}
@@ -125,7 +93,6 @@ func detectSelfLoopShapeConflict(
 		} else {
 			entry.canonicalKeys = append(entry.canonicalKeys, bodyKey)
 		}
-		// `upd` not needed once we know which buckets to populate.
 		_ = upd
 	}
 
@@ -133,9 +100,6 @@ func detectSelfLoopShapeConflict(
 		if len(u.canonicalKeys) == 0 || len(u.inverseKeys) == 0 {
 			continue
 		}
-		// Both shapes present for the same canonical relation. Check
-		// the intersection of their desired sets against the path
-		// entity — that's the only collision surface.
 		conflictKeys := []string{u.canonicalKeys[0], u.inverseKeys[0]}
 		if pathEntityInBothSets(entityID, conflictKeys, desired) {
 			return &v1.WireError{

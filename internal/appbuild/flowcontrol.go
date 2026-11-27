@@ -277,6 +277,8 @@ func (c *FlowControl) read(ctx context.Context, addr string) (*entity.Entity, er
 
 // authorize checks that the caller holds one of perms for the subject.
 // Without acl.yaml it allows everything.
+//
+//archplan:guard=authz reason="flow start, cancel and manage: the caller holds a flow permission on the subject"
 func (c *FlowControl) authorize(ctx context.Context, subjectID string, perms []string) error {
 	if c.d == nil {
 		return nil

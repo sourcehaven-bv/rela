@@ -102,14 +102,8 @@ func scopeFromParam(raw string, meta entityTypeChecker) (scope ScopeDescriptor, 
 		return ScopeDescriptor{}, false, "unknown scope source: " + d.Source
 	}
 
-	// Per-source required fields differ. A list scope is reproduced from
-	// {type, filters, sort}, so type is mandatory. A search scope is
-	// reproduced from {q, type?}: q is mandatory and type is an *optional*
-	// narrowing of a possibly-mixed-type result, so it is validated only
-	// when present.
 	switch d.Source {
 	case "pile":
-		// A pile is its own ordered set: nothing else narrows or orders it.
 		if d.Pile == "" {
 			return ScopeDescriptor{}, false, "scope pile is required for source pile"
 		}
@@ -133,12 +127,9 @@ func scopeFromParam(raw string, meta entityTypeChecker) (scope ScopeDescriptor, 
 		if d.Pile != "" {
 			return ScopeDescriptor{}, false, "pile needs source pile"
 		}
-		// The search pipeline does not narrow to a page tab, so it would
-		// walk more rows than the tab showed. A tab sends source "list".
 		if d.ScopePage != "" || d.ScopeTab != "" || d.Anchor != "" {
 			return ScopeDescriptor{}, false, "a page scope needs source list"
 		}
-		// The search pipeline does not apply a list's condition either.
 		if d.ListID != "" {
 			return ScopeDescriptor{}, false, "list_id needs source list"
 		}
@@ -183,8 +174,6 @@ func (d ScopeDescriptor) toQuery() url.Values {
 	if d.ListID != "" {
 		q.Set(listIDParam, d.ListID)
 	}
-	// Set when any is present, so a half-named page scope reaches
-	// resolvePageScope and is refused there instead of widening the set.
 	if d.ScopePage != "" || d.ScopeTab != "" || d.Anchor != "" {
 		q.Set(scopePageParam, d.ScopePage)
 		q.Set(scopeTabParam, d.ScopeTab)
@@ -208,18 +197,10 @@ func (d ScopeDescriptor) toQuery() url.Values {
 func storePosition(
 	a *App, w http.ResponseWriter, r *http.Request, scope ScopeDescriptor, id string,
 ) (*v1.Position, bool) {
-	// An allowlist, not a denylist: only a list scope is a GraphQuery. A
-	// search or pile scope that reached the pushdown would be read as a
-	// list of an empty type.
 	if scope.Source != "list" {
 		return nil, false
 	}
 	query := scope.toQuery()
-	// LOAD-BEARING: declining on either error is safe only because the Go
-	// path (resolveScope → scopedSortedEntities) gates the query and resolves
-	// the same narrowing again, and refuses with the same error. A scope that
-	// fails either must never degrade into an unscoped or ungated read; if the
-	// Go path ever stops re-checking, this must return the error instead.
 	state := a.State()
 	gated, err := gateAppListQuery(r.Context(), a, state, scope.Type, query)
 	if err != nil {

@@ -2,6 +2,7 @@ package appbuild
 
 import (
 	"context"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/conditionlint"
@@ -37,12 +38,14 @@ type ViewConditionMatcher interface {
 //
 // Takes config + metamodel rather than returning a prebuilt lookup because
 // both reload at runtime — a lookup captured at boot would keep evaluating a
-// condition the operator has since edited.
+// condition the operator has since edited. The lookup holds every condition
+// that compiled, alongside the problems; see
+// [conditionlint.ViewConditionMatchers].
 func ViewConditions(
 	cfg *dataentryconfig.Config, meta *metamodel.Metamodel,
 ) (lookup func(kind, id string) (ViewConditionMatcher, bool), problems []string) {
 	compiled, problems := conditionlint.ViewConditionMatchers(cfg, meta)
-	if len(problems) > 0 || compiled == nil {
+	if compiled == nil {
 		return nil, problems
 	}
 	return func(kind, id string) (ViewConditionMatcher, bool) {
@@ -54,7 +57,7 @@ func ViewConditions(
 			return nil, false
 		}
 		return viewConditionMatcher{m: m, meta: meta}, true
-	}, nil
+	}, problems
 }
 
 // viewConditionMatcher answers a view condition for a page of rows. Its
@@ -133,4 +136,13 @@ func bindPage(
 		}
 		return bound(e.ID)
 	}, nil
+}
+
+// AssignExpr evaluates a list or page `assign:` value expression
+// (TKT-FGE5G3I), bridging conditionlint to the seam internal/dataentry
+// declares, as [ViewConditions] does for list conditions.
+func AssignExpr(
+	ctx context.Context, meta *metamodel.Metamodel, def *metamodel.PropertyDef, expr string, now time.Time,
+) (any, error) {
+	return conditionlint.EvalAssignExpr(ctx, meta, def, expr, now)
 }

@@ -45,13 +45,9 @@ func handleV1NavStatus(a *App, w http.ResponseWriter, r *http.Request) {
 	aclImpl := a.views.currentACL()
 
 	items := make(map[string]v1.NavStatus)
-	// The same filter the sidebar applies: an entry this principal does not
-	// see gets no status either.
 	for _, ns := range sidebarNavStatusEntries(ctx, aclImpl, s.Cfg, r.URL.Query().Get("space")) {
 		status, ok, err := navStatusFor(ctx, a, s, ns)
 		if err != nil {
-			// One entry that cannot be counted must not blank every other
-			// marker, and a missing marker is the honest answer for it.
 			slog.Log(ctx, sidebarSkipLevel(err), "nav status: entry skipped",
 				"entry", ns.Entry.Label, "list", ns.List, "error", err)
 			continue
@@ -61,8 +57,6 @@ func handleV1NavStatus(a *App, w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Per principal; writeV1JSON already marks every v1 response no-store,
-	// which is what keeps a shared cache from holding one principal's counts.
 	writeV1JSON(w, http.StatusOK, v1.NavStatusResponse{Items: items})
 }
 
@@ -98,8 +92,6 @@ func navStatusInGo(
 	if len(rows) == 0 {
 		return v1.NavStatus{}, false, nil
 	}
-	// The rules redact the same rows. navStatusRows primed them already
-	// when the list has a condition.
 	rulesJudge := slices.ContainsFunc(ns.Entry.Status, func(r dataentryconfig.NavStatusRule) bool {
 		return r.Condition != ""
 	})
@@ -107,13 +99,10 @@ func navStatusInGo(
 		ctx = primeVerdicts(ctx, a.fieldResolver, rows)
 	}
 	for i, rule := range ns.Entry.Status {
-		m := viewCondition(a.viewConditions, s, viewKindNavStatus,
+		m, err := viewCondition(a.viewConditions, s, viewKindNavStatus,
 			dataentryconfig.NavStatusConditionID(ns.Key, i))
-		if rule.Condition != "" && m == nil {
-			// Counting without the condition would flag every row the list
-			// shows under this rule's tone, which is a wrong answer rather
-			// than a missing one.
-			return v1.NavStatus{}, false, fmt.Errorf("status[%d]: condition is not compiled", i)
+		if err != nil {
+			return v1.NavStatus{}, false, fmt.Errorf("status[%d]: %w", i, err)
 		}
 		kept, err := applyViewCondition(ctx, rows, m, suggestionRedactor(a.affordances), a.Services().Store)
 		if err != nil {
@@ -130,22 +119,13 @@ func navStatusInGo(
 	return v1.NavStatus{}, false, nil
 }
 
-// navStatusInStore answers an entry's rules with one scoped count each, when
-// the store can (TKT-I39Y7N4): the list's own request takes the pushdown
-// (listNarrowing.pushdownPlan, with its scope and `condition:`), and every
-// rule's condition lowers under the same rules a list condition does
-// ([lowerViewCondition]). Each count is the list's ACL-scoped query narrowed
-// by the rule, so it counts the rows the list shows this principal, after
-// the row gate, as the Go path does.
-//
-// handled is false when any part does not lower; the caller then takes the
-// Go path, which gives the same counts, or the same error for a request that
-// fails. Nothing is counted before every rule has lowered, so a declined
-// entry costs no count.
-//
-// Each rule is its own count, so a write landing between two counts can
-// change which rule wins, where the Go path judged one read. A marker is
-// advisory and the next request corrects it, so this is accepted.
+// navStatusInStore answers an entry's rules with one scoped count each when the
+// store can: the list's request takes the pushdown and every rule's condition
+// lowers as a list condition does ([lowerViewCondition]). Each count is the
+// list's ACL-scoped query narrowed by the rule. handled is false when any part
+// does not lower, before anything is counted; the caller then takes the Go path.
+// A write between two counts can change which rule wins; markers are advisory,
+// so this is accepted.
 func navStatusInStore(
 	ctx context.Context, a *App, s *Schema, ns dataentryconfig.NavStatusEntry, listCfg dataentryconfig.List,
 ) (status v1.NavStatus, ok, handled bool, err error) {
@@ -161,30 +141,26 @@ func navStatusInStore(
 	if err != nil {
 		return v1.NavStatus{}, false, false, nil //nolint:nilerr // the Go path returns this error
 	}
-	n := listNarrowing{
-		cond:  viewCondition(a.viewConditions, s, viewKindList, ns.List),
-		scope: scope, state: s, fields: a.fieldResolver,
+	cond, err := viewCondition(a.viewConditions, s, viewKindList, ns.List)
+	if err != nil {
+		return v1.NavStatus{}, false, false, nil //nolint:nilerr // the Go path returns this error
 	}
-	if listCfg.Condition != "" && n.cond == nil {
-		return v1.NavStatus{}, false, false, nil
-	}
+	n := listNarrowing{cond: cond, scope: scope, state: s, fields: a.fieldResolver}
 	plan, empty, planned := n.pushdownPlan(ctx, typeName, gated, 1, 1)
 	if !planned {
 		return v1.NavStatus{}, false, false, nil
 	}
 	if empty {
-		// The Go path judges no rule over no rows either.
 		return v1.NavStatus{}, false, true, nil
 	}
-	// counts[i] is the query rule i counts, or nil when a denied traversal
-	// leaves the rule no rows.
 	counts := make([]*listPlan, len(ns.Entry.Status))
 	for i, rule := range ns.Entry.Status {
 		ruled := plan
 		if rule.Condition != "" {
-			m := viewCondition(a.viewConditions, s, viewKindNavStatus, dataentryconfig.NavStatusConditionID(ns.Key, i))
-			if m == nil {
-				return v1.NavStatus{}, false, false, nil
+			id := dataentryconfig.NavStatusConditionID(ns.Key, i)
+			m, err := viewCondition(a.viewConditions, s, viewKindNavStatus, id)
+			if err != nil || m == nil {
+				return v1.NavStatus{}, false, false, nil //nolint:nilerr // the Go path returns this error
 			}
 			frag, denied, lowered := lowerViewCondition(ctx, s.Meta, m, a.fieldResolver, typeName)
 			if !lowered {
@@ -219,18 +195,12 @@ func navStatusInStore(
 }
 
 // navStatusRows returns exactly the rows the list shows this principal: its
-// entity type under the ACL row gate and the request's world, its query scope
-// (or the type's default), its static `filters:` and its `condition:`.
-//
-// Built from the list's CONFIG rather than from request parameters, since
-// there is no list request to copy them from. The static filters are encoded
-// the way the SPA sends them (listBaseParams in listParams.ts) so they run
-// through the list endpoint's own filter pass, not a second implementation.
-//
-// Rows are gated and redacted before anything is counted over them, the order
-// the root CLAUDE.md requires of an aggregate. The returned ctx carries the
-// query identity, for rule conditions that name current_user, and, when the
-// list has a condition, the verdict prime of the rows.
+// type under the ACL row gate and the request's world, its query scope, its
+// static `filters:` and its `condition:`. It is built from the list's config;
+// static filters are encoded as the SPA sends them so they run through the list
+// endpoint's own filter pass. Rows are gated and redacted before anything counts
+// over them. The returned ctx carries the query identity and, when the list has
+// a condition, the verdict prime of the rows.
 func navStatusRows(
 	ctx context.Context, a *App, s *Schema, listID string, listCfg dataentryconfig.List,
 ) (context.Context, []*entityPkg.Entity, error) {
@@ -266,13 +236,9 @@ func configuredListRows(
 	if err != nil {
 		return ctx, nil, err
 	}
-	// Bound up front rather than only when a narrowing needs it: a rule
-	// condition may name current_user even where the list itself does not.
 	if ctx, err = bindQueryIdentity(ctx, scope); err != nil {
 		return ctx, nil, err
 	}
-	// A configured filter on a property hidden from this principal fails
-	// this one entry, as any other error here does; the caller degrades it.
 	gated, err := gateAppListQuery(ctx, a, s, typeName, query)
 	if err != nil {
 		return ctx, nil, err
@@ -282,15 +248,10 @@ func configuredListRows(
 	if err != nil {
 		return ctx, nil, err
 	}
-	cond := viewCondition(a.viewConditions, s, viewKindList, listID)
-	if listCfg.Condition != "" && cond == nil {
-		return ctx, nil, fmt.Errorf("list %q: condition is not compiled", listID)
+	cond, err := viewCondition(a.viewConditions, s, viewKindList, listID)
+	if err != nil {
+		return ctx, nil, err
 	}
-	// A condition redacts each row before judging it, and an unprimed
-	// redaction resolves the principal's local roles with point lookups per
-	// row (TKT-YLG695, as BUG-E2W1LS was for the list). Prime only when a
-	// condition will judge every row, as listPage does; the returned ctx
-	// carries the prime to the caller.
 	if cond != nil {
 		ctx = primeVerdicts(ctx, a.fieldResolver, rows)
 	}

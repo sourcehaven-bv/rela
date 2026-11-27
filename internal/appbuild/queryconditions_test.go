@@ -155,3 +155,94 @@ assignments:
 		})
 	}
 }
+
+const defaultConditionSchema = `version: "1.0"
+entities:
+  feature:
+    label: Feature
+    plural: features
+    id_prefix: "FEAT-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+  ticket:
+    label: Ticket
+    plural: tickets
+    id_prefix: "TKT-"
+    id_type: sequential
+    properties:
+      blocked:
+        type: boolean
+        default: false
+relations:
+  implements:
+    label: implements
+    inverse: implementedBy
+    from: [ticket]
+    to: [feature]
+`
+
+// A list condition whose related() constraint names the target's schema
+// default also matches a target that never had the property written
+// (FEAT-UNSET), through the caller's gated Reader.
+func TestGatedReads_ConditionTraversalMatchesDefault(t *testing.T) {
+	t.Parallel()
+	meta, err := metamodel.Parse([]byte(defaultConditionSchema))
+	require.NoError(t, err)
+	st := memstore.New()
+	ctx := context.Background()
+	for suffix, props := range map[string]map[string]any{
+		"UNSET": {}, "FALSE": {"blocked": false}, "TRUE": {"blocked": true},
+	} {
+		require.NoError(t, st.CreateEntity(ctx, &entity.Entity{ID: "TKT-" + suffix, Type: "ticket", Properties: props}))
+		require.NoError(t, st.CreateEntity(ctx, &entity.Entity{ID: "FEAT-" + suffix, Type: "feature"}))
+		_, err = st.CreateRelation(ctx,
+			entity.RelationKey{From: "TKT-" + suffix, Type: "implements", To: "FEAT-" + suffix}, nil)
+		require.NoError(t, err)
+	}
+	require.NoError(t, st.CreateEntity(ctx, &entity.Entity{ID: "FEAT-NONE", Type: "feature"}))
+	var policy acl.Policy
+	require.NoError(t, yaml.Unmarshal([]byte(`
+roles:
+  everything:
+    read: ["*"]
+assignments:
+  bob: everything
+`), &policy))
+	d, err := acl.NewDeclarative(&policy, aclstore.MustNewGraph(st), st)
+	require.NoError(t, err)
+	svc := appbuildtest.New(meta, appbuildtest.WithStore(st), appbuildtest.WithDeclarative(d))
+	t.Cleanup(func() { _ = svc.Close() })
+	reads := svc.GatedReads()
+	ev := predicatefns.NewEvaluator(meta)
+
+	for _, tc := range []struct {
+		filter string
+		want   []string
+	}{
+		{"related(entity, 'implementedBy', { blocked = false })", []string{"FEAT-FALSE", "FEAT-UNSET"}},
+		{"related(entity, 'implementedBy', { blocked = true })", []string{"FEAT-TRUE"}},
+		{"not related(entity, 'implementedBy', { blocked = false })", []string{"FEAT-NONE", "FEAT-TRUE"}},
+	} {
+		t.Run(tc.filter, func(t *testing.T) {
+			t.Parallel()
+			callCtx := principal.With(ctx, principal.Principal{User: "bob", Tool: principal.ToolMCP})
+			callCtx, err := appbuild.MustIdentityBinder(svc)(callCtx)
+			require.NoError(t, err)
+			prog, err := ev.Compile("feature", tc.filter)
+			require.NoError(t, err)
+			filter, err := reads.Conditions.Lower(callCtx, prog, "feature")
+			require.NoError(t, err)
+			filter.Type, filter.Faces, filter.Limit = "feature", store.AllFaces(), 10
+			page, err := reads.Reader.ListEntityPage(callCtx, filter)
+			require.NoError(t, err)
+			var ids []string
+			for _, e := range page.Rows {
+				ids = append(ids, e.ID)
+			}
+			slices.Sort(ids)
+			require.Equal(t, tc.want, ids)
+		})
+	}
+}

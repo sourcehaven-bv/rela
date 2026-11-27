@@ -7,6 +7,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import EntityDetail from './EntityDetail.vue'
+import MentionedByPanel from './MentionedByPanel.vue'
 import { useSchemaStore } from '@/stores/schema'
 import type { Entity } from '@/types'
 import type { ViewResponse, ViewSection } from '@/api'
@@ -109,10 +110,44 @@ describe('EntityDetail backlinks through a view', () => {
     expect(wrapper.find('.section-incomplete').exists()).toBe(false)
   })
 
+  describe.each(['list', 'cards', 'content'] as const)('hide_type and hide_id on %s', (display) => {
+    const section = (flags: Partial<ViewSection>): ViewSection => ({
+      heading: 'Related',
+      sectionId: 'related',
+      display,
+      isEmpty: false,
+      isGrouped: false,
+      hasContent: false,
+      entities: [
+        { id: 'T-1', type: 'ticket', title: 'Index it', properties: {}, content: '' },
+        { id: 'T-2', type: 'ticket', title: '', properties: {}, content: '' },
+        { id: 'T-3', type: 'ticket', title: '  ', properties: {}, content: '' },
+      ] as never,
+      ...flags,
+    })
+
+    it('shows the type label and ID by default', async () => {
+      const wrapper = await render({ sections: [section({})] })
+      expect(wrapper.findAll('.entity-type').length).toBe(3)
+      expect(wrapper.findAll('.entity-id').map((e) => e.text())).toEqual(['T-1', 'T-2', 'T-3'])
+    })
+
+    it('leaves them off when asked, but keeps the ID of an untitled row', async () => {
+      const wrapper = await render({ sections: [section({ hide: ['type', 'id'] })] })
+      expect(wrapper.find('.entity-type').exists()).toBe(false)
+      expect(wrapper.findAll('.entity-id').map((e) => e.text())).toEqual(['T-2', 'T-3'])
+    })
+  })
+
   it('shows the built-in panel unless the server hides it', async () => {
     const shown = await render({})
     expect(shown.find('mentioned-by-panel-stub').exists()).toBe(true)
     const hidden = await render({ hideMentionedByPanel: true })
     expect(hidden.find('mentioned-by-panel-stub').exists()).toBe(false)
+  })
+
+  it('passes hideMentionedByID to the panel', async () => {
+    const wrapper = await render({ hideMentionedByID: true })
+    expect(wrapper.findComponent(MentionedByPanel).props('hideId')).toBe(true)
   })
 })

@@ -165,7 +165,7 @@ func newGoldenApp(t *testing.T, v goldenVariant) *goldenApp {
 		t.Fatalf("resolver: %v", err)
 	}
 	authz, err := dataentry.SelectCommandAuthorizer(
-		svc.ACL(), svc.ACLDeclarative(), true, false, dataentry.CommandAuthNotifier{})
+		svc.ACL(), svc.ACLDeclarative(), dataentry.CommandBind{Loopback: true}, dataentry.CommandAuthNotifier{})
 	if err != nil {
 		t.Fatalf("command authorizer: %v", err)
 	}

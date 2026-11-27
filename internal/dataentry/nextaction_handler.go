@@ -196,9 +196,6 @@ func (h *nextActionHandler) handleV1NextAction(w http.ResponseWriter, r *http.Re
 
 //archplan:auth=required reason="ACL-scoped list"
 func (h *nextActionHandler) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
-	// The request's world is the DISPLAY world: it decides which sources may
-	// surface here (visible_worlds), never which world a source queries. See
-	// nextActionSourceWorld.
 	st := h.schema()
 	if st.Cfg == nil {
 		writeV1JSON(w, http.StatusOK, nextActionResponse{})
@@ -211,25 +208,18 @@ func (h *nextActionHandler) handleV1NextActionGet(w http.ResponseWriter, r *http
 		return
 	}
 	if !known || !page.enabled(st.Cfg) {
-		// Suggestions are off for this page, or it names a view that no
-		// longer exists. Answered before any source runs, so a disabled
-		// surface costs no reads.
 		writeV1JSON(w, http.StatusOK, nextActionResponse{})
 		return
 	}
 
 	eng, scope, ok := h.engine(st, nextActionDisplayWorld(r.Context()), page, nextActionCurrent(r))
 	if !ok {
-		// No sources configured: a valid, common state (the feature is
-		// opt-in). An empty answer, not a 404 — the SPA renders nothing.
 		writeV1JSON(w, http.StatusOK, nextActionResponse{})
 		return
 	}
 
 	ctx := r.Context()
 	if scope != nil {
-		// Once per request, before any source runs: every matcher and
-		// pre-filter below reads what this stamps.
 		scoped, err := scope(ctx)
 		if err != nil {
 			writeNextActionError(w, r, err)
@@ -320,10 +310,6 @@ func (h *nextActionHandler) handleV1NextActionPost(w http.ResponseWriter, r *htt
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_body", "source is required", "")
 		return
 	}
-	// Only a CONFIGURED source may be addressed. Without this an arbitrary
-	// string would create user-state rows keyed on nothing — unbounded growth
-	// driven by request bodies, and a mute list full of ids that name no
-	// source and so can never be surfaced for un-muting.
 	src, known := h.schema().Cfg.NextActions[req.Source]
 	if !known {
 		writeV1Error(w, r, http.StatusBadRequest, "unknown_source",
@@ -339,12 +325,6 @@ func (h *nextActionHandler) handleV1NextActionPost(w http.ResponseWriter, r *htt
 		EntityID: req.EntityID,
 		Variant:  req.Variant,
 	}
-	// The SERVER decides the key shape, not the client. A source-scoped
-	// source keys on the source alone, so the entity the client echoed back
-	// (which it needs for the link, and which the GET does advertise) is
-	// dropped here. Trusting the echo verbatim would store the deferral under
-	// a key the engine never checks — a 204 that silently does nothing, which
-	// is exactly how this was found.
 	if src.ResolvedDeferScope() == dataentryconfig.DeferScopeSource {
 		key.EntityID = ""
 		key.Variant = ""
@@ -358,22 +338,10 @@ func (h *nextActionHandler) handleV1NextActionPost(w http.ResponseWriter, r *htt
 }
 
 // nextActionUser is the key this request's snoozes and mutes are stored
-// under.
-//
-// An UNSTAMPED principal (no auth configured) yields principal.From's
-// "unknown" sentinel, and every such request therefore shares one bucket of
-// state. That is deliberate and correct for a single-user deployment — which
-// is exactly when there is no auth — but it means a shared unauthenticated
-// deployment gives everyone one another's snoozes.
-//
-// Not a confidentiality problem: the state holds no entity content, only
-// which suggestions someone deferred. It IS a usability one, so it is named
-// here rather than left to be discovered. Wiring any identity source (JWT,
-// header, OS user) fixes it with no change to this code.
-//
-// Deliberately NOT translated to a synthesized per-session id: that would
-// invent an identity the audit log and ACL do not share, and the project's
-// rule is to never translate an unknown principal into a guessed one.
+// under. An unstamped principal yields principal.From's "unknown" sentinel,
+// so all such requests share one bucket. That holds no entity content and is
+// fine for a single-user deployment. It is never translated into a
+// synthesized per-session id.
 func nextActionUser(ctx context.Context) string {
 	return principal.From(ctx).User
 }
@@ -399,10 +367,6 @@ func applyNextActionFeedback(
 		return state.SetSnooze(ctx, key, now.Add(d))
 
 	case "dismiss":
-		// Dismissal is a snooze with no end: suppressed until the suggestion
-		// KEY changes, which is what key_props are for. Modeled on the
-		// existing mechanism rather than a separate one, so there is a single
-		// suppression path to reason about.
 		return state.SetSnooze(ctx, key, now.Add(dismissHorizon))
 
 	case "mute":
@@ -455,9 +419,6 @@ func nextActionDisplayWorld(ctx context.Context) string {
 func (h *nextActionHandler) engine(
 	st *Schema, displayWorld string, page nextActionPage, current *userstate.Key,
 ) (*nextaction.Engine, NextActionRequestScope, bool) {
-	// One snapshot for the whole request, taken by the caller: State() reads
-	// an atomic face, and two reads could observe different snapshots if a
-	// reload lands between them.
 	cfg := st.Cfg
 	if cfg == nil || len(cfg.NextActions) == 0 || h.userState == nil {
 		return nil, nil, false
@@ -475,19 +436,12 @@ func (h *nextActionHandler) engine(
 		scope  NextActionRequestScope
 	)
 	if h.matchers != nil {
-		// Compile errors are already reported at load by projectsetup; a
-		// config that reached here should compile. If it somehow does not,
-		// leave matchers unwired so New fails loudly for a source that
-		// declares a condition, rather than silently keeping every candidate.
 		if l, s, issues := h.matchers(cfg, st.Meta); len(issues) == 0 && l != nil {
 			lookup, scope = gatedNextActionMatchers(l, h.store()), s
 			opts = append(opts, nextaction.WithMatchers(lookup))
 		}
 	}
 
-	// The SAME lookup feeds both the engine (which runs each condition in
-	// full) and the candidate func (which pushes the condition's
-	// store-evaluable part into the query) — see nextActionHandler.candidates.
 	eng, err := nextaction.New(cfg, h.userState, h.candidates(st.Meta, lookup, page), opts...)
 	if err != nil {
 		return nil, nil, false

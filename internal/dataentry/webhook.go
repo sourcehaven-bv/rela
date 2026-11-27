@@ -184,8 +184,6 @@ func (f webhookFamily) missingClaim(claims WebhookClaims) string {
 	case familyOther:
 		needUser = true
 	default:
-		// A family added without a case here requires every claim, so it
-		// fails closed until someone decides.
 		needUser, needOrg = true, true
 	}
 	switch {
@@ -249,9 +247,6 @@ func (a *App) registerWebhookRoutes(mux *http.ServeMux) {
 	if a.webhook == nil {
 		return
 	}
-	// The handler lives on the receiver; the App only supplies the dispatch
-	// closure (which routes through the writeHandler: engine, schema). This
-	// keeps the HTTP-flow logic off the (already large) App type.
 	rec := a.webhook
 	mux.HandleFunc("POST /webhooks/idp", func(w http.ResponseWriter, r *http.Request) {
 		rec.handle(w, r, func(ctx context.Context, claims WebhookClaims) error {
@@ -260,20 +255,15 @@ func (a *App) registerWebhookRoutes(mux *http.ServeMux) {
 	})
 }
 
-// handle verifies an inbound IdP webhook and dispatches it. The request body
-// is the signed JWT (the IdP sends Content-Type: application/jwt). On any
-// verification failure it answers 401 and nothing runs. A webhook that lacks a
-// claim its family requires answers 400. An `organization.*` event goes to
-// the organization handler; every other event goes to dispatch, which runs
-// the action.
+// handle verifies an inbound IdP webhook (a signed JWT body) and dispatches
+// it. A verification failure answers 401 and nothing runs; a missing required
+// claim answers 400. `organization.*` events go to the organization handler,
+// others to dispatch.
 //
-// Dedup on the webhook id (jti) is a claim in the [seenSet]. A delivery
-// claims its id before it runs the handler. A redelivery of a handled id is
-// acknowledged with 200 without running again. A copy that arrives while
-// another delivery of the same id still runs gets 503 with Retry-After, so the
-// IdP delivers it again rather than losing it if the running one fails. A
-// handler failure releases the claim, so the retry runs. An id-less webhook
-// cannot be deduped and is always processed.
+// Dedup claims the webhook id (jti) in the [seenSet] before running. A
+// redelivery of a handled id gets 200, a copy of a running one gets 503 with
+// Retry-After, and a handler failure releases the claim. An id-less webhook
+// is always processed.
 //
 //archplan:auth=none reason="the body is a JWT signed by the IdP; verified before dispatch"
 func (rec *webhookReceiver) handle(
@@ -287,20 +277,13 @@ func (rec *webhookReceiver) handle(
 
 	claims, err := rec.verify.VerifyWebhook(r.Context(), string(raw))
 	if err != nil {
-		// Do not echo the reason — a probing client learns nothing beyond "rejected".
 		slog.Warn("idp webhook rejected", "error", err)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	// An event without the claims its family needs is unusable: the action
-	// has no user to fetch, or the organization handler no tenant. Treat it
-	// as a bad request rather than dispatching a no-op.
 	family := classifyWebhookEvent(claims.Event)
 	if missing := family.missingClaim(claims); missing != "" {
-		// Logged because the IdP is unlikely to retry a 400, so a dropped
-		// revocation would otherwise leave no trace. The user id is
-		// personal data and stays out of the log.
 		slog.Warn("idp webhook missing required claim",
 			"event", claims.Event, "id", claims.ID, "family", family, "missing", missing)
 		http.Error(w, "missing "+missing, http.StatusBadRequest)
@@ -311,8 +294,6 @@ func (rec *webhookReceiver) handle(
 		claim, seenErr := rec.seen.claim(r.Context(), claims.ID)
 		switch {
 		case seenErr != nil:
-			// Without the stored set a replay cannot be told apart, so the
-			// webhook is refused and the IdP delivers it again.
 			slog.Error("idp webhook: the dedup set is unavailable; asking the IdP to retry", "error", seenErr)
 			retryWebhook(w, "dedup unavailable")
 			return
@@ -321,8 +302,6 @@ func (rec *webhookReceiver) handle(
 			w.WriteHeader(http.StatusOK)
 			return
 		case claim == seenInFlight:
-			// Another delivery of this id is running. If it fails, this copy
-			// is the one that must run, so ask for it again later.
 			slog.Info("idp webhook already in flight; asking the IdP to retry", "id", claims.ID, "event", claims.Event)
 			retryWebhook(w, "already in flight")
 			return
@@ -335,12 +314,8 @@ func (rec *webhookReceiver) handle(
 		err = dispatch(r.Context(), claims)
 	}
 	if err != nil {
-		// The handler failed (IdP fetch error, script error, ...). Return 502 so
-		// the IdP retries, and release the claim so the retry runs.
 		if claims.ID != "" {
 			if relErr := rec.seen.release(r.Context(), claims.ID); relErr != nil {
-				// The claim lapses after webhookClaimTTL, so a later retry
-				// still runs.
 				slog.Error("idp webhook: releasing the claim failed; it lapses by itself",
 					"id", claims.ID, "error", relErr)
 			}
@@ -355,9 +330,6 @@ func (rec *webhookReceiver) handle(
 	}
 	if claims.ID != "" {
 		if err = rec.seen.finish(r.Context(), claims.ID); err != nil {
-			// The webhook was handled but its id could not be marked done.
-			// Ask for a retry rather than leave a replay open; the retry is
-			// harmless because the handlers are idempotent.
 			slog.Error("idp webhook: recording the id failed; asking the IdP to retry", "id", claims.ID, "error", err)
 			retryWebhook(w, "dedup unavailable")
 			return
@@ -384,14 +356,9 @@ func dispatchWebhookAction(ctx context.Context, h *writeHandler, rec *webhookRec
 	s := h.schema()
 	action, ok := s.Cfg.Actions[actionID]
 	if !ok {
-		// Misconfiguration: the configured action id doesn't exist. Fail loud in
-		// the log; the 502 the caller sends will surface it operationally too.
 		slog.Error("idp webhook: configured action not found", "action", actionID)
 		return errWebhookActionMissing
 	}
-	// The webhook runs as the webhook-receiver principal, not a user, so an
-	// action's `permission:` does not apply here: the verified callback is the
-	// authorization. An entity-bound action cannot run here at all.
 	if action.AvailableOn != nil {
 		slog.Error("idp webhook: configured action has available_on", "action", actionID)
 		return errWebhookActionEntityBound
@@ -401,16 +368,10 @@ func dispatchWebhookAction(ctx context.Context, h *writeHandler, rec *webhookRec
 		return errWebhookActionElevated
 	}
 
-	// Stamp the webhook-receiver principal so the provisioned entity is attributed
-	// to the callback, not to the default data-entry "unknown". The action path
-	// reads principal.From(ctx).
 	ctx = principal.With(ctx, principal.Principal{
 		User: idpWebhookUserPrefix + claims.Event,
 		Tool: principal.ToolWebhookReceiver,
 	})
-	// The webhook route is outside /api/, so attachACLRequest did not run:
-	// resolve the receiver's identity here, once, as every request edge does,
-	// and attach its read gate.
 	ctx, err := acl.BindRequest(readtime.Ensure(ctx, nowFunc), h.acl())
 	if err != nil {
 		return fmt.Errorf("idp webhook: resolve identity: %w", err)
@@ -426,15 +387,6 @@ func dispatchWebhookAction(ctx context.Context, h *writeHandler, rec *webhookRec
 		"org_id":  claims.OrgID,
 	}
 
-	// TKT-YH52OM: the webhook path resolves the SAME `actions:` entry as the
-	// HTTP endpoint, so it honors the same `capabilities:` declaration. This
-	// is the surface that most needs it to work: an IdP-sync action legitimately
-	// calls out over http with a named secret (see examples/idp-sync.lua), and
-	// it now must say so in config rather than receiving the whole secrets file
-	// by default.
-	// Hold the subject from before the action fetches the roles until they
-	// are stored. Two deliveries for one user then store in fetch order, so
-	// a slow older fetch cannot undo a revocation a newer one stored.
 	if rec.roles != nil {
 		release, holdErr := rec.roles.Hold(ctx, claims.UserID)
 		if holdErr != nil {
@@ -473,8 +425,6 @@ func storeAssertedRoles(
 	if err := roles.Set(ctx, claims.UserID, claims.OrgID, resp.AssertedRoles); err != nil {
 		return fmt.Errorf("idp webhook: store asserted roles: %w", err)
 	}
-	// The IdP subject is personal data; the audit record names the bound
-	// entity instead.
 	slog.Info("idp webhook stored asserted roles", "event", claims.Event, "roles", len(resp.AssertedRoles))
 	return nil
 }
@@ -639,8 +589,6 @@ func (s *seenSet) loadLocked(ctx context.Context) error {
 	}
 	var at map[string]seenEntry
 	if err := json.Unmarshal(data, &at); err != nil {
-		// Our own write is unreadable: start over rather than refuse every
-		// webhook until an operator deletes it.
 		slog.Warn("idp webhook: the stored dedup set is unreadable; starting a new one", "error", err)
 		at = nil
 	}

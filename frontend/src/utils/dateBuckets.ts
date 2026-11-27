@@ -35,6 +35,17 @@ export const BUCKET_ORDER: readonly DateBucket[] = [
   'no_date',
 ]
 
+/** The order for `buckets: relative_weeks`: this week and next week replace next 7 days. */
+export const WEEK_BUCKET_ORDER: readonly DateBucket[] = [
+  'overdue',
+  'today',
+  'tomorrow',
+  'this_week',
+  'next_week',
+  'later',
+  'no_date',
+]
+
 /**
  * Message keys of the section titles used when the list's `labels:` does not
  * name one. Literal keys, so the unused-key check can see them.
@@ -44,6 +55,8 @@ const DEFAULT_BUCKET_LABELS = {
   today: 'list.bucket.today',
   tomorrow: 'list.bucket.tomorrow',
   next_7_days: 'list.bucket.next7Days',
+  this_week: 'list.bucket.thisWeek',
+  next_week: 'list.bucket.nextWeek',
   later: 'list.bucket.later',
   no_date: 'list.bucket.noDate',
 } as const satisfies Record<DateBucket, string>
@@ -58,18 +71,24 @@ const NEXT_DAYS = 7
 
 const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/
 
-interface CalendarDay {
+export interface CalendarDay {
   year: number
   /** 1-based. */
   month: number
   day: number
 }
 
-function dayNumber(d: CalendarDay): number {
+export function dayNumber(d: CalendarDay): number {
   return Date.UTC(d.year, d.month - 1, d.day) / 86_400_000
 }
 
-function dayOfInstant(epochMs: number, tz: string): CalendarDay {
+/** The calendar day of a day number; the inverse of dayNumber. */
+export function dayFromNumber(n: number): CalendarDay {
+  const d = new Date(n * 86_400_000)
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() }
+}
+
+export function dayOfInstant(epochMs: number, tz: string): CalendarDay {
   const zoned = new TZDate(epochMs, tz)
   return { year: zoned.getFullYear(), month: zoned.getMonth() + 1, day: zoned.getDate() }
 }
@@ -112,7 +131,7 @@ export function calendarDayOf(value: unknown, tz: string): CalendarDay | null {
  * read as an instant that lands on the previous day west of UTC. Only the
  * property's type can tell the two apart, so the caller says which it is.
  */
-function asDateValue(value: unknown, dateOnly: boolean): unknown {
+export function asDateValue(value: unknown, dateOnly: boolean): unknown {
   if (!dateOnly || typeof value !== 'string') return value
   return /^\d{4}-\d{2}-\d{2}/.test(value) ? value.slice(0, 10) : value
 }
@@ -123,13 +142,26 @@ function asDateValue(value: unknown, dateOnly: boolean): unknown {
  * either way, and hiding it would lose the row. `dateOnly` is true for a
  * `date` property; see asDateValue.
  */
-export function bucketOf(value: unknown, now: Date, tz: string, dateOnly = false): DateBucket {
+export function bucketOf(
+  value: unknown,
+  now: Date,
+  tz: string,
+  dateOnly = false,
+  weeks = false
+): DateBucket {
   const day = calendarDayOf(asDateValue(value, dateOnly), tz)
   if (!day) return 'no_date'
-  const diff = dayNumber(day) - dayNumber(dayOfInstant(now.getTime(), tz))
+  const today = dayNumber(dayOfInstant(now.getTime(), tz))
+  const diff = dayNumber(day) - today
   if (diff < 0) return 'overdue'
   if (diff === 0) return 'today'
   if (diff === 1) return 'tomorrow'
+  if (weeks) {
+    const untilSunday = 6 - ((new Date(today * 86_400_000).getUTCDay() + 6) % 7)
+    if (diff <= untilSunday) return 'this_week'
+    if (diff <= untilSunday + 7) return 'next_week'
+    return 'later'
+  }
   if (diff <= NEXT_DAYS) return 'next_7_days'
   return 'later'
 }
@@ -173,12 +205,15 @@ export function bucketMeta(
       const wall = new Date(`${(value as string).slice(0, 19)}Z`)
       return wall.toLocaleTimeString(locale, { timeStyle: 'short', timeZone: 'UTC' })
     }
-    return new Date(value as string).toLocaleTimeString(locale, { timeStyle: 'short', timeZone: tz })
+    return new Date(value as string).toLocaleTimeString(locale, {
+      timeStyle: 'short',
+      timeZone: tz,
+    })
   }
   // Formatted from the calendar day at UTC noon in UTC, so the zone cannot
   // move it onto a neighbouring day.
   const noon = new Date(Date.UTC(day.year, day.month - 1, day.day, 12))
-  if (bucket === 'tomorrow' || bucket === 'next_7_days') {
+  if (bucket === 'tomorrow' || bucket === 'next_7_days' || bucket === 'this_week') {
     return noon.toLocaleDateString(locale, { weekday: 'short', timeZone: 'UTC' })
   }
   return noon.toLocaleDateString(locale, { month: 'short', day: 'numeric', timeZone: 'UTC' })

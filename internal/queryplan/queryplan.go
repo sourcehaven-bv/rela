@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
@@ -56,9 +57,15 @@ func UniqueSpecs(meta *metamodel.Metamodel) []store.DerivedObjectSpec {
 }
 
 // LoadStaticIndexSpecs parses and validates a complete data-entry config before
-// deriving specs. An error yields no partial desired set: reconciliation treats
-// absence as permission to drop owned indexes.
+// deriving specs. Deprecated syntax is read through the same in-memory
+// migration as the server. An error yields no partial desired set:
+// reconciliation treats absence as permission to drop owned indexes.
 func LoadStaticIndexSpecs(data []byte, meta *metamodel.Metamodel) ([]store.DerivedObjectSpec, error) {
+	migrated, err := migration.MigrateBytes(dataentryconfig.ConfigFile, data, migration.FileTypeDataEntry, nil)
+	if err != nil {
+		return nil, err
+	}
+	data = migrated.Data
 	var cfg dataentryconfig.Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
@@ -255,10 +262,10 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 			"\x02"+orderValuesKey(spec.OrderValues)] = spec
 	}
 	for _, ts := range scopeTraversalSpecs(meta) {
-		byKey[ts.Type+"\x00"+strings.Join(ts.Properties, "\x00")] = ts
+		byKey[traversalSpecKey(ts)] = ts
 	}
 	for _, ts := range conditionTraversalSpecs(cfg, meta) {
-		byKey[ts.Type+"\x00"+strings.Join(ts.Properties, "\x00")] = ts
+		byKey[traversalSpecKey(ts)] = ts
 	}
 	keys := make([]string, 0, len(byKey))
 	for key := range byKey {

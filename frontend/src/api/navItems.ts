@@ -1,3 +1,4 @@
+import type { NavItemStatus } from 'rela-components/types'
 import { api } from './client'
 
 /** One entry of a generated nav group: a row of its list, titled for this principal. */
@@ -7,6 +8,12 @@ export interface NavItemEntry {
   label: string
   /** The letter badge. Absent when there is none to show. */
   initial?: string
+  /** The entry's count, absent when it is zero or not configured. */
+  status?: NavItemStatus
+  /** The entries one level down (`items_from.children`), in their list's order. */
+  children?: NavItemEntry[]
+  /** True when the entry has more children than it shows. */
+  children_truncated?: boolean
 }
 
 /** The entries of one generated group, in the list's order. */

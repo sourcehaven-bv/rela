@@ -32,6 +32,8 @@ export interface Entity {
   // with `comment_counts`, and only when the reader holds comment:read across
   // the project (TKT-WA25G2). Absent means not served, never zero.
   _comment_count?: number
+  /** The computed group (list `group_by.groups` with conditions) the row falls in. */
+  _group?: string
   // The busy channels of the type a list asked for with `?busy=<type>`:
   // channels whose session is in a state with status `working`. Present
   // as `[]` when none is busy; absent when the list did not ask or the
@@ -469,10 +471,18 @@ export interface ListMeta {
   page: number
   per_page: number
   has_more: boolean
+  /**
+   * A free-text `/_search` matched more hits than its relevance cap of
+   * 1000; `total` counts the hits within the cap, and no page reaches the
+   * rest.
+   */
+  capped?: boolean
   next_cursor?: string
   // Set when the rows are in the order of one orderable relation of the
   // tab's anchor; see RelationOrder.
   relation_order?: RelationOrder
+  /** The rows are in the reader's own manual order (TKT-AVNEX5T). */
+  manual_order?: boolean
 }
 
 /**
@@ -536,6 +546,12 @@ export interface ListQueryScope {
   // applies no condition and returns the ACL-scoped superset.
   list_id?: string
   /**
+   * Asks a list with `order: manual` for the reader's stored order. Sent
+   * while the reader has not sorted; a grouped list always sends its group
+   * sort, so the sort cannot be the signal.
+   */
+  manual_order?: 1
+  /**
    * query_scope selects which rows are MEMBERS of the result, from the entity
    * type's declared `query_scopes:`. Orthogonal to `world`, which selects
    * which FACE of an already-included entity is served: a world never changes
@@ -558,6 +574,11 @@ export interface ListQueryScope {
 }
 
 export interface ListParams extends ListQueryScope {
+  /**
+   * kanban_id is list_id for a board. A read names at most one of the two.
+   * Not on ListQueryScope: a position scope carries list_id only.
+   */
+  kanban_id?: string
   page?: number
   per_page?: number
   cursor?: string
@@ -569,6 +590,9 @@ export interface ListParams extends ListQueryScope {
   // Asks each row to carry `_busy` for this channel type. Set when a kanban
   // card has a `busy:` field or a list has a busy column.
   busy?: string
+  // Asks each row to carry `_fields` and `_redacted` for these properties
+  // (comma-separated). Set when a list has toggle columns (TKT-M0AT73B).
+  field_verdicts?: string
   // world selects which FACE of each entity is served, and which entities
   // appear at all — an entity with no face in the requested world is omitted
   // entirely, because existence in a world IS the publication bit.

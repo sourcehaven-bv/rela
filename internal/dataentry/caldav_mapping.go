@@ -73,7 +73,7 @@ func (m *caldavMapper) toTodo(e *entitypkg.Entity, uid, url string) calfeed.Todo
 	}
 	if m.cfg.Priority != "" {
 		if n, err := strconv.Atoi(e.GetString(m.cfg.Priority)); err == nil {
-			td.Priority = n // calfeed clamps to the RFC range
+			td.Priority = n
 		}
 	}
 	if pm := m.cfg.PriorityMap; pm != nil {
@@ -95,9 +95,6 @@ func (m *caldavMapper) toTodo(e *entitypkg.Entity, uid, url string) calfeed.Todo
 	if m.cfg.Start != "" {
 		if start, timed, ok := m.parseDateProperty(e, m.cfg.Start); ok {
 			td.Start = start
-			// DTSTART and DUE must agree on value type (RFC 5545 3.8.2.4). DUE
-			// already set Timed when present; only adopt DTSTART's shape when
-			// it is the sole date on the to-do.
 			if td.Due.IsZero() {
 				td.Timed = timed
 			}
@@ -153,8 +150,7 @@ func (m *caldavMapper) rruleFor(e *entitypkg.Entity) string {
 // scalar like `due: 2026-08-12` straight to time.Time, while a quoted or
 // machine-written value arrives as a string — and Entity.GetString returns ""
 // for the former, so reading a date through it silently drops every
-// hand-authored due date. (The same latent hazard exists in the ICS feed's
-// mapEntity; see RR notes on TKT-MF1CWZ.)
+// hand-authored due date.
 func entityTimeValue(e *entitypkg.Entity, key string, def *metamodel.PropertyDef) (time.Time, bool) {
 	switch v := e.Properties[key].(type) {
 	case time.Time:
@@ -185,9 +181,6 @@ func (m *caldavMapper) applyCompletionToTodo(e *entitypkg.Entity, td *calfeed.To
 		td.Status = calfeed.TodoNeedsAction
 		return
 	}
-	// Prefer a recorded completion timestamp; fall back to the due date, then
-	// to a zero time. calfeed normalizes whatever we produce, so a completed
-	// to-do can never end up without its COMPLETED property.
 	at := td.Due
 	if comp.CompletedAt != "" {
 		if def, ok := m.propertyDef(comp.CompletedAt); ok {
@@ -197,10 +190,6 @@ func (m *caldavMapper) applyCompletionToTodo(e *entitypkg.Entity, td *calfeed.To
 		}
 	}
 	if at.IsZero() {
-		// A to-do marked done with no timestamp anywhere: use the epoch-free
-		// fallback of "now" rather than dropping COMPLETED, because RFC 4791
-		// §7.8.9's pending filter keys on its ABSENCE — omitting it would make
-		// a completed to-do reappear as pending in filter-driven clients.
 		at = time.Now().UTC()
 	}
 	td.Complete(at)
@@ -235,9 +224,6 @@ func (m *caldavMapper) patchFor(in inboundTodo) (entitypkg.Patch, error) {
 	if m.cfg.Due != "" && m.writable(dataentryconfig.CalDAVFieldDue) && in.has(ical.PropDue) {
 		switch {
 		case td.Due.IsZero():
-			// The client sent DUE with an empty value: an explicit clear, so an
-			// explicit unset. (A client that simply omits DUE lands in the
-			// has() check above and changes nothing.)
 			unset = append(unset, m.cfg.Due)
 		default:
 			formatted, err := m.formatDue(td)
@@ -251,10 +237,6 @@ func (m *caldavMapper) patchFor(in inboundTodo) (entitypkg.Patch, error) {
 	m.applyCompletionToPatch(in, props, &unset)
 
 	patch := entitypkg.Patch{Properties: props, MetaUnset: unset}
-	// The body is replaced through Patch.Content, never through Properties:
-	// Content is a tri-state pointer, so leaving it nil preserves the existing
-	// body — the same "unnamed properties are preserved" guarantee, applied to
-	// the one field that is not a property.
 	if m.mapsDescriptionToBody() && m.writable(dataentryconfig.CalDAVFieldDescription) && in.has(ical.PropDescription) {
 		body := td.Description
 		patch.Content = &body
@@ -266,20 +248,8 @@ func (m *caldavMapper) patchFor(in inboundTodo) (entitypkg.Patch, error) {
 //
 // Read-only is enforced HERE, at the single point where an inbound to-do
 // becomes a patch, rather than by filtering the parsed VTODO or by rejecting
-// the request. Both alternatives were considered and are worse:
-//
-//   - Stripping properties from the inbound VTODO would make the field look
-//     UNSENT, and unsent is already meaningful — patchFor uses it to decide
-//     "the client said nothing, preserve what is stored". Conflating "refused"
-//     with "not mentioned" works today only because both outcomes happen to be
-//     "change nothing", and would silently break the moment a field needs to
-//     distinguish them (an explicit clear already does: see the DUE branch).
-//   - Refusing the whole PUT with a 403 would discard the fields that ARE
-//     writable in the same request. A client sends the entire VTODO on every
-//     edit, so a user who ticks a to-do off in an app that also touches DTSTAMP
-//     would lose the tick to a field they never edited.
-//
-// So a read-only field is dropped from the patch and everything else applies.
+// the request. Stripping the property would read as "unsent", and a 403
+// would discard the writable fields sent in the same PUT.
 func (m *caldavMapper) writable(field string) bool {
 	return m.ignoreReadOnly || !m.cfg.IsReadOnly(field)
 }
@@ -313,7 +283,6 @@ func (m *caldavMapper) droppedReadOnly(in inboundTodo) bool {
 			return true
 		}
 	}
-	// Priority is mapped by either spelling, and completion by the trio.
 	priorityMapped := m.cfg.Priority != "" || m.cfg.PriorityMap != nil
 	if in.has(ical.PropPriority) && priorityMapped && !m.writable(dataentryconfig.CalDAVFieldPriority) {
 		return true
@@ -352,10 +321,6 @@ func (m *caldavMapper) applyExtrasToPatch(in inboundTodo, props map[string]any, 
 	td := in.Todo
 	writablePriority := m.writable(dataentryconfig.CalDAVFieldPriority)
 	if pm := m.cfg.PriorityMap; pm != nil && writablePriority && in.has(ical.PropPriority) {
-		// The FIRST bucket containing the value wins, so overlapping ranges
-		// resolve deterministically by declaration order rather than by map
-		// iteration. A value outside every bucket (including the RFC's 0 =
-		// undefined) leaves the property alone rather than guessing.
 		for _, b := range pm.Buckets {
 			if td.Priority >= b.From && td.Priority <= b.To {
 				props[pm.Property] = b.Value
@@ -419,8 +384,6 @@ func (m *caldavMapper) applyCompletionToPatch(in inboundTodo, props map[string]a
 	if comp == nil || !m.writable(dataentryconfig.CalDAVFieldCompletion) {
 		return
 	}
-	// A COMPLETED timestamp is itself a completion signal, so either property
-	// arriving counts as the client having spoken about completion.
 	if !in.has(ical.PropStatus) && !in.has(ical.PropCompleted) {
 		return
 	}
@@ -432,14 +395,11 @@ func (m *caldavMapper) applyCompletionToPatch(in inboundTodo, props map[string]a
 			props[comp.CompletedAt] = in.Todo.Completed.UTC().Format(time.RFC3339)
 		}
 	case calfeed.TodoNeedsAction:
-		// Re-opened: restore the pending value and clear any completion stamp,
-		// or the entity would claim a completion time for unfinished work.
 		props[comp.StatusProperty] = comp.PendingValue
 		if comp.CompletedAt != "" {
 			*unset = append(*unset, comp.CompletedAt)
 		}
 	default:
-		// IN-PROCESS / CANCELLED / unset: no rela meaning, leave it alone.
 	}
 }
 
@@ -454,25 +414,11 @@ func (m *caldavMapper) applyCompletionToPatch(in inboundTodo, props map[string]a
 // handed only the map would silently create the entity with an empty body.
 // `read_only:` does NOT apply here, and that is the whole reason this function
 // exists separately rather than being patchFor plus defaults.
-//
-// Read-only means "a client cannot CHANGE the stored value". On a create there
-// is no stored value to protect: the alternative reading — drop the field —
-// would take the summary the client just typed and create a titleless entity,
-// because SUMMARY is the one field every client sends and the usual read-only
-// list starts with it. The operator's `read_only: [summary]` means "the web app
-// owns the title from here on", not "discard the title I am creating with".
-//
-// The gap this leaves is narrow and closes itself: a client can set a read-only
-// field exactly once, at creation, and never again. An operator who wants no
-// client-created entries at all withholds that separately — `defaults:` cannot
-// satisfy the required properties, or the collection refuses creates outright.
 func (m *caldavMapper) createPatch(in inboundTodo) (entitypkg.Patch, error) {
 	patch, err := m.patchIgnoringReadOnly(in)
 	if err != nil {
 		return entitypkg.Patch{}, err
 	}
-	// Defaults do NOT override the client's values: a default is what to use
-	// when the client said nothing.
 	for k, v := range m.cfg.Defaults {
 		if _, set := patch.Properties[k]; !set {
 			patch.Properties[k] = v

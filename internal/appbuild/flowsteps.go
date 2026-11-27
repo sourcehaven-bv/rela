@@ -969,7 +969,7 @@ func (c *FlowControl) complete(ctx context.Context, id flow.RunID, gen int64,
 	if len(props) > 0 {
 		// The step's own write: this run's outside_edits do not narrow it,
 		// another run's on the subject still do (TKT-XI7IDBS).
-		pctx := flowedits.WithinRun(wctx, id, x.State)
+		pctx := withStepWrite(flowedits.WithinRun(wctx, id, x.State), id)
 		res, perr := grant.PatchEntity(pctx, run.Subject.String(), entity.Patch{Properties: props})
 		if perr != nil {
 			c.eng.ReleaseClaim(ctx, id, gen, cl.user)

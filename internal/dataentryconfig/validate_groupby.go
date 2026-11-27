@@ -3,32 +3,19 @@ package dataentryconfig
 import (
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
-// ValidGroupColors is the allowlist of section colors a list group may use.
-// It mirrors the component library's StatusColor type
-// (frontend/packages/rela-components/src/types/index.ts), which is what the
-// SPA hands the section heading. A token rather than a CSS value, for the
-// reason ValidCalendarColors gives.
-var ValidGroupColors = map[string]bool{
-	"green":  true,
-	"amber":  true,
-	"red":    true,
-	"grey":   true,
-	"blue":   true,
-	"purple": true,
-}
-
 // DateBucketKeys are the bucket keys `labels:` may override, in the order the
 // sections appear. The SPA's utils/dateBuckets.ts holds the same set.
 var DateBucketKeys = []string{"overdue", "today", "tomorrow", "next_7_days", "later", "no_date"}
 
-// bucketsRelative is the one bucketing scheme.
-const bucketsRelative = "relative"
+// WeekBucketKeys are the bucket keys of the relative_weeks scheme, in order.
+var WeekBucketKeys = []string{"overdue", "today", "tomorrow", "this_week", "next_week", "later", "no_date"}
 
 // Row caps for a grouped list. The default matches the size a reader can
 // still scan in sections; the ceiling keeps one page load bounded, since a
@@ -48,6 +35,7 @@ func validateListsGroupBy(cfg *Config, meta *metamodel.Metamodel) []string {
 			continue
 		}
 		errs = append(errs, validateListGroupBy(listID, list.EntityType, list.GroupBy, entDef, meta)...)
+		errs = append(errs, checkListOrder(listID, list)...)
 	}
 	return errs
 }
@@ -66,28 +54,22 @@ func validateListGroupBy(
 	if g.MaxRows < 0 || g.MaxRows > maxGroupMaxRows {
 		errs = append(errs, fmt.Sprintf("%s: max_rows %d is out of range (1..%d)", prefix, g.MaxRows, maxGroupMaxRows))
 	}
-	if len(g.Groups) > 0 && g.Buckets != "" {
+	if len(g.Groups) > 0 && g.Buckets != nil {
 		errs = append(errs, prefix+": groups and buckets cannot both be set "+
-			"(groups restyles enum values, buckets sorts dates into relative sections)")
+			"(groups restyles enum values, buckets sorts dates into date sections)")
 	}
-	if g.Buckets != "" && g.Buckets != bucketsRelative {
-		errs = append(errs, fmt.Sprintf("%s: buckets %q is not valid (valid: %s)", prefix, g.Buckets, bucketsRelative))
-	}
-	if len(g.Labels) > 0 && g.Buckets == "" {
+	if len(g.Labels) > 0 && g.Buckets == nil {
 		errs = append(errs, prefix+": labels only apply with buckets")
 	}
-	for _, key := range slices.Sorted(maps.Keys(g.Labels)) {
-		if !slices.Contains(DateBucketKeys, key) {
-			errs = append(errs, fmt.Sprintf("%s: labels has unknown bucket %q (valid: %s)",
-				prefix, key, strings.Join(DateBucketKeys, ", ")))
-		}
+	if g.Buckets != nil {
+		errs = append(errs, validateListBuckets(prefix, g)...)
 	}
 
 	if g.Relation != "" {
 		if g.Property != "" {
 			errs = append(errs, prefix+": property and relation are mutually exclusive")
 		}
-		if len(g.Groups) > 0 || g.Buckets != "" {
+		if len(g.Groups) > 0 || g.Buckets != nil {
 			errs = append(errs, prefix+": groups and buckets do not apply to a relation")
 		}
 		return append(errs, validateRelationColumns(prefix, entityType, relationColumnsSource{
@@ -98,7 +80,7 @@ func validateListGroupBy(
 		errs = append(errs, prefix+": offered_by, order_by and style_from need relation")
 	}
 	if g.Property == "" {
-		return append(errs, prefix+": property or relation is required")
+		return append(errs, validateComputedGroups(prefix, g)...)
 	}
 	propDef, ok := entDef.Properties[g.Property]
 	if !ok {
@@ -113,12 +95,101 @@ func validateListGroupBy(
 			prefix, g.Property))
 	}
 
-	if g.Buckets != "" && propDef.Type != metamodel.PropertyTypeDate && propDef.Type != metamodel.PropertyTypeDatetime {
+	isDate := propDef.Type == metamodel.PropertyTypeDate || propDef.Type == metamodel.PropertyTypeDatetime
+	if g.Buckets != nil && !isDate {
 		errs = append(errs, fmt.Sprintf("%s: buckets needs a date or datetime property, %q is %s",
 			prefix, g.Property, propDef.Type))
 	}
 	errs = append(errs, validateListGroups(prefix, g, propDef, meta)...)
 	return errs
+}
+
+// validateListBuckets checks `buckets:` and the `labels:` keys it allows.
+func validateListBuckets(prefix string, g *ListGroupBy) []string {
+	b := g.Buckets
+	var errs []string
+	if !b.Calendar() && b.Scheme != BucketsRelative && b.Scheme != BucketsRelativeWeeks {
+		errs = append(errs, fmt.Sprintf("%s: buckets %q is not valid (valid: %s, %s, or a mapping with by)",
+			prefix, b.Scheme, BucketsRelative, BucketsRelativeWeeks))
+	}
+	if b.Calendar() {
+		errs = append(errs, validateCalendarBuckets(prefix, *b)...)
+	}
+	allowed := BucketLabelKeys(*b)
+	for _, key := range slices.Sorted(maps.Keys(g.Labels)) {
+		if !slices.Contains(allowed, key) {
+			errs = append(errs, fmt.Sprintf("%s: labels has unknown bucket %q (valid: %s)",
+				prefix, key, strings.Join(allowed, ", ")))
+		}
+	}
+	return errs
+}
+
+// validateCalendarBuckets checks the mapping form of `buckets:`.
+func validateCalendarBuckets(prefix string, b ListBuckets) []string {
+	var errs []string
+	units := strings.Join(BucketUnits, ", ")
+	switch {
+	case b.By == "":
+		errs = append(errs, prefix+": buckets.by is required (valid: "+units+")")
+	case !slices.Contains(BucketUnits, b.By):
+		errs = append(errs, fmt.Sprintf("%s: buckets.by %q is not valid (valid: %s)", prefix, b.By, units))
+	}
+	if _, ok := b.ForDays(); !ok {
+		errs = append(errs, fmt.Sprintf("%s: buckets.for %q is not valid (a number of days from 1 to %d, such as 7d)",
+			prefix, b.For, maxBucketForDays))
+	}
+	if b.For != "" && b.By != BucketUnitDay {
+		errs = append(errs, prefix+": buckets.for needs by: day")
+	}
+	if b.Then != "" {
+		if b.For == "" {
+			errs = append(errs, prefix+": buckets.then needs for")
+		}
+		if !slices.Contains(BucketUnits[1:], b.Then) {
+			errs = append(errs, fmt.Sprintf("%s: buckets.then %q is not valid (valid: %s)",
+				prefix, b.Then, strings.Join(BucketUnits[1:], ", ")))
+		}
+	}
+	switch b.Order {
+	case "", BucketOrderAsc:
+	case BucketOrderDesc:
+		if b.For != "" {
+			errs = append(errs, prefix+": buckets.order desc cannot take for (the window runs forward from today)")
+		}
+	default:
+		errs = append(errs, fmt.Sprintf("%s: buckets.order %q is not valid (valid: %s, %s)",
+			prefix, b.Order, BucketOrderAsc, BucketOrderDesc))
+	}
+	return errs
+}
+
+// BucketLabelKeys returns the section keys `labels:` may rename for b, in
+// section order. The relative scheme has its fixed buckets. The calendar
+// form names only its fixed sections; the per-day, per-week and per-month
+// sections take titles from the calendar.
+func BucketLabelKeys(b ListBuckets) []string {
+	if b.Scheme == BucketsRelativeWeeks {
+		return WeekBucketKeys
+	}
+	if !b.Calendar() {
+		return DateBucketKeys
+	}
+	var keys []string
+	if b.For != "" {
+		keys = append(keys, "overdue")
+	}
+	if b.By == BucketUnitDay {
+		keys = append(keys, "today")
+		// A one-day window holds only today, so tomorrow has no section.
+		if days, _ := b.ForDays(); days != 1 {
+			keys = append(keys, "tomorrow")
+		}
+	}
+	if b.For != "" && b.Then == "" {
+		keys = append(keys, "later")
+	}
+	return append(keys, "no_date")
 }
 
 // validateListGroups checks `groups:` entries: each value must be one the
@@ -128,6 +199,12 @@ func validateListGroups(
 ) []string {
 	if len(g.Groups) == 0 {
 		return nil
+	}
+	for i, grp := range g.Groups {
+		if grp.ID != "" || grp.Condition != "" {
+			return []string{fmt.Sprintf("%s: groups[%d] has id or condition; "+
+				"a computed grouping has no property or relation", prefix, i)}
+		}
 	}
 	values := GetValidEnumValues(propDef, meta)
 	if len(values) == 0 {
@@ -149,9 +226,61 @@ func validateListGroups(
 		} else {
 			seen[grp.Value] = i
 		}
-		if grp.Color != "" && !ValidGroupColors[grp.Color] {
-			errs = append(errs, fmt.Sprintf("%s: groups[%d] has unknown color %q (valid: %s)",
-				prefix, i, grp.Color, strings.Join(slices.Sorted(maps.Keys(ValidGroupColors)), ", ")))
+		if grp.Color != "" {
+			if _, err := ParseNamedColor(grp.Color); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: groups[%d]: %v", prefix, i, err))
+			}
+		}
+	}
+	return errs
+}
+
+// maxComputedGroups caps a computed grouping. Each group costs one batched
+// condition pass over the served page, so the cap bounds that work.
+const maxComputedGroups = 20
+
+// validGroupID is the allowlist for a computed group's id, which the server
+// stamps on every row.
+var validGroupID = regexp.MustCompile(`^[a-z0-9_-]+$`)
+
+// validateComputedGroups checks a grouping by condition: declared groups,
+// each with an id and a condition, except one fallback that comes last.
+// The conditions themselves compile in conditionlint.
+func validateComputedGroups(prefix string, g *ListGroupBy) []string {
+	if len(g.Groups) == 0 {
+		return []string{prefix + ": property, relation or groups with conditions is required"}
+	}
+	var errs []string
+	if g.Buckets != nil {
+		errs = append(errs, prefix+": buckets needs a date property")
+	}
+	if len(g.Groups) > maxComputedGroups {
+		errs = append(errs, fmt.Sprintf("%s: %d groups is more than the limit of %d",
+			prefix, len(g.Groups), maxComputedGroups))
+	}
+	seen := map[string]int{}
+	for i, grp := range g.Groups {
+		if grp.Value != "" {
+			errs = append(errs, fmt.Sprintf("%s: groups[%d] has value %q; "+
+				"value needs property, a computed group uses id and condition", prefix, i, grp.Value))
+		}
+		if !validGroupID.MatchString(grp.ID) {
+			errs = append(errs, fmt.Sprintf("%s: groups[%d] id %q must match %s",
+				prefix, i, grp.ID, validGroupID.String()))
+		}
+		if j, dup := seen[grp.ID]; dup {
+			errs = append(errs, fmt.Sprintf("%s: groups[%d] duplicates groups[%d] (%q)", prefix, i, j, grp.ID))
+		} else {
+			seen[grp.ID] = i
+		}
+		if grp.Condition == "" && i != len(g.Groups)-1 {
+			errs = append(errs, fmt.Sprintf("%s: groups[%d] has no condition; "+
+				"only the last group may be the fallback", prefix, i))
+		}
+		if grp.Color != "" {
+			if _, err := ParseNamedColor(grp.Color); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: groups[%d]: %v", prefix, i, err))
+			}
 		}
 	}
 	return errs

@@ -8,8 +8,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/Sourcehaven-BV/rela/internal/desktop"
 )
 
 // Desktop projects arrive through a file picker from anywhere on disk, so two
@@ -164,7 +162,7 @@ func TestServeHTTP_RoutesByProject(t *testing.T) {
 	a := &loadedProject{id: "aaa", root: "/a", name: "A", handler: newStub("A", &pathA)}
 	b := &loadedProject{id: "bbb", root: "/b", name: "B", handler: newStub("B", &pathB)}
 
-	d := &Desktop{prefs: &desktop.Preferences{}, registry: newProjectRegistry()}
+	d := &Desktop{prefs: &Preferences{}, registry: newProjectRegistry()}
 	d.registry.add(a)
 	d.registry.add(b) // b is active, being added last
 	d.handler = b.handler
@@ -213,7 +211,7 @@ func TestServeHTTP_RoutesByProject(t *testing.T) {
 // The request handed to a project must be a copy: mutating the caller's
 // URL would corrupt it for anything sharing the request.
 func TestServeHTTP_DoesNotMutateCallerRequest(t *testing.T) {
-	d := &Desktop{prefs: &desktop.Preferences{}, registry: newProjectRegistry()}
+	d := &Desktop{prefs: &Preferences{}, registry: newProjectRegistry()}
 	d.registry.add(&loadedProject{
 		id: "aaa",
 		handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -230,7 +228,7 @@ func TestServeHTTP_DoesNotMutateCallerRequest(t *testing.T) {
 // The switcher asks for the project list, and must get the same answer from
 // any window — including one served under a project prefix.
 func TestServeProjects(t *testing.T) {
-	d := &Desktop{prefs: &desktop.Preferences{}, registry: newProjectRegistry()}
+	d := &Desktop{prefs: &Preferences{}, registry: newProjectRegistry()}
 	d.registry.add(&loadedProject{id: "bbb", root: "/b", name: "Beta"})
 	d.registry.add(&loadedProject{id: "aaa", root: "/a", name: "Alpha"})
 
@@ -270,7 +268,7 @@ func TestServeProjects(t *testing.T) {
 	})
 
 	t.Run("empty registry returns an empty list, not null", func(t *testing.T) {
-		empty := &Desktop{prefs: &desktop.Preferences{}, registry: newProjectRegistry()}
+		empty := &Desktop{prefs: &Preferences{}, registry: newProjectRegistry()}
 		rec := httptest.NewRecorder()
 		empty.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, projectsPath, http.NoBody))
 		assert.JSONEq(t, "[]", rec.Body.String(), "null would break a .map() in the switcher")

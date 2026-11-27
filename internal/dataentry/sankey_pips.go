@@ -48,7 +48,7 @@ func (h *sankeyHandler) attachTypePips(
 	nodes []v1.SankeyNode, faces map[string]entity.Face,
 ) *ganttError {
 	ctx := r.Context()
-	byID := map[string]int{} // node id -> index in nodes
+	byID := map[string]int{}
 	ids := []string{}
 	for i, n := range nodes {
 		if n.Type == typeName {
@@ -61,16 +61,13 @@ func (h *sankeyHandler) attachTypePips(
 	}
 	pipDef, ok := s.Meta.GetEntityDef(p.Type)
 	if !ok {
-		return nil // validated at load; a raced schema change degrades, not panics
+		return nil
 	}
 	label := p.Label
 	if label == "" {
 		label = pipDef.GetPrimaryProperty()
 	}
 
-	// ONE relation query names the candidate peers; ONE id-bounded gated read
-	// then decides which of them the principal may see. The read follows the
-	// number of edges of these nodes, never the size of the pip type.
 	cands, gerr := h.pipEdges(r, p, byID, ids)
 	if gerr != nil {
 		return gerr
@@ -87,8 +84,6 @@ func (h *sankeyHandler) attachTypePips(
 	if gerr != nil {
 		return gerr
 	}
-	// A peer id readable at two faces keeps the first: a pip is a dot, not an
-	// address, and every kept face is one the principal may read.
 	peerByID := make(map[string]*entity.Entity, len(peers))
 	for _, e := range peers {
 		if _, dup := peerByID[e.ID]; !dup {
@@ -167,7 +162,6 @@ func keepVisiblePipEdges(
 		if !visible {
 			continue
 		}
-		// A content-scoped edge belongs to the face of its tail only.
 		tail := faces[c.node]
 		if !c.nodeIsFrom {
 			tail = peer.Face

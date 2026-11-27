@@ -64,6 +64,10 @@ const { confirm } = useConfirm()
 // permission itself.
 const { data: me, isPending: meLoading } = useMe()
 const canEdit = computed(() => me.value?.can_edit_settings === true && !workspaceReadOnly.value)
+// The counts of types, relations, forms and lists describe the model, so only
+// a settings editor sees them, read-only workspace or not. Like the editor
+// controls, a UX choice: every user loads the schema they count.
+const showAppInfo = computed(() => me.value?.can_edit_settings === true)
 
 // Display-timezone picker. The list comes from Intl (all IANA zones); the
 // empty value maps to "Browser default". Changing it only affects how datetime
@@ -1495,7 +1499,7 @@ watch(
       </div>
 
       <!-- App Info -->
-      <div class="settings-card">
+      <div v-if="showAppInfo" class="settings-card" data-testid="app-info">
         <h3>Application Info</h3>
         <div class="info-grid">
           <div class="info-row">

@@ -6,7 +6,9 @@ import (
 	"encoding/base32"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -97,7 +99,7 @@ func (b *caldavBackend) ListCalendars(ctx context.Context) ([]caldav.Calendar, e
 	for name := range cfg.CalDAV.Static {
 		names = append(names, name)
 	}
-	sort.Strings(names) // stable order; map iteration is randomized
+	sort.Strings(names)
 
 	out := make([]caldav.Calendar, 0, len(names))
 	for _, name := range names {
@@ -142,8 +144,6 @@ func (b *caldavBackend) expandPattern(
 	out := make([]caldav.Calendar, 0, len(drivers))
 	for _, d := range drivers {
 		cfg := dyn.CalDAVCollection
-		// meta.name on a pattern would name every expansion identically, so the
-		// driver's display title is the label. Falls back to the id.
 		cfg.Meta.Name = meta.DisplayTitle(d.ID, d.Type, d.Properties)
 		if cfg.Meta.Name == "" {
 			cfg.Meta.Name = d.ID
@@ -165,8 +165,6 @@ func (b *caldavBackend) GetCalendar(ctx context.Context, p string) (*caldav.Cale
 	dyn, driverID, resolved := b.resolveDynamic(ctx, name)
 	if !resolved {
 		if driverID != "" {
-			// A well-formed dynamic name whose driver is absent OR unreadable —
-			// the same answer for both, so the URL cannot probe existence.
 			return nil, notFoundHere()
 		}
 		return nil, webdav.NewHTTPError(http.StatusNotFound, errors.New("caldav: unknown collection"))
@@ -189,10 +187,6 @@ func (b *caldavBackend) calendarFor(name string, cfg dataentryconfig.CalDAVColle
 	if display == "" {
 		display = name
 	}
-	// A collection advertises exactly ONE component. Apple's clients segregate
-	// by component set — Reminders binds only to a VTODO collection and
-	// Calendar.app creates its own separate VEVENT one — so a mixed collection
-	// is invisible to one of them.
 	component := "VTODO"
 	if cfg.ComponentOrDefault() == dataentryconfig.CalDAVComponentEvent {
 		component = "VEVENT"
@@ -212,10 +206,6 @@ func (b *caldavBackend) calendarPath(name string) string {
 // splitPath decomposes a request path into the collection name and, when the
 // path addresses a resource rather than the collection itself, its href.
 func (b *caldavBackend) splitPath(p string) (name, href string, ok bool) {
-	// Strip the prefix BEFORE cleaning. path.Clean resolves ".." first, so
-	// cleaning the whole path would let ".../tasks/../other/a.ics" address
-	// collection "other" while claiming to be scoped to "tasks" — defeating any
-	// reasoning that a request stays within the collection it names.
 	rest, found := strings.CutPrefix(p, caldavPathPrefix+caldavPrincipalSegment+"/"+caldavHomeSegment+"/")
 	if !found {
 		return "", "", false
@@ -225,10 +215,6 @@ func (b *caldavBackend) splitPath(p string) (name, href string, ok bool) {
 		return "", "", false
 	}
 	name, href, hasHref := strings.Cut(rest, "/")
-	// A collection name is a config key and an href is one path segment, so
-	// neither may contain a separator or a traversal element. Rejecting an href
-	// with a slash also keeps the alias key unambiguous — otherwise the same
-	// resource is addressable under two keys.
 	if name == "" || name == "." || name == ".." || strings.Contains(href, "/") {
 		return "", "", false
 	}
@@ -243,24 +229,11 @@ func (b *caldavBackend) splitPath(p string) (name, href string, ok bool) {
 
 // splitDynamicName decomposes a collection segment into its pattern key and
 // driver entity id: "project_tasks--PROJ-1" → ("project_tasks", "PROJ-1", true).
-//
-// ok=false means the segment is not a dynamic collection name — a static key, or
-// a pattern key with no driver, or a driver id that is not a legal entity id.
-// The caller then treats it as static, so an unknown segment falls through to
-// the same 404 it always got.
-//
-// # Why the id is validated here
-//
-// The driver id lands in a store lookup and in the alias key. entity.ValidateID
-// pins ids to ^[A-Za-z0-9][A-Za-z0-9_-]*$ — no slash, no dot, no percent — so
-// validating here means a hostile segment is rejected BEFORE it reaches either.
-// splitPath has already rejected path separators and traversal elements; this is
-// the narrower check that the remainder is an id at all.
-//
-// SplitN with n=2 on the FIRST separator, not the last: a pattern key cannot
-// contain "--" (config validation rejects it) and an id cannot either, so the
-// first occurrence is the only boundary. Splitting on the last would let a
-// crafted segment smuggle a different pattern name past the lookup.
+// ok=false means a static key or an invalid name; the caller treats it as
+// static. The driver id is checked with entity.ValidateID before it reaches a
+// store lookup or alias key. It splits on the FIRST "--": neither a pattern key
+// nor an id may contain one, and splitting on the last would let a crafted
+// segment smuggle a different pattern name.
 func splitDynamicName(segment string) (pattern, driverID string, ok bool) {
 	parts := strings.SplitN(segment, feedUIDSep, 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
@@ -296,7 +269,6 @@ func (b *caldavBackend) mapperFor(
 	if dyn, driverID, ok := b.resolveDynamic(ctx, name); ok {
 		return newCalDAVMapper(name, dyn.CalDAVCollection, s.Meta, link), dyn.CalDAVCollection, nil
 	} else if driverID != "" {
-		// A well-formed dynamic name whose driver is absent or unreadable.
 		return nil, dataentryconfig.CalDAVCollection{}, notFoundHere()
 	}
 	return nil, dataentryconfig.CalDAVCollection{},
@@ -311,6 +283,9 @@ func (b *caldavBackend) mapperFor(
 // a well-formed dynamic name — so the caller can distinguish "not a dynamic
 // name at all" from "a dynamic name that did not resolve", and answer the
 // latter with the uniform not-found rather than a different status.
+//
+// The driver must be readable by this principal; absent and denied are
+// indistinguishable.
 func (b *caldavBackend) resolveDynamic(
 	ctx context.Context, name string,
 ) (cfg dataentryconfig.CalDAVDynamicCollection, driverID string, ok bool) {
@@ -322,9 +297,6 @@ func (b *caldavBackend) resolveDynamic(
 	if !found {
 		return cfg, "", false
 	}
-	// The driver must be readable BY THIS PRINCIPAL. getEntity returns
-	// (nil,false,nil) for both absent and denied, deliberately
-	// indistinguishable, which is exactly the answer wanted here.
 	src := feedEntitySource{app: b.app}
 	if _, visible, err := src.getEntity(ctx, dyn.DriverType, id); err != nil || !visible {
 		return cfg, id, false
@@ -333,41 +305,23 @@ func (b *caldavBackend) resolveDynamic(
 }
 
 // dynamicMembers returns the ids belonging to a dynamic collection, via ONE
-// relation traversal from the driver entity.
-//
-// scoped=false means the collection is static and every entity of the type is a
-// candidate — the caller then applies no membership filter at all, rather than
-// treating an empty set as "nothing matches".
-//
-// # One traversal from the DRIVER, not one per member
-//
-// The query is anchored on the driver entity, so it costs a single
-// RelationQuery regardless of how many entities of the member type exist.
-// Walking members instead ("for each task, does it link to this project?")
-// would be O(members) traversals per poll, which is the shape that made the
-// old per-row relation filter O(N·edges) (see matchRelationFilter's doc).
-//
-// # Row visibility is applied downstream, not here
-//
-// The ids returned are unfiltered by ACL. That is safe because the caller
-// intersects them with `src.listType`, which IS ACL-scoped — an id the
-// principal cannot read is absent from that list and never reaches the output.
-// Gating here too would be a second, redundant read of every neighbor.
+// relation traversal from the driver entity. scoped=false means the collection
+// is static and the caller applies no membership filter. A dynamic name whose
+// driver is gone or unreadable is not found, never the whole member type. The
+// ids are not ACL-filtered: the caller reads them through the ACL-scoped
+// `src.listByIDs`, so an unreadable id never reaches the output.
 func (b *caldavBackend) dynamicMembers(
 	ctx context.Context, name string,
 ) (members map[string]struct{}, scoped bool, err error) {
 	dyn, driverID, ok := b.resolveDynamic(ctx, name)
-	if !ok {
+	switch {
+	case !ok && driverID != "":
+		return nil, false, notFoundHere()
+	case !ok:
 		return nil, false, nil
 	}
-	// An absent `direction:` is inferred from the metamodel against the MEMBER
-	// type (entity_type), since the edge runs member→driver. Getting this wrong
-	// is a write bug, not a display one: the mirror query below would select
-	// the wrong set, and a client-created entry would land in no collection.
 	dir := relationDirection(resolveConfigDirection(
 		b.app.State(), dyn.EntityType, dyn.Relation, dyn.Direction))
-	// The edge runs member→driver by default, so from the DRIVER's side the
-	// query is the mirror of the configured direction.
 	q := store.RelationQuery{EntityID: driverID, Type: dyn.Relation, Direction: flipDirection(dir)}
 	rels, err := listRelationsCtx(ctx, b.app.Services().Store, q)
 	if err != nil {
@@ -403,11 +357,6 @@ func (b *caldavBackend) listTodos(ctx context.Context, name string) ([]caldav.Ca
 	if err != nil {
 		return nil, err
 	}
-	src := feedEntitySource{app: b.app}
-	ents, err := src.listType(ctx, cfg.EntityType)
-	if err != nil {
-		return nil, err
-	}
 	filters, err := parseWhereAt(cfg.Where, requestReadTime(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("caldav %q: %w", name, err)
@@ -416,18 +365,21 @@ func (b *caldavBackend) listTodos(ctx context.Context, name string) ([]caldav.Ca
 	if err != nil {
 		return nil, err
 	}
+	src := feedEntitySource{app: b.app}
+	var ents []*entitypkg.Entity
+	if scoped {
+		ents, err = src.listByIDs(ctx, cfg.EntityType, slices.Sorted(maps.Keys(members)))
+	} else {
+		ents, err = src.listType(ctx, cfg.EntityType)
+	}
+	if err != nil {
+		return nil, err
+	}
 	entDef, _ := b.app.State().Meta.GetEntityDef(cfg.EntityType)
 	ctx = visibility.PrimeTraversals(ctx, b.fieldRedactor(), ents)
 
 	out := make([]caldav.CalendarObject, 0, len(ents))
 	for _, e := range ents {
-		// Membership first: for a dynamic collection this is the cheap set
-		// lookup, and it excludes most of the type before any filter runs.
-		if scoped {
-			if _, isMember := members[e.ID]; !isMember {
-				continue
-			}
-		}
 		matched, matchErr := filter.MatchAll(entityRecord(e), filters, entDef, b.app.State().Meta)
 		if matchErr != nil {
 			return nil, fmt.Errorf("caldav %q: %w", name, matchErr)
@@ -490,18 +442,10 @@ func (b *caldavBackend) fieldRedactor() visibility.FieldRedactor {
 }
 
 // redactEntityFields returns a copy of e with `visible:`-hidden properties
-// removed, or e unchanged when nothing is hidden.
-//
-// A COPY, never a mutation: the entity comes from the shared store snapshot, so
-// deleting properties in place would redact it for every other reader in the
-// process — including write-prep reads, where a missing property is an ERASURE
-// (see the PatchEntity rule in CLAUDE.md).
-//
-// Content is cleared alongside the properties when the collection maps
-// DESCRIPTION to the body: `visible:` names properties, so it has no vocabulary
-// for the body, and a redactor that hid `body` while the mapping routed the
-// markdown body into DESCRIPTION would leak exactly what it was asked to hide.
-// Erring toward hiding is the safe direction for a read path.
+// removed, or e unchanged when nothing is hidden. It never mutates e, which
+// comes from the shared store snapshot. Content is cleared too when the
+// collection maps DESCRIPTION to the body and a property is hidden, since
+// `visible:` has no vocabulary for the body.
 func redactEntityFields(
 	ctx context.Context, r visibility.FieldRedactor, e *entitypkg.Entity,
 ) *entitypkg.Entity {
@@ -532,23 +476,12 @@ func redactEntityFields(
 // a client receives from a PUT is computed over exactly the rendering a later
 // GET returns. Two call sites deriving that independently is how a conditional
 // request starts failing for no visible reason.
+//
+// It applies field-level `visible:` redaction, since this is the single place
+// an entity becomes a CalDAV resource; rows were gated upstream.
 func (b *caldavBackend) renderObject(
 	ctx context.Context, collection string, m *caldavMapper, e *entitypkg.Entity, href, uid string,
 ) (*caldav.CalendarObject, error) {
-	// Field-level `visible:` redaction, applied HERE because this is the single
-	// place an entity becomes a CalDAV resource.
-	//
-	// visibleReader gates ROWS — a hidden entity never reaches this function.
-	// It does not touch FIELDS, and docs/acl-security.md commits to redaction on
-	// "every HTTP read shape". CalDAV was a new read shape that skipped it: a
-	// collection mapping `description: body` served the body verbatim to a
-	// principal whose role redacts it, because toTodo reads e.GetString/e.Content
-	// straight off the raw entity.
-	//
-	// Redacting before the mapping (rather than after) means a hidden property
-	// is simply absent, and the mapper's existing "absent property → omit the
-	// iCalendar property" rule does the rest — no CalDAV-specific redaction
-	// logic, and no way for a hidden value to survive into the ETag either.
 	e = redactEntityFields(ctx, b.fieldRedactor(), e)
 	td := m.toTodo(e, uid, m.link(e.Type, e.ID))
 	ic := calfeed.ICal{Now: time.Now().UTC()}
@@ -622,37 +555,11 @@ func (b *caldavBackend) CreateCalendar(context.Context, *caldav.Calendar) error 
 }
 
 // watermarkCTag derives the ctag from the store's entity-type watermark instead
-// of rendering the collection, when the backend supports one.
-//
-// ok=false means "no watermark available" — the caller falls back to the
-// content-derived tag. That is the fsstore path (no monotonic sequence) and it
-// stays correct, just not cheap.
-//
-// # Why a type watermark is a SOUND ctag, despite being coarser
-//
-// The contract a ctag must satisfy is one-directional: it MUST change when the
-// collection's content changes. It is explicitly allowed to change when nothing
-// a client can see changed — RFC-wise the client simply re-enumerates and finds
-// the same ETags.
-//
-// The watermark moves on any write to the entity type. Every change to this
-// collection is such a write, so the required direction holds. It also moves for
-// writes the collection filters out, for entities this principal cannot read,
-// and for other collections over the same type — all spurious re-enumerations,
-// none of them incorrect.
-//
-// The reverse trade is what makes this safe: a missed change strands a client
-// forever, a spurious one costs it a single listing.
-//
-// # What this does NOT cover
-//
-// Config changes. The watermark is over entity rows, so editing the collection's
-// `where:` clause or its property mapping does not move it, and a client keeps
-// its stale view until the next entity write. The rendered tag included the
-// mapping implicitly, so this is a real (if minor) regression: an operator who
-// edits a mapping and wants clients to see it immediately should touch an entity
-// or restart. Folding a config generation into the tag is the fix if that
-// becomes a problem.
+// of rendering the collection. ok=false means no watermark (fsstore); the caller
+// falls back to the content-derived tag. A ctag must change when content
+// changes; spurious changes only cost a re-listing, so the coarser type
+// watermark is sound. The tag is namespaced by collection. Config edits do not
+// move it; a client sees them after the next entity write.
 func (b *caldavBackend) watermarkCTag(
 	ctx context.Context, name string,
 ) (ctag string, supported bool, err error) {
@@ -668,14 +575,8 @@ func (b *caldavBackend) watermarkCTag(
 	if err != nil {
 		return "", false, err
 	}
-	// Namespaced by collection so two collections over the same type do not
-	// share a tag: they render different content, and a client that switched
-	// between them must not see a matching tag. The seq alone would collide.
 	h := sha256.New()
 	fmt.Fprintf(h, "wm:%d:%s:%d", len(name), name, seq)
-	// A `where:` with a date variable selects by the read time too: at
-	// midnight a `due>=$today` entry leaves the collection with no entity
-	// write. Fold each resolved value in, so the tag moves when it does.
 	for _, v := range resolvedDateVariables(cfg.Where, requestReadTime(ctx)) {
 		fmt.Fprintf(h, ":%d:%s", len(v), v)
 	}

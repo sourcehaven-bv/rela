@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -17,22 +18,19 @@ import (
 // coverage-ignore: scheduler command - long-running process
 type SchedulerCmd struct{}
 
-// Run dispatches `rela scheduler`. The WorkspaceProvider and the identity
-// binder are supplied at the kong wiring site (appbuild.Services implements
-// the provider structurally).
-func (c *SchedulerCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider, bind scheduler.IdentityBinder) error {
+// Run dispatches `rela scheduler`. The services and the identity binder are
+// supplied at the kong wiring site; the scheduler runs on svc.Scheduler().
+func (c *SchedulerCmd) Run(ctx context.Context, svc *appbuild.Services, bind scheduler.IdentityBinder) error {
 	// coverage-ignore-start: main-or-wiring: constructs and runs the long-running scheduler loop; the CLI test harness
 	// supplies no
 	// scheduler.WorkspaceProvider fixture
-	// The kong wiring binds *appbuild.Services. Anything else cannot be
-	// checked for a sync backend, so it is refused rather than run unchecked.
-	svc, ok := ws.(*appbuild.Services)
-	if !ok {
-		return fmt.Errorf("rela scheduler: workspace %T cannot be checked for a sync backend", ws)
+	if svc == nil {
+		return errors.New("rela scheduler: no project services")
 	}
 	if err := appbuild.RequireSyncBackend(svc); err != nil {
 		return err
 	}
+	ws := svc.Scheduler()
 	cfg, err := scheduler.LoadWorkspaceConfig(ctx, ws)
 	if err != nil {
 		// Unlike the server, the command refuses to start: an operator

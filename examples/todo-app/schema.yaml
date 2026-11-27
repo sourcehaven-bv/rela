@@ -1,0 +1,122 @@
+# Personal to-do list app. See README.md.
+version: "1.0"
+types:
+  todo_status:
+    values: [open, completed, canceled]
+    default: open
+    initial: open
+    transitions:
+      - { from: open, to: completed, label: Complete }
+      - { from: open, to: canceled, label: Cancel }
+      - { from: completed, to: open, label: Reopen }
+      - { from: canceled, to: open, label: Reopen }
+  # When a to-do is meant to happen. Scheduled needs a start_date; Today is
+  # derived from it on read, so nothing has to move a to-do at midnight.
+  when_list:
+    values: [anytime, someday, scheduled]
+    labels:
+      anytime: Anytime
+      someday: Someday
+      scheduled: Scheduled
+  repeat_interval:
+    description: "A rela.date_add offset: 1d, 2w, 1m, 1y"
+    validations:
+      - pattern: "^[1-9][0-9]*[dwmy]$"
+        error: "Use a number and d, w, m or y, such as 1w"
+  part_of_day:
+    values: [day, evening]
+    labels:
+      day: Day
+      evening: Evening
+entities:
+  area:
+    label: Area
+    plural: areas
+    id_prefix: ""
+    id_type: manual
+    display: title
+    properties:
+      title: { type: string, required: true }
+  project:
+    label: Project
+    plural: projects
+    id_prefix: "PRJ-"
+    id_type: short
+    display: title
+    properties:
+      title: { type: string, required: true }
+      status: { type: todo_status }
+      deadline: { type: date }
+      completed_on: { type: date }
+    query_scopes:
+      active: "entity.status == 'open'"
+  heading:
+    label: Heading
+    plural: headings
+    id_prefix: "HD-"
+    id_type: short
+    display: title
+    properties:
+      title: { type: string, required: true }
+  todo:
+    label: To-do
+    plural: to-dos
+    id_prefix: "TD-"
+    id_type: short
+    display: title
+    properties:
+      title: { type: string, required: true }
+      status: { type: todo_status }
+      when: { type: when_list }
+      start_date: { type: date }
+      part_of_day: { type: part_of_day }
+      deadline: { type: date }
+      completed_on: { type: date }
+      # How often the to-do comes back once completed: 1d, 2w, 1m, 1y.
+      repeat: { type: repeat_interval }
+  tag:
+    label: Tag
+    plural: tags
+    id_prefix: "TAG-"
+    id_type: short
+    display: title
+    properties:
+      title: { type: string, required: true }
+relations:
+  in_project:
+    label: in project
+    inverse: project_todos
+    from: [todo]
+    to: [project]
+    max_outgoing: 1
+    orderable: incoming
+  in_area:
+    label: in area
+    inverse: area_items
+    from: [todo, project]
+    to: [area]
+    max_outgoing: 1
+    orderable: incoming
+  has_heading:
+    label: has heading
+    from: [project]
+    to: [heading]
+    max_incoming: 1
+    orderable: outgoing
+  under_heading:
+    label: under heading
+    from: [todo]
+    to: [heading]
+    max_outgoing: 1
+  tagged:
+    label: tagged
+    from: [todo, project]
+    to: [tag]
+validations:
+  - name: scheduled-needs-start-date
+    description: A scheduled to-do has a start date.
+    entity_type: todo
+    severity: error
+    enforce: write
+    when_condition: "entity.when == 'scheduled'"
+    then_condition: "entity.start_date ~= nil"

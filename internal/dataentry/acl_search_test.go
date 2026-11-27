@@ -372,7 +372,7 @@ func TestACLSearchRegression_NopACL(t *testing.T) {
 			t.Errorf("NopACL search lost %s (off-metamodel types must stay visible without ACL)", id)
 		}
 	}
-	if resp.Meta.Total != 3 || resp.Meta.Page != 1 || resp.Meta.PerPage != 3 {
-		t.Errorf("meta = %+v, want {Total:3 Page:1 PerPage:3}", resp.Meta)
+	if resp.Meta.Total != 3 || resp.Meta.Page != 1 || resp.Meta.PerPage != maxSearchResults || resp.Meta.HasMore {
+		t.Errorf("meta = %+v, want {Total:3 Page:1 PerPage:%d HasMore:false}", resp.Meta, maxSearchResults)
 	}
 }

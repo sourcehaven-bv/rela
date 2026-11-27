@@ -18,6 +18,6 @@ const { t } = useI18n()
     <template #topbar>
       <PageTitle :title="t('notFound.title')" />
     </template>
-    <NotFoundState />
+    <NotFoundState untitled />
   </PageLayout>
 </template>

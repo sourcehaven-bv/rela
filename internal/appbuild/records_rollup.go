@@ -37,6 +37,10 @@ func (f recordFold) FoldRecords(ctx context.Context, q rollup.RecordQuery) (map[
 		// The one named owner is hidden from the caller: it has no rows to show.
 		return map[string]string{}, nil
 	}
+	if errors.Is(err, records.ErrForbidden) {
+		// The caller may not read this type: it has no rows to show.
+		return map[string]string{}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +53,7 @@ func (f recordFold) FoldRecords(ctx context.Context, q rollup.RecordQuery) (map[
 		case metamodel.RollupLatestRow:
 			text = p.Latest
 		case metamodel.RollupCount, metamodel.RollupExists, metamodel.RollupMin, metamodel.RollupMax,
-			metamodel.RollupSum, metamodel.RollupLatest:
+			metamodel.RollupSum, metamodel.RollupLatest, metamodel.RollupBodyTasks:
 		}
 		if text != "" {
 			out[p.Owner] = text

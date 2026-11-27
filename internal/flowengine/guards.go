@@ -60,6 +60,37 @@ func (g guards) doneBranch(ctx context.Context, f *flowcfg.Flow, run flowrun.Run
 	}
 }
 
+// keptChangeHolds reports whether the `change` branch b, kept for token
+// tok while its state settled, may still be taken: its guard holds on the
+// subject as it is now, and no other person holds a live claim on the
+// step. A failing guard is not taken; its error is logged.
+func (g guards) keptChangeHolds(ctx context.Context, run flowrun.Run, tok string, cur flow.Current,
+	b flowcfg.Branch, by string, now time.Time) bool {
+	if _, _, c, ok := slot(run, tok); ok && c != nil && c.Generation == cur.Generation && c.By != by &&
+		now.Sub(c.At) < ClaimTTL {
+
+		slog.InfoContext(ctx, "flowengine: a kept write event was dropped: the step is claimed",
+			"run", run.ID, "state", cur.State)
+		return false
+	}
+	if b.When == nil {
+		return true
+	}
+	subj, err := g.subjects.Subject(ctx, run.Subject)
+	if err != nil {
+		slog.WarnContext(ctx, "flowengine: a kept write event was dropped: the subject could not be read",
+			"run", run.ID, "error", err)
+		return false
+	}
+	ok, err := g.holds(ctx, b.When, subj)
+	if err != nil || !ok {
+		slog.InfoContext(ctx, "flowengine: a kept write event was dropped: its guard no longer holds",
+			"run", run.ID, "state", cur.State)
+		return false
+	}
+	return true
+}
+
 // holds evaluates w over subj, bound as `entity`.
 func (g guards) holds(ctx context.Context, w *flowcfg.Guard, subj *entity.Entity) (bool, error) {
 	def, ok := g.meta.GetEntityDef(subj.Type)

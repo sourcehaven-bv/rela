@@ -27,6 +27,7 @@ import { useShellAppConfig } from '@/composables/useShellAppConfig'
 import { bootMeta } from '@/i18n/bootMeta'
 import { usePresentationOutlet } from '@/composables/usePresentation'
 import { useBackTarget } from '@/composables/useBackTarget'
+import { isQuickEntryPopup } from '@/utils/quickEntry'
 import { unknownWorldQuery } from '@/composables/useWorld'
 import { isPageHidden } from '@/composables/visibleRefetch'
 import AsOfBanner from '@/components/common/AsOfBanner.vue'
@@ -40,7 +41,7 @@ import RlViewTabs from 'rela-components/components/layout/RlViewTabs.vue'
 import SpaceCreateMenu from '@/components/common/SpaceCreateMenu.vue'
 import { useSpaceStore } from '@/stores/space'
 import { SIDEBAR_DEFAULT_WIDTH } from '@/stores/ui'
-import Sidebar from '@/components/common/Sidebar.vue'
+import Sidebar from '@/components/sidebar/Sidebar.vue'
 import ConfigureSidebar from '@/components/configure/ConfigureSidebar.vue'
 import { isConfigurePath } from '@/configure/routes'
 import SidebarFlyout from '@/components/flyout/SidebarFlyout.vue'
@@ -68,6 +69,7 @@ import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 // query) should hide the hamburger.
 const { t } = useI18n()
 const route = useRoute()
+const quickPopup = computed(() => isQuickEntryPopup(route))
 const backTarget = useBackTarget()
 const NON_TOP_LEVEL_ROUTES = new Set(['form-create', 'form-edit'])
 /*
@@ -91,7 +93,7 @@ const showHamburger = computed(
   () =>
     backTarget.value === null &&
     !NON_TOP_LEVEL_ROUTES.has(route.name as string) &&
-    !pageHeader.present.value,
+    !pageHeader.present.value
 )
 
 const schemaStore = useSchemaStore()
@@ -144,7 +146,7 @@ const detailPanel = useDetailPanelOutlet()
  */
 const sidebarWidth = computed(() => (uiStore.sidebarCollapsed ? undefined : uiStore.sidebarWidth))
 const frameStyle = computed(() =>
-  sidebarWidth.value === undefined ? undefined : { '--rl-sidebar-width': `${sidebarWidth.value}px` },
+  sidebarWidth.value === undefined ? undefined : { '--rl-sidebar-width': `${sidebarWidth.value}px` }
 )
 
 const loading = ref(true)
@@ -219,7 +221,7 @@ watch(
     const next = unknownWorldQuery(route.query, schemaStore.worlds)
     if (next) router.replace({ query: next })
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 // Apply palette CSS variables when schema loads, theme toggles, or
@@ -299,7 +301,9 @@ watch(
   <!-- A multi-tenant server is still creating this organization's tenant. -->
   <div v-else-if="tenantProvisioning !== 'idle'" class="boot-screen">
     <RlStatusRegion :tone="tenantProvisioning === 'failed' ? 'error' : undefined">
-      {{ tenantProvisioning === 'failed' ? t('shell.provisioningFailed') : t('shell.provisioning') }}
+      {{
+        tenantProvisioning === 'failed' ? t('shell.provisioningFailed') : t('shell.provisioning')
+      }}
     </RlStatusRegion>
   </div>
 
@@ -322,6 +326,13 @@ watch(
     below whatever header the page puts above it, and the flyout would open
     at a different height on each screen.
   -->
+  <!-- The desktop quick-entry popup is a dialog window: no shell chrome. -->
+  <div v-else-if="quickPopup" class="quick-popup-frame">
+    <RouterView />
+    <RlToastHost :toasts="toasts" @dismiss="dismissToast" />
+    <ScriptErrorDialog />
+  </div>
+
   <div
     v-else
     class="app-frame"
@@ -374,7 +385,10 @@ watch(
             v-if="pageHeader.content.value?.actions || (spaceStore.create.length && !configuring)"
             #actions
           >
-            <component :is="pageHeader.content.value.actions" v-if="pageHeader.content.value?.actions" />
+            <component
+              :is="pageHeader.content.value.actions"
+              v-if="pageHeader.content.value?.actions"
+            />
             <SpaceCreateMenu v-if="!configuring" />
           </template>
           <template v-if="pageHeader.content.value?.tools" #tools>
@@ -433,10 +447,7 @@ watch(
       <RouterView />
       <RlToastHost :toasts="toasts" @dismiss="dismissToast" />
       <ScriptErrorDialog />
-      <KeyboardShortcutsModal
-        :open="shortcutsModalOpen"
-        @close="shortcutsModalOpen = false"
-      />
+      <KeyboardShortcutsModal :open="shortcutsModalOpen" @close="shortcutsModalOpen = false" />
     </RlAppShell>
 
     <div class="app-frame__flyout">
@@ -491,7 +502,9 @@ body {
   font-size: var(--rl-font-size-md);
   background: var(--rl-color-bg);
   line-height: var(--rl-line-height-normal);
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
 }
 
 /*
@@ -519,7 +532,8 @@ body {
   /* The top padding as a variable, so the hamburger bar can pull itself up
      over it and stick at the pane's edge (see .mobile-menu-bar). */
   --pane-padding-top: var(--rl-space-5);
-  padding: var(--pane-padding-top) var(--rl-page-gutter-right) var(--rl-space-5) var(--rl-page-gutter-left);
+  padding: var(--pane-padding-top) var(--rl-page-gutter-right) var(--rl-space-5)
+    var(--rl-page-gutter-left);
   padding-bottom: 48px; /* Account for status bar */
   /* The pane is the scroll container, so PageLayout's sticky bars stick
      against it rather than against the document. */
@@ -553,6 +567,12 @@ body {
   .app-frame--sidebar-collapsed .app-frame__flyout {
     left: 0;
   }
+}
+
+.quick-popup-frame {
+  min-height: 100vh;
+  background: var(--rl-color-bg);
+  color: var(--rl-color-text);
 }
 
 .boot-screen {
