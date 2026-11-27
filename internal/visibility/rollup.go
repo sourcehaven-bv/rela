@@ -127,6 +127,7 @@ func (r *Rollups) Values(
 			continue
 		}
 		var results map[string]store.RollupResult
+		var withheld map[string]bool
 		switch {
 		case col.BodyTasks != "":
 			if bodies == nil {
@@ -135,6 +136,8 @@ func (r *Rollups) Values(
 			results = bodyColumn(col, rows, bodies)
 		case col.Records != "":
 			results, err = r.recordColumn(ctx, col, ids)
+		case col.Siblings != nil:
+			results, withheld, err = r.siblingsColumn(ctx, col, ids, world)
 		case col.Along != nil:
 			results, err = r.alongColumn(ctx, col, ids, world)
 		default:
@@ -147,7 +150,7 @@ func (r *Rollups) Values(
 		for _, ref := range rows {
 			id := ref.ID
 			v, ok := col.ValueOf(results[id])
-			if !ok || !shown(store.EntityHeader{ID: ref.ID, Face: ref.Face}) {
+			if !ok || withheld[id] || !shown(store.EntityHeader{ID: ref.ID, Face: ref.Face}) {
 				continue
 			}
 			if out[id] == nil {
