@@ -444,7 +444,8 @@ func (l *workerLife) stop() {
 // run tries to take the worker lock until it gets it or ctx ends, and
 // then leads until ctx ends or the lock is lost, when it goes back to
 // trying. Store events are drained on a goroutine of
-// their own, so a long round never fills the subscription.
+// their own, so a long round never fills the subscription. A wake while
+// another process leads only ends the wait early; the leader purges.
 func (w *realtimeWorker) run(ctx context.Context) {
 	events, cancel := w.changes.Subscribe(triggerEventBuffer)
 	defer cancel()
@@ -473,7 +474,7 @@ func (w *realtimeWorker) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-takeover.C:
-		case <-w.wake: // the leader purges
+		case <-w.wake:
 		}
 	}
 }
@@ -505,7 +506,9 @@ func (w *realtimeWorker) drain(ctx context.Context, events <-chan store.Event) {
 // every tick that has work, a trigger reconcile on its timer, and a timer
 // round when the [realtime.TimerSchedule] says. The trigger engine and the timer loop
 // start and end with nothing in memory, so they never act on what they
-// held while another process led.
+// held while another process led. Outputs rounds run beside the loop and
+// end with the lead. The due-wake noted before the lead is dropped, because
+// the first timer round covers it.
 func (w *realtimeWorker) lead(ctx context.Context, check func(context.Context) error) {
 	ctx = principal.With(ctx, principal.Principal{User: principal.UserRealtime, Tool: principal.ToolRealtime})
 	w.leading.Store(true)
@@ -516,7 +519,6 @@ func (w *realtimeWorker) lead(ctx context.Context, check func(context.Context) e
 		w.triggers.Reset()
 		w.timers.Reset()
 	}()
-	// An outputs round runs beside this loop; it ends with the lead.
 	ctx, cancel := context.WithCancel(ctx)
 	var rounds sync.WaitGroup
 	defer func() {
@@ -527,7 +529,7 @@ func (w *realtimeWorker) lead(ctx context.Context, check func(context.Context) e
 	w.retention(ctx)
 	w.lifecycle(ctx)
 	w.reconcile(ctx, &rounds)
-	w.dueWake.Take() // the first round below covers what was noted before
+	w.dueWake.Take()
 	sched := w.timerRound(ctx, &rounds)
 	timer := time.NewTimer(sched.Delay(time.Now()))
 	defer timer.Stop()
@@ -666,15 +668,20 @@ func (w *realtimeWorker) startOutputs(ctx context.Context, rounds *sync.WaitGrou
 				w.runOutputs(ctx)
 				continue
 			}
-			w.outputsBusy.Store(false)
-			// A wake between the swap above and the release saw the runner
-			// busy and started nothing, so take the runner back for it.
-			if !w.outputsDirty.Load() || !w.outputsBusy.CompareAndSwap(false, true) {
+			if !w.releaseOutputs() {
 				return
 			}
 		}
 	})
 	return true
+}
+
+// releaseOutputs frees the outputs runner and reports whether it took the
+// runner back. A wake between the last dirty check and the release saw the
+// runner busy and started nothing, so the runner is taken back for it.
+func (w *realtimeWorker) releaseOutputs() bool {
+	w.outputsBusy.Store(false)
+	return w.outputsDirty.Load() && w.outputsBusy.CompareAndSwap(false, true)
 }
 
 // runOutputs runs one round of the session outputs runner, bounded by
