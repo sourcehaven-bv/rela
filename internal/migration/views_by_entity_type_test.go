@@ -135,10 +135,55 @@ forms:
 	}
 	out := mustMarshalYAML(t, &doc)
 	if strings.Contains(out, "entity_views") {
-		t.Errorf("entity_views should be removed entirely, got:\n%s", out)
+		t.Errorf("entity_views left empty should be removed, got:\n%s", out)
 	}
 	if !strings.Contains(out, "forms:") {
 		t.Errorf("unrelated config should be preserved, got:\n%s", out)
+	}
+}
+
+func TestViewsByEntityType_Apply_KeepsLiveEntityViewsKeys(t *testing.T) {
+	m := &ViewsByEntityTypeMigration{}
+
+	src := `
+entity_views:
+  ticket:
+    detail_view: ticket_detail
+    mentioned_by_hide_id: true
+  label:
+    mentioned_by_panel: false
+`
+	doc := mustParseYAML(t, src)
+	if err := m.Apply(&doc); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	out := mustMarshalYAML(t, &doc)
+	if strings.Contains(out, "detail_view") {
+		t.Errorf("detail_view should be removed, got:\n%s", out)
+	}
+	for _, want := range []string{"entity_views:", "mentioned_by_hide_id: true", "mentioned_by_panel: false"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q to be kept, got:\n%s", want, out)
+		}
+	}
+	if m.Detect(&doc) {
+		t.Errorf("expected Detect=false after Apply, got:\n%s", out)
+	}
+}
+
+func TestViewsByEntityType_Detect_IgnoresLiveEntityViews(t *testing.T) {
+	m := &ViewsByEntityTypeMigration{}
+
+	src := `
+entity_views:
+  ticket:
+    mentioned_by_hide_id: true
+    duplicate:
+      properties: [title]
+`
+	doc := mustParseYAML(t, src)
+	if m.Detect(&doc) {
+		t.Error("expected Detect=false for entity_views without detail_view")
 	}
 }
 
@@ -152,7 +197,7 @@ entity_views:
 `
 	doc := mustParseYAML(t, src)
 	if !m.Detect(&doc) {
-		t.Error("expected Detect=true when only entity_views: is present")
+		t.Error("expected Detect=true when an entity_views entry names detail_view")
 	}
 }
 

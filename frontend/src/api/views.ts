@@ -206,6 +206,9 @@ export interface ViewSection {
   create?: ViewSectionCreate
   // Entry properties shown under a table section (TKT-4Q2EIVZ).
   totals?: SectionTotal[]
+  // Row parts to leave off (`hide_type`, `hide_id`). A row with no title
+  // keeps its ID. Presentation only.
+  hide?: Array<'type' | 'id'>
 }
 
 /**
@@ -279,6 +282,8 @@ export interface ViewResponse {
    * backlinks in its own section, or the operator turned the panel off.
    */
   hideMentionedByPanel?: boolean
+  /** `mentioned_by_hide_id`: the panel leaves the entity ID off its rows. */
+  hideMentionedByID?: boolean
 }
 
 // Fetch executed view data for an entity. The backend looks up the

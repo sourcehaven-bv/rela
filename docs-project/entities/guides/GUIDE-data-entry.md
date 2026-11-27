@@ -3384,6 +3384,8 @@ sections:
 | `group_by`      | string | Property to group entities by                           |
 | `empty_message` | string | Text shown when the collection is empty                 |
 | `hide_empty`    | bool   | Leave the section out when the collection is empty (see below) |
+| `hide_type`     | bool   | Leave the entity type label off the rows (`list`, `cards`, `content`; see below) |
+| `hide_id`       | bool   | Leave the entity ID off the rows (`list`, `cards`, `content`, `nested`; see below) |
 | `permission`    | string | Show the section only to holders of this permission (see below) |
 | `link`          | string | `detail` links entity titles to their detail pages      |
 | `create`        | map    | Offer a "create related entity" button (see below)      |
@@ -3579,6 +3581,32 @@ from a `recursive:` traverse rule, or from a rule that starts at another
 collection rather than `entry`, has no single entity to link the new one to;
 declaring `create:` on one is refused at config load rather than silently
 producing no button.
+
+### Hiding the type label and ID (`hide_type:`, `hide_id:`)
+
+A `list`, `cards` or `content` section over a collection shows each row's
+type label, title and entity ID. A `nested` section shows the title and ID.
+Set `hide_type: true` or `hide_id: true` to leave them off, so the title
+reads on its own. Show an ID only where people need it to refer to the record.
+
+```yaml
+sections:
+  - heading: Related decisions
+    source: decisions
+    display: cards
+    hide_type: true
+    hide_id: true
+```
+
+Both default to `false`, so existing views look as before. A row without a
+title keeps its ID so it stays identifiable. The built-in "Mentioned by" panel
+has its own switch, `entity_views.<type>.mentioned_by_hide_id`; it shows no
+type label.
+
+These keys change what the page draws. They are not access control: the type
+and ID stay in the row link and in the API response. Config load refuses them
+on a `properties` or `table` section, on `source: entry`, in a form side panel,
+and `hide_type` on a `nested` section, which shows no type label.
 
 ### Hiding empty sections
 
@@ -4020,6 +4048,7 @@ entity_views:
 | `detail_view` | string  | View name (must reference a key under `views:`) used for entities of this type |
 | `duplicate`   | mapping | Narrows what a duplicate of this type copies — see below |
 | `mentioned_by_panel` | bool | `false` hides the built-in "Mentioned by" panel on this type's page |
+| `mentioned_by_hide_id` | bool | `true` leaves the entity ID off the rows of that panel |
 
 An entry may carry any of these fields. An entry that declares none is a
 load error, since it configures nothing.

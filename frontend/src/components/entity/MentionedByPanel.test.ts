@@ -66,6 +66,23 @@ describe('MentionedByPanel', () => {
     expect(wrapper.text()).toContain('POL-1@draft')
   })
 
+  it('leaves the address off the rows with hideId, but keeps the face and untitled IDs', async () => {
+    getMentionedByMock.mockResolvedValue({
+      items: [
+        { id: 'TKT-1', type: 'ticket', title: 'A ticket' },
+        { id: 'TKT-2', type: 'ticket', title: '' },
+        { id: 'POL-1', type: 'policy', title: 'Policy', face: 'draft' },
+      ],
+    })
+    const wrapper = mount(MentionedByPanel, {
+      props: { entityType: 'feature', entityId: 'FEAT-1', hideId: true },
+      global: { stubs: { RouterLink: RouterLinkStub } },
+    })
+    await flushPromises()
+    const ids = wrapper.findAll('li').map((li) => li.findAll('.entity-id').map((e) => e.text()))
+    expect(ids).toEqual([[], ['TKT-2'], ['@draft']])
+  })
+
   it('appends the next page on Show more', async () => {
     getMentionedByMock
       .mockResolvedValueOnce({

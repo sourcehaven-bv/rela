@@ -279,6 +279,10 @@ type SectionData struct {
 	// Unexported like hideEmpty: only the wire converter reads it.
 	totals []dataentryconfig.SectionTotal
 
+	// hide is the section's `hide_type:` and `hide_id:` as row parts,
+	// copied to the wire by viewSectionToV1.
+	hide []string
+
 	// Tree holds the parent rows of a `display: nested` section, each with its
 	// own children. Empty for every other display mode.
 	Tree []SectionTreeNode
@@ -480,6 +484,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			hideEmpty:    sec.HideEmpty,
 			source:       sec.Source,
 			totals:       sec.Totals,
+			hide:         sectionHide(sec.HideType, sec.HideID),
 		}
 
 		if sec.Source == "entry" {

@@ -898,6 +898,7 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	resp.Mentions = collectMentions(
 		r.Context(), h.viewReader, s.Meta, viewContentBlobs(result.Entry, sections)...)
 	resp.HideMentionedByPanel = hideMentionedByPanel(s.Cfg, viewCfg)
+	resp.HideMentionedByID = hideMentionedByID(s.Cfg, viewCfg)
 
 	writeV1JSON(w, http.StatusOK, resp)
 }
@@ -932,6 +933,7 @@ func viewSectionToV1(sec SectionData, owner map[string]*v1.EntityOwner) v1.ViewS
 		Content:       sec.Content,
 		HasContent:    sec.HasContent,
 		RelationOrder: sec.RelationOrder,
+		Hide:          sec.hide,
 	}
 
 	v1Sec.Create = sectionCreateToV1(sec.CreateInfo)
@@ -1036,6 +1038,27 @@ func hideMentionedByPanel(cfg *Config, view ViewConfig) bool {
 		}
 	}
 	return false
+}
+
+// sectionHide lists the row parts a section leaves off, for [v1.ViewSection.Hide].
+func sectionHide(hideType, hideID bool) []string {
+	var hide []string
+	if hideType {
+		hide = append(hide, v1.SectionHideType)
+	}
+	if hideID {
+		hide = append(hide, v1.SectionHideID)
+	}
+	return hide
+}
+
+// hideMentionedByID reports whether the "Mentioned by" panel leaves the entity
+// ID off its rows for an entry of view's type.
+func hideMentionedByID(cfg *Config, view ViewConfig) bool {
+	if cfg == nil {
+		return false
+	}
+	return cfg.EntityViews[view.Entry.Type].MentionedByHideID
 }
 
 // viewContentBlobs gathers every markdown body that will be rendered by
