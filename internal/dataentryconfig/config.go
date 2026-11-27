@@ -106,7 +106,7 @@ func (d Direction) IsIncoming() bool {
 // a breaking change to every project's config file, made to satisfy a lint.
 // Grouping fields into embedded `yaml:",inline"` structs would keep the YAML
 // shape, but the grouping is arbitrary (does `dashboard` belong with the
-// views or the behaviour keys?) and it touches every call site that reads a
+// views or the behavior keys?) and it touches every call site that reads a
 // field. Config is decoded from YAML and never encoded whole (`/_config`
 // builds its own wire type), so the grouping would buy nothing.
 // A genuinely new top-level key therefore raises the pin by one; `account`
