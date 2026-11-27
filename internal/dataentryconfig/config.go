@@ -104,6 +104,11 @@ func (d Direction) IsIncoming() bool {
 // sections (a new view kind legitimately adds one) rather than god-object
 // accretion. Splitting it would churn the YAML shape for no design gain —
 // a breaking change to every project's config file, made to satisfy a lint.
+// Grouping fields into embedded `yaml:",inline"` structs would keep the YAML
+// shape, but the grouping is arbitrary (does `dashboard` belong with the
+// views or the behaviour keys?) and it touches every call site that reads a
+// field. Config is decoded from YAML and never encoded whole (`/_config`
+// builds its own wire type), so the grouping would buy nothing.
 // A genuinely new top-level key therefore raises the pin by one; `account`
 // (TKT-MJTD12), `pages` (TKT-ITQ0HL), `piles` (TKT-K3RJLH), `channels`
 // (TKT-91BK6F), `header_buttons` (TKT-31822PN) and `list_buttons`
@@ -3325,7 +3330,7 @@ type CalDAVDynamicCollection struct {
 	// completion, read_only, defaults, on_delete. Embedded rather than repeated
 	// so a dynamic collection maps EXACTLY like a static one, and a mapping
 	// feature added later applies to both without a second implementation.
-	CalDAVCollection `yaml:",inline" json:",inline"`
+	CalDAVCollection `yaml:",inline"`
 	// DriverType is the entity type whose instances become collections. One
 	// collection per readable entity of this type.
 	DriverType string `yaml:"driver_type" json:"driver_type"`

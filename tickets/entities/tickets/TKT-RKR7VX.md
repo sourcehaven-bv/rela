@@ -8,7 +8,9 @@ effort: xs
 tags:
     - tech-debt
     - good-first
-status: backlog
+started: "2026-11-27"
+completed: "2026-11-27"
+status: done
 ---
 
 Sub-ticket of [[TKT-N0IKN9]]. One small PR; everything below is verified on
@@ -62,3 +64,29 @@ fsstore 81→92 / 33→36, memstore 43→50 / 29→32, sqlitestore 43→53 / 29�
 pgstore 49→52 / 39→42, app 86→87. The exported bumps are legitimate
 (`store.Store` grew); the total-method bumps are the ratchet being defeated by a
 large feature PR and are what the fsstore arc now pays back.
+
+## Outcome (2026-11-27, develop dcc997c08)
+
+- **Dead directives: kept, premise was wrong.** plimsoll resolves the cap as
+inline directive > config override > default, so a directive below 40 is a
+TIGHTER cap, not a no-op. `docRuntime` (`max-methods=29`, 29 methods) and
+`mcp.Server` (`max-methods=27`, 27 methods) are pinned ratchets: deleting either
+would let the type grow to 40 unnoticed. Neither type has exported fields or
+more than 20 exported methods, so no other dimension is involved. Both doc
+comments already state the ratchet intent.
+- **Stale prose: already resolved.** `copylist.go` is now accurate
+(`manager.go:82` carries `//plimsoll:max-methods=37`), and `worldneighbors.go`
+no longer cites a number.
+- **Store backends: already documented** at each declaration site as the
+required-interface exception (memstore, sqlitestore, fsstore, pgstore). The
+free-function note was not added: package functions in place of methods are now
+the documented house style (pgstore `notifyFaceDelete`, memstore, fsstore,
+`SetWorldNeighbors`), so calling them an anti-pattern would contradict it.
+- **`dataentryconfig.Config`:** the doc comment now also explains why
+`yaml:",inline"` grouping is not worth it.
+- **No-op `json:",inline"` tags dropped** on `ThemeManifest.PaletteConfig` and
+`CalDAVDynamicCollection.CalDAVCollection`. encoding/json ignores the option; an
+embedded struct with an empty tag name is promoted either way, so marshal and
+unmarshal output is unchanged (checked with a throwaway program). The
+`yaml:",inline"` tags stay; yaml.v3 needs them.
+- **Epic record:** TKT-N0IKN9 already records the #1452 ratchet regression.
