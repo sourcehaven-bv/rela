@@ -528,18 +528,58 @@ func TestOutputs_TriggerMoveWritesAsRunAs(t *testing.T) {
 	require.Equal(t, "session:DOC-001/watch/waiting->escalated#1/0", recs[0].TriggeredBy)
 }
 
+// heldRound is an outputsRound that holds the first round that ran an
+// output, after it ran, until the test closes release.
+type heldRound struct {
+	inner   outputsRound
+	held    chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (h *heldRound) Run(ctx context.Context) (realtime.OutputsReport, error) {
+	rep, err := h.inner.Run(ctx)
+	if rep.Ran > 0 {
+		hold := false
+		h.once.Do(func() { hold = true })
+		if hold {
+			close(h.held)
+			select {
+			case <-h.release:
+			case <-ctx.Done():
+			}
+		}
+	}
+	return rep, err
+}
+
 // TestOutputs_TriggerFinalCloseOnly pins a trigger move into a final state
-// with no outputs: its mark only closes the channel.
+// with no outputs: its mark only closes the channel. The move is posted
+// while the outputs round of the first move still runs, so its wake
+// arrives mid-round and must run another round (BUG-LQ0WOC1) rather than
+// wait for the minute tick.
 func TestOutputs_TriggerFinalCloseOnly(t *testing.T) {
 	env := runAsServices(t, nil)
 	env.createDoc(t, map[string]any{"title": "Leak"})
+	w := env.svc.realtimeWorker
+	require.NotNil(t, w)
+	round := &heldRound{inner: w.outputs, held: make(chan struct{}), release: make(chan struct{})}
+	w.outputs = round
 	runWorker(t, env)
 	env.setStatus(t, "hot")
-	require.Eventually(t, func() bool {
-		got, err := env.svc.Store().GetEntity(context.Background(), entity.Ref{ID: "DOC-001"})
-		return err == nil && got.Properties["status"] == "escalated"
-	}, 20*time.Second, 50*time.Millisecond)
+	select {
+	case <-round.held:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the outputs round of the first move never ran")
+	}
+	require.Equal(t, "escalated", env.doc(t).Properties["status"])
 	env.setStatus(t, "cold")
+	// Release the first round only once the second mark is written and
+	// its wake has reached the busy runner.
+	require.Eventually(t, func() bool {
+		return len(env.marks(t)) == 2 && w.outputsDirty.Load()
+	}, 20*time.Second, 10*time.Millisecond)
+	close(round.release)
 	// The close lands before the mark records its result, so wait for both.
 	require.Eventually(t, func() bool {
 		h, err := env.svc.channels.Head(context.Background(), runAsKey)
