@@ -8002,8 +8002,8 @@ item lands in the list. The list must have an `assign` block and the same
 entity type as the form.
 
 The shortcut is a set of modifiers and one key joined with `+`. Modifiers are
-`CmdOrCtrl`, `Cmd`, `Ctrl`, `Alt`, `Option`, `OptionOrAlt`, `Shift` and
-`Super`. At least one modifier is required. The key is a letter, a digit,
+`CmdOrCtrl`, `Cmd`, `Command`, `Ctrl`, `Alt`, `Option`, `OptionOrAlt`,
+`Shift` and `Super`. At least one modifier is required. The key is a letter, a digit,
 `F1` to `F12` or `Space`. The shortcut works in every application, so a
 letter, a digit or `Space` also needs `Shift` or `Alt`. That keeps keys such
 as `Cmd+V` free. Without `shortcut:` the desktop app uses
