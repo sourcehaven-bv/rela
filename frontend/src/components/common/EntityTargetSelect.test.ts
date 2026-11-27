@@ -4,7 +4,7 @@ import EntityTargetSelect from './EntityTargetSelect.vue'
 import type { TargetCandidate } from '@/types'
 
 // A candidate whose _title differs from id (the interesting case: the committed
-// value must be the bare title, NOT "Title (ID)").
+// value must be the id, while the label shows the title, TKT-ZKPA1E).
 const jeroen: TargetCandidate = { id: 'PERS-JV', _title: 'Jeroen Vloothuis' }
 const marc: TargetCandidate = { id: 'PERS-MC', _title: 'Marc' }
 const alice: TargetCandidate = { id: 'PERS-AL', _title: 'Alice' }
@@ -28,30 +28,29 @@ describe('EntityTargetSelect — select mode', () => {
     expect(options[0].attributes('value')).toBe('')
   })
 
-  it('option VALUE is the bare title, not "Title (ID)"', () => {
+  it('option VALUE is the id; the label is "Title (ID)"', () => {
     const wrapper = mount(EntityTargetSelect, {
       props: { candidates: [jeroen], modelValue: '', mode: 'select' },
     })
     const opt = wrapper.findAll('option')[1]
-    // Value committed to the filter must be the bare title (backend matches it).
-    expect(opt.attributes('value')).toBe('Jeroen Vloothuis')
-    // Label MAY show the id for disambiguation.
+    // The backend relation filter matches the target id.
+    expect(opt.attributes('value')).toBe('PERS-JV')
     expect(opt.text()).toBe('Jeroen Vloothuis (PERS-JV)')
   })
 
-  it('emits the bare title when an option is selected', async () => {
+  it('emits the id when an option is selected', async () => {
     const wrapper = mount(EntityTargetSelect, {
       props: { candidates: [jeroen, marc], modelValue: '', mode: 'select' },
     })
     const select = wrapper.find('select')
-    await select.setValue('Jeroen Vloothuis')
+    await select.setValue('PERS-JV')
     const emits = wrapper.emitted('update:modelValue')
-    expect(emits?.[emits.length - 1]).toEqual(['Jeroen Vloothuis'])
+    expect(emits?.[emits.length - 1]).toEqual(['PERS-JV'])
   })
 
   it('selecting All emits empty (clears the filter)', async () => {
     const wrapper = mount(EntityTargetSelect, {
-      props: { candidates: [jeroen], modelValue: 'Jeroen Vloothuis', mode: 'select' },
+      props: { candidates: [jeroen], modelValue: 'PERS-JV', mode: 'select' },
     })
     await wrapper.find('select').setValue('')
     const emits = wrapper.emitted('update:modelValue')
@@ -62,28 +61,32 @@ describe('EntityTargetSelect — select mode', () => {
     const wrapper = mount(EntityTargetSelect, {
       props: { candidates: [marc, alice, jeroen], modelValue: '', mode: 'select' },
     })
-    const labels = wrapper
+    const values = wrapper
       .findAll('option')
       .slice(1)
       .map((o) => o.attributes('value'))
-    expect(labels).toEqual(['Alice', 'Jeroen Vloothuis', 'Marc'])
+    expect(values).toEqual(['PERS-AL', 'PERS-JV', 'PERS-MC'])
   })
 
-  it('deduplicates candidates that share a display title and drops the ambiguous id', () => {
+  it('keeps candidates that share a display title apart, labelled by id', () => {
     const dupe: TargetCandidate = { id: 'PERS-DUP', _title: 'Marc' }
     const wrapper = mount(EntityTargetSelect, {
       props: { candidates: [marc, dupe], modelValue: '', mode: 'select' },
     })
-    // All + one "Marc" (collapsed).
-    const options = wrapper.findAll('option')
-    expect(options).toHaveLength(2)
-    // A collided title matches BOTH entities, so the label must NOT pin one id.
-    expect(options[1].text()).toBe('Marc')
-    expect(options[1].attributes('value')).toBe('Marc')
+    const options = wrapper.findAll('option').slice(1)
+    expect(options.map((o) => o.attributes('value'))).toEqual(['PERS-DUP', 'PERS-MC'])
+    expect(options.map((o) => o.text())).toEqual(['Marc (PERS-DUP)', 'Marc (PERS-MC)'])
+  })
+
+  it('lists a candidate fetched twice once', () => {
+    const wrapper = mount(EntityTargetSelect, {
+      props: { candidates: [marc, { ...marc }], modelValue: '', mode: 'select' },
+    })
+    expect(wrapper.findAll('option')).toHaveLength(2)
   })
 
   it('renders a placeholder option for a committed value absent from candidates', () => {
-    // Deep-linked / externally-set title that is not among the loaded options
+    // Deep-linked old title value that is not among the loaded options
     // (beyond the fetch cap, or pre-load). The control must still reflect it as
     // selected rather than silently showing "All" while the filter is applied.
     const wrapper = mount(EntityTargetSelect, {
@@ -98,10 +101,10 @@ describe('EntityTargetSelect — select mode', () => {
 
   it('does not add a placeholder option when the committed value is a known candidate', () => {
     const wrapper = mount(EntityTargetSelect, {
-      props: { candidates: [marc, jeroen], modelValue: 'Marc', mode: 'select' },
+      props: { candidates: [marc, jeroen], modelValue: 'PERS-MC', mode: 'select' },
     })
-    // All + Jeroen + Marc = 3; no synthetic duplicate for 'Marc'.
-    const marcOptions = wrapper.findAll('option').filter((o) => o.attributes('value') === 'Marc')
+    // All + Jeroen + Marc = 3; no synthetic duplicate for Marc.
+    const marcOptions = wrapper.findAll('option').filter((o) => o.attributes('value') === 'PERS-MC')
     expect(marcOptions).toHaveLength(1)
   })
 
@@ -117,10 +120,10 @@ describe('EntityTargetSelect — select mode', () => {
 
   it('deep-link value binds directly as the selected option', () => {
     const wrapper = mount(EntityTargetSelect, {
-      props: { candidates: [jeroen, marc], modelValue: 'Jeroen Vloothuis', mode: 'select' },
+      props: { candidates: [jeroen, marc], modelValue: 'PERS-JV', mode: 'select' },
     })
     const select = wrapper.find<HTMLSelectElement>('select')
-    expect(select.element.value).toBe('Jeroen Vloothuis')
+    expect(select.element.value).toBe('PERS-JV')
   })
 })
 
@@ -150,7 +153,7 @@ describe('EntityTargetSelect — typeahead mode', () => {
     expect(items).not.toContain('Jeroen Vloothuis (PERS-JV)')
   })
 
-  it('clicking an option commits the bare title and closes the dropdown', async () => {
+  it('clicking an option commits the id and closes the dropdown', async () => {
     const wrapper = mount(EntityTargetSelect, {
       props: { candidates: [jeroen, marc], modelValue: '', mode: 'typeahead' },
     })
@@ -159,7 +162,7 @@ describe('EntityTargetSelect — typeahead mode', () => {
     await jeroenItem!.trigger('click')
 
     const emits = wrapper.emitted('update:modelValue')
-    expect(emits?.[emits.length - 1]).toEqual(['Jeroen Vloothuis'])
+    expect(emits?.[emits.length - 1]).toEqual(['PERS-JV'])
     expect(wrapper.find('.dropdown').exists()).toBe(false)
   })
 
@@ -171,7 +174,7 @@ describe('EntityTargetSelect — typeahead mode', () => {
     await input.trigger('focus')
     await input.setValue('jer')
     // External committed-value update arrives (back/forward nav, SSE).
-    await wrapper.setProps({ modelValue: 'Marc' } as Record<string, unknown>)
+    await wrapper.setProps({ modelValue: 'PERS-MC' } as Record<string, unknown>)
     // The user's in-progress search must survive.
     expect(input.element.value).toBe('jer')
   })
@@ -194,7 +197,7 @@ describe('EntityTargetSelect — typeahead mode', () => {
 
   it('clear button resets the committed value to empty', async () => {
     const wrapper = mount(EntityTargetSelect, {
-      props: { candidates: [jeroen], modelValue: 'Jeroen Vloothuis', mode: 'typeahead' },
+      props: { candidates: [jeroen], modelValue: 'PERS-JV', mode: 'typeahead' },
     })
     const clear = wrapper.find('.clear-selection')
     expect(clear.exists()).toBe(true)
@@ -203,11 +206,40 @@ describe('EntityTargetSelect — typeahead mode', () => {
     expect(emits?.[emits.length - 1]).toEqual([''])
   })
 
-  it('shows the committed title as the input placeholder when a value is set', () => {
+  it('shows the committed option label, not the raw id, as the input placeholder', () => {
+    const wrapper = mount(EntityTargetSelect, {
+      props: { candidates: [jeroen], modelValue: 'PERS-JV', mode: 'typeahead' },
+    })
+    const input = wrapper.find<HTMLInputElement>('input[role="combobox"]')
+    expect(input.attributes('placeholder')).toBe('Jeroen Vloothuis (PERS-JV)')
+  })
+
+  it('shows an old title value as given when no candidate has that id', () => {
     const wrapper = mount(EntityTargetSelect, {
       props: { candidates: [jeroen], modelValue: 'Jeroen Vloothuis', mode: 'typeahead' },
     })
     const input = wrapper.find<HTMLInputElement>('input[role="combobox"]')
     expect(input.attributes('placeholder')).toBe('Jeroen Vloothuis')
+  })
+
+  it('marks the committed option as selected', async () => {
+    const wrapper = mount(EntityTargetSelect, {
+      props: { candidates: [jeroen, marc], modelValue: 'PERS-JV', mode: 'typeahead' },
+    })
+    await wrapper.find('input[role="combobox"]').trigger('focus')
+    const selected = wrapper.findAll('[role="option"][aria-selected="true"]').map((o) => o.text())
+    expect(selected).toEqual(['Jeroen Vloothuis (PERS-JV)'])
+  })
+
+  it('typing an id finds the candidate', async () => {
+    const wrapper = mount(EntityTargetSelect, {
+      props: { candidates: [jeroen, marc], modelValue: '', mode: 'typeahead' },
+    })
+    const input = wrapper.find('input[role="combobox"]')
+    await input.trigger('focus')
+    await input.setValue('pers-mc')
+    const items = wrapper.findAll('.dropdown-item').map((d) => d.text())
+    expect(items).toContain('Marc (PERS-MC)')
+    expect(items).not.toContain('Jeroen Vloothuis (PERS-JV)')
   })
 })

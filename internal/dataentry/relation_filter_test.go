@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // relationFilterMeta is a small metamodel exercising both relation
@@ -164,6 +166,26 @@ func TestV1ListRelationFilter(t *testing.T) {
 			name:    "outgoing relation filter different target",
 			query:   url.Values{"filter[belongs_to]": {"Gemini"}},
 			wantIDs: []string{"TAAK-002"},
+		},
+		{
+			name:    "incoming relation filter by target id",
+			query:   url.Values{"filter[verantwoordelijk_voor]": {"PER-001"}, "sort": {"title"}},
+			wantIDs: []string{"TAAK-001", "TAAK-003"},
+		},
+		{
+			name:    "outgoing relation filter by target id",
+			query:   url.Values{"filter[belongs_to]": {"PRJ-002"}},
+			wantIDs: []string{"TAAK-002"},
+		},
+		{
+			name:    "ne by target id keeps rows without that edge",
+			query:   url.Values{"filter[belongs_to][ne]": {"PRJ-001"}, "sort": {"title"}},
+			wantIDs: []string{"TAAK-002", "TAAK-004"},
+		},
+		{
+			name:    "unknown target id matches nothing",
+			query:   url.Values{"filter[belongs_to]": {"PRJ-999"}},
+			wantIDs: []string{},
 		},
 		{
 			name:    "empty relation filter value is no constraint",
@@ -481,11 +503,107 @@ func TestV1ListRelationFilterACL(t *testing.T) {
 		}
 	})
 
+	t.Run("filter by hidden neighbor id returns no rows", func(t *testing.T) {
+		// An id compare must not confirm that a row links to an entity alice
+		// cannot read (TKT-ZKPA1E).
+		got := listAs(t, url.Values{"filter[verantwoordelijk_voor]": {"PER-001"}})
+		if len(got) != 0 {
+			t.Errorf("ids = %v, want [] — hidden neighbor id must not be an existence channel", got)
+		}
+	})
+
+	t.Run("ne by hidden neighbor id keeps every row", func(t *testing.T) {
+		// Same answer as for an id that does not exist.
+		got := listAs(t, url.Values{"filter[verantwoordelijk_voor][ne]": {"PER-001"}, "sort": {"title"}})
+		if !equalStringSlices(got, []string{"TAAK-001", "TAAK-002", "TAAK-003", "TAAK-004"}) {
+			t.Errorf("ids = %v, want every taak", got)
+		}
+	})
+
 	t.Run("filter by VISIBLE neighbor title still works (gate not over-filtering)", func(t *testing.T) {
 		// project is readable, so the outgoing belongs_to filter still matches.
 		got := listAs(t, url.Values{"filter[belongs_to]": {"Apollo"}, "sort": {"title"}})
 		if !equalStringSlices(got, []string{"TAAK-001", "TAAK-003"}) {
 			t.Errorf("ids = %v, want [TAAK-001 TAAK-003] — visible-neighbor filter must still match", got)
+		}
+	})
+}
+
+// TestV1ListRelationFilter_ByID pins TKT-ZKPA1E: the filter value is the
+// target id, so two targets sharing a display title filter separately, and
+// renaming a target does not change the rows a saved id filter returns.
+func TestV1ListRelationFilter_ByID(t *testing.T) {
+	cfg := &dataentryconfig.Config{
+		App: dataentryconfig.AppConfig{Name: "Test"},
+		Lists: map[string]dataentryconfig.List{
+			"taken": {EntityType: "taak", FilterControls: []dataentryconfig.FilterControl{{Relation: "belongs_to"}}},
+		},
+	}
+	build := func(t *testing.T) *App {
+		t.Helper()
+		f := newFixture()
+		f.AddNode(&entity.Entity{ID: "PRJ-001", Type: "project", Properties: map[string]any{"name": "Done"}})
+		f.AddNode(&entity.Entity{ID: "PRJ-002", Type: "project", Properties: map[string]any{"name": "Done"}})
+		f.AddNode(&entity.Entity{ID: "PRJ-003", Type: "project", Properties: map[string]any{"name": "PRJ-001"}})
+		f.AddNode(&entity.Entity{ID: "TAAK-001", Type: "taak", Properties: map[string]any{"title": "A task"}})
+		f.AddNode(&entity.Entity{ID: "TAAK-002", Type: "taak", Properties: map[string]any{"title": "B task"}})
+		f.AddNode(&entity.Entity{ID: "TAAK-003", Type: "taak", Properties: map[string]any{"title": "C task"}})
+		f.AddEdge(entity.NewRelation("TAAK-001", "belongs_to", "PRJ-001"))
+		f.AddEdge(entity.NewRelation("TAAK-002", "belongs_to", "PRJ-002"))
+		f.AddEdge(entity.NewRelation("TAAK-003", "belongs_to", "PRJ-003"))
+		return newAppFromParts(cfg, relationFilterMeta(), f)
+	}
+
+	t.Run("same-titled targets filter separately by id", func(t *testing.T) {
+		app := build(t)
+		if got := listTaken(t, app, url.Values{"filter[belongs_to]": {"PRJ-001"}}); !equalStringSlices(got, []string{"TAAK-001"}) {
+			t.Errorf("PRJ-001: ids = %v, want [TAAK-001]", got)
+		}
+		if got := listTaken(t, app, url.Values{"filter[belongs_to]": {"PRJ-002"}}); !equalStringSlices(got, []string{"TAAK-002"}) {
+			t.Errorf("PRJ-002: ids = %v, want [TAAK-002]", got)
+		}
+	})
+
+	t.Run("deprecated title value still matches both", func(t *testing.T) {
+		got := listTaken(t, build(t), url.Values{"filter[belongs_to]": {"Done"}, "sort": {"title"}})
+		if !equalStringSlices(got, []string{"TAAK-001", "TAAK-002"}) {
+			t.Errorf("ids = %v, want [TAAK-001 TAAK-002]", got)
+		}
+	})
+
+	t.Run("an id wins over a neighbor titled with that id", func(t *testing.T) {
+		app := build(t)
+		if got := listTaken(t, app, url.Values{"filter[belongs_to]": {"PRJ-001"}}); !equalStringSlices(got, []string{"TAAK-001"}) {
+			t.Errorf("eq: ids = %v, want [TAAK-001]", got)
+		}
+		got := listTaken(t, app, url.Values{"filter[belongs_to][ne]": {"PRJ-001"}, "sort": {"title"}})
+		if !equalStringSlices(got, []string{"TAAK-002", "TAAK-003"}) {
+			t.Errorf("ne: ids = %v, want [TAAK-002 TAAK-003]", got)
+		}
+	})
+
+	t.Run("the deprecation log leaves out the title value", func(t *testing.T) {
+		logs := logtest.Capture(t, slog.LevelDebug)
+		listTaken(t, build(t), url.Values{"filter[belongs_to]": {"Done"}})
+		out := logs()
+		if !strings.Contains(out, "deprecated title value") {
+			t.Fatalf("no deprecation log line in %q", out)
+		}
+		if strings.Contains(out, "Done") {
+			t.Errorf("log carries the title value: %q", out)
+		}
+	})
+
+	t.Run("renaming the target keeps the id filter", func(t *testing.T) {
+		app := build(t)
+		if err := app.store.UpdateEntity(t.Context(), &entity.Entity{
+			ID: "PRJ-001", Type: "project", Properties: map[string]any{"name": "Shipped"},
+		}); err != nil {
+			t.Fatalf("rename: %v", err)
+		}
+		got := listTaken(t, app, url.Values{"filter[belongs_to]": {"PRJ-001"}})
+		if !equalStringSlices(got, []string{"TAAK-001"}) {
+			t.Errorf("ids = %v, want [TAAK-001]", got)
 		}
 	})
 }

@@ -265,8 +265,9 @@ func (p *listPipeline) scanType(
 // applyRelationFilters keeps the entities that match every relation filter in
 // query; isRelationKey decides which params are relation filters. An entity
 // matches when it has an edge of that relation, in the configured direction,
-// to a READABLE neighbor whose title equals the value. An unreadable neighbor
-// never matches, so the filter is no title-inference channel.
+// to a READABLE neighbor whose id (or, deprecated, display title) equals the
+// value; see matchRelationFilterMany. An unreadable neighbor never matches, so
+// the filter is no existence or title-inference channel.
 //
 // Only `eq` and `ne` are supported; any other operator is errBadFilter (400),
 // never a silent fail-open. It runs over the whole visible set before

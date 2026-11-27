@@ -255,51 +255,57 @@ func TestContentEdges_IncomingRelationFilterMatchesTheServedFace(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			title := app.Meta().DisplayTitle(pub.ID, pub.Type, pub.Properties)
-			var rows []*entity.Entity
-			for _, id := range []string{"FEAT-DRAFT", "FEAT-PUB", "FEAT-1"} {
-				rows = append(rows, &entity.Entity{ID: id, Type: "feature"})
-			}
-			matched, err := matchRelationFilterMany(ctx, app.Services(), app.visibleReader, appRedactor(app), rows,
-				"cites", dataentryconfig.DirectionIncoming, title)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var got []string
-			for _, r := range rows {
-				if matched[r.ID] {
-					got = append(got, r.ID)
-				}
-			}
-			if want := []string{"FEAT-PUB"}; !slices.Equal(got, want) {
-				t.Errorf("incoming cites filter on %q matched %v, want %v", title, got, want)
-			}
-
-			// In a world that serves the draft, the draft's edge counts, but
-			// only for a reader who may read the draft face.
-			draftCtx := withWorld(ctx, worldHandle{name: "drafts", scope: store.NewWorldScope(
-				map[string]store.TypeResolution{
-					"policy": {Chain: []entity.Face{"draft"}, Fallback: store.FallbackExclude},
-				})})
-			matched, err = matchRelationFilterMany(draftCtx, app.Services(), app.visibleReader, appRedactor(app), rows,
-				"cites", dataentryconfig.DirectionIncoming, title)
-			if err != nil {
-				t.Fatal(err)
-			}
-			got = got[:0]
-			for _, r := range rows {
-				if matched[r.ID] {
-					got = append(got, r.ID)
-				}
-			}
-			var want []string
-			if reader.draft {
-				want = []string{"FEAT-DRAFT"}
-			}
-			if !slices.Equal(got, want) {
-				t.Errorf("draft world: incoming cites filter matched %v, want %v", got, want)
+			for _, value := range []string{pub.ID, app.Meta().DisplayTitle(pub.ID, pub.Type, pub.Properties)} {
+				assertIncomingCitesFilter(ctx, t, app, reader.draft, value)
 			}
 		})
+	}
+}
+
+func assertIncomingCitesFilter(ctx context.Context, t *testing.T, app *App, draftReader bool, title string) {
+	t.Helper()
+	var rows []*entity.Entity
+	for _, id := range []string{"FEAT-DRAFT", "FEAT-PUB", "FEAT-1"} {
+		rows = append(rows, &entity.Entity{ID: id, Type: "feature"})
+	}
+	matched, err := matchRelationFilterMany(ctx, app.Services(), app.visibleReader, appRedactor(app), rows,
+		"cites", dataentryconfig.DirectionIncoming, title)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range rows {
+		if matched[r.ID] {
+			got = append(got, r.ID)
+		}
+	}
+	if want := []string{"FEAT-PUB"}; !slices.Equal(got, want) {
+		t.Errorf("incoming cites filter on %q matched %v, want %v", title, got, want)
+	}
+
+	// In a world that serves the draft, the draft's edge counts, but
+	// only for a reader who may read the draft face.
+	draftCtx := withWorld(ctx, worldHandle{name: "drafts", scope: store.NewWorldScope(
+		map[string]store.TypeResolution{
+			"policy": {Chain: []entity.Face{"draft"}, Fallback: store.FallbackExclude},
+		})})
+	matched, err = matchRelationFilterMany(draftCtx, app.Services(), app.visibleReader, appRedactor(app), rows,
+		"cites", dataentryconfig.DirectionIncoming, title)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = got[:0]
+	for _, r := range rows {
+		if matched[r.ID] {
+			got = append(got, r.ID)
+		}
+	}
+	var want []string
+	if draftReader {
+		want = []string{"FEAT-DRAFT"}
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("draft world: incoming cites filter matched %v, want %v", got, want)
 	}
 }
 

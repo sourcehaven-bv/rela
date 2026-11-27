@@ -155,8 +155,8 @@ test.describe('Kanban Board', () => {
       await expect(kanbanPage.cards.filter({ hasText: 'Dashboard Analytics' })).toBeVisible();
 
       // Only FEAT-001 blocks FEAT-003 (Export Data). The control's options are
-      // the relation's targets; the board used to ignore relation controls.
-      await kanbanPage.setFilter('Blocks', 'Export Data');
+      // the relation's targets, valued by id (TKT-ZKPA1E).
+      await kanbanPage.setFilter('Blocks', 'FEAT-003');
 
       await expect(kanbanPage.cards.filter({ hasText: 'User Authentication' })).toBeVisible();
       await expect(kanbanPage.cards.filter({ hasText: 'Dashboard Analytics' })).toHaveCount(0);
