@@ -101,7 +101,9 @@ var errBadViewID = errors.New("invalid view parameter: give list_id or kanban_id
 // errViewConditionNotCompiled reports a view whose config declares a
 // `condition:` that did not compile. The view fails closed: serving its rows
 // unfiltered would show rows the operator's view excludes. The compile
-// problem itself is logged once per config load (logViewConditionProblems).
+// problem, which names the expression and its error, is logged once per config
+// load (logViewConditionProblems). Each refused request is still logged by the
+// caller's error path, without that detail.
 var errViewConditionNotCompiled = errors.New("view condition does not compile")
 
 // requestViewCondition resolves the condition of the list or kanban a

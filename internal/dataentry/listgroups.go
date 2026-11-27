@@ -48,6 +48,8 @@ func serveListGroups(
 		}
 		m := viewConditionFor(lookup, viewKindListGroup, dataentryconfig.ListGroupConditionID(listID, g.ID))
 		if m == nil {
+			slog.DebugContext(ctx, "dataentry: list group condition does not compile; rows left ungrouped",
+				"list", listID, "group", g.ID)
 			clearGroups(data)
 			return true
 		}

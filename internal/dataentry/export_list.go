@@ -488,9 +488,10 @@ func columnLabel(c dataentryconfig.ListColumn) string {
 }
 
 // listCondition resolves the effective list's compiled `condition:`, or nil
-// when the seam is unwired or the list declares none. An error means the list
-// declares a condition that has no compiled matcher, so the export fails
-// rather than exporting rows the condition would exclude.
+// when the list declares none or the seam is nil (tests only). An error means
+// the list declares a condition that has no compiled matcher, also when no
+// compiler is wired, so the export fails rather than exporting rows the
+// condition would exclude.
 func (h *exportHandler) listCondition(listID string) (ViewConditionMatcher, error) {
 	if h.viewCondition == nil {
 		return nil, nil //nolint:nilnil // nil is the documented "no condition"

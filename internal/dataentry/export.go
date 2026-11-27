@@ -38,9 +38,10 @@ type exportHandler struct {
 	// condition is applied above it (in listPage), so an export that only
 	// called the shared read path emitted rows the list excludes.
 	//
-	// Nil means no condition is ever applied, which is the pre-condition
-	// behavior: the ACL-scoped superset of the view, never more. An error
-	// is a declared condition that did not compile; the export fails.
+	// It returns nil when the list declares no condition. It returns
+	// errViewConditionNotCompiled when the list declares one that has no
+	// compiled matcher, including when no compiler is wired; the export then
+	// fails. A nil seam applies no condition; only tests leave it nil.
 	viewCondition func(listID string) (ViewConditionMatcher, error)
 
 	// store answers a condition's `related(...)`, under the request's gate.

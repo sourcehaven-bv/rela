@@ -94,6 +94,8 @@ func pageStepDone(
 		return false, err
 	}
 	if m == nil {
+		// coverage-ignore: invariant: the caller passes only tabs with done_when on a known
+		// list, which viewCondition treats as declared, so it errors instead of returning nil
 		return false, errors.New("done_when is not compiled")
 	}
 	query := navStatusListQuery(listCfg)
