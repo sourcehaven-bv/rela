@@ -29,3 +29,7 @@ even when that principal may update the owner.
 ## Follow-up
 
 Issue #2576: the records guide said `append` alone covers changing or deleting a row. Both permissions are needed, as `changeable` in `internal/records/mutate.go` checks. The guide now says so.
+
+## Follow-up 2
+
+Issue #2649: "Changing rows" and "Access control" in the records guide now say that a type with `permissions` needs both `read` and `append` to change or delete a row.
