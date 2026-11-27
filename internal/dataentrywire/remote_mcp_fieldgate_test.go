@@ -133,7 +133,7 @@ func aliceMCPSession(t *testing.T, svc *appbuild.Services) *mcpgo.ClientSession 
 	}
 	inner := srv.HTTPHandler()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		inner.ServeHTTP(w, r.WithContext(boundCtx(t, svc, "alice")))
+		inner.ServeHTTP(w, r.WithContext(boundCtxFrom(r.Context(), t, svc, "alice")))
 	}))
 	t.Cleanup(ts.Close)
 

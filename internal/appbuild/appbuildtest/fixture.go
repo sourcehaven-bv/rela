@@ -207,6 +207,23 @@ func WithDeclarative(d *acl.Declarative) Option {
 	}
 }
 
+// mustWriteGates builds the transition wiring and the field write gate from
+// the same ACL production uses, so the fixture's write gates follow its
+// policy (BUG-VUNO11).
+func mustWriteGates(
+	meta *metamodel.Metamodel, st store.Store, aclImpl acl.ACL,
+) (appbuild.TransitionWiring, entitymanager.FieldWriteGate) {
+	tw, err := appbuild.BuildTransitionWiring(meta, st, aclImpl)
+	if err != nil {
+		panic(fmt.Sprintf("appbuildtest.New: compile transitions: %v", err))
+	}
+	fieldGate, err := appbuild.BuildFieldWriteGate(meta, st, aclImpl)
+	if err != nil {
+		panic(fmt.Sprintf("appbuildtest.New: build field write gate: %v", err))
+	}
+	return tw, fieldGate
+}
+
 // New constructs a *appbuild.Services bundle suitable for tests. By
 // default the fixture has an in-memory filesystem rooted at
 // `/project`, an empty memstore, and a real script engine (cheap to
@@ -247,14 +264,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 	scriptEngine := script.NewEngine()
 	auditSink, aclImpl := cfg.auditOrNop(), cfg.aclOrNop()
 
-	tw, err := appbuild.BuildTransitionWiring(meta, st, aclImpl)
-	if err != nil {
-		panic(fmt.Sprintf("appbuildtest.New: compile transitions: %v", err))
-	}
-	fieldGate, err := appbuild.BuildFieldWriteGate(meta, st, aclImpl)
-	if err != nil {
-		panic(fmt.Sprintf("appbuildtest.New: build field write gate: %v", err))
-	}
+	tw, fieldGate := mustWriteGates(meta, st, aclImpl)
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store:       st,
 		Meta:        meta,
