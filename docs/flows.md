@@ -334,8 +334,12 @@ Some writes fire no event:
 
 Other trigger writes do fire the event. A `set` of a trigger on an update
 is part of that update. A Lua script action that calls
-`rela.update_entity` makes an ordinary update, attributed to the person
-whose write ran the trigger.
+`rela.update_entity` makes an ordinary update. A foreground script's
+update is attributed to the person whose write ran the trigger. A
+`background: true` script runs as its `run_as`, by default
+`system:automation`, so its update is attributed to `run_as` and a
+`change` branch with `roles:` checks the roles of `run_as`. The writer
+appears only as `by=` in the `triggered_by` label.
 
 If another person has claimed the step, an edit by someone else leaves
 it to them. If the run is still writing the outputs of its state, rela
