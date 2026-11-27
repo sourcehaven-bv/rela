@@ -44,6 +44,23 @@ type Rollups struct {
 	// recs and now serve roll-ups over record types; see [Rollups.WithRecords].
 	recs RecordAggregator
 	now  func() time.Time
+	// rowCap caps the rows of each walk; zero means [store.AlongRowCap].
+	// A nested roll-up shares it over its whole evaluation.
+	rowCap int
+}
+
+// WithRowCap returns a copy of r whose walks hold at most n rows each; a
+// nested roll-up (design section 10) holds at most n over the outer walk
+// and its inner roll-ups together. Zero restores [store.AlongRowCap].
+//
+// Nil: accepted; a nil Rollups stays nil.
+func (r *Rollups) WithRowCap(n int) *Rollups {
+	if r == nil {
+		return nil
+	}
+	c := *r
+	c.rowCap = n
+	return &c
 }
 
 // NewRollups builds the roll-up reader.
@@ -93,13 +110,26 @@ func (r *Rollups) Names(entityType string) []string {
 func (r *Rollups) Values(
 	ctx context.Context, entityType string, rows []entity.Ref, world store.WorldScope, want func(string) bool,
 ) map[string]map[string]any {
-	out := map[string]map[string]any{}
-	if r == nil || len(rows) == 0 {
-		return out
+	if r == nil {
+		return map[string]map[string]any{}
+	}
+	out, _ := r.values(ctx, entityType, rows, world, want, r.rowCap)
+	return out
+}
+
+// values is [Rollups.Values] with each walk capped at rowCap rows, and the
+// problems of the columns it left out joined into err.
+func (r *Rollups) values(
+	ctx context.Context, entityType string, rows []entity.Ref, world store.WorldScope, want func(string) bool,
+	rowCap int,
+) (out map[string]map[string]any, err error) {
+	out = map[string]map[string]any{}
+	if len(rows) == 0 {
+		return out, nil
 	}
 	cols := r.set.For(entityType)
 	if len(cols) == 0 {
-		return out
+		return out, nil
 	}
 	ids := make([]string, 0, len(rows))
 	seen := make(map[string]struct{}, len(rows))
@@ -112,8 +142,9 @@ func (r *Rollups) Values(
 	own, err := r.fields.SearchFieldScope(ctx, entityType)
 	if err != nil {
 		slog.Warn("visibility: roll-ups left out", "type", entityType, "err", err)
-		return out
+		return out, err
 	}
+	var failed []error
 	// bodies are the served rows' readable bodies, read once for every
 	// body_tasks column of the type.
 	var bodies map[entity.Ref]string
@@ -124,6 +155,7 @@ func (r *Rollups) Values(
 		shown, err := r.shownOn(ctx, own, entityType, col.Property, ids)
 		if err != nil {
 			slog.Warn("visibility: roll-up left out", "type", entityType, "property", col.Property, "err", err)
+			failed = append(failed, err)
 			continue
 		}
 		var results map[string]store.RollupResult
@@ -137,14 +169,15 @@ func (r *Rollups) Values(
 		case col.Records != "":
 			results, err = r.recordColumn(ctx, col, ids)
 		case col.Siblings != nil:
-			results, withheld, err = r.siblingsColumn(ctx, col, ids, world)
+			results, withheld, err = r.siblingsColumn(ctx, col, ids, world, rowCap)
 		case col.Along != nil:
-			results, err = r.alongColumn(ctx, col, ids, world)
+			results, withheld, err = r.alongColumn(ctx, col, ids, world, rowCap)
 		default:
 			results, err = r.column(ctx, col, ids, world)
 		}
 		if err != nil {
 			slog.Warn("visibility: roll-up left out", "type", entityType, "property", col.Property, "err", err)
+			failed = append(failed, err)
 			continue
 		}
 		for _, ref := range rows {
@@ -159,7 +192,7 @@ func (r *Rollups) Values(
 			out[id][col.Property] = v
 		}
 	}
-	return out
+	return out, errors.Join(failed...)
 }
 
 // shownOn is the test for "own shows prop on this row" over ids: one store

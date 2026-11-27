@@ -36,7 +36,7 @@ type relationFieldVerdicter interface {
 // the ids whose value is absent because the order of one of their parents
 // is hidden from the reader.
 func (r *Rollups) siblingsColumn(
-	ctx context.Context, col rollup.Column, ids []string, world store.WorldScope,
+	ctx context.Context, col rollup.Column, ids []string, world store.WorldScope, rowCap int,
 ) (results map[string]store.RollupResult, withheld map[string]bool, err error) {
 	sw := col.Siblings
 	parents, err := r.siblingNodes(ctx, sw.Parents, sw.WhenParent, world)
@@ -50,7 +50,7 @@ func (r *Rollups) siblingsColumn(
 	results, err = store.Rollup(ctx, r.st, store.RollupQuery{
 		Sources: ids, Func: col.StoreFunc(), Siblings: &store.SiblingWalk{
 			Relation: sw.Relation, Parents: parents, Siblings: members, Climb: sw.Climb,
-			CountSiblings: col.Siblings.CountSiblings,
+			CountSiblings: col.Siblings.CountSiblings, RowCap: rowCap,
 		},
 	})
 	if err != nil {
