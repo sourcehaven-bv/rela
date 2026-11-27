@@ -5,9 +5,7 @@ title: Migrate the data-entry SPA onto the rela-components library
 kind: refactor
 priority: medium
 effort: xl
-started: "2026-11-27"
-completed: "2026-11-27"
-status: done
+status: backlog
 ---
 
 ## Description
@@ -108,11 +106,11 @@ never narrowed, because nothing in the suite could see a CSS variable that was
 never rebound.
 
 - The e2e suite serves the SPA bundle **embedded in the Go binary**
-(`internal/dataentry/static/v2`), not the working tree. Running it without `just
-build-server-e2e` first tests the last build: a new assertion failed against
-code from twelve minutes earlier, and had it been written to pass rather than to
-fail, the whole suite would have gone green over unbuilt changes. Rebuild before
-believing an e2e result.
+(`internal/dataentry/static/v2`), not the working tree. Running it without
+`just build-server-e2e` first tests the last build: a new assertion failed
+against code from twelve minutes earlier, and had it been written to pass
+rather than to fail, the whole suite would have gone green over unbuilt
+changes. Rebuild before believing an e2e result.
 
 A related trap: a probe can lie in the same way. Measuring rows with
 `document.elementFromPoint` reported "COVERED" for rows that were merely
@@ -134,9 +132,9 @@ well-constrained: `actionKeyRegex` (`internal/dataentryconfig/validate.go`) is
 `^[a-z0-9]$`, so `RlKbd`'s split on `+` is a safe no-op here.
 - The mobile hiding rule (`display: none` below the breakpoint) had to be
 re-pointed at `.rl-kbd`, because `RlKbd` sets `display: inline-flex` in its own
-scoped style and the rule has to beat it. This is the only genuinely behavioural
-change in the batch and **no unit test can see it**, which is why it now has an
-e2e test on the phone viewport.
+scoped style and the rule has to beat it. This is the only genuinely
+behavioural change in the batch and **no unit test can see it**, which is why
+it now has an e2e test on the phone viewport.
 - Two sites were hints in name only: SearchView wrote pairs as `<kbd>j</kbd> /
 <kbd>k</kbd>` and DynamicForm crammed ⌘↵ into one cap. Both are now real
 combinations, so they are announced as separate tokens rather than as one
@@ -155,26 +153,26 @@ replacing the page.
 **A panel is not the canonical item view.** `/entity/:type/:id` stays the
 address of the entity; `?selected=` on the list route addresses a row of *this
 list*. The panel's expand control bridges between them. Keeping both is what
-lets the existing navigation e2e tests stay meaningful, and matches the library,
-whose `RlDetailPanel` ships a `variant="page"` and an `expand` action for
-exactly this split.
+lets the existing navigation e2e tests stay meaningful, and matches the
+library, whose `RlDetailPanel` ships a `variant="page"` and an `expand` action
+for exactly this split.
 
-`?selected=` is the **only** state — there is no local ref mirroring it. That is
-what makes a shared link, a reload and a back step all restore the panel through
-one code path. A mirrored ref would need the echo-signature reconciliation
-`useUrlFilterSync` carries; with no local copy there is no echo. The entity
-*type* is deliberately not in the query: it is `listConfig.entity`, so putting
-it in the URL would let a link name a row the list cannot contain.
+`?selected=` is the **only** state — there is no local ref mirroring it. That
+is what makes a shared link, a reload and a back step all restore the panel
+through one code path. A mirrored ref would need the echo-signature
+reconciliation `useUrlFilterSync` carries; with no local copy there is no echo.
+The entity *type* is deliberately not in the query: it is `listConfig.entity`,
+so putting it in the URL would let a link name a row the list cannot contain.
 
 ### Two traps
 
 - **`RouterLink` ignores `preventDefault`.** A plain `@click` handler that
-calls `preventDefault` still navigates, because RouterLink's own listener checks
-its guard conditions rather than `defaultPrevented`. The click has to be taken
-on the **capture** phase with `stopPropagation`. The first e2e run caught this:
-the panel assertion failed because the click had gone to the entity page. Only
-plain clicks are taken; cmd/ctrl/shift/middle stay the anchor's own default, so
-"open in new tab" still reaches the entity's own page.
+calls `preventDefault` still navigates, because RouterLink's own listener
+checks its guard conditions rather than `defaultPrevented`. The click has to be
+taken on the **capture** phase with `stopPropagation`. The first e2e run caught
+this: the panel assertion failed because the click had gone to the entity page.
+Only plain clicks are taken; cmd/ctrl/shift/middle stay the anchor's own
+default, so "open in new tab" still reaches the entity's own page.
 
 - **`selected-id` was carrying the wrong state.** `EntityList` passed the j/k
 cursor into RlTable's `selected-id`, which the library documents as "the row
@@ -186,9 +184,9 @@ The cursor now uses RlTable's `cursor-id`, requested from and delivered by the
 component repo during this work. Worth recording *why* the library owns it:
 `RlTableRow` already spends `aria-current` on the open row and `aria-selected`
 on the checkbox, so a third state announced from rela would have been a second
-`aria-current` in one row. The library's answer is `aria-activedescendant` on
-the grid, because the cursor is a focus position rather than a property of the
-row. rela paints nothing and moves the index only.
+`aria-current` in one row. The library's answer is
+`aria-activedescendant` on the grid, because the cursor is a focus position
+rather than a property of the row. rela paints nothing and moves the index only.
 
 ### Fallout worth knowing
 
@@ -199,13 +197,14 @@ mode. Scoped to `.entity-list .empty-state`.
 
 **Not a library naming problem**, though it was first reported to the component
 repo as one. The library's class is `rl-empty-state`; both colliding elements
-are rela's own unprefixed `.empty-state`, of which there are six across the SPA.
-Nor would more prefixing help the general case: once two panes are on screen,
-`rl-table-row--selected` legitimately appears twice, each table marking its own
-open row. The ambiguity is **per-instance, not per-name**, so the fix is to
-address the instance — `row-attrs` is the library's hook for exactly that, and
-is what the cursor stopgap had already used. Expect more of these as the
-three-pane layout lands, and scope the locator rather than renaming anything.
+are rela's own unprefixed `.empty-state`, of which there are six across the
+SPA. Nor would more prefixing help the general case: once two panes are on
+screen, `rl-table-row--selected` legitimately appears twice, each table marking
+its own open row. The ambiguity is **per-instance, not per-name**, so the fix
+is to address the instance — `row-attrs` is the library's hook for exactly
+that, and is what the cursor stopgap had already used. Expect more of these as
+the three-pane layout lands, and scope the locator rather than renaming
+anything.
 
 Six e2e tests added (327 → 333), including cursor-independence: open the panel,
 press j twice, assert the panel has not moved.
@@ -247,8 +246,7 @@ App.vue now suppresses its own when the outlet is filled (gate 3 on
 hard-coded 24px. Different numbers, so the list content could not line up with
 the title above it. The pane now takes the library's token, and the 768/480
 breakpoints no longer restate horizontal padding — the token carries its own
-breakpoints and the safe-area inset. This changed the desktop gutter 24px →
-32px.
+breakpoints and the safe-area inset. This changed the desktop gutter 24px → 32px.
 
 `mobile-layout.spec.ts`'s padding-contract test failed on that: it read
 `--page-padding-x` with `getPropertyValue`, which returns a custom property
@@ -259,9 +257,9 @@ value out as a real width, which is what the bleeding bars actually get.
 ### Testing
 
 Five e2e tests (332 → 337). They are geometry assertions on purpose: happy-dom
-has no layout engine and reports the same box for a header that spans both panes
-and one that does not, so a unit test cannot tell them apart. All five were
-mutation-verified — renaming the `#header` slot fails every one.
+has no layout engine and reports the same box for a header that spans both
+panes and one that does not, so a unit test cannot tell them apart. All five
+were mutation-verified — renaming the `#header` slot fails every one.
 
 Unit tests that mount a view alone now render no header, so its search box is
 absent and an assertion about it reads as "search is hidden". `withPageHeader`
@@ -273,9 +271,9 @@ restoring the half of the app that paints it. Six tests across
 
 The kanban, calendar and gantt views keep their own in-view headers, as do
 dashboard, search and settings. Each draws a different one (the calendar has a
-period navigator, the gantt a zoom control), so they are separate pieces of work
-rather than one sweep. A screen that sets no header renders no band at all,
-which is what lets them stay as they are.
+period navigator, the gantt a zoom control), so they are separate pieces of
+work rather than one sweep. A screen that sets no header renders no band at
+all, which is what lets them stay as they are.
 
 ## Outcome: one theme, the library's (27221ab5)
 
@@ -287,20 +285,20 @@ colour of its own.
 
 The two palettes could not be kept in step. With `.dark` on the html element,
 `--rl-color-bg` still resolved to `#fff` while rela's `--bg-color` was dark, so
-the app shell painted white on a dark page — light and dark visibly on screen at
-once.
+the app shell painted white on a dark page — light and dark visibly on screen
+at once.
 
 ### The carve-out recognised the wrong thing
 
-`relaCssLayer.ts` lifts the token contract out of `@layer rela` so an operator's
-unlayered `custom.css` can still override it. It matched a palette by SELECTOR —
-`:root` and `:root.dark`. rela-components selects its dark palette two other
-ways: a bare `.dark` (which also themes a subtree, not just the document) and
-`:root:not(.light)` inside `@media (prefers-color-scheme: dark)`. Neither
-matched, so the dark tokens stayed layered while the light ones were lifted out,
-and an unlayered declaration beats a layered one at ANY specificity. The light
-palette won regardless of the class. This looks exactly like a JavaScript bug
-and is not one.
+`relaCssLayer.ts` lifts the token contract out of `@layer rela` so an
+operator's unlayered `custom.css` can still override it. It matched a palette
+by SELECTOR — `:root` and `:root.dark`. rela-components selects its dark
+palette two other ways: a bare `.dark` (which also themes a subtree, not just
+the document) and `:root:not(.light)` inside `@media (prefers-color-scheme:
+dark)`. Neither matched, so the dark tokens stayed layered while the light ones
+were lifted out, and an unlayered declaration beats a layered one at ANY
+specificity. The light palette won regardless of the class. This looks exactly
+like a JavaScript bug and is not one.
 
 It now recognises a palette by what it DECLARES — custom properties, plus
 `color-scheme`, which picks the built-in treatment for form controls and
@@ -310,8 +308,8 @@ That alone was not enough. lightningcss MERGES adjacent rules sharing a
 selector, and `dark.css` declares `.dark` twice: the palette, then a paint rule
 giving a dark subtree its own background. Minified they become one rule holding
 both, which "carve out only pure palettes" rejects — re-layering the whole dark
-palette. A mixed rule is now SPLIT rather than rejected, so neither half depends
-on how the source happens to be authored or how hard it is minified.
+palette. A mixed rule is now SPLIT rather than rejected, so neither half
+depends on how the source happens to be authored or how hard it is minified.
 
 ### Emptying tokens.css broke custom apps
 
@@ -326,8 +324,8 @@ An `@import` cannot fix it: `_rela.css` is the whole contract and is served
 cross-origin. So the palette is COPIED, and `scripts/gen-app-tokens.mjs`
 generates the copy (`npm run gen:tokens`) rather than leaving it to be
 hand-maintained, which would be the same drift with an extra step. It fails
-loudly when it finds no palette rules, because a silent empty palette is how the
-editor lost its colours the first time.
+loudly when it finds no palette rules, because a silent empty palette is how
+the editor lost its colours the first time.
 
 `TestAppCSSSource` asserted `:root.dark`; the dark selector is a bare `.dark`
 now. The app SDK already toggles that exact class on `<html>`, so the mechanism
@@ -337,9 +335,9 @@ was never broken — only the assertion.
 
 `dataentryconfig.deriveTheme` still emits rela's retired token names from its 8
 base colours, so a palette-configured project now covers none of the library's
-tokens. `TestPaletteCarriesEveryDefaultToken` is `t.Skip`ped naming this ticket.
-The test is unchanged and the property it guards is still right — an operator
-palette must not blank out tokens — what is missing is the port.
+tokens. `TestPaletteCarriesEveryDefaultToken` is `t.Skip`ped naming this
+ticket. The test is unchanged and the property it guards is still right — an
+operator palette must not blank out tokens — what is missing is the port.
 
 `applyPalette` in `stores/ui.ts` writes palette values as inline styles on
 `<html>`, which beat any stylesheet, so it needs porting with it.
@@ -358,8 +356,8 @@ Settings, About, Shortcuts. The theme picker is NOT duplicated there —
 footer component, because replacing the slot replaces the library's default
 toggle along with its default link.
 
-Both overlays stay teleported: the sidebar is a scroll container and a drawer on
-narrow viewports, so a popover anchored inside it would clip.
+Both overlays stay teleported: the sidebar is a scroll container and a drawer
+on narrow viewports, so a popover anchored inside it would clip.
 
 `RlSidebar`'s `theme-toggle`, `footer-label`, `v-model:theme` and
 `@footer-click` are inert once the slot is supplied, so they are gone from the
@@ -390,11 +388,11 @@ page surface may fight a library component's own scoped layout in the footer.
 Decide per hook whether the operator contract belongs on rela markup or whether
 the library component should carry it, and reconcile both surfaces together.
 
-**The operator palette still speaks the retired token names.** Carried over from
-the single-theme work above: `dataentryconfig.deriveTheme` and `applyPalette` in
-`stores/ui.ts` both need porting to `--rl-*`.
-`TestPaletteCarriesEveryDefaultToken` is skipped naming this ticket until they
-are.
+**The operator palette still speaks the retired token names.** Carried over
+from the single-theme work above: `dataentryconfig.deriveTheme` and
+`applyPalette` in `stores/ui.ts` both need porting to `--rl-*`. That port is
+TKT-XG8E00N. `TestPaletteCarriesEveryDefaultToken` is skipped naming that
+ticket until it is done.
 
 ## Outcome: rela's global component CSS is gone (50db1a07)
 

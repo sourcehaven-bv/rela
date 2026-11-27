@@ -546,7 +546,7 @@ var rlBadgeTokens = map[string][]string{
 // are mapped: the built-in palette defaults predate the library and would
 // repaint every project that has no palette at all.
 //
-// This is a partial port of the retired token names (TKT-ME8LEI): accent and
+// This is a partial port of the retired token names (TKT-XG8E00N): accent and
 // badges, the roles with a one-to-one library token. The other roles need
 // fg/bg pairs that keep text at AA and are not mapped yet.
 func rlTokens(accent string, badges map[string]string, hoverDelta float64) map[string]string {

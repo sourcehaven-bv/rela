@@ -836,14 +836,14 @@ func TestValidateBridgeVersion(t *testing.T) {
 //
 // Asserting the SET rather than any particular name is what makes this catch
 // the next token too, without needing to be updated.
-// SKIPPED during the rela-components migration (TKT-ME8LEI). The default path
+// SKIPPED since the rela-components migration (TKT-ME8LEI). The default path
 // now serves the library's `--rl-*` palette, while deriveTheme still emits
 // rela's retired token names from its 8 base colors — so every `--rl-*` token
 // reads as missing. The property this guards is still the right one and the
 // test is unchanged; what is missing is deriveTheme's port, which is parked on
-// the ticket with the rest of the operator-palette work. Re-enable with it.
+// TKT-XG8E00N with the rest of the operator-palette work. Re-enable with it.
 func TestPaletteCarriesEveryDefaultToken(t *testing.T) {
-	t.Skip("TKT-ME8LEI: deriveTheme still emits retired token names; ported with the operator-palette work")
+	t.Skip("TKT-XG8E00N: deriveTheme still emits retired token names; ported with the operator-palette work")
 
 	tokenNames := func(css string) map[string]bool {
 		names := map[string]bool{}
