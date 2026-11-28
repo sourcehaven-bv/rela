@@ -290,8 +290,12 @@ type condBuilder struct {
 // the operand of a NOT is wrapped in COALESCE(..., FALSE), because a leaf
 // over an absent key may be NULL and `NOT NULL` would drop a row the
 // two-valued reading keeps (see [store.Cond]). Under AND and OR a NULL
-// already behaves as false in WHERE.
+// already behaves as false in WHERE. A subtree with a roll-up leaf is the
+// exception: it is NULL when a leaf in it is absent (see rollupStrict).
 func (cb *condBuilder) render(c store.Cond) string {
+	if store.HasRollupLeaf(&c) {
+		return "(" + cb.rollupStrict(c) + " = 1)"
+	}
 	switch c.Op {
 	case store.CondProp:
 		return propCond(cb.b, c.Prop)
@@ -301,8 +305,6 @@ func (cb *condBuilder) render(c store.Cond) string {
 		w, ex := buildPredicateSQL(cb.b, prefix, c.Rel.Pred, cb.typeArg, relatedDirection(c.Rel), cb.sel)
 		cb.with = append(cb.with, w...)
 		return existsCond(ex, c.Rel.Pred.Negate)
-	case store.CondRollup:
-		return cb.rollupLeaf(c.Rollup)
 	case store.CondNot:
 		if len(c.Args) != 1 {
 			return cb.b.fail(store.ValidateCond(c))

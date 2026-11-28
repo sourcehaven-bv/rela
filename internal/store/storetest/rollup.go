@@ -516,6 +516,7 @@ func RunRollupTests(t *testing.T, f Factory) {
 	t.Run("along", func(t *testing.T) { runRollupAlongTests(t, f) })
 	t.Run("siblings", func(t *testing.T) { runRollupSiblingsTests(t, f) })
 	t.Run("leaf", func(t *testing.T) { runRollupLeafTests(t, f) })
+	t.Run("cap", func(t *testing.T) { runRollupCapTests(t, f) })
 
 	t.Run("invalid_queries_are_refused", func(t *testing.T) {
 		s := f(t)

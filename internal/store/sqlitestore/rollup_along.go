@@ -22,7 +22,8 @@ import (
 // past about nine levels. Each level is one statement over the previous
 // level's new triples and every triple seen so far, both passed as JSON;
 // its hops, gates and node conditions are pgstore's. Go keeps the seen
-// set, applies the row cap and folds the counted visits. A walk whose
+// set, applies the row cap to each source alone and folds the counted
+// visits. A walk whose
 // names the builder cannot render is answered by [store.RollupGeneric].
 
 // alongTriple is one (source, entity, state) arrival of the walk.
@@ -68,17 +69,32 @@ func (s *Store) rollupAlong(ctx context.Context, q store.RollupQuery) (map[strin
 		}
 		stmts[i] = lvl
 	}
-	visits, err := s.walkAlong(ctx, q, stmts)
+	w, err := s.walkAlong(ctx, q, stmts)
 	if err != nil {
 		return nil, err
 	}
-	return foldAlong(q, visits)
+	out, err := foldAlong(q, w.visits)
+	if err != nil {
+		return nil, err
+	}
+	for src := range w.over {
+		out[src] = store.RollupResult{OverCap: true}
+	}
+	return out, nil
 }
 
-// walkAlong runs the levels in order and returns every gated arrival. A
-// walk holding more triples than its cap is refused with
-// [store.ErrAlongRowCap]; each level asks for at most one row past it.
-func (s *Store) walkAlong(ctx context.Context, q store.RollupQuery, stmts []alongLevel) ([]alongVisit, error) {
+// alongWalked is a walk's gated arrivals for the sources within their cap,
+// the triples each of them holds, and the sources over the cap.
+type alongWalked struct {
+	visits []alongVisit
+	held   map[string]int
+	over   map[string]bool
+}
+
+// walkAlong runs the levels in order. A source holding more triples than
+// the cap is over it: its arrivals are dropped and it walks no further.
+// Each level returns at most one row past the cap per source.
+func (s *Store) walkAlong(ctx context.Context, q store.RollupQuery, stmts []alongLevel) (alongWalked, error) {
 	limit := q.Along.RowCap
 	if limit == 0 {
 		limit = store.AlongRowCap
@@ -88,29 +104,38 @@ func (s *Store) walkAlong(ctx context.Context, q store.RollupQuery, stmts []alon
 	for _, src := range srcs {
 		frontier = append(frontier, alongTriple{Src: src, ID: src, State: -1})
 	}
-	var seen []alongVisit
+	w := alongWalked{held: map[string]int{}, over: map[string]bool{}}
 	for _, lvl := range stmts {
 		if len(frontier) == 0 {
 			break
 		}
-		rows, err := s.runAlongLevel(ctx, lvl, frontier, seen, limit-len(seen)+1)
+		rows, err := s.runAlongLevel(ctx, lvl, frontier, w.visits, limit+1)
 		if err != nil {
-			return nil, err
+			return alongWalked{}, err
 		}
-		if len(seen)+len(rows) > limit {
-			return nil, store.ErrAlongRowCap
+		for _, r := range rows {
+			w.held[r.Src]++
+			if w.held[r.Src] > limit {
+				w.over[r.Src] = true
+			}
 		}
 		frontier = frontier[:0]
 		for _, r := range rows {
-			frontier = append(frontier, r.alongTriple)
+			if !w.over[r.Src] {
+				frontier = append(frontier, r.alongTriple)
+				w.visits = append(w.visits, r)
+			}
 		}
-		seen = append(seen, rows...)
 	}
-	return seen, nil
+	w.visits = slices.DeleteFunc(w.visits, func(v alongVisit) bool { return w.over[v.Src] })
+	for src := range w.over {
+		delete(w.held, src)
+	}
+	return w, nil
 }
 
 // runAlongLevel runs one level from frontier, excluding the triples seen
-// already, and returns at most limit gated arrivals.
+// already, and returns at most limit gated arrivals per source.
 func (s *Store) runAlongLevel(
 	ctx context.Context, lvl alongLevel, frontier []alongTriple, seen []alongVisit, limit int,
 ) ([]alongVisit, error) {
@@ -207,9 +232,11 @@ func buildAlongLevelSQL(q store.RollupQuery, hops []store.AlongHop) (alongLevel,
 				hop.Seg, b.arg(typ), pairs, gate))
 		}
 	}
-	sqlText := withClause(with) + "SELECT u.src, u.id, u.state, u.type, u.face, u.hit, CAST(u.val AS TEXT) FROM (" +
+	sqlText := withClause(with) + "SELECT v.src, v.id, v.state, v.type, v.face, v.hit, CAST(v.val AS TEXT) FROM " +
+		"(SELECT u.*, row_number() OVER (PARTITION BY u.src ORDER BY u.id, u.state) AS rn FROM (" +
 		strings.Join(arms, " UNION ALL ") + ") u WHERE NOT EXISTS (SELECT 1 FROM seen x " +
-		"WHERE x.src = u.src AND x.id = u.id AND x.state = u.state) ORDER BY u.src, u.id, u.state LIMIT " + limitArg
+		"WHERE x.src = u.src AND x.id = u.id AND x.state = u.state)) v WHERE v.rn <= " + limitArg +
+		" ORDER BY v.src, v.id, v.state"
 	return alongLevel{sql: sqlText, args: b.args}, !b.unsafe
 }
 

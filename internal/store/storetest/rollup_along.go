@@ -136,7 +136,7 @@ func alongDepthCap(t *testing.T, s store.Store) {
 // alongRestartOnce: PRJ-1 is reached at depth 1 and at depth 3, and the
 // folder chain above it is walked once. The walk holds six triples (ACT-2,
 // ACT-3 and PRJ-1 by child_of, FLD-1 to FLD-3 by in_folder): a row cap of
-// six passes and one of five fails.
+// six passes and one of five leaves ACT-1 over its cap.
 func alongRestartOnce(t *testing.T, s store.Store) {
 	alongSeed(t, s, "action", "done", "ACT-1", "ACT-2", "ACT-3")
 	alongSeed(t, s, "project", "active", "PRJ-1")
@@ -149,10 +149,7 @@ func alongRestartOnce(t *testing.T, s store.Store) {
 	q.Along.RowCap = 6
 	requireRollup(t, s, q, alongOne())
 	q.Along.RowCap = 5
-	_, err := store.Rollup(ctx(), s, q)
-	require.ErrorIs(t, err, store.ErrAlongRowCap)
-	_, err = store.RollupGeneric(ctx(), s, q)
-	require.ErrorIs(t, err, store.ErrAlongRowCap)
+	requireRollup(t, s, q, map[string]store.RollupResult{"ACT-1": {OverCap: true}})
 }
 
 // alongCycles: ACT-1 and ACT-2 form a loop, as do ACT-3, ACT-4 and ACT-5;

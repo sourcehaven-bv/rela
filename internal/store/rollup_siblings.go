@@ -24,8 +24,10 @@ const SiblingOrderProperty = metamodel.OrderPropertyIn
 // The nodes of a source are the source and, with Climb, each ancestor
 // along Relation within Climb hops that a Parents gate admits; a hidden
 // ancestor ends the climb. A node with several edges is judged under each
-// parent. Every row read is counted against RowCap, and a query over it
-// fails with [ErrAlongRowCap].
+// parent. A source's gated rows count against RowCap: the climb's
+// triples, its nodes' edges into a qualifying parent, and the qualifying
+// siblings' edges into those parents. A source over it has a result with
+// [RollupResult.OverCap]; each source is capped alone.
 type SiblingWalk struct {
 	// Relation is the canonical relation type, ordered on its incoming
 	// side.
@@ -41,7 +43,7 @@ type SiblingWalk struct {
 	// (node, sibling) pairs that put a node behind. Otherwise it is the
 	// number of nodes that are behind.
 	CountSiblings bool
-	// RowCap caps the rows read; zero means [AlongRowCap].
+	// RowCap caps the gated rows of each source; zero means [AlongRowCap].
 	RowCap int
 }
 
@@ -117,25 +119,23 @@ func (e SiblingEdge) orderKey() metamodel.OrderKey {
 // and one gated header read and one MatchingFaces per sibling type.
 func rollupSiblings(ctx context.Context, st RollupReader, q RollupQuery) (map[string]RollupResult, error) {
 	w := q.Siblings
-	limit := w.RowCap
-	if limit == 0 {
-		limit = AlongRowCap
-	}
 	srcsOf := map[string][]string{}
-	for _, src := range q.Sources {
-		srcsOf[src] = appendNew(srcsOf[src], src)
-	}
-	read := 0
+	climbed := siblingClimbed{held: map[string]int{}, over: map[string]bool{}}
 	if w.Climb > 0 {
-		seen, visited, err := walkAlong(ctx, st, SiblingClimb(w), q.Sources)
+		walked, err := walkAlong(ctx, st, SiblingClimb(w), q.Sources)
 		if err != nil {
 			return nil, err
 		}
-		read += len(seen)
-		for src, ids := range visited {
+		climbed = siblingClimbed{held: walked.held, over: walked.over}
+		for src, ids := range walked.visited {
 			for id := range ids {
 				srcsOf[id] = appendNew(srcsOf[id], src)
 			}
+		}
+	}
+	for _, src := range q.Sources {
+		if !climbed.over[src] {
+			srcsOf[src] = appendNew(srcsOf[src], src)
 		}
 	}
 	nodeEdges, err := siblingEdges(ctx, st, w.Relation, slices.Sorted(maps.Keys(srcsOf)), DirectionOutgoing)
@@ -152,9 +152,6 @@ func rollupSiblings(ctx context.Context, st RollupReader, q RollupQuery) (map[st
 	if err != nil {
 		return nil, err
 	}
-	if read += len(nodeEdges) + len(sibEdges); read > limit {
-		return nil, ErrAlongRowCap
-	}
 	matching, err := siblingGate(ctx, st, w.Siblings, w.Relation, edgeEnds(sibEdges, SiblingEdge.node), qp, false)
 	if err != nil {
 		return nil, err
@@ -170,24 +167,38 @@ func rollupSiblings(ctx context.Context, st RollupReader, q RollupQuery) (map[st
 			return metamodel.CompareOrderKeys(a.orderKey(), b.orderKey())
 		})
 	}
-	return foldSiblings(w, srcsOf, nodeEdges, qualify, before), nil
+	return foldSiblings(w, srcsOf, nodeEdges, qualify, before, climbed), nil
+}
+
+// siblingClimbed is what the climb held per source within its cap, and the
+// sources it took over the cap.
+type siblingClimbed struct {
+	held map[string]int
+	over map[string]bool
 }
 
 // foldSiblings is each source's result over its nodes' edges: before holds
-// each qualifying parent's matching siblings in key order.
+// each qualifying parent's matching siblings in key order. A source whose
+// gated rows, with what its climb held, pass the cap is over it.
 func foldSiblings(
 	w *SiblingWalk, srcsOf map[string][]string, nodeEdges []SiblingEdge, qualify map[string]bool,
-	before map[string][]SiblingEdge,
+	before map[string][]SiblingEdge, climbed siblingClimbed,
 ) map[string]RollupResult {
+	limit := w.RowCap
+	if limit == 0 {
+		limit = AlongRowCap
+	}
 	type pair struct{ node, peer string }
 	pairs := map[string]map[pair]bool{}
 	behind := map[string]map[string]bool{}
 	parentsOf := map[string][]string{}
+	read := maps.Clone(climbed.held)
 	for _, e := range nodeEdges {
 		if !qualify[e.Parent] {
 			continue
 		}
 		for _, src := range srcsOf[e.Node] {
+			read[src]++
 			parentsOf[src] = appendNew(parentsOf[src], e.Parent)
 			if pairs[src] == nil {
 				pairs[src], behind[src] = map[pair]bool{}, map[string]bool{}
@@ -201,8 +212,22 @@ func foldSiblings(
 			}
 		}
 	}
-	out := make(map[string]RollupResult, len(parentsOf))
+	out := make(map[string]RollupResult, len(parentsOf)+len(climbed.over))
+	for src := range climbed.over {
+		out[src] = RollupResult{OverCap: true}
+	}
+	for src := range read {
+		for _, p := range parentsOf[src] {
+			read[src] += len(before[p])
+		}
+		if read[src] > limit {
+			out[src] = RollupResult{OverCap: true}
+		}
+	}
 	for src, ps := range parentsOf {
+		if read[src] > limit {
+			continue
+		}
 		slices.Sort(ps)
 		res := RollupResult{Count: len(behind[src]), Parents: ps}
 		if w.CountSiblings {

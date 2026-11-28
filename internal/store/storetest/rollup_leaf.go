@@ -103,7 +103,7 @@ func leafCompare(t *testing.T, s store.Store, name string, base store.GraphQuery
 	require.NoError(t, err, name)
 	var want []string
 	for _, id := range candidates {
-		if q.Judge(res[id]) {
+		if holds, known := q.Judge(res[id]); holds && known {
 			want = append(want, id)
 		}
 	}

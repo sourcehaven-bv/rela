@@ -232,7 +232,7 @@ func siblingsGates(t *testing.T, s store.Store) {
 }
 
 // siblingsRowCap: the walk reads ACT-1's edge and the three edges into
-// PRJ-1; a cap of four passes and one of three fails closed.
+// PRJ-1; a cap of four passes and one of three leaves ACT-1 over it.
 func siblingsRowCap(t *testing.T, s store.Store) {
 	seedEntityWithProps(t, s, "project", "PRJ-1", map[string]any{"ordering": "sequential"})
 	siblingsSeed(t, s, "PRJ-1", open("ACT-1", 3), open("ACT-2", 2), open("ACT-3", 1))
@@ -240,10 +240,7 @@ func siblingsRowCap(t *testing.T, s store.Store) {
 	q.Siblings.RowCap = 4
 	requireRollup(t, s, q, map[string]store.RollupResult{"ACT-1": behind(1, "PRJ-1")})
 	q.Siblings.RowCap = 3
-	_, err := store.Rollup(ctx(), s, q)
-	require.ErrorIs(t, err, store.ErrAlongRowCap)
-	_, err = store.RollupGeneric(ctx(), s, q)
-	require.ErrorIs(t, err, store.ErrAlongRowCap)
+	requireRollup(t, s, q, map[string]store.RollupResult{"ACT-1": {OverCap: true}})
 }
 
 // siblingsInvalid: a query the backends would answer differently is

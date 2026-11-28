@@ -16,13 +16,16 @@ import (
 // statement), so the cap bounds the cost of a statement.
 const MaxAlongDepth = 32
 
-// AlongRowCap is the default most (source, entity, state) triples one walk
-// may hold. A walk that would hold more fails with [ErrAlongRowCap] rather
-// than return a truncated, and so inexact, answer.
+// AlongRowCap is the default most (source, entity, state) triples one
+// source's walk may hold. Only triples a gate admits count, and each source
+// is capped alone. A source whose walk would hold more has a result with
+// [RollupResult.OverCap] rather than a truncated, and so inexact, answer.
 const AlongRowCap = 50000
 
-// ErrAlongRowCap is returned when an along walk exceeds its row cap. The
-// caller leaves the roll-up absent: it fails closed.
+// ErrAlongRowCap is returned when a row budget is too small to hold any
+// walk at all, whatever the data. The caller leaves the roll-up absent: it
+// fails closed. A source over its cap is reported by
+// [RollupResult.OverCap], never by this error.
 var ErrAlongRowCap = errors.New("store: rollup: the along walk exceeds its row cap")
 
 // AlongWalk is the walk of an inherited roll-up (design gap 1): from each
@@ -38,7 +41,8 @@ type AlongWalk struct {
 	Segments []AlongSegment
 	// MaxDepth caps the hops, from 1 to [MaxAlongDepth].
 	MaxDepth int
-	// RowCap caps the triples the walk holds; zero means [AlongRowCap].
+	// RowCap caps the gated triples each source's walk holds; zero means
+	// [AlongRowCap].
 	RowCap int
 	// Visits asks for the counted visits themselves in
 	// [RollupResult.Visits], for a caller that folds in Go.
@@ -197,16 +201,19 @@ type alongVisit struct {
 // then one MatchingFaces per counting node.
 func rollupAlong(ctx context.Context, st RollupReader, q RollupQuery) (map[string]RollupResult, error) {
 	a := q.Along
-	seen, visited, err := walkAlong(ctx, st, a, q.Sources)
+	w, err := walkAlong(ctx, st, a, q.Sources)
 	if err != nil {
 		return nil, err
 	}
-	counted, err := alongCounted(ctx, st, a, seen, visited)
+	counted, err := alongCounted(ctx, st, a, w.seen, w.visited)
 	if err != nil {
 		return nil, err
 	}
 	out := map[string]RollupResult{}
-	for src, ids := range visited {
+	for src := range w.over {
+		out[src] = RollupResult{OverCap: true}
+	}
+	for src, ids := range w.visited {
 		var rows []EntityHeader
 		for _, id := range slices.Sorted(maps.Keys(ids)) {
 			if counted[alongKey{src: src, id: id}] {
@@ -227,18 +234,28 @@ func rollupAlong(ctx context.Context, st RollupReader, q RollupQuery) (map[strin
 	return out, nil
 }
 
-// walkAlong walks a from sources and returns every triple it holds and,
-// per source, each entity other than the source it visited, at the row
-// and state of its first arrival.
-func walkAlong(
-	ctx context.Context, st RollupReader, a *AlongWalk, sources []string,
-) (seen map[alongKey]bool, visited map[string]map[string]alongVisit, _ error) {
+// alongWalked is a walk's outcome for the sources within their cap: every
+// triple held, each entity other than the source visited at the row and
+// state of its first arrival, and the triples held per source. over are
+// the sources whose walk went over the cap; nothing of theirs is kept.
+type alongWalked struct {
+	seen    map[alongKey]bool
+	visited map[string]map[string]alongVisit
+	held    map[string]int
+	over    map[string]bool
+}
+
+// walkAlong walks a from sources, each source capped alone at the walk's
+// row cap over the gated triples it holds.
+func walkAlong(ctx context.Context, st RollupReader, a *AlongWalk, sources []string) (alongWalked, error) {
 	limit := a.RowCap
 	if limit == 0 {
 		limit = AlongRowCap
 	}
-	seen = map[alongKey]bool{}
-	visited = map[string]map[string]alongVisit{}
+	w := alongWalked{
+		seen: map[alongKey]bool{}, visited: map[string]map[string]alongVisit{},
+		held: map[string]int{}, over: map[string]bool{},
+	}
 	frontier := make([]alongKey, 0, len(sources))
 	for _, src := range slices.Sorted(slices.Values(sources)) {
 		frontier = append(frontier, alongKey{src: src, id: src, state: -1})
@@ -255,24 +272,40 @@ func walkAlong(
 		for _, j := range slices.Sorted(maps.Keys(bySeg)) {
 			reached, err := alongHop(ctx, st, a.Segments[j], bySeg[j])
 			if err != nil {
-				return nil, nil, err
+				return alongWalked{}, err
 			}
 			for _, r := range reached {
 				k := alongKey{src: r.src, id: r.header.ID, state: j}
-				if seen[k] {
+				if w.over[k.src] || w.seen[k] {
 					continue
 				}
-				seen[k] = true
-				if len(seen) > limit {
-					return nil, nil, ErrAlongRowCap
+				w.seen[k] = true
+				w.held[k.src]++
+				if w.held[k.src] > limit {
+					w.over[k.src] = true
+					continue
 				}
 				next = append(next, k)
-				noteVisit(visited, k, r.header)
+				noteVisit(w.visited, k, r.header)
 			}
 		}
-		frontier = next
+		frontier = slices.DeleteFunc(next, func(k alongKey) bool { return w.over[k.src] })
 	}
-	return seen, visited, nil
+	w.dropOver()
+	return w, nil
+}
+
+// dropOver forgets everything the sources over their cap held.
+func (w alongWalked) dropOver() {
+	for k := range w.seen {
+		if w.over[k.src] {
+			delete(w.seen, k)
+		}
+	}
+	for src := range w.over {
+		delete(w.visited, src)
+		delete(w.held, src)
+	}
 }
 
 // noteVisit records k's entity as visited from its source at h and k's

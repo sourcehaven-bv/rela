@@ -141,6 +141,11 @@ type RollupResult struct {
 	// under, sorted: each one a gate admits that meets its condition. A
 	// siblings source with none has no result.
 	Parents []string
+	// OverCap says the source's along or siblings walk held more gated
+	// rows than its row cap. The source has no answer: the other fields
+	// are empty, and the caller leaves its roll-up absent. Each source is
+	// capped alone, so one source over its cap changes no other answer.
+	OverCap bool
 }
 
 // Rollupper is the native form of [Rollup]: one statement per query.
@@ -156,7 +161,8 @@ type RollupReader interface {
 }
 
 // Rollup answers q on st, through the backend's [Rollupper] when it has one.
-// Sources without a related row are absent from the map.
+// Sources without a related row are absent from the map; a source over its
+// row cap has a result with [RollupResult.OverCap].
 func Rollup(ctx context.Context, st Store, q RollupQuery) (map[string]RollupResult, error) {
 	if r, ok := st.(Rollupper); ok {
 		return r.Rollup(ctx, q)

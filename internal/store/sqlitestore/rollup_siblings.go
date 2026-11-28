@@ -43,7 +43,7 @@ func (s *Store) rollupSiblings(ctx context.Context, q store.RollupQuery) (map[st
 	if !ok || !climbOK {
 		return store.RollupGeneric(ctx, s, q)
 	}
-	nodes, read, err := s.siblingNodes(ctx, q, climb, stmts)
+	nodes, climbed, err := s.siblingNodes(ctx, q, climb, stmts)
 	if err != nil {
 		return nil, err
 	}
@@ -51,25 +51,32 @@ func (s *Store) rollupSiblings(ctx context.Context, q store.RollupQuery) (map[st
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: rollup: siblings nodes: %w", err)
 	}
-	args[0], args[1] = string(raw), read
+	args[0] = string(raw)
 	type row struct {
-		overCap bool
 		src     string
-		n       int
+		n, read int
 		parents string
 	}
 	rows, err := collectRows(ctx, s.q(), sqlText, args, func(sc scanner) (row, error) {
 		var r row
-		scanErr := sc.Scan(&r.overCap, &r.src, &r.n, &r.parents)
+		scanErr := sc.Scan(&r.src, &r.n, &r.read, &r.parents)
 		return r, scanErr
 	})
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]store.RollupResult, len(rows))
+	limit := w.RowCap
+	if limit == 0 {
+		limit = store.AlongRowCap
+	}
+	out := make(map[string]store.RollupResult, len(rows)+len(climbed.over))
+	for src := range climbed.over {
+		out[src] = store.RollupResult{OverCap: true}
+	}
 	for _, r := range rows {
-		if r.overCap {
-			return nil, store.ErrAlongRowCap
+		if climbed.held[r.src]+r.read > limit {
+			out[r.src] = store.RollupResult{OverCap: true}
+			continue
 		}
 		var parents []string
 		if err := json.Unmarshal([]byte(r.parents), &parents); err != nil {
@@ -101,58 +108,57 @@ func siblingClimbSQL(q store.RollupQuery) (store.RollupQuery, []alongLevel, bool
 	return climb, stmts, true
 }
 
-// siblingNodes is q's sources, each its own node, and every gated ancestor
-// the climb's stmts reached, with the number of triples the climb read.
+// siblingNodes is q's sources within the climb's cap, each its own node,
+// and every gated ancestor the climb's stmts reached, with what the climb
+// held per source.
 func (s *Store) siblingNodes(
 	ctx context.Context, q, climb store.RollupQuery, stmts []alongLevel,
-) ([]siblingNode, int, error) {
+) ([]siblingNode, alongWalked, error) {
+	w := alongWalked{held: map[string]int{}, over: map[string]bool{}}
+	if len(stmts) > 0 {
+		var err error
+		if w, err = s.walkAlong(ctx, climb, stmts); err != nil {
+			return nil, alongWalked{}, err
+		}
+	}
 	srcs := slices.Compact(slices.Sorted(slices.Values(q.Sources)))
-	nodes := make([]siblingNode, 0, len(srcs))
+	nodes := make([]siblingNode, 0, len(srcs)+len(w.visits))
 	for _, src := range srcs {
-		nodes = append(nodes, siblingNode{Src: src, ID: src})
+		if !w.over[src] {
+			nodes = append(nodes, siblingNode{Src: src, ID: src})
+		}
 	}
-	if len(stmts) == 0 {
-		return nodes, 0, nil
-	}
-	visits, err := s.walkAlong(ctx, climb, stmts)
-	if err != nil {
-		return nil, 0, err
-	}
-	for _, v := range visits {
+	for _, v := range w.visits {
 		nodes = append(nodes, siblingNode{Src: v.Src, ID: v.ID})
 	}
 	slices.SortFunc(nodes, func(a, b siblingNode) int { return strings.Compare(a.Src+"\x00"+a.ID, b.Src+"\x00"+b.ID) })
-	return slices.Compact(nodes), len(visits), nil
+	return slices.Compact(nodes), w, nil
 }
 
-// buildSiblingsSQL renders q's siblings walk as one statement returning
-// the sentinel, then per source its count and its qualifying parents as a
-// JSON array. Its first two arguments are the nodes and the triples the
-// climb read, set per run. It reports !ok when a name cannot be rendered.
+// buildSiblingsSQL renders q's siblings walk as one statement returning,
+// per source, its count, its gated rows (its node edges into a qualifying
+// parent and the qualifying siblings' edges into those parents) and its
+// qualifying parents as a JSON array. Its first argument is the nodes, set
+// per run. It reports !ok when a name cannot be rendered.
 func buildSiblingsSQL(q store.RollupQuery) (sqlText string, args []any, ok bool) {
 	w := q.Siblings
 	b := &sqlBuilder{}
-	nodesArg, readArg := b.arg(""), b.arg(0)
-	limit := w.RowCap
-	if limit == 0 {
-		limit = store.AlongRowCap
-	}
-	limitArg := b.arg(limit + 1)
+	nodesArg := b.arg("")
 	relArg := b.arg(w.Relation)
 	ord := siblingOrderSQL(b.jsonPath(store.SiblingOrderProperty))
 	with := []string{
 		"sn AS (SELECT json_extract(value, '$.s') AS src, json_extract(value, '$.i') AS id FROM json_each(" +
 			nodesArg + "))",
 		fmt.Sprintf("ne AS (SELECT r.from_id AS id, r.to_id AS parent, %s AS ord FROM relations r "+
-			"WHERE r.from_id IN (SELECT id FROM sn) AND r.rel_type = %s AND r.from_face = '' LIMIT %s)",
-			ord, relArg, limitArg),
+			"WHERE r.from_id IN (SELECT id FROM sn) AND r.rel_type = %s AND r.from_face = '')",
+			ord, relArg),
 	}
 	with = append(with, siblingGatesSQL(b, "sp", w.Parents, "SELECT DISTINCT parent FROM ne")...)
 	with = append(with,
 		"qp AS ("+siblingAdmittedSQL("sp", w.Parents)+")",
 		fmt.Sprintf("se AS (SELECT r.to_id AS parent, r.from_id AS peer, %s AS ord FROM relations r "+
-			"WHERE r.to_id IN (SELECT id FROM qp) AND r.rel_type = %s AND r.from_face = '' LIMIT %s)",
-			ord, relArg, limitArg))
+			"WHERE r.to_id IN (SELECT id FROM qp) AND r.rel_type = %s AND r.from_face = '')",
+			ord, relArg))
 	with = append(with, siblingGatesSQL(b, "ss", w.Siblings, "SELECT DISTINCT peer FROM se")...)
 	with = append(with,
 		"sm AS (SELECT se.* FROM se WHERE se.peer IN ("+siblingAdmittedSQL("ss", w.Siblings)+"))",
@@ -168,11 +174,9 @@ func buildSiblingsSQL(q store.RollupQuery) (sqlText string, args []any, ok bool)
 				"(PARTITION BY parent ORDER BY ord IS NULL, ord, peer) AS rn FROM sm) WHERE rn = 1)",
 			"sb AS (SELECT DISTINCT j.src, j.id FROM sj j JOIN sf m ON m.parent = j.parent WHERE "+before+")")
 	}
-	sentinel := "SELECT 1 AS over_cap, '' AS src, 0 AS n, '[]' AS parents WHERE " + readArg +
-		" + (SELECT count(*) FROM ne) + (SELECT count(*) FROM se) > " + b.arg(limit)
-	result := "SELECT 0, g.src, (SELECT count(*) FROM sb WHERE sb.src = g.src), json_group_array(DISTINCT g.parent) " +
-		"FROM sj g GROUP BY g.src"
-	sqlText = withClause(with) + "SELECT * FROM (" + sentinel + " UNION ALL " + result + ") o ORDER BY o.over_cap DESC"
+	read := "count(*) + (SELECT count(*) FROM sm m WHERE m.parent IN (SELECT j.parent FROM sj j WHERE j.src = g.src))"
+	sqlText = withClause(with) + "SELECT g.src, (SELECT count(*) FROM sb WHERE sb.src = g.src), " + read +
+		", json_group_array(DISTINCT g.parent) FROM sj g GROUP BY g.src"
 	return sqlText, b.args, !b.unsafe
 }
 

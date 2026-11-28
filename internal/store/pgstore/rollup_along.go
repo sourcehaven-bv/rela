@@ -22,9 +22,10 @@ import (
 // one gate per type the hop's segment reaches. Each gate is the reader's
 // graph source seeded by the hop's ids, so it never scans its type, and it
 // judges the node's Counts on the prime row it selects. Level K keeps the
-// (src, id, state) triples no earlier level holds (a cumulative CTE), at
-// most cap + 1 of them; a sentinel row reports a walk over the cap. The
-// reference is [store.RollupGeneric].
+// gated (src, id, state) triples no earlier level holds (a cumulative CTE),
+// at most cap + 1 of them per source. A source holding more than cap
+// triples in all is over its cap: a sentinel row names it, and it has no
+// other row. The reference is [store.RollupGeneric].
 
 // rollupAlong is [Store.Rollup] for an along query.
 func (s *Store) rollupAlong(ctx context.Context, q store.RollupQuery) (map[string]store.RollupResult, error) {
@@ -70,16 +71,17 @@ type alongRow struct {
 	count        *int
 }
 
-// collect adds r to out, or to visits for a visits query. The sentinel
-// sorts first, so a walk over its cap is refused before any row is kept.
+// collect adds r to out, or to visits for a visits query; a sentinel marks
+// its source over the cap.
 func (r alongRow) collect(
 	q store.RollupQuery, out map[string]store.RollupResult, visits map[string][]store.EntityHeader,
 ) error {
-	if r.overCap {
-		return store.ErrAlongRowCap
-	}
 	if r.src == nil {
 		return errors.New("pgstore: rollup: along row without a source")
+	}
+	if r.overCap {
+		out[*r.src] = store.RollupResult{OverCap: true}
+		return nil
 	}
 	if q.Along.Visits {
 		h := store.EntityHeader{ID: deref(r.id), Type: deref(r.typ), Face: entity.Face(deref(r.face))}
@@ -124,9 +126,9 @@ func buildAlongSQL(q store.RollupQuery, levels [][]store.AlongHop) (sqlText stri
 	if limit == 0 {
 		limit = store.AlongRowCap
 	}
-	with, overCap := alongCountedSQL(b, q, levels, sourcesSeed(b, q.Sources), limit)
-	sentinel := "SELECT TRUE AS over_cap, NULL::text AS src, NULL::text AS id, NULL::text AS type, " +
-		"NULL::text AS face, NULL::int AS n, NULL::text AS value WHERE " + overCap
+	with, _ := alongCountedSQL(b, q, levels, sourcesSeed(b, q.Sources), limit)
+	sentinel := "SELECT TRUE AS over_cap, o.src::text AS src, NULL::text AS id, NULL::text AS type, " +
+		"NULL::text AS face, NULL::int AS n, NULL::text AS value FROM capped o"
 	result := "SELECT FALSE, c.src, NULL, NULL, NULL, count(*)::int, " + alongFoldSQL(q) +
 		" FROM counted c GROUP BY c.src"
 	if q.Along.Visits {
@@ -144,21 +146,24 @@ func sourcesSeed(b *sqlBuilder, sources []string) string {
 	return "SELECT unnest(" + b.arg(sources) + "::text[])"
 }
 
-// alongCountedSQL renders the walk of q from the ids seed selects and
-// counted, its counted visits per (src, id), with the condition under which
-// the walk is over limit rows.
+// alongCountedSQL renders the walk of q from the ids seed selects: capped,
+// the sources holding more than limit triples, and counted, the counted
+// visits per (src, id) of the others. overCap holds when some source is
+// over, for a walk seeded with one candidate.
 func alongCountedSQL(
 	b *sqlBuilder, q store.RollupQuery, levels [][]store.AlongHop, seed string, limit int,
 ) (with []string, overCap string) {
 	with = append(alongWalkSQL(b, q, levels, seed, b.arg(limit+1)),
+		"capped AS (SELECT src FROM walk GROUP BY src HAVING count(*) > "+b.arg(limit)+")",
 		`counted AS (SELECT w.src, w.id, min(w.type) AS type, min(w.face COLLATE "C") AS face, `+
-			`min(w.val) AS val FROM walk w WHERE w.id <> w.src GROUP BY w.src, w.id HAVING bool_or(w.hit))`)
-	return with, "(SELECT count(*) FROM walk) > " + b.arg(limit)
+			`min(w.val) AS val FROM walk w WHERE w.id <> w.src AND w.src NOT IN (SELECT src FROM capped) `+
+			`GROUP BY w.src, w.id HAVING bool_or(w.hit))`)
+	return with, "EXISTS (SELECT 1 FROM capped)"
 }
 
 // alongWalkSQL renders the CTEs l0 to lK of q's walk from the ids seed
 // selects and walk, the union of l1 to lK: every gated (src, id, state)
-// triple, at most limitArg per level.
+// triple, at most limitArg per source per level.
 func alongWalkSQL(b *sqlBuilder, q store.RollupQuery, levels [][]store.AlongHop, seed, limitArg string) []string {
 	with := []string{fmt.Sprintf(
 		`l0 AS (SELECT DISTINCT s COLLATE "C" AS src, s COLLATE "C" AS id, -1 AS state FROM (%s) z(s))`, seed)}
@@ -200,12 +205,15 @@ func alongLevelSQL(b *sqlBuilder, q store.RollupQuery, k int, hops []store.Along
 				hop.Seg, b.arg(typ), pairs, gate))
 		}
 	}
-	level := fmt.Sprintf("l%d AS (SELECT u.* FROM (%s) u", k, strings.Join(arms, " UNION ALL "))
+	level := fmt.Sprintf("SELECT u.*, row_number() OVER (PARTITION BY u.src) AS rn FROM (%s) u",
+		strings.Join(arms, " UNION ALL "))
 	if k > 1 {
 		level += fmt.Sprintf(" WHERE NOT EXISTS (SELECT 1 FROM %s x WHERE x.src = u.src AND x.id = u.id AND x.state = u.state)",
 			alongSeen(k-1))
 	}
-	return append(with, level+" LIMIT "+limitArg+")")
+	return append(with, fmt.Sprintf(
+		"l%d AS (SELECT v.src, v.id, v.state, v.type, v.face, v.hit, v.val FROM (%s) v WHERE v.rn <= %s)",
+		k, level, limitArg))
 }
 
 // alongHopSQL selects the distinct (src, id) pairs the identity-scoped
