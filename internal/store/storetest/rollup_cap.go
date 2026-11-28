@@ -21,6 +21,7 @@ func runRollupCapTests(t *testing.T, f Factory) {
 		"along_hop":           capAlongHop,
 		"siblings_per_source": capSiblingsPerSource,
 		"siblings_hidden":     capSiblingsHidden,
+		"siblings_hop":        capSiblingsHop,
 		"climb_hidden":        capClimbHidden,
 		"leaf_fails_closed":   capLeafFailsClosed,
 	} {
@@ -158,6 +159,43 @@ func capSiblingsHidden(t *testing.T, s store.Store) {
 	q.Siblings.RowCap = 3
 	requireRollup(t, s, q, map[string]store.RollupResult{"ACT-1": {OverCap: true}})
 	requireRollup(t, s, capGateSiblings(q), map[string]store.RollupResult{"ACT-1": behind(1, "PRJ-1")})
+}
+
+// capSiblingsHop: PRJ-1 holds ACT-1 and ten secret siblings, ACT-3 is a
+// child of PRJ-3 and ten secret projects, and ACT-9 sits in PRJ-2 after
+// one sibling. A hop cap of ten leaves ACT-1 and ACT-3 over it even for
+// the reader who sees no secret row, as each reads eleven edges in one
+// step; a hop cap of eleven does not. ACT-9 keeps its answer.
+func capSiblingsHop(t *testing.T, s store.Store) {
+	q := capSiblingsHopSeed(t, s, 10)
+	q.Siblings.HopCap = 10
+	requireRollup(t, s, q, map[string]store.RollupResult{
+		"ACT-1": {OverCap: true}, "ACT-3": {OverCap: true}, "ACT-9": behind(1, "PRJ-2"),
+	})
+	q.Siblings.HopCap = 11
+	requireRollup(t, s, q, map[string]store.RollupResult{
+		"ACT-1": behind(0, "PRJ-1"), "ACT-3": behind(1, "PRJ-3"), "ACT-9": behind(1, "PRJ-2"),
+	})
+}
+
+// capSiblingsHopSeed seeds the graph of [capSiblingsHop] with n secret
+// rows per hub and returns its gated query over ACT-1, ACT-3 and ACT-9.
+func capSiblingsHopSeed(t *testing.T, s store.Store, n int) store.RollupQuery {
+	t.Helper()
+	for _, id := range []string{"PRJ-1", "PRJ-2", "PRJ-3"} {
+		seedEntityWithProps(t, s, "project", id, map[string]any{"ordering": "sequential"})
+	}
+	siblingsSeed(t, s, "PRJ-1", open("ACT-1", 9))
+	siblingsSeed(t, s, "PRJ-2", open("ACT-8", 1), open("ACT-9", 2))
+	siblingsSeed(t, s, "PRJ-3", open("ACT-7", 1), open("ACT-3", 2))
+	for i := range n {
+		sib, prj := fmt.Sprintf("ACT-S%03d", i), fmt.Sprintf("PRJ-S%03d", i)
+		capSecret(t, s, "action", "open", sib)
+		mustRelProps(t, s, sib, "child_of", "PRJ-1", map[string]any{"_order_in": 0})
+		seedEntityWithProps(t, s, "project", prj, map[string]any{"ordering": "sequential", "secret": "yes"})
+		mustRel(t, s, "ACT-3", "child_of", prj)
+	}
+	return capGateSiblings(siblingsQuery(0, "ACT-1", "ACT-3", "ACT-9"))
 }
 
 // capClimbHidden: ACT-1's climb reaches GRP-1 and ten secret actions it

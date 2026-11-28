@@ -14,10 +14,12 @@ import (
 
 // The siblings roll-up (design gap 2, section 4.4) is one statement per
 // query. With a climb, the along CTEs of [store.SiblingClimb] give the
-// ancestors. ne holds the nodes' identity-scoped edges, one gate per parent
-// type seeded by their targets judges the parents, se holds the edges into
-// the qualifying parents, and one gate per sibling type seeded by their
-// sources judges the siblings. Each edge's order is the guarded float8 of
+// ancestors. ne holds each source's nodes' identity-scoped edges, one gate
+// per parent type seeded by their targets judges the parents, se holds the
+// edges into each source's qualifying parents, and one gate per sibling
+// type seeded by their sources judges the siblings. ne and se read at most
+// hop cap + 1 edges per source, and a source reading more than hop cap of
+// either is over its cap. Each edge's order is the guarded float8 of
 // [store.SiblingOrderProperty]; NULL sorts last and ties fall to the source
 // id in byte order, which is the order [store.SiblingWalk] names. Each
 // source is capped alone over its gated rows; a sentinel row names a source
@@ -80,7 +82,7 @@ func buildSiblingsSQL(q store.RollupQuery) (sqlText string, args []any, err erro
 	count := "(SELECT count(DISTINCT j.id) FROM sj j WHERE j.src = g.src AND EXISTS " +
 		"(SELECT 1 FROM sf m WHERE m.parent = j.parent AND " + siblingBefore + "))::int"
 	if q.Siblings.CountSiblings {
-		count = "(SELECT count(DISTINCT (j.id, m.peer)) FROM sj j JOIN sm m ON m.parent = j.parent " +
+		count = "(SELECT count(DISTINCT (j.id, m.peer)) FROM sj j JOIN sm m ON m.src = j.src AND m.parent = j.parent " +
 			"WHERE j.src = g.src AND " + siblingBefore + ")::int"
 	}
 	sentinel := "SELECT TRUE AS over_cap, o.src::text AS src, NULL::int AS n, NULL::text[] AS parents FROM scapped o"
@@ -99,8 +101,8 @@ const siblingBefore = `(m.ord IS NULL, COALESCE(m.ord, 0), m.peer COLLATE "C") <
 
 // siblingsWalkSQL renders the CTEs of q's siblings walk from the ids seed
 // selects: sj, each source's node edges into a qualifying parent; sm, the
-// qualifying siblings' edges; sf, each parent's first of them; scapped,
-// the sources over the cap. A source's rows are its climb's triples, its
+// qualifying siblings' edges per source; sf, each parent's first of them;
+// scapped, the sources over the row or hop cap. A source's rows are its climb's triples, its
 // node edges into a qualifying parent, and the qualifying siblings' edges
 // into those parents. overCap holds when some source is over, for a walk
 // seeded with one candidate.
@@ -121,29 +123,41 @@ func siblingsWalkSQL(b *sqlBuilder, q store.RollupQuery, seed string) (with []st
 			"(SELECT count(*) * " + b.arg(limit+1) + " FROM hopover o WHERE o.src = s.src)"
 	}
 	ord := siblingOrderSQL(b.arg(store.SiblingOrderProperty))
+	hopRead, hopLimit := b.arg(siblingHopCap(w)+1), b.arg(siblingHopCap(w))
 	with = append(with,
 		"sn AS ("+nodes+")",
-		fmt.Sprintf("ne AS (SELECT r.from_id AS id, r.to_id AS parent, %s AS ord FROM relations r "+
-			"WHERE r.from_id IN (SELECT id FROM sn) AND r.rel_type = %s AND r.from_face = '')",
-			ord, relArg))
-	with = append(with, siblingGatesSQL(b, "sp", w.Parents, "SELECT DISTINCT parent FROM ne")...)
+		"ne AS ("+perSourceEdgesSQL("SELECT DISTINCT src FROM sn", "SELECT DISTINCT s.id FROM sn s WHERE s.src = n.src",
+			"r.from_id AS id, r.to_id AS parent, "+ord+" AS ord", "from_id", relArg, hopRead)+")",
+		"neo AS (SELECT src FROM ne GROUP BY src HAVING count(*) > "+hopLimit+")")
+	with = append(with, siblingGatesSQL(b, "sp", w.Parents,
+		"SELECT DISTINCT parent FROM ne WHERE src NOT IN (SELECT src FROM neo)")...)
 	with = append(with,
 		"qp AS ("+siblingAdmittedSQL("sp", w.Parents)+")",
-		fmt.Sprintf("se AS (SELECT r.to_id AS parent, r.from_id AS peer, %s AS ord FROM relations r "+
-			"WHERE r.to_id IN (SELECT id FROM qp) AND r.rel_type = %s AND r.from_face = '')",
-			ord, relArg))
-	with = append(with, siblingGatesSQL(b, "ss", w.Siblings, "SELECT DISTINCT peer FROM se")...)
+		"sj AS (SELECT ne.src, ne.id, ne.parent, ne.ord FROM ne WHERE ne.parent IN (SELECT id FROM qp) "+
+			"AND ne.src NOT IN (SELECT src FROM neo))",
+		"se AS ("+perSourceEdgesSQL("SELECT DISTINCT src FROM sj",
+			"SELECT DISTINCT j.parent AS id FROM sj j WHERE j.src = n.src",
+			"r.to_id AS parent, r.from_id AS peer, "+ord+" AS ord", "to_id", relArg, hopRead)+")",
+		"seo AS (SELECT src FROM se GROUP BY src HAVING count(*) > "+hopLimit+")")
+	with = append(with, siblingGatesSQL(b, "ss", w.Siblings,
+		"SELECT DISTINCT peer FROM se WHERE src NOT IN (SELECT src FROM seo)")...)
 	with = append(with,
 		"sm AS (SELECT se.* FROM se WHERE se.peer IN ("+siblingAdmittedSQL("ss", w.Siblings)+"))",
-		"sj AS (SELECT n.src, ne.id, ne.parent, ne.ord FROM sn n JOIN ne ON ne.id = n.id "+
-			"WHERE ne.parent IN (SELECT id FROM qp))",
 		`sf AS (SELECT DISTINCT ON (parent) parent, peer, ord FROM sm `+
 			`ORDER BY parent, ord IS NULL, ord, peer COLLATE "C")`,
 		"scapped AS (SELECT s.src FROM (SELECT DISTINCT src FROM sn) s WHERE "+read+
 			" + (SELECT count(*) FROM sj j WHERE j.src = s.src)"+
-			" + (SELECT count(*) FROM sm m WHERE m.parent IN (SELECT j.parent FROM sj j WHERE j.src = s.src)) > "+
-			b.arg(limit)+")")
+			" + (SELECT count(*) FROM sm m WHERE m.src = s.src) > "+b.arg(limit)+
+			" UNION SELECT src FROM neo UNION SELECT src FROM seo)")
 	return with, "EXISTS (SELECT 1 FROM scapped)"
+}
+
+// siblingHopCap is the most edges w reads per source per step.
+func siblingHopCap(w *store.SiblingWalk) int {
+	if w.HopCap == 0 {
+		return store.AlongHopCap
+	}
+	return w.HopCap
 }
 
 // siblingOrderSQL is an edge's order over r: the stored number as float8

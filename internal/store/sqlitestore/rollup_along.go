@@ -284,7 +284,7 @@ func buildAlongLevelSQL(q store.RollupQuery, hops []store.AlongHop) (alongLevel,
 	if hopCap == 0 {
 		hopCap = store.AlongHopCap
 	}
-	hopArg := b.arg(hopCap)
+	hopArg, readArg := b.arg(hopCap), b.arg(hopCap+1)
 	with := []string{
 		"f AS (SELECT json_extract(value, '$.s') AS src, json_extract(value, '$.i') AS id, " +
 			"json_extract(value, '$.t') AS state FROM json_each(" + frontArg + "))",
@@ -293,7 +293,7 @@ func buildAlongLevelSQL(q store.RollupQuery, hops []store.AlongHop) (alongLevel,
 	for _, hop := range hops {
 		seg := q.Along.Segments[hop.Seg]
 		pairs := fmt.Sprintf("s%d", hop.Seg)
-		with = append(with, alongHopSQL(b, pairs, hop, seg, hopArg)...)
+		with = append(with, alongHopSQL(b, pairs, hop, seg, hopArg, readArg)...)
 		over = append(over, "SELECT src FROM "+pairs+"_o")
 		for ti, typ := range slices.Sorted(maps.Keys(seg.Through)) {
 			gate := fmt.Sprintf("%s_t%d", pairs, ti)
@@ -312,11 +312,13 @@ func buildAlongLevelSQL(q store.RollupQuery, hops []store.AlongHop) (alongLevel,
 	return alongLevel{sql: sqlText, args: b.args}, !b.unsafe
 }
 
-// alongHopSQL renders hop's edges as name_e, the edges of seg from each
-// distinct (src, entity) of the frontier triples in hop's states; name_o,
+// alongHopSQL renders hop's edges as name_e, at most readArg edges of seg
+// per source, from the entities of its frontier triples in hop's states; name_o,
 // the sources reading more than hopArg of them; and name, the distinct
 // (src, id) pairs of the other sources.
-func alongHopSQL(b *sqlBuilder, name string, hop store.AlongHop, seg store.AlongSegment, hopArg string) []string {
+func alongHopSQL(
+	b *sqlBuilder, name string, hop store.AlongHop, seg store.AlongSegment, hopArg, readArg string,
+) []string {
 	nearCol, farCol := "from_id", "to_id"
 	if seg.SourceIsTo {
 		nearCol, farCol = farCol, nearCol
@@ -325,14 +327,25 @@ func alongHopSQL(b *sqlBuilder, name string, hop store.AlongHop, seg store.Along
 	for i, st := range hop.From {
 		states[i] = strconv.Itoa(st)
 	}
+	in := strings.Join(states, ", ")
 	return []string{
-		fmt.Sprintf("%s_e AS MATERIALIZED (SELECT p.src, r.%s AS id FROM (SELECT DISTINCT src, id FROM f "+
-			"WHERE state IN (%s)) p JOIN relations r ON r.%s = p.id WHERE r.rel_type = %s AND r.from_face = '')",
-			name, farCol, strings.Join(states, ", "), nearCol, b.arg(seg.Relation)),
+		fmt.Sprintf("%s_e AS MATERIALIZED (%s)", name, perSourceEdgesSQL(
+			"SELECT DISTINCT src FROM f WHERE state IN ("+in+")",
+			"SELECT f2.id FROM f f2 WHERE f2.src = p.src AND f2.state IN ("+in+")",
+			"r."+farCol+" AS id", nearCol, b.arg(seg.Relation), readArg)),
 		fmt.Sprintf("%s_o AS (SELECT src FROM %s_e GROUP BY src HAVING count(*) > %s)", name, name, hopArg),
 		fmt.Sprintf("%s AS (SELECT DISTINCT src, id FROM %s_e WHERE src NOT IN (SELECT src FROM %s_o))",
 			name, name, name),
 	}
+}
+
+// perSourceEdgesSQL selects, for each src of srcs, at most read rows of
+// cols over the identity-scoped edges of relArg whose nearCol is an id of
+// nears, a subquery over p.src. The LIMIT stops each source's read.
+func perSourceEdgesSQL(srcs, nears, cols, nearCol, relArg, read string) string {
+	return "SELECT p.src, " + cols + " FROM (" + srcs + ") p JOIN relations r ON r.rowid IN (SELECT r2.rowid " +
+		"FROM relations r2 WHERE r2." + nearCol + " IN (" + nears + ") AND r2.rel_type = " + relArg +
+		" AND r2.from_face = '' LIMIT " + read + ")"
 }
 
 // alongGateSQL renders the gate name over the ids subquery: the prime row

@@ -18,8 +18,9 @@ import (
 // stored number as a REAL when that is finite, else NULL, which sorts
 // last; ties fall to the source id under BINARY, which is byte order.
 // SQLite parses a JSON number as Go's strconv.ParseFloat does, so this is
-// the order [store.SiblingWalk] names. A query whose names the builder cannot
-// render is answered by [store.RollupGeneric].
+// the order [store.SiblingWalk] names. ne and se read at most hop cap + 1
+// edges per source. A query whose names the builder cannot render is
+// answered by [store.RollupGeneric].
 
 // siblingNode is one node of a siblings walk: a source or an ancestor it
 // climbed to.
@@ -56,10 +57,11 @@ func (s *Store) rollupSiblings(ctx context.Context, q store.RollupQuery) (map[st
 		src     string
 		n, read int
 		parents string
+		over    bool
 	}
 	rows, err := collectRows(ctx, s.q(), sqlText, args, func(sc scanner) (row, error) {
 		var r row
-		scanErr := sc.Scan(&r.src, &r.n, &r.read, &r.parents)
+		scanErr := sc.Scan(&r.src, &r.n, &r.read, &r.parents, &r.over)
 		return r, scanErr
 	})
 	if err != nil {
@@ -74,7 +76,7 @@ func (s *Store) rollupSiblings(ctx context.Context, q store.RollupQuery) (map[st
 		out[src] = store.RollupResult{OverCap: true}
 	}
 	for _, r := range rows {
-		if climbed.held[r.src]+r.read > limit {
+		if r.over || climbed.held[r.src]+r.read > limit {
 			out[r.src] = store.RollupResult{OverCap: true}
 			continue
 		}
@@ -137,8 +139,9 @@ func (s *Store) siblingNodes(
 
 // buildSiblingsSQL renders q's siblings walk as one statement returning,
 // per source, its count, its gated rows (its node edges into a qualifying
-// parent and the qualifying siblings' edges into those parents) and its
-// qualifying parents as a JSON array. Its first argument is the nodes, set
+// parent and the qualifying siblings' edges into those parents), its
+// qualifying parents as a JSON array, and whether it read more than the
+// hop cap of edges. Its first argument is the nodes, set
 // per run. It reports !ok when a name cannot be rendered.
 func buildSiblingsSQL(q store.RollupQuery) (sqlText string, args []any, ok bool) {
 	w := q.Siblings
@@ -146,37 +149,48 @@ func buildSiblingsSQL(q store.RollupQuery) (sqlText string, args []any, ok bool)
 	nodesArg := b.arg("")
 	relArg := b.arg(w.Relation)
 	ord := siblingOrderSQL(b.jsonPath(store.SiblingOrderProperty))
+	hopCap := w.HopCap
+	if hopCap == 0 {
+		hopCap = store.AlongHopCap
+	}
+	hopArg, readArg := b.arg(hopCap), b.arg(hopCap+1)
 	with := []string{
 		"sn AS (SELECT json_extract(value, '$.s') AS src, json_extract(value, '$.i') AS id FROM json_each(" +
 			nodesArg + "))",
-		fmt.Sprintf("ne AS (SELECT r.from_id AS id, r.to_id AS parent, %s AS ord FROM relations r "+
-			"WHERE r.from_id IN (SELECT id FROM sn) AND r.rel_type = %s AND r.from_face = '')",
-			ord, relArg),
+		"ne AS MATERIALIZED (" + perSourceEdgesSQL("SELECT DISTINCT src FROM sn",
+			"SELECT s.id FROM sn s WHERE s.src = p.src",
+			"r.from_id AS id, r.to_id AS parent, "+ord+" AS ord", "from_id", relArg, readArg) + ")",
+		"neo AS (SELECT src FROM ne GROUP BY src HAVING count(*) > " + hopArg + ")",
 	}
-	with = append(with, siblingGatesSQL(b, "sp", w.Parents, "SELECT DISTINCT parent FROM ne")...)
+	with = append(with, siblingGatesSQL(b, "sp", w.Parents,
+		"SELECT DISTINCT parent FROM ne")...)
 	with = append(with,
 		"qp AS ("+siblingAdmittedSQL("sp", w.Parents)+")",
-		fmt.Sprintf("se AS (SELECT r.to_id AS parent, r.from_id AS peer, %s AS ord FROM relations r "+
-			"WHERE r.to_id IN (SELECT id FROM qp) AND r.rel_type = %s AND r.from_face = '')",
-			ord, relArg))
-	with = append(with, siblingGatesSQL(b, "ss", w.Siblings, "SELECT DISTINCT peer FROM se")...)
+		"sj AS MATERIALIZED (SELECT ne.src, ne.id, ne.parent, ne.ord FROM ne WHERE ne.parent IN (SELECT id FROM qp) "+
+			"AND ne.src NOT IN (SELECT src FROM neo))",
+		"se AS MATERIALIZED ("+perSourceEdgesSQL("SELECT DISTINCT src FROM sj",
+			"SELECT j.parent FROM sj j WHERE j.src = p.src",
+			"r.to_id AS parent, r.from_id AS peer, "+ord+" AS ord", "to_id", relArg, readArg)+")",
+		"seo AS (SELECT src FROM se GROUP BY src HAVING count(*) > "+hopArg+")",
+		"so AS (SELECT src FROM neo UNION SELECT src FROM seo)")
+	with = append(with, siblingGatesSQL(b, "ss", w.Siblings,
+		"SELECT DISTINCT peer FROM se")...)
 	with = append(with,
-		"sm AS (SELECT se.* FROM se WHERE se.peer IN ("+siblingAdmittedSQL("ss", w.Siblings)+"))",
-		"sj AS (SELECT n.src, ne.id, ne.parent, ne.ord FROM sn n JOIN ne ON ne.id = n.id "+
-			"WHERE ne.parent IN (SELECT id FROM qp))")
+		"sm AS (SELECT se.* FROM se WHERE se.peer IN ("+siblingAdmittedSQL("ss", w.Siblings)+"))")
 	before := "(m.ord IS NULL, COALESCE(m.ord, 0), m.peer) < (j.ord IS NULL, COALESCE(j.ord, 0), j.id)"
 	if w.CountSiblings {
-		with = append(with, "sb AS (SELECT DISTINCT j.src, j.id, m.peer FROM sj j JOIN sm m ON m.parent = j.parent "+
-			"WHERE "+before+")")
+		with = append(with, "sb AS (SELECT DISTINCT j.src, j.id, m.peer FROM sj j JOIN sm m ON m.src = j.src "+
+			"AND m.parent = j.parent WHERE "+before+")")
 	} else {
 		with = append(with,
 			"sf AS (SELECT parent, peer, ord FROM (SELECT parent, peer, ord, row_number() OVER "+
 				"(PARTITION BY parent ORDER BY ord IS NULL, ord, peer) AS rn FROM sm) WHERE rn = 1)",
 			"sb AS (SELECT DISTINCT j.src, j.id FROM sj j JOIN sf m ON m.parent = j.parent WHERE "+before+")")
 	}
-	read := "count(*) + (SELECT count(*) FROM sm m WHERE m.parent IN (SELECT j.parent FROM sj j WHERE j.src = g.src))"
+	read := "count(*) + (SELECT count(*) FROM sm m WHERE m.src = g.src)"
 	sqlText = withClause(with) + "SELECT g.src, (SELECT count(*) FROM sb WHERE sb.src = g.src), " + read +
-		", json_group_array(DISTINCT g.parent) FROM sj g GROUP BY g.src"
+		", json_group_array(DISTINCT g.parent), 0 FROM sj g WHERE g.src NOT IN (SELECT src FROM so) GROUP BY g.src " +
+		"UNION ALL SELECT src, 0, 0, '[]', 1 FROM so"
 	return sqlText, b.args, !b.unsafe
 }
 

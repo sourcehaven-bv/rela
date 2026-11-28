@@ -25,9 +25,9 @@ import (
 // gated (src, id, state) triples no earlier level holds (a cumulative CTE),
 // at most cap + 1 of them per source. A source holding more than cap
 // triples in all is over its cap: a sentinel row names it, and it has no
-// other row. A hop reads at most hop cap + 1 edges per frontier entity, and
-// a source reading more than hop cap edges in one hop is over its cap too,
-// so a hub is never read in full. Type, face, value and hit of a visit come
+// other row. A hop reads at most hop cap + 1 edges per source, and a source
+// reading more than hop cap edges in one hop is over its cap too, so a hub
+// is never read in full. Type, face, value and hit of a visit come
 // from its earliest arrival, by level and then segment. The reference is
 // [store.RollupGeneric].
 
@@ -199,7 +199,7 @@ func alongWalkSQL(b *sqlBuilder, q store.RollupQuery, levels [][]store.AlongHop,
 }
 
 // alongHopCap is the placeholders of a walk's hop cap and of the edges a
-// hop reads per frontier entity, one past it.
+// hop reads per source, one past it.
 type alongHopCap struct{ limit, read string }
 
 // alongSeen names the CTE of every triple levels 1 to k hold.
@@ -240,7 +240,7 @@ func alongLevelSQL(
 }
 
 // alongHopSQL renders hop's edges at level k: _e, at most hc.read edges
-// of seg per distinct (src, entity) of the level k-1 triples in hop's
+// of seg per source, from the entities of its level k-1 triples in hop's
 // states; _o, the sources reading more than hc.limit of them; and the
 // hop itself, the distinct (src, id) pairs of the other sources.
 func alongHopSQL(b *sqlBuilder, k int, hop store.AlongHop, seg store.AlongSegment, hc alongHopCap) []string {
@@ -254,14 +254,24 @@ func alongHopSQL(b *sqlBuilder, k int, hop store.AlongHop, seg store.AlongSegmen
 	}
 	name := fmt.Sprintf("l%d_s%d", k, hop.Seg)
 	return []string{
-		fmt.Sprintf("%s_e AS (SELECT p.src, x.id FROM (SELECT DISTINCT src, id FROM l%d WHERE state IN (%s)) p "+
-			"CROSS JOIN LATERAL (SELECT r.%s AS id FROM relations r WHERE r.%s = p.id AND r.rel_type = %s "+
-			"AND r.from_face = '' LIMIT %s) x)",
-			name, k-1, strings.Join(states, ", "), farCol, nearCol, b.arg(seg.Relation), hc.read),
+		fmt.Sprintf("%s_e AS (%s)", name, perSourceEdgesSQL(
+			fmt.Sprintf("SELECT DISTINCT src FROM l%d WHERE state IN (%s)", k-1, strings.Join(states, ", ")),
+			fmt.Sprintf("SELECT DISTINCT f.id FROM l%d f WHERE f.src = n.src AND f.state IN (%s)",
+				k-1, strings.Join(states, ", ")),
+			"r."+farCol+" AS id", nearCol, b.arg(seg.Relation), hc.read)),
 		fmt.Sprintf("%s_o AS (SELECT src FROM %s_e GROUP BY src HAVING count(*) > %s)", name, name, hc.limit),
 		fmt.Sprintf("%s AS (SELECT DISTINCT src, id FROM %s_e WHERE src NOT IN (SELECT src FROM %s_o))",
 			name, name, name),
 	}
+}
+
+// perSourceEdgesSQL selects, for each src of srcs, at most read rows of
+// cols over the identity-scoped edges of relArg whose nearCol is an id of
+// nears, a subquery over n.src. Each id's edges are read by index.
+func perSourceEdgesSQL(srcs, nears, cols, nearCol, relArg, read string) string {
+	return "SELECT n.src, x.* FROM (" + srcs + ") n CROSS JOIN LATERAL (SELECT y.* FROM (" + nears + ") u " +
+		"CROSS JOIN LATERAL (SELECT " + cols + " FROM relations r WHERE r." + nearCol + " = u.id AND r.rel_type = " +
+		relArg + " AND r.from_face = '' LIMIT " + read + ") y LIMIT " + read + ") x"
 }
 
 // alongGateSQL renders the gate name over the ids subquery: the prime row

@@ -27,7 +27,10 @@ const SiblingOrderProperty = metamodel.OrderPropertyIn
 // parent. A source's gated rows count against RowCap: the climb's
 // triples, its nodes' edges into a qualifying parent, and the qualifying
 // siblings' edges into those parents. A source over it has a result with
-// [RollupResult.OverCap]; each source is capped alone.
+// [RollupResult.OverCap]; each source is capped alone. So does a source
+// whose nodes have more than HopCap edges, or whose qualifying parents
+// more than HopCap incoming ones, gated or not; no backend reads more
+// than HopCap+1 of them per source.
 type SiblingWalk struct {
 	// Relation is the canonical relation type, ordered on its incoming
 	// side.
@@ -45,6 +48,9 @@ type SiblingWalk struct {
 	CountSiblings bool
 	// RowCap caps the gated rows of each source; zero means [AlongRowCap].
 	RowCap int
+	// HopCap caps the edges each source reads per step, before any gate;
+	// zero means [AlongHopCap]. The climb takes it too.
+	HopCap int
 }
 
 // validateSiblings refuses a siblings query the backends would answer
@@ -62,8 +68,8 @@ func validateSiblings(q RollupQuery) error {
 		return fmt.Errorf("%w: rollup: siblings: relation is required", ErrInvalidQuery)
 	case w.Climb < 0 || w.Climb > MaxAlongDepth:
 		return fmt.Errorf("%w: rollup: siblings climb %d is outside 0 to %d", ErrInvalidQuery, w.Climb, MaxAlongDepth)
-	case w.RowCap < 0:
-		return fmt.Errorf("%w: rollup: siblings row cap is negative", ErrInvalidQuery)
+	case w.RowCap < 0 || w.HopCap < 0:
+		return fmt.Errorf("%w: rollup: siblings row or hop cap is negative", ErrInvalidQuery)
 	case w.Climb > 0 && w.CountSiblings:
 		return fmt.Errorf("%w: rollup: siblings cannot count while it climbs", ErrInvalidQuery)
 	}
@@ -97,7 +103,7 @@ func SiblingClimb(w *SiblingWalk) *AlongWalk {
 	}
 	return &AlongWalk{
 		Segments: []AlongSegment{{Relation: w.Relation, Repeat: true, Through: through}},
-		MaxDepth: w.Climb, RowCap: w.RowCap,
+		MaxDepth: w.Climb, RowCap: w.RowCap, HopCap: w.HopCap,
 	}
 }
 
@@ -114,12 +120,17 @@ func (e SiblingEdge) orderKey() metamodel.OrderKey {
 }
 
 // rollupSiblings is [RollupGeneric] for a [SiblingWalk]: the climb, then
-// one relation read for the nodes' edges, one gated header read and one
-// MatchingFaces per parent type, one relation read for the siblings' edges,
-// and one gated header read and one MatchingFaces per sibling type.
+// the relation reads of readPerSource for the nodes' edges, one gated
+// header read and one MatchingFaces per parent type, the relation reads for
+// the siblings' edges, and one gated header read and one MatchingFaces per
+// sibling type.
 func rollupSiblings(ctx context.Context, st RollupReader, q RollupQuery) (map[string]RollupResult, error) {
 	w := q.Siblings
-	srcsOf := map[string][]string{}
+	hopCap := w.HopCap
+	if hopCap == 0 {
+		hopCap = AlongHopCap
+	}
+	nodesOf := map[string][]string{}
 	climbed := siblingClimbed{held: map[string]int{}, over: map[string]bool{}}
 	if w.Climb > 0 {
 		walked, err := walkAlong(ctx, st, SiblingClimb(w), q.Sources)
@@ -128,36 +139,44 @@ func rollupSiblings(ctx context.Context, st RollupReader, q RollupQuery) (map[st
 		}
 		climbed = siblingClimbed{held: walked.held, over: walked.over}
 		for src, ids := range walked.visited {
-			for id := range ids {
-				srcsOf[id] = appendNew(srcsOf[id], src)
-			}
+			nodesOf[src] = slices.Collect(maps.Keys(ids))
 		}
 	}
 	for _, src := range q.Sources {
 		if !climbed.over[src] {
-			srcsOf[src] = appendNew(srcsOf[src], src)
+			nodesOf[src] = appendNew(nodesOf[src], src)
 		}
 	}
-	nodeEdges, err := siblingEdges(ctx, st, w.Relation, slices.Sorted(maps.Keys(srcsOf)), DirectionOutgoing)
+	nodeEdges, err := siblingEdges(ctx, st, w.Relation, nodesOf, false, hopCap, climbed.over)
 	if err != nil {
 		return nil, err
 	}
-	parents := edgeEnds(nodeEdges, func(e SiblingEdge) string { return e.Parent })
-	qualify, err := siblingGate(ctx, st, w.Parents, w.Relation, parents, edgeEnds(nodeEdges, SiblingEdge.node), true)
+	all := slices.Concat(slices.Collect(maps.Values(nodeEdges))...)
+	parents := edgeEnds(all, func(e SiblingEdge) string { return e.Parent })
+	qualify, err := siblingGate(ctx, st, w.Parents, w.Relation, parents, edgeEnds(all, SiblingEdge.node), true)
 	if err != nil {
 		return nil, err
 	}
+	parentsOf := map[string][]string{}
+	for src, es := range nodeEdges {
+		for _, e := range es {
+			if qualify[e.Parent] {
+				parentsOf[src] = appendNew(parentsOf[src], e.Parent)
+			}
+		}
+	}
+	sibEdges, err := siblingEdges(ctx, st, w.Relation, parentsOf, true, hopCap, climbed.over)
+	if err != nil {
+		return nil, err
+	}
+	sibs := distinctEdges(sibEdges)
 	qp := slices.Sorted(maps.Keys(qualify))
-	sibEdges, err := siblingEdges(ctx, st, w.Relation, qp, DirectionIncoming)
-	if err != nil {
-		return nil, err
-	}
-	matching, err := siblingGate(ctx, st, w.Siblings, w.Relation, edgeEnds(sibEdges, SiblingEdge.node), qp, false)
+	matching, err := siblingGate(ctx, st, w.Siblings, w.Relation, edgeEnds(sibs, SiblingEdge.node), qp, false)
 	if err != nil {
 		return nil, err
 	}
 	before := map[string][]SiblingEdge{}
-	for _, e := range sibEdges {
+	for _, e := range sibs {
 		if matching[e.Node] {
 			before[e.Parent] = append(before[e.Parent], e)
 		}
@@ -167,21 +186,22 @@ func rollupSiblings(ctx context.Context, st RollupReader, q RollupQuery) (map[st
 			return metamodel.CompareOrderKeys(a.orderKey(), b.orderKey())
 		})
 	}
-	return foldSiblings(w, srcsOf, nodeEdges, qualify, before, climbed), nil
+	return foldSiblings(w, nodeEdges, parentsOf, before, climbed), nil
 }
 
 // siblingClimbed is what the climb held per source within its cap, and the
-// sources it took over the cap.
+// sources over a cap: the climb's, or a read's of siblingEdges.
 type siblingClimbed struct {
 	held map[string]int
 	over map[string]bool
 }
 
-// foldSiblings is each source's result over its nodes' edges: before holds
-// each qualifying parent's matching siblings in key order. A source whose
-// gated rows, with what its climb held, pass the cap is over it.
+// foldSiblings is each source's result over its nodes' edges: parentsOf
+// holds each source's qualifying parents, and before each qualifying
+// parent's matching siblings in key order. A source whose gated rows, with
+// what its climb held, pass the cap is over it.
 func foldSiblings(
-	w *SiblingWalk, srcsOf map[string][]string, nodeEdges []SiblingEdge, qualify map[string]bool,
+	w *SiblingWalk, nodeEdges map[string][]SiblingEdge, parentsOf map[string][]string,
 	before map[string][]SiblingEdge, climbed siblingClimbed,
 ) map[string]RollupResult {
 	limit := w.RowCap
@@ -189,51 +209,58 @@ func foldSiblings(
 		limit = AlongRowCap
 	}
 	type pair struct{ node, peer string }
-	pairs := map[string]map[pair]bool{}
-	behind := map[string]map[string]bool{}
-	parentsOf := map[string][]string{}
-	read := maps.Clone(climbed.held)
-	for _, e := range nodeEdges {
-		if !qualify[e.Parent] {
-			continue
-		}
-		for _, src := range srcsOf[e.Node] {
-			read[src]++
-			parentsOf[src] = appendNew(parentsOf[src], e.Parent)
-			if pairs[src] == nil {
-				pairs[src], behind[src] = map[pair]bool{}, map[string]bool{}
-			}
-			for _, t := range before[e.Parent] {
-				if metamodel.CompareOrderKeys(t.orderKey(), e.orderKey()) >= 0 {
-					break
-				}
-				pairs[src][pair{e.Node, t.Node}] = true
-				behind[src][e.Node] = true
-			}
-		}
-	}
 	out := make(map[string]RollupResult, len(parentsOf)+len(climbed.over))
 	for src := range climbed.over {
 		out[src] = RollupResult{OverCap: true}
 	}
-	for src := range read {
-		for _, p := range parentsOf[src] {
-			read[src] += len(before[p])
-		}
-		if read[src] > limit {
-			out[src] = RollupResult{OverCap: true}
-		}
-	}
 	for src, ps := range parentsOf {
-		if read[src] > limit {
+		if climbed.over[src] {
+			continue
+		}
+		pairs, behind := map[pair]bool{}, map[string]bool{}
+		read := climbed.held[src]
+		for _, e := range nodeEdges[src] {
+			if !slices.Contains(ps, e.Parent) {
+				continue
+			}
+			read++
+			for _, t := range before[e.Parent] {
+				if metamodel.CompareOrderKeys(t.orderKey(), e.orderKey()) >= 0 {
+					break
+				}
+				pairs[pair{e.Node, t.Node}] = true
+				behind[e.Node] = true
+			}
+		}
+		for _, p := range ps {
+			read += len(before[p])
+		}
+		if read > limit {
+			out[src] = RollupResult{OverCap: true}
 			continue
 		}
 		slices.Sort(ps)
-		res := RollupResult{Count: len(behind[src]), Parents: ps}
+		res := RollupResult{Count: len(behind), Parents: ps}
 		if w.CountSiblings {
-			res.Count = len(pairs[src])
+			res.Count = len(pairs)
 		}
 		out[src] = res
+	}
+	return out
+}
+
+// distinctEdges is the distinct edges of every source in bySrc.
+func distinctEdges(bySrc map[string][]SiblingEdge) []SiblingEdge {
+	type key struct{ node, parent string }
+	seen := map[key]bool{}
+	var out []SiblingEdge
+	for _, src := range slices.Sorted(maps.Keys(bySrc)) {
+		for _, e := range bySrc[src] {
+			if k := (key{e.Node, e.Parent}); !seen[k] {
+				seen[k] = true
+				out = append(out, e)
+			}
+		}
 	}
 	return out
 }
@@ -251,22 +278,26 @@ func edgeEnds(edges []SiblingEdge, end func(SiblingEdge) string) []string {
 	return slices.Compact(out)
 }
 
-// siblingEdges reads the identity-scoped edges of rel whose near end is in
-// ids: their sources for dir outgoing, their targets for incoming.
+// siblingEdges reads, per source, the identity-scoped edges of rel at its
+// ids in nearsOf: from them, or into them when incoming. A source reading
+// more than hopCap edges is marked in over and has none.
 func siblingEdges(
-	ctx context.Context, st RollupReader, rel string, ids []string, dir Direction,
-) ([]SiblingEdge, error) {
-	if len(ids) == 0 {
-		return nil, nil
+	ctx context.Context, st RollupReader, rel string, nearsOf map[string][]string, incoming bool, hopCap int,
+	over map[string]bool,
+) (map[string][]SiblingEdge, error) {
+	edges, overRead, err := readPerSource(ctx, st, rel, incoming, nearsOf, hopCap)
+	if err != nil {
+		return nil, err
 	}
-	identity := entity.Face("")
-	var out []SiblingEdge
-	rq := RelationQuery{Type: rel, EntityIDs: ids, FromFace: &identity, Direction: dir}
-	for r, err := range st.ListRelations(ctx, rq) {
-		if err != nil {
-			return nil, err
+	for src := range overRead {
+		over[src] = true
+	}
+	out := make(map[string][]SiblingEdge, len(edges))
+	for src, rs := range edges {
+		for _, r := range rs {
+			e := SiblingEdge{Node: r.From, Parent: r.To, Order: r.Properties[metamodel.OrderPropertyIn]}
+			out[src] = append(out[src], e)
 		}
-		out = append(out, SiblingEdge{Node: r.From, Parent: r.To, Order: r.Properties[metamodel.OrderPropertyIn]})
 	}
 	return out, nil
 }

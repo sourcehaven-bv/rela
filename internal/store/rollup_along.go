@@ -346,29 +346,34 @@ type alongReach struct {
 	header EntityHeader
 }
 
-// alongHop follows seg from the frontier triples: one relation read for
-// every frontier id, then one gated header read per type seg reaches.
-// over are the sources that read more than hopCap edges; they reach
-// nothing.
+// alongHop follows seg from the frontier triples: the relation reads of
+// readPerSource, then one gated header read per type seg reaches. over are
+// the sources that read more than hopCap edges; they reach nothing.
 func alongHop(
 	ctx context.Context, st RollupReader, seg AlongSegment, from []alongKey, hopCap int,
 ) (reached []alongReach, over []string, err error) {
-	srcsOf := map[string][]string{}
+	nears := map[string][]string{}
 	for _, k := range from {
-		if !slices.Contains(srcsOf[k.id], k.src) {
-			srcsOf[k.id] = append(srcsOf[k.id], k.src)
-		}
+		nears[k.src] = appendNew(nears[k.src], k.id)
 	}
-	near := slices.Sorted(maps.Keys(srcsOf))
-	linked, edges, err := alongLinks(ctx, st, seg, near, srcsOf)
+	edges, overSet, err := readPerSource(ctx, st, seg.Relation, seg.SourceIsTo, nears, hopCap)
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, src := range slices.Sorted(maps.Keys(edges)) {
-		if edges[src] > hopCap {
-			over = append(over, src)
+	over = slices.Sorted(maps.Keys(overSet))
+	linked := map[string][]string{}
+	nearSet := map[string]bool{}
+	for src, es := range edges {
+		for _, r := range es {
+			nearID, far := r.From, r.To
+			if seg.SourceIsTo {
+				nearID, far = r.To, r.From
+			}
+			nearSet[nearID] = true
+			linked[far] = appendNew(linked[far], src)
 		}
 	}
+	near := slices.Sorted(maps.Keys(nearSet))
 	if len(linked) == 0 {
 		return nil, over, nil
 	}
@@ -391,35 +396,6 @@ func alongHop(
 		}
 	}
 	return reached, over, nil
-}
-
-// alongLinks reads seg's identity-scoped edges at near: the sources that
-// reach each far entity, and the edges each source read.
-func alongLinks(
-	ctx context.Context, st RollupReader, seg AlongSegment, near []string, srcsOf map[string][]string,
-) (linked map[string][]string, edges map[string]int, err error) {
-	identity := entity.Face("")
-	rq := RelationQuery{Type: seg.Relation, EntityIDs: near, FromFace: &identity, Direction: DirectionOutgoing}
-	if seg.SourceIsTo {
-		rq.Direction = DirectionIncoming
-	}
-	linked, edges = map[string][]string{}, map[string]int{}
-	for r, err := range st.ListRelations(ctx, rq) {
-		if err != nil {
-			return nil, nil, err
-		}
-		nearID, far := r.From, r.To
-		if seg.SourceIsTo {
-			nearID, far = r.To, r.From
-		}
-		for _, src := range srcsOf[nearID] {
-			edges[src]++
-			if !slices.Contains(linked[far], src) {
-				linked[far] = append(linked[far], src)
-			}
-		}
-	}
-	return linked, edges, nil
 }
 
 // alongCounted judges every counting node once over the ids visited through
