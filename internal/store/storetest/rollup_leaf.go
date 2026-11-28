@@ -23,6 +23,7 @@ func runRollupLeafTests(t *testing.T, f Factory) {
 	for name, run := range map[string]func(*testing.T, store.Store){
 		"held":         leafHeld,
 		"invalid":      leafInvalid,
+		"paged":        leafPagedInherit,
 		"differential": leafDifferential,
 	} {
 		t.Run(name, func(t *testing.T) { run(t, f(t)) })
@@ -42,6 +43,37 @@ func leafHeld(t *testing.T, s store.Store) {
 	require.Equal(t, []string{"ACT-1"}, leafIDs(t, s, store.RollupLeaf(held, true)))
 	require.Equal(t, []string{"ACT-2"}, leafIDs(t, s, store.RollupLeaf(held, false)))
 	require.Empty(t, leafIDs(t, s, store.AndCond(store.RollupLeaf(held, false), alongStatus("done"))))
+}
+
+// leafPagedInherit: the project gate inherits its grant from the folder
+// alice owns, and the project's id sorts before every action's. A store
+// that reads the actions in keyset pages must not narrow the gate's
+// closure by the page's resume id: with two-row pages, ACT-4 and ACT-5
+// are on the second page and are held as ACT-1 and ACT-2 are.
+func leafPagedInherit(t *testing.T, s store.Store) {
+	alongSeed(t, s, "action", "open", "ACT-1", "ACT-2", "ACT-3", "ACT-4", "ACT-5", "ACT-6")
+	alongSeed(t, s, "project", "on_hold", "AA-1")
+	seedGraphQueryEntities(t, s, "folder", "FLD-1")
+	seedGraphQueryEntities(t, s, "user", "alice")
+	mustRel(t, s, "alice", "owns", "FLD-1")
+	mustRel(t, s, "AA-1", "in_folder", "FLD-1")
+	for _, id := range []string{"ACT-1", "ACT-2", "ACT-4", "ACT-5"} {
+		mustRel(t, s, id, "child_of", "AA-1")
+	}
+	held := store.RollupQuery{Func: store.RollupCount, Along: &store.AlongWalk{
+		MaxDepth: 2,
+		Segments: []store.AlongSegment{{Relation: "child_of", Repeat: true, Through: map[string]store.AlongNode{
+			"project": {Gate: store.GraphQuery{
+				EntityType: "project", Faces: alongWorld,
+				Related: []store.DirectedRelation{{Incoming: true, Pred: store.RelationPredicate{
+					Endpoints: []string{"alice"}, OfTypes: []string{"owns"},
+					EntityInheritThrough: []string{"in_folder"}, EntityDepth: 3,
+				}}},
+			}, Counts: new(alongStatus("on_hold"))},
+		}}},
+	}}
+	require.Equal(t, []string{"ACT-1", "ACT-2", "ACT-4", "ACT-5"}, leafIDs(t, s, store.RollupLeaf(held, true)))
+	require.Equal(t, []string{"ACT-3", "ACT-6"}, leafIDs(t, s, store.RollupLeaf(held, false)))
 }
 
 // leafInvalid: a leaf with sources, another fold, or visits is refused.

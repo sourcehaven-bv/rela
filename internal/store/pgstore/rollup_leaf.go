@@ -53,8 +53,13 @@ func (cb *condBuilder) rollupStrict(c store.Cond) string {
 }
 
 // rollupLeaf renders c as an integer over the candidate row e: 1, 0, or
-// NULL when the candidate's walk is over its cap.
+// NULL when the candidate's walk is over its cap. The keyset resume id
+// narrows only closures rooted at the page's candidates; the walk's gates
+// are rooted at other entities, so it is cleared while they render.
 func (cb *condBuilder) rollupLeaf(c *store.RollupCond) string {
+	prevAfter, prevOp := cb.b.pageAfter, cb.b.pageSeedOp
+	cb.b.pageAfter, cb.b.pageSeedOp = "", ""
+	defer func() { cb.b.pageAfter, cb.b.pageSeedOp = prevAfter, prevOp }()
 	if err := store.ValidateCond(store.Cond{Op: store.CondRollup, Rollup: c}); err != nil {
 		return cb.b.fail(err)
 	}
