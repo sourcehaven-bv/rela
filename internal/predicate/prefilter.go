@@ -291,6 +291,11 @@ type Comparison struct {
 	// Int reports that Attribute is an int and Value the decimal form of
 	// an int literal. Only [Program.ConditionTree] reports one.
 	Int bool
+
+	// Bool reports an `==` of a boolean attribute with a boolean literal,
+	// whose Value is "true" or "false". Only [Program.ConditionTree]
+	// reports one.
+	Bool bool
 }
 
 // TraversalTerm is one `related(...)` leaf of

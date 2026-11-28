@@ -366,7 +366,7 @@ func (o actionOps) collectCandidates(
 		var noCondition store.GraphQuery
 		return o.collectLoweredCandidates(ctx, s, subjectID, target, rqr, noCondition, r, existing, cands)
 	}
-	frag, empty, lowered := lowerViewCondition(ctx, s.Meta, m, o.h.affordances.resolver(), target)
+	frag, empty, lowered := lowerViewCondition(ctx, m, o.h.affordances.resolver(), target)
 	switch {
 	case lowered && empty:
 		return false, nil

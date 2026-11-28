@@ -38,25 +38,15 @@ type relationFieldVerdicter interface {
 func (r *Rollups) siblingsColumn(
 	ctx context.Context, col rollup.Column, ids []string, world store.WorldScope, rowCap int,
 ) (results map[string]store.RollupResult, withheld map[string]bool, err error) {
-	sw := col.Siblings
-	parents, err := r.siblingNodes(ctx, sw.Parents, sw.WhenParent, world)
+	q, err := r.siblingsQuery(ctx, col, ids, world, rowCap)
 	if err != nil {
 		return nil, nil, err
 	}
-	members, err := r.siblingNodes(ctx, sw.Members, sw.Where, world)
+	results, err = store.Rollup(ctx, r.st, q)
 	if err != nil {
 		return nil, nil, err
 	}
-	results, err = store.Rollup(ctx, r.st, store.RollupQuery{
-		Sources: ids, Func: col.StoreFunc(), Siblings: &store.SiblingWalk{
-			Relation: sw.Relation, Parents: parents, Siblings: members, Climb: sw.Climb,
-			CountSiblings: col.Siblings.CountSiblings, RowCap: rowCap,
-		},
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	dark, err := r.darkParents(ctx, sw.Relation, results, members)
+	dark, err := r.darkParents(ctx, col.Siblings.Relation, results, q.Siblings.Siblings)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -67,6 +57,28 @@ func (r *Rollups) siblingsColumn(
 		}
 	}
 	return results, withheld, nil
+}
+
+// siblingsQuery is the store query of col for ids: every parent and
+// sibling gated for the reader in world.
+func (r *Rollups) siblingsQuery(
+	ctx context.Context, col rollup.Column, ids []string, world store.WorldScope, rowCap int,
+) (store.RollupQuery, error) {
+	sw := col.Siblings
+	parents, err := r.siblingNodes(ctx, sw.Parents, sw.WhenParent, world)
+	if err != nil {
+		return store.RollupQuery{}, err
+	}
+	members, err := r.siblingNodes(ctx, sw.Members, sw.Where, world)
+	if err != nil {
+		return store.RollupQuery{}, err
+	}
+	return store.RollupQuery{
+		Sources: ids, Func: col.StoreFunc(), Siblings: &store.SiblingWalk{
+			Relation: sw.Relation, Parents: parents, Siblings: members, Climb: sw.Climb,
+			CountSiblings: sw.CountSiblings, RowCap: rowCap,
+		},
+	}, nil
 }
 
 // siblingNodes is the reader's gate per type of types, each judged by its

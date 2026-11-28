@@ -4,10 +4,14 @@ import (
 	"context"
 	"slices"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/queryplan"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // conditionAttributes is the optional capability a [ViewConditionMatcher]
@@ -63,10 +67,14 @@ func conditionRollups(meta *metamodel.Metamodel, m ViewConditionMatcher) map[str
 // rollupConditionMatcher judges a condition that reads roll-ups. Before it
 // evaluates, it computes those roll-ups for the rows it is handed, which are
 // the redacted candidates, gated for the reader inside the roll-up query
-// (gate before fold). It offers no store lowering: the store holds no
-// roll-up value, so such a condition always takes the Go path until the
-// per-candidate LATERAL pushdown and TKT-4Z2BIRG. Its store calls grow with
-// the candidates over [rollupChunk] (TestQueryBudget_ListConditionRollups).
+// (gate before fold). Its store calls grow with the candidates over
+// [rollupChunk] (TestQueryBudget_ListConditionRollups).
+//
+// Its store lowering ([rollupConditionMatcher.Lower]) answers each exists
+// roll-up compared with true or false by a per-candidate walk inside the
+// page scan, when queryplan admits it (design gap 3.5, step 2); min and
+// max, defer-date conditions (TKT-4Z2BIRG) and nested roll-ups keep the
+// Go path.
 type rollupConditionMatcher struct {
 	inner ViewConditionMatcher
 	want  map[string]bool
@@ -81,6 +89,41 @@ func (m rollupConditionMatcher) EntityType() string {
 // EntityAttributes are the entity fields the inner condition reads.
 func (m rollupConditionMatcher) EntityAttributes() []string {
 	return m.inner.(conditionAttributes).EntityAttributes()
+}
+
+// rollupLowerer is the optional capability of a compiled condition to lower
+// its roll-up comparisons; appbuild's view condition matcher has it.
+type rollupLowerer interface {
+	LowerRollups(
+		ctx context.Context, gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+		facts queryplan.RollupFacts, bind visibility.RollupLeafBinder,
+	) (frag store.GraphQuery, empty, ok bool)
+}
+
+// Lower rewrites the condition for the principal gate authorizes, each
+// roll-up comparison queryplan admits bound to this reader's walk in the
+// request's world. ok=false keeps the Go path: the inner condition cannot
+// lower its roll-ups, or the reader's walk has no store form.
+func (m rollupConditionMatcher) Lower(
+	ctx context.Context, gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+) (frag store.GraphQuery, empty, ok bool) {
+	l, lowers := m.inner.(rollupLowerer)
+	if !lowers || m.src.schema == nil || m.src.schema() == nil {
+		return frag, false, false
+	}
+	set := m.src.schema().rollups
+	reads := visibility.ReadQueryFunc(func(ctx context.Context, t string) (acl.ReadQueryResult, error) {
+		return readGateFromContext(ctx).ReadQuery(ctx, t), nil
+	})
+	r, err := visibility.NewRollups(set, m.src.st, reads, m.src.fields())
+	if err != nil {
+		return frag, false, false
+	}
+	world := worldScopeFrom(ctx)
+	bind := func(ctx context.Context, entityType, property string) (store.RollupQuery, bool, error) {
+		return r.LeafQuery(ctx, entityType, property, world)
+	}
+	return l.LowerRollups(ctx, gate, set.LeafFacts(r.OrderFieldGated), bind)
 }
 
 // MatchPage computes the roll-ups the condition reads for rows, one batch

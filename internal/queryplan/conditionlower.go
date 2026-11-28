@@ -32,25 +32,27 @@ type ConditionLowering struct {
 // LoweredCond is one node of [ConditionLowering.Where]: a [store.Cond] whose
 // relation leaves are still traversals for the caller to gate. Op is a
 // [store.CondOp]; Prop is meaningful for CondProp, Traversal (bound to the
-// identity) for CondRelated, Args for the others. Literal true is an AND
-// without arguments and literal false an OR without arguments.
+// identity) for CondRelated, Rollup for CondRollup, Args for the others.
+// Literal true is an AND without arguments and literal false an OR without
+// arguments.
 type LoweredCond struct {
 	Op        store.CondOp
 	Prop      store.PropPredicate
 	Traversal predicate.TraversalSpec
+	Rollup    LoweredRollup
 	Args      []LoweredCond
 }
 
 // PropCond returns c as a [store.Cond]. ok is false when c holds a
-// traversal anywhere: a traversal must pass the principal's traversal gate
-// before it becomes a relation leaf, which this conversion cannot do. It
+// traversal or a roll-up anywhere: each must be bound for the principal
+// before it becomes a store leaf, which this conversion cannot do. It
 // does not check field visibility; the property leaves match the stored
 // row.
 func (c LoweredCond) PropCond() (store.Cond, bool) {
 	switch c.Op {
 	case store.CondProp:
 		return store.PropLeaf(c.Prop), true
-	case store.CondRelated:
+	case store.CondRelated, store.CondRollup:
 		return store.Cond{}, false
 	default:
 	}
@@ -105,6 +107,7 @@ func (c LoweredCond) PropCond() (store.Cond, bool) {
 //   - an ordered comparison on a decimal, date, datetime, boolean or list
 //     declines (dates wait for canonical storage, TKT-4Z2BIRG)
 //   - a rollup property declines: the stored row holds no rollup value
+//     ([LowerConditionRollups] lowers some comparisons of one)
 //   - `current_user.tool` declines, and a `current_user` reference with no
 //     identity declines, as in [LowerScope]
 //   - a tree over [store.MaxCondDepth], [store.MaxCondLeaves] or
@@ -131,6 +134,13 @@ func LowerCondition(
 func LowerConditionExplained(
 	prog *predicate.Program, meta *metamodel.Metamodel, entityType, identity string,
 ) (ConditionLowering, error) {
+	return lowerCondition(prog, meta, entityType, identity, nil)
+}
+
+// lowerCondition is [LowerConditionRollups]; nil facts lower no roll-up.
+func lowerCondition(
+	prog *predicate.Program, meta *metamodel.Metamodel, entityType, identity string, facts RollupFacts,
+) (ConditionLowering, error) {
 	if prog == nil || meta == nil || entityType == "" {
 		return ConditionLowering{}, &UnsupportedConditionError{Construct: "condition", Reason: "nothing to lower"}
 	}
@@ -142,7 +152,7 @@ func LowerConditionExplained(
 				"string or integer literal, related(...), and and/or/not over those",
 		}
 	}
-	l := lowerer{meta: meta, types: []string{entityType}, identity: identity}
+	l := lowerer{meta: meta, types: []string{entityType}, identity: identity, rollups: facts}
 	root, err := l.lower(tree)
 	if err != nil {
 		return ConditionLowering{}, err
@@ -265,7 +275,7 @@ func withinCondLimits(root LoweredCond) bool {
 		switch c.Op {
 		case store.CondProp:
 			leaves++
-		case store.CondRelated:
+		case store.CondRelated, store.CondRollup:
 			leaves++
 			rels++
 		default:
@@ -284,6 +294,7 @@ type lowerer struct {
 	meta     *metamodel.Metamodel
 	types    []string
 	identity string
+	rollups  RollupFacts
 }
 
 func (l lowerer) lower(t predicate.CondTree) (LoweredCond, error) {
@@ -329,9 +340,11 @@ func (l lowerer) lowerCompare(c predicate.Comparison) (LoweredCond, error) {
 		return LoweredCond{}, &UnsupportedConditionError{Construct: describeComparison(c), Reason: reason}
 	}
 	if rollupOnAnyType(l.meta, l.types, c.Attribute) {
-		return refuse("a rollup property is not stored, so the store cannot compare it")
+		return l.lowerRollup(c)
 	}
 	switch {
+	case c.Bool:
+		return refuse("a boolean comparison lowers only on an exists roll-up")
 	case c.Int:
 		if !integerOnEveryType(l.meta, l.types, c.Attribute) {
 			return refuse("not a declared integer property")

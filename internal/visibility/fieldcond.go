@@ -191,7 +191,7 @@ func soleProperty(c store.Cond) (string, bool) {
 	prop, only, found := "", true, false
 	c.Walk(func(n store.Cond) bool {
 		switch n.Op {
-		case store.CondRelated:
+		case store.CondRelated, store.CondRollup:
 			only = false
 		case store.CondProp:
 			if found && n.Prop.Property != prop {

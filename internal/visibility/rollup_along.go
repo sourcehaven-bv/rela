@@ -40,20 +40,9 @@ func (r *Rollups) alongColumn(
 	ctx context.Context, col rollup.Column, ids []string, world store.WorldScope, rowCap int,
 ) (results map[string]store.RollupResult, withheld map[string]bool, err error) {
 	a := col.Along
-	gates := alongGates{}
-	for _, seg := range a.Segments {
-		for _, typ := range seg.Reaches {
-			if _, done := gates[typ]; done {
-				continue
-			}
-			g, denied, err := r.gate(ctx, typ, world)
-			switch {
-			case err != nil:
-				return nil, nil, err
-			case !denied:
-				gates[typ] = g
-			}
-		}
+	gates, err := r.alongGates(ctx, a, world)
+	if err != nil {
+		return nil, nil, err
 	}
 	if a.Lowers() {
 		counts, err := r.alongCounts(ctx, col, gates)
@@ -66,6 +55,26 @@ func (r *Rollups) alongColumn(
 		}
 	}
 	return r.alongGoFold(ctx, col, ids, gates, world, rowCap)
+}
+
+// alongGates is the reader's gate per type a reaches in world.
+func (r *Rollups) alongGates(ctx context.Context, a *rollup.Along, world store.WorldScope) (alongGates, error) {
+	gates := alongGates{}
+	for _, seg := range a.Segments {
+		for _, typ := range seg.Reaches {
+			if _, done := gates[typ]; done {
+				continue
+			}
+			g, denied, err := r.gate(ctx, typ, world)
+			switch {
+			case err != nil:
+				return nil, err
+			case !denied:
+				gates[typ] = g
+			}
+		}
+	}
+	return gates, nil
 }
 
 // alongQuery is the store query of col: each reachable type the reader

@@ -96,6 +96,13 @@ func (p *policyResolver) RelationMetaRestricted(ctx context.Context, from *entit
 	return affordances.RelationMetaRestricted(ctx, p.inner, from, relType)
 }
 
+// RelationMetaGated reports whether the policy declares meta `visible:`
+// grants for relType anywhere ([affordances.RelationMetaGated]); a roll-up
+// over relType's order lowers into a list scan only when it does not.
+func (p *policyResolver) RelationMetaGated(relType string) bool {
+	return affordances.RelationMetaGated(p.inner, relType)
+}
+
 // RelationFieldVerdicts forwards to the wrapped policy resolver, making
 // policyResolver satisfy [RelationVisibilityResolver] (TKT-B1F5Q1). Only the
 // policy-backed resolver implements this — Nop / Demo do not, so relation meta
