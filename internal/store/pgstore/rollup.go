@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -77,28 +79,46 @@ func (s *Store) Rollup(ctx context.Context, q store.RollupQuery) (map[string]sto
 	return out, nil
 }
 
-// RollupStatementTimeout bounds every roll-up statement (design T7). A walk
+// RollupStatementTimeout bounds every roll-up statement (design T7), and
+// every statement of a graph query whose Where holds a roll-up leaf. A walk
 // a writer made expensive fails instead of holding a connection.
 const RollupStatementTimeout = 5 * time.Second
 
-// queryBounded runs one read statement in its own transaction under
-// [RollupStatementTimeout] and calls each for every row. SET LOCAL ends
-// with the transaction (a savepoint inside a [Store.Tx] view), so the
-// timeout never reaches the next user of the connection.
-func (s *Store) queryBounded(ctx context.Context, sqlText string, args []any, each func(pgx.Rows) error) error {
+// rollupStatementTimeout holds [RollupStatementTimeout]. It is atomic only
+// so tests can shrink it while other tests' statements read it.
+var rollupStatementTimeout atomic.Int64
+
+func init() { rollupStatementTimeout.Store(int64(RollupStatementTimeout)) }
+
+// beginBounded opens a read transaction under [RollupStatementTimeout]
+// and returns the handle to query it through. SET LOCAL ends with the
+// transaction (a savepoint inside a [Store.Tx] view), so the timeout never
+// reaches the next user of the connection.
+func (s *Store) beginBounded(ctx context.Context) (pgx.Tx, DBTX, error) {
 	tx, err := unwrapDB(s.db).Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("pgstore: rollup: %w", err)
+		return nil, nil, fmt.Errorf("pgstore: rollup: %w", err)
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // a read-only transaction; nothing to keep
-	timeout := fmt.Sprintf("SET LOCAL statement_timeout = '%dms'", RollupStatementTimeout.Milliseconds())
-	if _, err = tx.Exec(ctx, timeout); err != nil {
-		return fmt.Errorf("pgstore: rollup: %w", err)
+	ms := time.Duration(rollupStatementTimeout.Load()).Milliseconds()
+	if _, err = tx.Exec(ctx, fmt.Sprintf("SET LOCAL statement_timeout = '%dms'", max(ms, 1))); err != nil {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+		return nil, nil, fmt.Errorf("pgstore: rollup: %w", err)
 	}
 	var db DBTX = tx
 	if i, ok := s.db.(*instantDB); ok {
 		db = i.over(tx)
 	}
+	return tx, db, nil
+}
+
+// queryBounded runs one read statement in its own transaction under
+// [RollupStatementTimeout] and calls each for every row.
+func (s *Store) queryBounded(ctx context.Context, sqlText string, args []any, each func(pgx.Rows) error) error {
+	tx, db, err := s.beginBounded(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // a read-only transaction; nothing to keep
 	rows, err := db.Query(ctx, sqlText, args...)
 	if err != nil {
 		return fmt.Errorf("pgstore: rollup: %w", err)
@@ -113,6 +133,61 @@ func (s *Store) queryBounded(ctx context.Context, sqlText string, args []any, ea
 		return fmt.Errorf("pgstore: rollup: %w", err)
 	}
 	return nil
+}
+
+// boundedDB is the store's handle with each Query run in its own read
+// transaction under [RollupStatementTimeout], ended when its rows close.
+// A keyset scan reads every page into memory and closes it before it
+// yields, so it holds no transaction across a yield. Exec, QueryRow and
+// Begin pass through unbounded; [graphPages] uses only Query.
+type boundedDB struct{ s *Store }
+
+func (b boundedDB) Query(ctx context.Context, sqlText string, args ...any) (pgx.Rows, error) {
+	tx, db, err := b.s.beginBounded(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(ctx, sqlText, args...)
+	if err != nil {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+		return nil, err
+	}
+	return &boundedRows{Rows: rows, end: func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }}, nil
+}
+
+func (b boundedDB) Exec(ctx context.Context, sqlText string, args ...any) (pgconn.CommandTag, error) {
+	return b.s.db.Exec(ctx, sqlText, args...)
+}
+
+func (b boundedDB) QueryRow(ctx context.Context, sqlText string, args ...any) pgx.Row {
+	return b.s.db.QueryRow(ctx, sqlText, args...)
+}
+
+func (b boundedDB) Begin(ctx context.Context) (pgx.Tx, error) { return b.s.db.Begin(ctx) }
+
+// boundedRows ends its transaction once, when it closes.
+type boundedRows struct {
+	pgx.Rows
+	end  func()
+	done bool
+}
+
+func (r *boundedRows) Close() {
+	r.Rows.Close()
+	if !r.done {
+		r.done = true
+		r.end()
+	}
+}
+
+// graphDB is the handle a graph query over q reads through: bounded by
+// [RollupStatementTimeout] when q's Where holds a roll-up leaf, whose walk
+// runs per candidate inside the scan.
+func (s *Store) graphDB(q store.GraphQuery) DBTX {
+	if store.HasRollupLeaf(q.Where) {
+		return boundedDB{s: s}
+	}
+	return s.db
 }
 
 // rollupValue decodes the text the statement returns for the aggregate.

@@ -1224,8 +1224,10 @@ counts once. A loop in the data ends at `max_depth`. A walk from one entity
 that would hold more than 50,000 rows the reader may read, or read more than
 50,001 edges in one hop, fails, and the roll-up then has no value for that
 entity. A roll-up statement on PostgreSQL, and a roll-up call on SQLite,
-also stops after 5 seconds. See the access guide for what these bounds
-reveal.
+also stops after 5 seconds. The timeout covers every entity in that
+statement or call, so the roll-up then has no value for any of them. A list
+or count that filters on a roll-up fails with an error instead. See the
+access guide for what these bounds reveal.
 
 **Earlier siblings (`siblings_before:`).** A `siblings_before:` roll-up looks
 at the siblings that come before the entity in a parent's manual order. Use

@@ -252,3 +252,11 @@ func RollupStatementTimeoutSettingForTest(ctx context.Context, s *Store) (string
 	})
 	return got, err
 }
+
+// SetRollupStatementTimeoutForTest shrinks [RollupStatementTimeout] for the
+// test's duration.
+func SetRollupStatementTimeoutForTest(t interface{ Cleanup(func()) }, d time.Duration) {
+	prev := rollupStatementTimeout.Load()
+	rollupStatementTimeout.Store(int64(d))
+	t.Cleanup(func() { rollupStatementTimeout.Store(prev) })
+}

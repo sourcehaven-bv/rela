@@ -1390,16 +1390,23 @@ A nested roll-up gates twice: the outer roll-up gates the related entities,
 and each inner roll-up gates every entity it visits. When an inner value is
 absent for the reader, the outer value is absent too.
 
-Walks are bounded per source row, and every bound fails closed: the roll-up
-has no value for that row, and a list condition on it does not match the
-row. Other rows on the page keep their value.
+Walks are bounded, and every bound fails closed. The row cap and the edge
+ceiling apply per source row: the roll-up has no value for that row, and a
+list condition on it does not match the row. Other rows on the page keep
+their value.
 
 - Only rows the reader may read count toward the row cap of 50,000.
 - Each step of a walk (an `along:` hop, or the edges of a `siblings_before:`
   walk) reads at most 50,001 edges per source row, before they are gated. A
   row over that ceiling has no value.
-- On PostgreSQL every roll-up statement runs with a 5 second
-  `statement_timeout`; on SQLite one roll-up call stops after 5 seconds.
+
+A timeout applies to a whole statement or call, not to one row. On
+PostgreSQL every roll-up statement runs with a 5 second `statement_timeout`.
+On SQLite one roll-up call stops after 5 seconds; a call computes the
+roll-up for up to 1,000 rows. When a timeout fires, the roll-up has no
+value for any row in that statement or call. A list or a count whose
+condition holds a roll-up runs under the same timeout. When it fires, the
+request fails with an error and returns no rows.
 
 Edges are read before they are gated, so the number of hidden rows near a
 row the reader can see affects how long the request takes, and whether a

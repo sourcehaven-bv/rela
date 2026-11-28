@@ -53,3 +53,31 @@ func TestRollupTimeout(t *testing.T) {
 	_, err = s.Rollup(context.Background(), alongTestQuery(4, "ACT-1"))
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
+
+// A list query with a roll-up leaf past the timeout fails closed: the
+// leaf's batched Rollup call is bounded, so the scan errors and yields no
+// row and the count errors.
+func TestRollupLeafQueryTimeout(t *testing.T) {
+	s := open(t)
+	seed(t, s, func(v store.Store) {
+		mustCreate(t, v, entity.New("ACT-1", "action"))
+		mustCreate(t, v, entity.New("PRJ-1", "project"))
+		mustRelate(t, v, "ACT-1", "child_of", "PRJ-1")
+	})
+	leaf := store.RollupLeaf(alongTestQuery(4), false)
+	q := store.GraphQuery{EntityType: "action", Faces: store.InWorld(store.TrivialScope()), Where: &leaf}
+	sqlitestore.SetRollupTimeoutForTest(t, time.Nanosecond)
+	var rows int
+	var scanErr error
+	for _, err := range s.GraphQueryHeaders(context.Background(), q) {
+		if err != nil {
+			scanErr = err
+			break
+		}
+		rows++
+	}
+	require.ErrorIs(t, scanErr, context.DeadlineExceeded)
+	require.Zero(t, rows)
+	_, err := s.CountMatched(context.Background(), q)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
