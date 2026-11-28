@@ -17,8 +17,8 @@ var unselectedGraphQueryAllowlist = map[string]allowed{
 		"returns); the caller merges it into a selected query"},
 	"internal/appbuild/queryscopes.go":    {1, "a \"no query\" return of the scope lowering"},
 	"internal/dataentry/gantt_handler.go": {1, "completed by stampScope before it runs"},
-	"internal/dataentry/listpushdown.go": {3, "one is completed by stampScope before it runs; two are " +
-		"\"no query\" returns of the view condition lowering"},
+	"internal/dataentry/listpushdown.go": {6, "one is completed by stampScope before it runs; two are " +
+		"\"no query\" returns of the view condition lowering and three of the relation filter lowering"},
 	"internal/dataentry/queryscope.go": {1, "a \"no query\" return of the scope lowering"},
 	"internal/dataentry/scopedread.go": {1, "completed by stampScope before it runs"},
 	"internal/visibility/rollup.go": {3, "\"no query\" returns of Rollups.gate (deny and error); " +

@@ -391,14 +391,16 @@ func relationFilterClassifier(
 // matchRelationFilterMany evaluates a relation filter for every row at once:
 // one relation query, one header read per distinct neighbor, one gate probe
 // per neighbor type. A row matches when a served neighbor over the relation has
-// the wanted id (TKT-ZKPA1E). Only when no served neighbor has that id does the
-// deprecated display-title fallback apply (see [logDeprecatedTitleMatch]).
+// the wanted id (TKT-ZKPA1E). A target the request already resolved to a
+// readable id needs no neighbor read. Otherwise, only when no served neighbor
+// has the value as its id does the deprecated display-title fallback apply
+// (see [logDeprecatedTitleMatch]).
 // A store failure is returned, never folded into an empty map, which would
 // admit every row for a `ne` filter. Hidden neighbors are never compared, and
 // the title compared is the redacted one the principal is shown.
 func matchRelationFilterMany(
 	ctx context.Context, svc Services, visible visibleReader, red visibility.FieldRedactor,
-	rows []*entityPkg.Entity, relation string, direction dataentryconfig.Direction, want string,
+	rows []*entityPkg.Entity, relation string, direction dataentryconfig.Direction, target relationTarget,
 ) (map[string]bool, error) {
 	matched := make(map[string]bool, len(rows))
 	if len(rows) == 0 {
@@ -408,7 +410,16 @@ func matchRelationFilterMany(
 	if err != nil || len(neighborIDs) == 0 {
 		return matched, err
 	}
-
+	if target.id != "" {
+		resolved := map[string]store.EntityHeader{
+			target.id: {ID: target.id, Type: target.entityType, Face: target.face},
+		}
+		for _, c := range servedFilterNeighbors(svc.Meta, edges, resolved, direction) {
+			matched[c.rowID] = true
+		}
+		return matched, nil
+	}
+	want := target.title
 	served, err := visible.servedIDsErr(ctx, neighborIDs)
 	if err != nil {
 		return nil, err

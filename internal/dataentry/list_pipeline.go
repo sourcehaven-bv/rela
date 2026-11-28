@@ -225,7 +225,7 @@ func (p *listPipeline) scopedSortedEntitiesScoped(
 			if ferr != nil {
 				return nil, ferr
 			}
-			rows, ferr = p.applyRelationFilters(ctx, rows, params, typeName, query.isRelationKey)
+			rows, ferr = p.applyRelationFilters(ctx, rows, query, typeName)
 			if ferr != nil {
 				return nil, ferr
 			}
@@ -262,8 +262,8 @@ func (p *listPipeline) scanType(
 	return headerEntities(headers), nil
 }
 
-// applyRelationFilters keeps the entities that match every relation filter in
-// query; isRelationKey decides which params are relation filters. An entity
+// applyRelationFilters keeps the entities that match every relation filter of
+// gated; its isRelationKey decides which params are relation filters. An entity
 // matches when it has an edge of that relation, in the configured direction,
 // to a READABLE neighbor whose id (or, deprecated, display title) equals the
 // value; see matchRelationFilterMany. An unreadable neighbor never matches, so
@@ -271,21 +271,25 @@ func (p *listPipeline) scanType(
 //
 // Only `eq` and `ne` are supported; any other operator is errBadFilter (400),
 // never a silent fail-open. It runs over the whole visible set before
-// pagination, so the list and _position agree.
+// pagination, so the list and _position agree. The pushdown answers an id
+// filter in the store instead when it can (listpushdown.go).
 func (p *listPipeline) applyRelationFilters(
-	ctx context.Context, entities []*entityPkg.Entity, query map[string][]string, typeName string,
-	isRelationKey func(string) bool,
+	ctx context.Context, entities []*entityPkg.Entity, gated gatedListQuery, typeName string,
 ) ([]*entityPkg.Entity, error) {
 	cfg := p.schema().Cfg
-	for key, values := range query {
+	isRelationKey := gated.isRelationKey
+	for key, values := range gated.params {
 		if !strings.HasPrefix(key, "filter[") || len(values) == 0 {
 			continue
 		}
 		relation, operator, ok := parseRelationFilterKey(key)
-		if !ok || !isRelationKey(relation) {
+		if !ok || isRelationKey == nil || !isRelationKey(relation) {
 			continue
 		}
-		want := values[len(values)-1]
+		want, err := relationFilterValueOf(key, values)
+		if err != nil {
+			return nil, err
+		}
 		if want == "" {
 			continue
 		}
@@ -297,9 +301,13 @@ func (p *listPipeline) applyRelationFilters(
 				errBadFilter, operator, key)
 		}
 
+		target, resolved := gated.relationTargets[key]
+		if !resolved {
+			target = relationTarget{title: want}
+		}
 		direction, _ := cfg.RelationFilterDirection(typeName, relation)
 		matched, merr := matchRelationFilterMany(
-			ctx, p.services(), p.visible(), affRedactor{aff: p.affordances}, entities, relation, direction, want)
+			ctx, p.services(), p.visible(), affRedactor{aff: p.affordances}, entities, relation, direction, target)
 		if merr != nil {
 			return nil, fmt.Errorf("%w: relation filter %q: %w", errListLoad, relation, merr)
 		}

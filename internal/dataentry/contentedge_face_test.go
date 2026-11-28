@@ -269,7 +269,7 @@ func assertIncomingCitesFilter(ctx context.Context, t *testing.T, app *App, draf
 		rows = append(rows, &entity.Entity{ID: id, Type: "feature"})
 	}
 	matched, err := matchRelationFilterMany(ctx, app.Services(), app.visibleReader, appRedactor(app), rows,
-		"cites", dataentryconfig.DirectionIncoming, title)
+		"cites", dataentryconfig.DirectionIncoming, relationTarget{title: title})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func assertIncomingCitesFilter(ctx context.Context, t *testing.T, app *App, draf
 			"policy": {Chain: []entity.Face{"draft"}, Fallback: store.FallbackExclude},
 		})})
 	matched, err = matchRelationFilterMany(draftCtx, app.Services(), app.visibleReader, appRedactor(app), rows,
-		"cites", dataentryconfig.DirectionIncoming, title)
+		"cites", dataentryconfig.DirectionIncoming, relationTarget{title: title})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestContentEdges_BareIdSurfacesServeOnlyTheOwningFace(t *testing.T) {
 			{"FEAT-PUB", true},
 		} {
 			got, err := matchRelationFilterMany(ctx, app.Services(), app.visibleReader, appRedactor(app), []*entity.Entity{pub},
-				"cites", dataentryconfig.DirectionOutgoing, tc.want)
+				"cites", dataentryconfig.DirectionOutgoing, relationTarget{title: tc.want})
 			if err != nil {
 				t.Fatal(err)
 			}

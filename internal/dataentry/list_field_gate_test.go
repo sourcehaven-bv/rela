@@ -382,7 +382,7 @@ assignments:
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := gateCtxFor(principalCtx(tc.user), t, d)
 			matched, err := matchRelationFilterMany(ctx, app.Services(), app.visibleReader, appRedactor(app), rows,
-				"implements", dataentryconfig.DirectionOutgoing, "Hidden Feature")
+				"implements", dataentryconfig.DirectionOutgoing, relationTarget{title: "Hidden Feature"})
 			if err != nil {
 				t.Fatal(err)
 			}
