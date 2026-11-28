@@ -235,25 +235,21 @@ func (a alongSeen) runLevel(
 }
 
 // foldAlong folds each source's counted visits: an entity other than the
-// source that some arrival counted, at the type, face and value of its
-// first arrival. A source with no counted visit has no result.
+// source whose earliest arrival, by level and then segment, counted. Type,
+// face, value and hit all come from that arrival. visits are in walk order.
+// A source with no counted visit has no result.
 func foldAlong(q store.RollupQuery, visits []alongVisit) (map[string]store.RollupResult, error) {
 	type key struct{ src, id string }
 	first := map[key]alongVisit{}
-	counted := map[key]bool{}
 	for _, v := range visits {
-		if v.ID == v.Src {
-			continue
-		}
 		k := key{v.Src, v.ID}
-		if _, ok := first[k]; !ok {
+		if _, ok := first[k]; !ok && v.ID != v.Src {
 			first[k] = v
 		}
-		counted[k] = counted[k] || v.hit
 	}
 	rows := map[string][]store.EntityHeader{}
 	for k, v := range first {
-		if !counted[k] {
+		if !v.hit {
 			continue
 		}
 		h := store.EntityHeader{ID: v.ID, Type: v.typ, Face: entity.Face(v.face)}

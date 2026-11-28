@@ -423,8 +423,10 @@ func alongLinks(
 }
 
 // alongCounted judges every counting node once over the ids visited through
-// it, and returns the (source, id) pairs that count. A visit counts when its
-// node's Counts holds on the face the walk's gate selected.
+// it, and returns the (source, id) pairs that count. A visit counts when the
+// Counts of the node it first arrived through holds on the face that node's
+// gate selected: type, face, value and hit all come from the earliest
+// arrival.
 func alongCounted(
 	ctx context.Context, st GraphQueryer, a *AlongWalk,
 	seen map[alongKey]bool, visited map[string]map[string]alongVisit,
@@ -435,10 +437,11 @@ func alongCounted(
 	}
 	keys := map[node][]alongKey{}
 	for k := range seen {
-		if k.id == k.src {
+		v, ok := visited[k.src][k.id]
+		if k.id == k.src || !ok || v.state != k.state {
 			continue
 		}
-		n := node{seg: k.state, typ: visited[k.src][k.id].header.Type}
+		n := node{seg: k.state, typ: v.header.Type}
 		if a.Segments[n.seg].Through[n.typ].Counts != nil {
 			keys[n] = append(keys[n], k)
 		}

@@ -27,7 +27,9 @@ import (
 // triples in all is over its cap: a sentinel row names it, and it has no
 // other row. A hop reads at most hop cap + 1 edges per frontier entity, and
 // a source reading more than hop cap edges in one hop is over its cap too,
-// so a hub is never read in full. The reference is [store.RollupGeneric].
+// so a hub is never read in full. Type, face, value and hit of a visit come
+// from its earliest arrival, by level and then segment. The reference is
+// [store.RollupGeneric].
 
 // rollupAlong is [Store.Rollup] for an along query.
 func (s *Store) rollupAlong(ctx context.Context, q store.RollupQuery) (map[string]store.RollupResult, error) {
@@ -150,17 +152,18 @@ func sourcesSeed(b *sqlBuilder, sources []string) string {
 
 // alongCountedSQL renders the walk of q from the ids seed selects: capped,
 // the sources holding more than limit triples or over the hop cap, and
-// counted, the counted visits per (src, id) of the others. overCap holds
-// when some source is over, for a walk seeded with one candidate.
+// counted, the counted visits per (src, id) of the others, each at its
+// earliest arrival. overCap holds when some source is over, for a walk
+// seeded with one candidate.
 func alongCountedSQL(
 	b *sqlBuilder, q store.RollupQuery, levels [][]store.AlongHop, seed string, limit int,
 ) (with []string, overCap string) {
 	with = append(alongWalkSQL(b, q, levels, seed, b.arg(limit+1)),
 		"capped AS (SELECT src FROM walk GROUP BY src HAVING count(*) > "+b.arg(limit)+
 			" UNION SELECT src FROM hopover)",
-		`counted AS (SELECT w.src, w.id, min(w.type) AS type, min(w.face COLLATE "C") AS face, `+
-			`min(w.val) AS val FROM walk w WHERE w.id <> w.src AND w.src NOT IN (SELECT src FROM capped) `+
-			`GROUP BY w.src, w.id HAVING bool_or(w.hit))`)
+		`arrived AS (SELECT DISTINCT ON (w.src, w.id) w.src, w.id, w.type, w.face, w.hit, w.val FROM walk w `+
+			`WHERE w.id <> w.src AND w.src NOT IN (SELECT src FROM capped) ORDER BY w.src, w.id, w.lvl, w.state)`,
+		"counted AS (SELECT src, id, type, face, val FROM arrived WHERE hit)")
 	return with, "EXISTS (SELECT 1 FROM capped)"
 }
 
