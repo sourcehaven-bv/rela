@@ -2750,8 +2750,8 @@ Notes:
 - Two targets with the same display title are separate options, told apart by
   their IDs.
 - A value that is a display title still matches, for links made before the
-  filter used IDs. This fallback is deprecated. A value that is one target's ID
-  and another target's title matches both.
+  filter used IDs. This fallback is deprecated. A value that is the ID of a
+  target you can read matches that target only, never another target's title.
 - The candidate list is fetched from the target types' entities; a type with
   more than ~100 entities has its option set truncated.
 - A relation whose name is not a plain identifier (e.g. contains a hyphen)

@@ -2,7 +2,9 @@ package dataentry
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -29,10 +31,11 @@ import (
 // inequality on scalar STRING-shaped properties (string, enum, date,
 // datetime, custom types) compare byte-for-byte on both sides; ordering by
 // such a property is byte-wise on both sides with absent values last (see
-// applyV1Sorting). Anything else — integers (byte order is not numeric
-// order), lists, `contains`/`in`/range operators, free text, relation
-// filters — stays on the Go path. Pinned by the differential test in
-// listpushdown_test.go.
+// applyV1Sorting). A relation filter by target id is pushed as a gated
+// traversal ([lowerRelationFilters], TKT-ZKPA1E). Anything else — integers
+// (byte order is not numeric order), lists, `contains`/`in`/range
+// operators, free text, relation filters by title — stays on the Go path.
+// Pinned by the differential test in listpushdown_test.go.
 //
 // The ACL is honored by construction: the pushed query IS the principal's
 // compiled read query (or an unconstrained one for an allow-all principal)
@@ -86,8 +89,14 @@ func planListPushdown(
 			continue
 		}
 		fk, err := parseFilterKey(key)
-		if err != nil || fk.arrayForm || (isRelationKey != nil && isRelationKey(fk.property)) {
+		if err != nil || fk.arrayForm {
 			return listPlan{}, false
+		}
+		if isRelationKey != nil && isRelationKey(fk.property) {
+			if !pushableRelationFilter(meta, gated, key, fk, values) {
+				return listPlan{}, false
+			}
+			continue
 		}
 		property, operator := fk.property, fk.operator
 		if !stringShaped(property) || len(values) != 1 {
@@ -225,6 +234,16 @@ func (n listNarrowing) pushdownPlan(
 			return listPlan{}, false, false
 		}
 	}
+	frag, denied, lowered := lowerRelationFilters(ctx, n.state, typeName, query)
+	switch {
+	case !lowered:
+		return listPlan{}, false, false
+	case denied:
+		return listPlan{}, true, true
+	}
+	if plan, lowered = plan.narrowed(frag); !lowered {
+		return listPlan{}, false, false
+	}
 	if n.cond != nil {
 		frag, denied, lowered := lowerViewCondition(ctx, n.state.Meta, n.cond, n.fields, typeName)
 		switch {
@@ -238,6 +257,64 @@ func (n listNarrowing) pushdownPlan(
 		}
 	}
 	return plan, false, true
+}
+
+// pushableRelationFilter reports whether the relation filter at key may be
+// answered in the store: one `eq` or `ne` value that names a served target
+// by id, over an identity-scoped relation. A content-scoped edge belongs to
+// one face of its source, which the Go path checks per edge (BUG-ISJHML)
+// and a traversal does not.
+func pushableRelationFilter(
+	meta *metamodel.Metamodel, gated gatedListQuery, key string, fk filterKey, values []string,
+) bool {
+	target, ok := gated.relationTargets[key]
+	return ok && target.id != "" && len(values) == 1 &&
+		(fk.operator == "eq" || fk.operator == "ne") &&
+		!metamodel.IsContentScoped(meta, fk.property)
+}
+
+// lowerRelationFilters rewrites each id relation filter of q, in key order,
+// as a traversal gated for the principal, as [lowerViewCondition] does for
+// `related(...)`: `ne` negates it, a denied `eq` empties the page and a
+// denied `ne` adds nothing. A filter [pushableRelationFilter] refuses, or
+// any other refusal, keeps the Go path. So does a target type with
+// faces unless the principal reads it whole: the store tests the world's
+// first face of the target, while the Go path drops unreadable faces before
+// the world ranks them, so a hidden first face would split the two paths.
+func lowerRelationFilters(
+	ctx context.Context, state *Schema, typeName string, q gatedListQuery,
+) (frag store.GraphQuery, empty, ok bool) {
+	gate := traversalGateFromContext(ctx)
+	for _, key := range slices.Sorted(maps.Keys(q.relationTargets)) {
+		target := q.relationTargets[key]
+		fk, err := parseFilterKey(key)
+		if err != nil || fk.arrayForm || !pushableRelationFilter(state.Meta, q, key, fk, q.params[key]) {
+			return store.GraphQuery{}, false, false
+		}
+		if metamodel.HasFaces(state.Meta, target.entityType) &&
+			!readGateFromContext(ctx).ReadQuery(ctx, target.entityType).AllowAll {
+
+			return store.GraphQuery{}, false, false
+		}
+		direction, _ := state.Cfg.RelationFilterDirection(typeName, fk.property)
+		hop := acl.TraversalHop{
+			RelationTypes: []string{fk.property}, Incoming: direction.IsIncoming(),
+			EntityType: target.entityType, EndpointIDs: []string{target.id},
+		}
+		negate := fk.operator == "ne"
+		pred, err := gate.GateTraversal(ctx, typeName, hop)
+		switch {
+		case errors.Is(err, acl.ErrTraversalDenied):
+			empty = empty || !negate
+			continue
+		case err != nil, pred == nil, pred.Negate:
+			return store.GraphQuery{}, false, false
+		}
+		rel := store.DirectedRelation{Incoming: hop.Incoming, Pred: *pred}
+		rel.Pred.Negate = negate
+		frag.Related = append(frag.Related, rel)
+	}
+	return frag, empty, true
 }
 
 // viewConditionLowerer is the optional capability a [ViewConditionMatcher]

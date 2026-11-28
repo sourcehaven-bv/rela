@@ -132,6 +132,27 @@ func (r *Resolver) ResolveIDs(ctx context.Context, w World, ids []string) map[st
 // only for ids the read found. An unset world is logged and serves
 // nothing.
 func (r *Resolver) ResolveIDsErr(ctx context.Context, w World, ids []string) (map[string]store.EntityHeader, error) {
+	return r.resolveIDs(ctx, w, ids, func(typ string, err error) error {
+		warnGate("batch", typ, "", err)
+		return nil
+	})
+}
+
+// ResolveIDsStrict is [Resolver.ResolveIDsErr] that also returns a gate
+// error, so a caller can answer any fault as a failed request instead of
+// reading the type's ids as unserved. As with [Resolver.ReadableTypes], the
+// caller must not answer per id: a fault then tells no id from another.
+func (r *Resolver) ResolveIDsStrict(
+	ctx context.Context, w World, ids []string,
+) (map[string]store.EntityHeader, error) {
+	return r.resolveIDs(ctx, w, ids, func(_ string, err error) error { return err })
+}
+
+// resolveIDs is the body of [Resolver.ResolveIDsErr], with onGate deciding
+// what a gate error for one type does.
+func (r *Resolver) resolveIDs(
+	ctx context.Context, w World, ids []string, onGate func(typ string, err error) error,
+) (map[string]store.EntityHeader, error) {
 	if !w.denied && !w.scope.IsSet() {
 		slog.ErrorContext(ctx, "visibility: ResolveIDs with an unset world (use WorldOf)")
 		return map[string]store.EntityHeader{}, nil
@@ -140,10 +161,7 @@ func (r *Resolver) ResolveIDsErr(ctx context.Context, w World, ids []string) (ma
 	if len(ids) == 0 || w.denied {
 		return map[string]store.EntityHeader{}, nil
 	}
-	faces, err := r.scanHeaders(ctx, ids, func(typ string, err error) error {
-		warnGate("batch", typ, "", err)
-		return nil
-	})
+	faces, err := r.scanHeaders(ctx, ids, onGate)
 	if err != nil {
 		return nil, err
 	}
