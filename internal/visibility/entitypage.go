@@ -57,15 +57,18 @@ type PageTraversal struct {
 
 // PageCond is a boolean page filter: a [store.Cond] whose relation leaves
 // are hops rather than store predicates. Op is a [store.CondOp]; Prop is
-// meaningful for CondProp, Hop for CondRelated, Args for the others. As with
+// meaningful for CondProp, Hop for CondRelated, Rollup and Holds for
+// CondRollup ([GateCondRollups]), Args for the others. As with
 // [PageTraversal], the reader builds each edge test from the gate's answer,
 // so a caller cannot pass an ungated one; a hop onto a type the caller may
 // not read is false.
 type PageCond struct {
-	Op   store.CondOp
-	Prop store.PropPredicate
-	Hop  acl.TraversalHop
-	Args []PageCond
+	Op     store.CondOp
+	Prop   store.PropPredicate
+	Hop    acl.TraversalHop
+	Rollup string
+	Holds  bool
+	Args   []PageCond
 }
 
 // Props returns the property predicates of c's leaves.
@@ -97,6 +100,13 @@ func GateCond(
 	ctx context.Context, gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
 	entityType string, c PageCond,
 ) (store.Cond, error) {
+	return GateCondRollups(ctx, gate, nil, entityType, c)
+}
+
+// gateCond is [GateCondRollups] for every node but a roll-up leaf.
+func gateCond(
+	ctx context.Context, gate traversalGate, leaves RollupLeafBinder, entityType string, c PageCond,
+) (store.Cond, error) {
 	switch c.Op {
 	case store.CondRelated:
 		rels, denied, err := gateTraversals(ctx, gate, entityType, []PageTraversal{{Hop: c.Hop}})
@@ -113,7 +123,7 @@ func GateCond(
 	}
 	out := store.Cond{Op: c.Op, Args: make([]store.Cond, 0, len(c.Args))}
 	for _, a := range c.Args {
-		ga, err := GateCond(ctx, gate, entityType, a)
+		ga, err := GateCondRollups(ctx, gate, leaves, entityType, a)
 		if err != nil {
 			return store.Cond{}, err
 		}

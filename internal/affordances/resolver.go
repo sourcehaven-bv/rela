@@ -358,6 +358,12 @@ func (r *PolicyResolver) compileFieldBlock(
 			errs = append(errs, verr)
 			continue
 		}
+		if block == blockVisible {
+			if err := refuseRollupRead(r.meta, roleName, entityType, i, fg.Field, fg.When); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+		}
 		prog, err := r.compile(roleName, bk.key, entityType, block, i, fg.When)
 		if err != nil {
 			errs = append(errs, err)

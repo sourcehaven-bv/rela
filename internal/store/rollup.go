@@ -93,6 +93,15 @@ type RollupQuery struct {
 	// not hold, the result has no Value, but the row still wins: an older
 	// row is never read instead.
 	PickRequire []RowCondition
+
+	// Along makes the query an inherited roll-up ([AlongWalk]); Related,
+	// Path and Relation are then empty, and Func is count, min or max.
+	// Nil: accepted — the query is a related or path roll-up.
+	Along *AlongWalk
+	// Siblings makes the query an earlier-siblings roll-up ([SiblingWalk]);
+	// Related, Path, Relation and Along are then empty, and Func is count.
+	// Nil: accepted — the query is another form.
+	Siblings *SiblingWalk
 }
 
 // RollupStep is one step of a [RollupQuery.Path]: the identity-scoped edges
@@ -126,6 +135,17 @@ type RowCondition struct {
 type RollupResult struct {
 	Count int
 	Value any
+	// Visits are the counted visits of an along walk that asked for them.
+	Visits []AlongVisit
+	// Parents are the parents a siblings query judged the source's nodes
+	// under, sorted: each one a gate admits that meets its condition. A
+	// siblings source with none has no result.
+	Parents []string
+	// OverCap says the source's along or siblings walk held more gated
+	// rows than its row cap. The source has no answer: the other fields
+	// are empty, and the caller leaves its roll-up absent. Each source is
+	// capped alone, so one source over its cap changes no other answer.
+	OverCap bool
 }
 
 // Rollupper is the native form of [Rollup]: one statement per query.
@@ -141,7 +161,8 @@ type RollupReader interface {
 }
 
 // Rollup answers q on st, through the backend's [Rollupper] when it has one.
-// Sources without a related row are absent from the map.
+// Sources without a related row are absent from the map; a source over its
+// row cap has a result with [RollupResult.OverCap].
 func Rollup(ctx context.Context, st Store, q RollupQuery) (map[string]RollupResult, error) {
 	if r, ok := st.(Rollupper); ok {
 		return r.Rollup(ctx, q)
@@ -152,6 +173,12 @@ func Rollup(ctx context.Context, st Store, q RollupQuery) (map[string]RollupResu
 // ValidateRollupQuery refuses a query every backend would answer
 // differently or not at all.
 func ValidateRollupQuery(q RollupQuery) error {
+	if q.Siblings != nil {
+		return validateSiblings(q)
+	}
+	if q.Along != nil {
+		return validateAlong(q)
+	}
 	if q.Relation == "" {
 		return fmt.Errorf("%w: rollup: relation is required", ErrInvalidQuery)
 	}
@@ -210,6 +237,12 @@ func RollupGeneric(ctx context.Context, st RollupReader, q RollupQuery) (map[str
 	out := map[string]RollupResult{}
 	if len(q.Sources) == 0 {
 		return out, nil
+	}
+	if q.Siblings != nil {
+		return rollupSiblings(ctx, st, q)
+	}
+	if q.Along != nil {
+		return rollupAlong(ctx, st, q)
 	}
 	// reached maps each entity reached so far to the sources it is
 	// reached from.

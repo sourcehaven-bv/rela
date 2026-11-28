@@ -102,6 +102,14 @@ func (d *instantDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.R
 	return d.inner.QueryRow(ctx, sql, args...)
 }
 
+// over returns the seam over inner, a transaction begun below it, with the
+// schema already resolved kept.
+func (d *instantDB) over(inner DBTX) *instantDB {
+	d.schemaMu.Lock()
+	defer d.schemaMu.Unlock()
+	return &instantDB{inner: inner, schema: d.schema}
+}
+
 // errRow is a pgx.Row whose Scan reports err.
 type errRow struct{ err error }
 

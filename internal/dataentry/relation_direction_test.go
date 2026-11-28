@@ -110,7 +110,7 @@ relations:
 				Columns:    []dec.ListColumn{{Relation: "belongs-to"}},
 			},
 		}
-		got := resolveListDirections(s, lists)
+		got := resolveListDirections(s, lists, nil)
 
 		if d := got["projects"].Columns[0].Direction; d != dec.DirectionIncoming {
 			t.Errorf("project column direction = %q, want incoming", d)

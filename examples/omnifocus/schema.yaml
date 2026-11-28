@@ -1,0 +1,260 @@
+# OmniFocus-style task manager. See README.md for what maps and what does not.
+version: "1.0"
+types:
+  project_status:
+    values: [active, on_hold, completed, dropped]
+    default: active
+    initial: active
+    labels: { active: Active, on_hold: On Hold, completed: Completed, dropped: Dropped }
+    transitions:
+      - { from: active, to: on_hold, label: Put on hold }
+      - { from: on_hold, to: active, label: Activate }
+      - { from: active, to: completed, label: Complete }
+      - { from: active, to: dropped, label: Drop }
+      - { from: on_hold, to: dropped, label: Drop }
+      - { from: completed, to: active, label: Reopen }
+      - { from: dropped, to: active, label: Reactivate }
+  action_status:
+    values: [open, completed, dropped]
+    default: open
+    initial: open
+    transitions:
+      - { from: open, to: completed, label: Complete }
+      - { from: open, to: dropped, label: Drop }
+      - { from: completed, to: open, label: Reopen }
+      - { from: dropped, to: open, label: Reopen }
+  tag_status:
+    values: [active, on_hold, dropped]
+    default: active
+    labels: { active: Active, on_hold: On Hold, dropped: Dropped }
+  review_interval:
+    values: [weekly, monthly, quarterly, yearly]
+    default: weekly
+  folder_status:
+    values: [active, dropped]
+    default: active
+  # How a project or action group releases its children.
+  ordering:
+    values: [parallel, sequential, single_actions]
+    default: parallel
+    labels:
+      parallel: Parallel
+      sequential: Sequential
+      single_actions: Single actions
+  # OmniFocus repeat methods.
+  repeat_method:
+    values: [fixed, defer_again, due_again]
+    labels:
+      fixed: Repeat every
+      defer_again: Defer another
+      due_again: Due again
+  repeat_rrule:
+    description: "An iCalendar RRULE, such as FREQ=WEEKLY;BYDAY=MO"
+    validations:
+      - pattern: "^(RRULE:)?FREQ=(DAILY|WEEKLY|MONTHLY|YEARLY)(;[A-Z]+=[^;]+)*$"
+        error: "Use an RRULE such as FREQ=WEEKLY;BYDAY=MO"
+
+entities:
+  folder:
+    label: Folder
+    plural: folders
+    id_prefix: "FLD-"
+    id_type: short
+    display: title
+    properties:
+      title: { type: string, required: true }
+      status: { type: folder_status }
+
+  project:
+    label: Project
+    plural: projects
+    id_prefix: "PRJ-"
+    id_type: short
+    display: title
+    properties:
+      title: { type: string, required: true }
+      status: { type: project_status }
+      ordering: { type: ordering }
+      flagged: { type: boolean }
+      defer_date: { type: date }
+      due_date: { type: date }
+      completed_on: { type: date }
+      complete_with_last_action: { type: boolean }
+      # Review: OmniFocus asks you to look at a project every N days.
+      review_every: { type: review_interval }
+      last_reviewed: { type: date }
+      # date_add refuses an integer property as its count, so the interval
+      # is an enum and each value gets a literal.
+      next_review:
+        type: date
+        computed: >-
+          entity.last_reviewed ~= nil and (
+            (entity.review_every == 'weekly' and date_add(entity.last_reviewed, 1, 'week'))
+            or (entity.review_every == 'monthly' and date_add(entity.last_reviewed, 1, 'month'))
+            or (entity.review_every == 'quarterly' and date_add(entity.last_reviewed, 3, 'month'))
+            or (entity.review_every == 'yearly' and date_add(entity.last_reviewed, 1, 'year')))
+      # Open actions directly in the project (not inside a group).
+      remaining_actions:
+        type: integer
+        rollup: { via: children, count: true, where: { status: open } }
+      # True when at least one direct child action is available, by the
+      # same rules as the Available list: not deferred itself, and not a
+      # group with open children. Work inside a group is one level too deep
+      # to count here.
+      has_available_action:
+        type: boolean
+        rollup:
+          exists: true
+          via: children
+          condition:
+            action: >-
+              entity.status == 'open' and entity.held == false
+              and entity.held_by_tag == false
+              and entity.deferred_above == false
+              and entity.waiting == false
+              and (entity.defer_date == nil or entity.defer_date <= now())
+              and entity.subactions_open == 0
+    query_scopes:
+      active: "entity.status == 'active'"
+      remaining: "entity.status == 'active' or entity.status == 'on_hold'"
+
+  action:
+    label: Action
+    plural: actions
+    id_prefix: "ACT-"
+    id_type: short
+    display: title
+    properties:
+      title: { type: string, required: true }
+      status: { type: action_status }
+      flagged: { type: boolean }
+      defer_date: { type: datetime }
+      planned_date: { type: datetime }
+      due_date: { type: datetime }
+      estimate_minutes: { type: integer, min: 1, max: 10000 }
+      completed_on: { type: date }
+      # Only used when the action has children (an action group).
+      ordering: { type: ordering }
+      complete_with_last_action: { type: boolean }
+      repeat_rule: { type: repeat_rrule }
+      repeat_method: { type: repeat_method }
+      # True when a group above, the project, or a folder above holds the
+      # action back by its status. A completed project holds its open
+      # actions too.
+      held:
+        type: boolean
+        rollup:
+          exists: true
+          along: [child_of*, in_folder*]
+          max_depth: 12
+          condition:
+            action: "entity.status ~= 'open'"
+            project: >-
+              entity.status == 'on_hold' or entity.status == 'dropped'
+              or entity.status == 'completed'
+            folder: "entity.status == 'dropped'"
+      # True when a tag on the action, or a parent of one, is on hold or
+      # dropped.
+      held_by_tag:
+        type: boolean
+        rollup:
+          exists: true
+          along: [tagged, tag_parent*]
+          max_depth: 8
+          condition:
+            tag: "entity.status == 'on_hold' or entity.status == 'dropped'"
+      # True when a group above or the project is deferred to the future.
+      deferred_above:
+        type: boolean
+        rollup:
+          exists: true
+          along: [child_of*]
+          max_depth: 12
+          condition:
+            action: "entity.defer_date ~= nil and entity.defer_date > now()"
+            project: "entity.defer_date ~= nil and entity.defer_date > now()"
+      # True when, in a sequential parent, an earlier sibling is still open,
+      # at this level or at any group above.
+      waiting:
+        type: boolean
+        rollup:
+          exists: true
+          siblings_before: child_of
+          where: { status: open }
+          when_parent: { ordering: sequential }
+          climb: true
+          max_depth: 12
+      subactions_open:
+        type: integer
+        rollup: { via: children, type: action, count: true, where: { status: open } }
+      checklist_done: { type: integer, rollup: { body_tasks: done } }
+      checklist_total: { type: integer, rollup: { body_tasks: total } }
+
+  tag:
+    label: Tag
+    plural: tags
+    id_prefix: "TAG-"
+    id_type: short
+    display: title
+    properties:
+      title: { type: string, required: true }
+      status: { type: tag_status }
+      # OmniFocus tags can carry a location; rela only stores it.
+      location: { type: string }
+      open_actions:
+        type: integer
+        rollup: { via: tagged_actions, type: action, count: true, where: { status: open } }
+
+relations:
+  in_folder:
+    label: in folder
+    inverse: folder_items
+    from: [project, folder]
+    to: [folder]
+    max_outgoing: 1
+    orderable: incoming
+  # The one parent relation: an action sits in a project or in an action
+  # group. Not `owning:`, because an owned entity cannot own another one,
+  # and OmniFocus nests groups to any depth.
+  child_of:
+    label: child of
+    inverse: children
+    from: [action]
+    to: [action, project]
+    max_outgoing: 1
+    orderable: incoming
+  tagged:
+    label: tagged
+    inverse: tagged_actions
+    from: [action, project]
+    to: [tag]
+    orderable: incoming
+  # Nested tags, such as Errands > Hardware store.
+  tag_parent:
+    label: child of tag
+    inverse: child_tags
+    from: [tag]
+    to: [tag]
+    max_outgoing: 1
+    orderable: incoming
+
+validations:
+  - name: due-after-defer
+    description: An action is not due before it becomes available.
+    entity_type: action
+    severity: warning
+    when_condition: "entity.defer_date ~= nil and entity.due_date ~= nil"
+    then_condition: "entity.due_date >= entity.defer_date"
+  - name: repeat-needs-method
+    description: A repeating action says how it repeats.
+    entity_type: action
+    severity: error
+    enforce: write
+    when_condition: "entity.repeat_rule ~= nil"
+    then_condition: "entity.repeat_method ~= nil"
+  - name: review-interval-needs-date
+    description: A project with a review interval has a last-reviewed date.
+    entity_type: project
+    severity: warning
+    when_condition: "entity.review_every ~= nil"
+    then_condition: "entity.last_reviewed ~= nil"

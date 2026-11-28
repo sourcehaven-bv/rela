@@ -72,8 +72,8 @@ type rollupRow struct {
 // non-nil, limits the roll-ups computed; the others are absent. Each props
 // map must be the row's wire copy, never a store entity's map.
 //
-// It costs a constant number of store queries per roll-up column, whatever
-// len(rows) is. The result is per principal: never cache it across requests.
+// It costs a constant number of store queries per roll-up column for each
+// [rollupChunk] rows. The result is per principal: never cache it across requests.
 // A zero rollupSource (a handler a test builds without one) adds nothing.
 func (s rollupSource) add(
 	ctx context.Context, entityType string, rows []rollupRow, world store.WorldScope, want func(string) bool,
@@ -98,17 +98,34 @@ func (s rollupSource) add(
 		if err != nil {
 			slog.WarnContext(ctx, "roll-ups not computed", "type", entityType, "error", err)
 		} else {
-			r = s.withRecords(r)
-			refs := make([]entityPkg.Ref, len(rows))
-			for i, row := range rows {
-				refs[i] = row.ref
-			}
-			values = r.Values(ctx, entityType, refs, world, want)
+			values = rollupValuesChunked(ctx, s.withRecords(r), entityType, rows, world, want)
 		}
 	}
 	for _, row := range rows {
 		visibility.MergeRollups(row.props, names, values[row.ref.ID])
 	}
+}
+
+// rollupChunk is the most source rows one roll-up statement is asked
+// about. A list condition computes roll-ups for its whole candidate
+// population, so the chunk bounds the size of each statement's id set.
+const rollupChunk = 1000
+
+// rollupValuesChunked is [visibility.Rollups.Values] over rows, one call
+// per [rollupChunk] rows.
+func rollupValuesChunked(
+	ctx context.Context, r *visibility.Rollups, entityType string, rows []rollupRow,
+	world store.WorldScope, want func(string) bool,
+) map[string]map[string]any {
+	values := map[string]map[string]any{}
+	for chunk := range slices.Chunk(rows, rollupChunk) {
+		refs := make([]entityPkg.Ref, len(chunk))
+		for i, row := range chunk {
+			refs[i] = row.ref
+		}
+		maps.Copy(values, r.Values(ctx, entityType, refs, world, want))
+	}
+	return values
 }
 
 // addToEntities replaces each entity in groups by a copy carrying its
@@ -189,9 +206,8 @@ func queriedRollups(meta *metamodel.Metamodel, typeName string, query gatedListQ
 // roll-ups query filters or sorts on, and returns the originals narrow kept,
 // in its order. A roll-up is computed per reader and never stored, so the
 // list filter and sort see it only this way. It costs one store query per
-// queried roll-up for the whole population, before paging; the store
-// cannot page by a roll-up, so such a request never takes the pushdown
-// (listNarrowing.pushdownPlan).
+// queried roll-up per [rollupChunk] rows, before paging; the store cannot
+// page by a roll-up, so it never takes the pushdown (listNarrowing.pushdownPlan).
 //
 // The originals are returned, not the copies: every later step (redaction,
 // serialization) reads raw store entities, and the served page computes
@@ -216,20 +232,11 @@ func withQueriedRollups(
 	if len(entities) == 0 {
 		return narrow(entities)
 	}
-	copies := make([]*entityPkg.Entity, len(entities))
+	copies := s.copiesWithRollups(ctx, typeName, entities, want)
 	original := make(map[*entityPkg.Entity]*entityPkg.Entity, len(entities))
-	rows := make([]rollupRow, len(entities))
-	for i, e := range entities {
-		cp := *e
-		cp.Properties = maps.Clone(e.Properties)
-		if cp.Properties == nil {
-			cp.Properties = map[string]any{}
-		}
-		copies[i] = &cp
-		original[&cp] = e
-		rows[i] = rollupRow{ref: e.Ref(), props: cp.Properties}
+	for i, c := range copies {
+		original[c] = entities[i]
 	}
-	s.add(ctx, typeName, rows, worldScopeFrom(ctx), func(p string) bool { return want[p] })
 	kept, err := narrow(copies)
 	if err != nil {
 		return nil, err
@@ -239,6 +246,28 @@ func withQueriedRollups(
 		out[i] = original[c]
 	}
 	return out, nil
+}
+
+// copiesWithRollups returns copies of entities, all of typeName, carrying
+// the roll-ups in want as this reader sees them, in the same order. A
+// roll-up with no value is absent from its copy, so a condition reads it as
+// unset. Every stored value under a roll-up name is dropped.
+func (s rollupSource) copiesWithRollups(
+	ctx context.Context, typeName string, entities []*entityPkg.Entity, want map[string]bool,
+) []*entityPkg.Entity {
+	copies := make([]*entityPkg.Entity, len(entities))
+	rows := make([]rollupRow, len(entities))
+	for i, e := range entities {
+		cp := *e
+		cp.Properties = maps.Clone(e.Properties)
+		if cp.Properties == nil {
+			cp.Properties = map[string]any{}
+		}
+		copies[i] = &cp
+		rows[i] = rollupRow{ref: e.Ref(), props: cp.Properties}
+	}
+	s.add(ctx, typeName, rows, worldScopeFrom(ctx), func(p string) bool { return want[p] })
+	return copies
 }
 
 // serveRowRollups adds the roll-ups want selects to each row in data, which

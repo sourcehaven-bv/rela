@@ -221,6 +221,9 @@ var unpagedReadAllowlist = map[string]unpagedRead{
 	"internal/visibility/luareader.go#ScriptReader.listGatedThenRanked": {1, passThrough,
 		"ScriptReader.ListEntities' load-then-filter fallback: runs its caller's query at every face; " +
 			"the HolderLookup callers pass a whole type"},
+	"internal/visibility/rollup_siblings.go#Rollups.darkParents": {1, bounded,
+		"the siblings of a page's parents: the member gate with a Related predicate whose Endpoints are " +
+			"those parents"},
 	"internal/visibility/pushdown.go#listPushdown": {2, passThrough,
 		"ScriptReader.ListEntities' pushdown: runs its caller's query with the ACL scope added"},
 	"internal/visibility/tracer.go#VisibleTracer.FindOrphans": {2, batchJob,

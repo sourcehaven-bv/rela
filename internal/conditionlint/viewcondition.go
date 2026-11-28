@@ -99,7 +99,7 @@ func CompileViewConditions(
 
 	for id, v := range cfg.Lists {
 		key := ViewConditionKey{ViewConditionList, id}
-		compileOne(ev, meta, key, key.String(), v.EntityType, v.Condition, programs, &problems)
+		compileListCondition(ev, meta, key, v.EntityType, v.Condition, programs, &problems)
 	}
 	for id, v := range cfg.Lists {
 		if !v.GroupBy.Computed() {
@@ -410,6 +410,15 @@ func compileOne(
 	ev *predicatefns.Evaluator, meta *metamodel.Metamodel, key ViewConditionKey, name, entityType, condition string,
 	programs map[ViewConditionKey]*predicate.Program, problems *[]string,
 ) {
+	compileWith(ev.CompileWithCurrentUser, meta, key, name, entityType, condition, programs, problems)
+}
+
+// compileWith is [compileOne] with the compiler as an argument.
+func compileWith(
+	compile func(entityType, source string) (*predicate.Program, error),
+	meta *metamodel.Metamodel, key ViewConditionKey, name, entityType, condition string,
+	programs map[ViewConditionKey]*predicate.Program, problems *[]string,
+) {
 	if condition == "" {
 		return
 	}
@@ -420,7 +429,7 @@ func compileOne(
 		*problems = append(*problems, name+": condition requires entity_type to be set")
 		return
 	}
-	prog, err := ev.CompileWithCurrentUser(entityType, condition)
+	prog, err := compile(entityType, condition)
 	if err != nil {
 		*problems = append(*problems, fmt.Sprintf(
 			"%s: condition does not compile against entity type %q: %v", name, entityType, err))
@@ -431,6 +440,42 @@ func compileOne(
 		return
 	}
 	programs[key] = prog
+}
+
+// compileListCondition is [compileOne] for a list's own `condition:`, which
+// may read the type's roll-ups: the list pipeline computes the ones it reads
+// for every candidate row first. A body_tasks roll-up is refused, because a
+// list reads no bodies (see withQueriedRollups in internal/dataentry).
+func compileListCondition(
+	ev *predicatefns.Evaluator, meta *metamodel.Metamodel, key ViewConditionKey, entityType, condition string,
+	programs map[ViewConditionKey]*predicate.Program, problems *[]string,
+) {
+	compile := func(entityType, source string) (*predicate.Program, error) {
+		prog, err := ev.CompileWithRollups(entityType, source)
+		if err != nil {
+			return nil, err
+		}
+		if name := bodyTasksRead(meta, entityType, prog); name != "" {
+			return nil, fmt.Errorf("roll-up %q counts body tasks, which a list condition cannot read", name)
+		}
+		return prog, nil
+	}
+	compileWith(compile, meta, key, key.String(), entityType, condition, programs, problems)
+}
+
+// bodyTasksRead returns the first body_tasks roll-up of entityType that prog
+// reads, or "".
+func bodyTasksRead(meta *metamodel.Metamodel, entityType string, prog *predicate.Program) string {
+	def, ok := meta.GetEntityDef(entityType)
+	if !ok {
+		return ""
+	}
+	for _, name := range prog.Attributes(predicatefns.VarEntity) {
+		if pd, ok := def.Properties[name]; ok && pd.Rollup != nil && pd.Rollup.BodyTasks != "" {
+			return name
+		}
+	}
+	return ""
 }
 
 // compileAssignExpr compiles an `assign:` value expression (TKT-FGE5G3I) for

@@ -4,6 +4,8 @@ import { defineComponent, nextTick, type Ref } from 'vue'
 import { accessRefusal } from '@/api/workspaceAccess'
 import { useQueryCache } from '@pinia/colada'
 import { useEvents, type SSEConnectionState } from './useEvents'
+import { entityKeys } from '@/queries/entities'
+import type { ListParams } from '@/types/entity'
 
 // Mock stores
 const mockGitFetchStatus = vi.fn().mockResolvedValue(undefined)
@@ -19,6 +21,11 @@ vi.mock('@/stores', () => ({
   }),
   useUIStore: () => ({
     error: mockUIError,
+  }),
+  useSchemaStore: () => ({
+    lists: new Map([
+      ['stalled', { entity: 'project', columns: [], refresh_types: ['action', 'project', 'tag'] }],
+    ]),
   }),
 }))
 
@@ -206,6 +213,28 @@ describe('useEvents', () => {
 
       expect(mockEntitiesInvalidateAll).toHaveBeenCalledTimes(1)
       expect(spy).toHaveBeenCalledWith({ key: ['entities', 'ticket'] }, true)
+    })
+
+    it('refetches the lists whose roll-ups read the changed type (Q8)', async () => {
+      const queryCache = useQueryCache()
+      const spy = vi.spyOn(queryCache, 'invalidateQueries')
+      await mountConnected()
+
+      lastSource!._emit('entity:changed', JSON.stringify({ type: 'tag' }))
+
+      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'tag'] }, true)
+      const listCall = spy.mock.calls.find(([filter]) => {
+        const key = (filter as { key?: readonly unknown[] }).key
+        return key?.length === 3 && key[1] === 'project' && key[2] === 'list'
+      })
+      expect(listCall).toBeDefined()
+      const predicate = (listCall![0] as { predicate: (e: { key: readonly unknown[] }) => boolean })
+        .predicate
+      const stalled = entityKeys.listParams('project', { list_id: 'stalled' } as ListParams)
+      const other = entityKeys.listParams('project', { list_id: 'all_projects' } as ListParams)
+      expect(predicate({ key: stalled })).toBe(true)
+      expect(predicate({ key: other })).toBe(false)
+      expect(predicate({ key: entityKeys.list('project') })).toBe(false)
     })
 
     it('invalidates per type across successive entity:changed events', async () => {

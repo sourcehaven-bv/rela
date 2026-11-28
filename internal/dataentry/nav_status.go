@@ -162,7 +162,7 @@ func navStatusInStore(
 			if err != nil || m == nil {
 				return v1.NavStatus{}, false, false, nil //nolint:nilerr // the Go path returns this error
 			}
-			frag, denied, lowered := lowerViewCondition(ctx, s.Meta, m, a.fieldResolver, typeName)
+			frag, denied, lowered := lowerViewCondition(ctx, m, a.fieldResolver, typeName)
 			if !lowered {
 				return v1.NavStatus{}, false, false, nil
 			}

@@ -1,0 +1,450 @@
+version: "1.0"
+app:
+  name: "Focus"
+  description: "An OmniFocus-style task manager built from rela config"
+styles:
+  action_status: {open: blue, completed: green, dropped: gray}
+  project_status: {active: blue, on_hold: amber, completed: green, dropped: gray}
+  tag_status: {active: blue, on_hold: amber, dropped: gray}
+  ordering: {parallel: teal, sequential: purple, single_actions: gray}
+quick_entry:
+  form: quick_action
+  list: inbox
+forms:
+  quick_action:
+    entity_type: action
+    title: "New Action"
+    fields:
+      - {property: title, label: "Title"}
+      - {property: flagged, label: "Flag", span: 3}
+      - {property: defer_date, label: "Defer", span: 3}
+      - {property: due_date, label: "Due", span: 3}
+    relations:
+      - {relation: child_of, label: "Project or group", direction: outgoing}
+      - {relation: tagged, label: "Tags", direction: outgoing}
+  action:
+    entity_type: action
+    title: "Action"
+    mode: edit
+    body: true
+    fields:
+      - {property: title, label: "Title"}
+      - {property: status, label: "Status", span: 4}
+      - {property: flagged, label: "Flagged", span: 4}
+      - {property: estimate_minutes, label: "Estimate (min)", span: 4}
+      - {property: defer_date, label: "Defer until", span: 4}
+      - {property: planned_date, label: "Planned", span: 4}
+      - {property: due_date, label: "Due", span: 4}
+      - {property: repeat_rule, label: "Repeat (RRULE)", span: 6, placeholder: "FREQ=WEEKLY;BYDAY=MO"}
+      - {property: repeat_method, label: "Repeat method", span: 6}
+      - {property: ordering, label: "Group ordering", span: 4}
+      - {property: complete_with_last_action, label: "Complete with last action", span: 4}
+      - {property: completed_on, label: "Completed", span: 4}
+    relations:
+      - {relation: child_of, label: "Project or group", direction: outgoing}
+      - {relation: tagged, label: "Tags", direction: outgoing}
+  project:
+    entity_type: project
+    title: "Project"
+    body: true
+    fields:
+      - {property: title, label: "Title"}
+      - {property: status, label: "Status", span: 4}
+      - {property: ordering, label: "Ordering", span: 4}
+      - {property: flagged, label: "Flagged", span: 4}
+      - {property: defer_date, label: "Defer until", span: 4}
+      - {property: due_date, label: "Due", span: 4}
+      - {property: complete_with_last_action, label: "Complete with last action", span: 4}
+      - {property: review_every, label: "Review every", span: 4}
+      - {property: last_reviewed, label: "Last reviewed", span: 4}
+      - {property: next_review, label: "Next review", span: 4}
+    relations:
+      - {relation: in_folder, label: "Folder", direction: outgoing}
+      - {relation: tagged, label: "Tags", direction: outgoing}
+  folder:
+    entity_type: folder
+    title: "Folder"
+    fields:
+      - {property: title, label: "Title"}
+      - {property: status, label: "Status"}
+    relations:
+      - {relation: in_folder, label: "Parent folder", direction: outgoing}
+  tag:
+    entity_type: tag
+    title: "Tag"
+    fields:
+      - {property: title, label: "Title"}
+      - {property: status, label: "Status", span: 6}
+      - {property: location, label: "Location", span: 6}
+    relations:
+      - {relation: tag_parent, label: "Parent tag", direction: outgoing}
+actions:
+  complete:
+    label: "Complete"
+    key: "c"
+    set: {status: completed}
+  drop:
+    label: "Drop"
+    key: "x"
+    set: {status: dropped}
+  flag:
+    label: "Flag"
+    key: "f"
+    set: {flagged: true}
+  unflag:
+    label: "Unflag"
+    key: "u"
+    set: {flagged: false}
+  defer-tomorrow:
+    label: "Defer to tomorrow"
+    key: "t"
+    script: defer.lua
+    params: {days: 1}
+  defer-week:
+    label: "Defer a week"
+    key: "w"
+    script: defer.lua
+    params: {days: 7}
+  mark-reviewed:
+    label: "Mark Reviewed"
+    key: "r"
+    script: mark_reviewed.lua
+  hold:
+    label: "Put on hold"
+    key: "p"
+    set: {status: on_hold}
+  activate:
+    label: "Activate"
+    key: "a"
+    set: {status: active}
+lists:
+  # Inbox: no project, no tags.
+  inbox:
+    entity_type: action
+    title: "Inbox"
+    empty_message: "Inbox is clean."
+    condition: >-
+      entity.status == 'open' and not related(entity, 'child_of', { type = 'project' })
+      and not related(entity, 'child_of', { type = 'action' })
+      and not related(entity, 'tagged')
+    columns:
+      - {property: title, label: "Title", link: detail}
+      - {property: flagged, label: "Flag"}
+      - {property: defer_date, label: "Defer"}
+      - {property: due_date, label: "Due"}
+    order: manual
+    # Quick entry needs a list with an assign block.
+    assign:
+      properties: {status: open}
+    create_form: quick_action
+    edit_form: action
+    actions: [complete, drop, flag, unflag, defer-tomorrow, defer-week]
+  # Available: what can be done now. The roll-ups on action carry the tree
+  # rules: a held or deferred group, project or folder above, an on-hold
+  # tag or parent tag, and an open earlier sibling in a sequential parent.
+  # A group with open children is not itself available.
+  available:
+    entity_type: action
+    title: "Available"
+    condition: >-
+      entity.status == 'open' and entity.held == false
+      and entity.held_by_tag == false and entity.deferred_above == false
+      and entity.waiting == false
+      and (entity.defer_date == nil or entity.defer_date <= now())
+      and not related(entity, 'children', { status = 'open' })
+    columns:
+      - {property: title, label: "Title", link: detail}
+      - {relation: tagged, label: "Tags", direction: outgoing}
+      - {property: estimate_minutes, label: "Est."}
+      - {property: due_date, label: "Due"}
+      - {property: flagged, label: "Flag"}
+    sort: [{property: due_date}, {property: title}]
+    create_form: quick_action
+    edit_form: action
+    actions: [complete, drop, flag, unflag, defer-tomorrow, defer-week]
+  # Remaining: every open action, available or not.
+  remaining:
+    entity_type: action
+    title: "Remaining"
+    filters: [{property: status, operator: "=", value: open}]
+    columns:
+      - {property: title, label: "Title", link: detail}
+      - {property: waiting, label: "Waiting"}
+      - {property: defer_date, label: "Defer"}
+      - {property: due_date, label: "Due"}
+      - {relation: tagged, label: "Tags", direction: outgoing}
+    sort: [{property: title}]
+    edit_form: action
+    actions: [complete, drop, flag, unflag]
+  flagged:
+    entity_type: action
+    title: "Flagged"
+    condition: >-
+      entity.status == 'open' and entity.flagged == true and entity.held == false
+      and entity.held_by_tag == false and entity.deferred_above == false
+      and entity.waiting == false
+      and (entity.defer_date == nil or entity.defer_date <= now())
+    columns:
+      - {property: title, label: "Title", link: detail}
+      - {relation: child_of, label: "Project or group", direction: outgoing}
+      - {relation: tagged, label: "Tags", direction: outgoing}
+      - {property: due_date, label: "Due"}
+    group_by:
+      property: due_date
+      buckets: relative
+    sort: [{property: due_date}, {property: title}]
+    create_form: quick_action
+    edit_form: action
+    actions: [complete, drop, unflag, defer-tomorrow]
+  # Forecast as a list: due, planned or deferred dates by day.
+  forecast:
+    entity_type: action
+    title: "Forecast"
+    condition: >-
+      entity.status == 'open' and (entity.due_date ~= nil or entity.planned_date
+      ~= nil)
+    columns:
+      - {property: title, label: "Title", link: detail}
+      - {relation: child_of, label: "Project or group", direction: outgoing}
+      - {property: planned_date, label: "Planned"}
+      - {property: due_date, label: "Due"}
+      - {property: estimate_minutes, label: "Est."}
+    # One date per row only: an action planned today and due Friday shows
+    # under Friday.
+    group_by:
+      property: due_date
+      buckets: {by: day, for: 7d, then: month}
+    sort: [{property: due_date}]
+    create_form: action
+    edit_form: action
+    actions: [complete, drop, flag, defer-tomorrow]
+  completed:
+    entity_type: action
+    title: "Completed"
+    filters: [{property: status, operator: in, value: "completed,dropped"}]
+    columns:
+      - {property: title, label: "Title", link: detail}
+      - {property: status, label: "Status"}
+      - {relation: child_of, label: "Project or group", direction: outgoing}
+      - {property: completed_on, label: "Completed"}
+    group_by:
+      property: completed_on
+      buckets: {by: month, order: desc}
+    edit_form: action
+  # Review: active and on-hold projects whose review date has come.
+  review:
+    entity_type: project
+    title: "Review"
+    empty_message: "Nothing to review."
+    condition: >-
+      (entity.status == 'active' or entity.status == 'on_hold') and
+      entity.next_review ~= nil and entity.next_review <= today()
+    columns:
+      - {property: title, label: "Project", link: detail}
+      - {property: status, label: "Status"}
+      - {property: last_reviewed, label: "Last reviewed"}
+      - {property: next_review, label: "Due for review"}
+      - {property: remaining_actions, label: "Remaining"}
+    sort: [{property: next_review}]
+    edit_form: project
+    actions: [mark-reviewed, hold, activate]
+  projects:
+    entity_type: project
+    title: "Projects"
+    query_scope: remaining
+    columns:
+      - {property: title, label: "Project", link: detail}
+      - {property: status, label: "Status"}
+      - {property: ordering, label: "Type"}
+      - {property: has_available_action, label: "Available"}
+      - {property: remaining_actions, label: "Remaining"}
+      - {property: due_date, label: "Due"}
+    group_by:
+      relation: in_folder
+    sort: [{property: title}]
+    create_form: project
+    edit_form: project
+    actions: [hold, activate, mark-reviewed]
+  # A project with no available action is "stalled" in OmniFocus terms.
+  stalled:
+    entity_type: project
+    title: "Stalled projects"
+    # has_available_action is a roll-up over the actions' own roll-ups.
+    condition: >-
+      entity.status == 'active' and entity.ordering ~= 'single_actions'
+      and entity.has_available_action == false
+    columns:
+      - {property: title, label: "Project", link: detail}
+      - {property: remaining_actions, label: "Remaining"}
+    edit_form: project
+  tags:
+    entity_type: tag
+    title: "Tags"
+    columns:
+      - {property: title, label: "Tag", link: detail}
+      - {property: status, label: "Status"}
+      - {property: open_actions, label: "Open"}
+      - {property: location, label: "Location"}
+    group_by:
+      relation: tag_parent
+    sort: [{property: title}]
+    create_form: tag
+    edit_form: tag
+  folders:
+    entity_type: folder
+    title: "Folders"
+    columns: [{property: title, link: detail}, {property: status}]
+    create_form: folder
+    edit_form: folder
+  # Rows of the project and tag pages.
+  project_actions:
+    entity_type: action
+    title: "Actions"
+    filters: [{property: status, operator: "=", value: open}]
+    columns:
+      - {property: title, label: "Title", link: detail}
+      - {property: waiting, label: "Waiting"}
+      - {property: subactions_open, label: "Sub"}
+      - {property: defer_date, label: "Defer"}
+      - {property: due_date, label: "Due"}
+      - {relation: tagged, label: "Tags", direction: outgoing}
+    create_form: quick_action
+    edit_form: action
+    actions: [complete, drop, flag, unflag, defer-tomorrow]
+  tag_actions:
+    entity_type: action
+    title: "Actions"
+    filters: [{property: status, operator: "=", value: open}]
+    columns:
+      - {property: title, label: "Title", link: detail}
+      - {relation: child_of, label: "Project or group", direction: outgoing}
+      - {property: waiting, label: "Waiting"}
+      - {property: due_date, label: "Due"}
+    edit_form: action
+    actions: [complete, drop, flag]
+  # Sidebar sources.
+  active_projects:
+    entity_type: project
+    query_scope: active
+    columns: [{property: title}]
+    sort: [{property: title}]
+  active_tags:
+    entity_type: tag
+    filters: [{property: status, operator: "=", value: active}]
+    columns: [{property: title}]
+    sort: [{property: title}]
+calendars:
+  forecast_calendar:
+    title: "Forecast"
+    default_view: week
+    week_start: monday
+    sources:
+      - entity_type: action
+        label: "Due"
+        where: ["status=open"]
+        date: due_date
+        summary: title
+        color: red
+      - entity_type: action
+        label: "Planned"
+        where: ["status=open"]
+        date: planned_date
+        summary: title
+        color: blue
+      - entity_type: action
+        label: "Deferred until"
+        where: ["status=open"]
+        date: defer_date
+        summary: title
+        color: gray
+      - entity_type: project
+        label: "Project due"
+        where: ["status=active"]
+        date: due_date
+        summary: title
+        color: violet
+    edit_form: action
+    create_form: action
+views:
+  # The outline of a project: top-level actions with their subactions.
+  # Only two levels: `display: nested` refuses a recursive walk.
+  project:
+    entry: {type: project}
+    traverse:
+      - {from: entry, follow_incoming: child_of, collect_as: actions}
+      - {from: actions, follow_incoming: child_of, collect_as: subs}
+    sections:
+      - heading: Outline
+        source: actions
+        display: nested
+        children: subs
+        parent_columns:
+          action:
+            - {property: status}
+            - {property: waiting}
+            - {property: due_date}
+        child_columns:
+          action:
+            - {property: status}
+            - {property: waiting}
+            - {property: due_date}
+pages:
+  forecast:
+    label: Forecast
+    icon: calendar
+    tabs:
+      - {id: list, label: "List", list: forecast}
+      - {id: calendar, label: "Calendar", calendar: forecast_calendar}
+  project:
+    entity_type: project
+    label: Project
+    badge: status
+    assign:
+      entity_type: action
+      relations: {child_of: target}
+    tabs:
+      - {id: actions, label: "Actions", list: project_actions, scope: {relation: child_of, direction: incoming}}
+  tag:
+    entity_type: tag
+    label: Tag
+    badge: status
+    assign:
+      entity_type: action
+      relations: {tagged: target}
+    tabs:
+      - {id: actions, label: "Actions", list: tag_actions, scope: {relation: tagged, direction: incoming}}
+navigation:
+  - label: "Inbox"
+    list: inbox
+    icon: inbox
+    status:
+      - {tone: info, label: "{count}"}
+  - page: forecast
+  - label: "Flagged"
+    list: flagged
+    icon: flag
+    status:
+      - {tone: warning, label: "{count}"}
+  - label: "Available"
+    list: available
+    icon: active
+  - label: "Review"
+    list: review
+    icon: refresh
+    status:
+      - {tone: new, label: "{count}"}
+  - group: "Perspectives"
+    items:
+      - {label: "Projects", list: projects}
+      - {label: "Remaining", list: remaining}
+      - {label: "Stalled", list: stalled}
+      - {label: "Tags", list: tags}
+      - {label: "Folders", list: folders}
+      - {label: "Completed", list: completed}
+  - group: "Projects"
+    items_from: {list: active_projects, page: project, create: true}
+  - group: "Tags"
+    items_from: {list: active_tags, page: tag, create: true}
+  - group: "More"
+    items:
+      - {label: "Search", search: true}

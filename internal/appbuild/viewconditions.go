@@ -10,8 +10,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/queryplan"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // ViewConditionMatcher restates the method set internal/dataentry
@@ -85,6 +87,18 @@ func (v viewConditionMatcher) Lower(
 	ctx context.Context, gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
 ) (frag store.GraphQuery, empty, ok bool) {
 	return lowerQueryCondition(ctx, v.meta, v.m.Program(), v.m.EntityType(), gate)
+}
+
+// LowerRollups is [viewConditionMatcher.Lower] that also lowers each
+// comparison of an exists roll-up facts admits to a roll-up leaf, bound to
+// the reader's walk by bind (design gap 3.5, step 2). The caller checks the
+// roll-ups are visible on every row, as for any field the condition reads.
+func (v viewConditionMatcher) LowerRollups(
+	ctx context.Context, gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+	facts queryplan.RollupFacts, bind visibility.RollupLeafBinder,
+) (frag store.GraphQuery, empty, ok bool) {
+	return lowerQueryConditionRollups(ctx, v.meta, v.m.Program(), v.m.EntityType(), gate,
+		rollupLeaves{facts: facts, bind: bind})
 }
 
 // MatchPage returns one verdict per row, in order. An evaluation error is

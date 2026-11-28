@@ -37,12 +37,16 @@ const loadCheckIdentity = "load-check"
 // `related(...)` terms. What does not: or, not, ordered comparisons, ~=, and
 // the host functions has_role, has_global_role, has_relation, count_relations
 // and has_current_user. Grant per-entity roles with role_relations, which
-// `visible:` already honors.
+// `visible:` already honors. A condition that reads a roll-up is refused
+// first, with its own message ([queryplan.RollupRead]).
 func requireLowerable(
 	meta *metamodel.Metamodel, roleName, entityType string, idx int, field string, prog *predicate.Program,
 ) error {
 	if prog == nil {
 		return nil
+	}
+	if err := rollupRefusal(prog, meta, roleName, entityType, idx, field); err != nil {
+		return err
 	}
 	if _, ok := queryplan.LowerScope(prog, meta, entityType, loadCheckIdentity); ok {
 		return nil
@@ -53,6 +57,40 @@ func requireLowerable(
 		"has_current_user are refused; "+
 		"grant per-entity access with role_relations)",
 		roleName, entityType, idx, field)
+}
+
+// refuseRollupRead refuses a `visible:` `when:` that reads a roll-up of
+// entityType, naming the property. The ordinary env omits roll-ups, so the
+// condition is compiled again against a record that declares them; a
+// condition that does not compile there is left to the ordinary compile to
+// report. It runs before [queryplan.LowerScope] is ever consulted.
+func refuseRollupRead(meta *metamodel.Metamodel, roleName, entityType string, idx int, field, when string) error {
+	if when == "" || len(meta.RollupNames(entityType)) == 0 {
+		return nil
+	}
+	env, err := buildEnvWith(entityRecordType(meta, entityType, true))
+	if err != nil {
+		return fmt.Errorf("role %q: %s visible[%d] %s: roll-up env: %w", roleName, entityType, idx, field, err)
+	}
+	prog, err := predicate.Compile(env, when)
+	if err != nil {
+		return nil //nolint:nilerr // why: the ordinary compile reports this error with its own path
+	}
+	return rollupRefusal(prog, meta, roleName, entityType, idx, field)
+}
+
+// rollupRefusal is the error for a `visible:` `when:` that reads a roll-up,
+// or nil when prog reads none ([queryplan.RollupRead]).
+func rollupRefusal(
+	prog *predicate.Program, meta *metamodel.Metamodel, roleName, entityType string, idx int, field string,
+) error {
+	prop, reads := queryplan.RollupRead(prog, meta, entityType)
+	if !reads {
+		return nil
+	}
+	return fmt.Errorf("roles.%s.visible.%s[%d] (field %q).when: reads roll-up property %q; a roll-up is "+
+		"computed per reader under this policy and never stored, so it cannot decide a visible: grant",
+		roleName, entityType, idx, field, prop)
 }
 
 // SearchFieldScope compiles the `visible:` grants of entityType for the

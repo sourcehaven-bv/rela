@@ -41,17 +41,35 @@ func lowerQueryCondition(
 	ctx context.Context, meta *metamodel.Metamodel, prog *predicate.Program, entityType string,
 	gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
 ) (frag store.GraphQuery, empty, ok bool) {
+	return lowerQueryConditionRollups(ctx, meta, prog, entityType, gate, rollupLeaves{})
+}
+
+// rollupLeaves lowers a list condition's roll-up comparisons: facts
+// decides which lower ([queryplan.LowerConditionRollups]) and bind gives
+// each the reader's walk. The zero value lowers none.
+type rollupLeaves struct {
+	facts queryplan.RollupFacts
+	bind  visibility.RollupLeafBinder
+}
+
+// lowerQueryConditionRollups is [lowerQueryCondition] that also lowers the
+// roll-up comparisons leaves admits. A roll-up leaf the reader's walk has
+// no store form for is ok=false, as a refused traversal is.
+func lowerQueryConditionRollups(
+	ctx context.Context, meta *metamodel.Metamodel, prog *predicate.Program, entityType string,
+	gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error), leaves rollupLeaves,
+) (frag store.GraphQuery, empty, ok bool) {
 	if gate == nil {
 		return store.GraphQuery{}, false, false
 	}
-	lowered, ok := lowerConditionTerms(ctx, meta, prog, entityType)
-	if !ok {
+	lowered, err := lowerConditionTermsWith(ctx, meta, prog, entityType, leaves.facts)
+	if err != nil {
 		return store.GraphQuery{}, false, false
 	}
 	frag.Props = lowered.props
 	if lowered.where != nil {
 		// Gated first, so a refused hop in it wins over a denied term below.
-		w, err := visibility.GateCond(ctx, gate, entityType, *lowered.where)
+		w, err := visibility.GateCondRollups(ctx, gate, leaves.bind, entityType, *lowered.where)
 		if err != nil {
 			return store.GraphQuery{}, false, false
 		}
@@ -104,22 +122,23 @@ type conditionTerms struct {
 	where *visibility.PageCond
 }
 
-// lowerConditionTerms lowers prog exactly ([queryplan.LowerCondition]) with
-// the query identity stamped on ctx, and resolves each distinct traversal
-// to the hop it walks. It gates nothing: a caller gates the terms, or hands
-// them to a reader that gates them itself. ok=false: prog does not lower,
-// or a traversal has no hop.
-func lowerConditionTerms(
-	ctx context.Context, meta *metamodel.Metamodel, prog *predicate.Program, entityType string,
-) (out conditionTerms, ok bool) {
-	out, err := lowerConditionTermsExplained(ctx, meta, prog, entityType)
-	return out, err == nil
-}
-
-// lowerConditionTermsExplained is [lowerConditionTerms] that says why a
-// condition does not lower.
+// lowerConditionTermsExplained lowers prog exactly
+// ([queryplan.LowerCondition]) with the query identity stamped on ctx, and
+// resolves each distinct traversal to the hop it walks. It gates nothing: a
+// caller gates the terms, or hands them to a reader that gates them
+// itself. The error says why prog does not lower, or names a traversal
+// with no hop.
 func lowerConditionTermsExplained(
 	ctx context.Context, meta *metamodel.Metamodel, prog *predicate.Program, entityType string,
+) (conditionTerms, error) {
+	return lowerConditionTermsWith(ctx, meta, prog, entityType, nil)
+}
+
+// lowerConditionTermsWith is [lowerConditionTermsExplained] that also
+// lowers the roll-up comparisons facts admits.
+func lowerConditionTermsWith(
+	ctx context.Context, meta *metamodel.Metamodel, prog *predicate.Program, entityType string,
+	facts queryplan.RollupFacts,
 ) (conditionTerms, error) {
 	if prog == nil || meta == nil {
 		return conditionTerms{}, errors.New("no condition to lower")
@@ -128,7 +147,7 @@ func lowerConditionTermsExplained(
 	if id, bound := predicatefns.QueryIdentityFrom(ctx); bound {
 		identity = id.ID()
 	}
-	lowered, err := queryplan.LowerConditionExplained(prog, meta, entityType, identity)
+	lowered, err := queryplan.LowerConditionRollups(prog, meta, entityType, identity, facts)
 	if err != nil {
 		return conditionTerms{}, err
 	}
@@ -166,7 +185,7 @@ func lowerConditionTermsExplained(
 
 // pageCond resolves the traversals of c to the hops they walk.
 func pageCond(meta *metamodel.Metamodel, entityType string, c queryplan.LoweredCond) (visibility.PageCond, error) {
-	out := visibility.PageCond{Op: c.Op, Prop: c.Prop}
+	out := visibility.PageCond{Op: c.Op, Prop: c.Prop, Rollup: c.Rollup.Property, Holds: c.Rollup.Holds}
 	if c.Op == store.CondRelated {
 		hop, err := relresolve.Hop(meta, entityType, c.Traversal)
 		if err != nil {

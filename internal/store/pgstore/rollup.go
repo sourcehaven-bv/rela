@@ -6,6 +6,11 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -19,9 +24,18 @@ var _ store.Rollupper = (*Store)(nil)
 // identity-scoped edges of the sources (through the gated path, when q has
 // one) and grouped per source. The fold rules match [store.RollupGeneric],
 // which is the reference.
+// An along query ([store.AlongWalk]) is the unrolled walk of
+// rollup_along.go. Every roll-up statement runs under
+// [RollupStatementTimeout].
 func (s *Store) Rollup(ctx context.Context, q store.RollupQuery) (map[string]store.RollupResult, error) {
 	if err := store.ValidateRollupQuery(q); err != nil {
 		return nil, err
+	}
+	if q.Siblings != nil {
+		return rollupSiblings(ctx, s, q)
+	}
+	if q.Along != nil {
+		return rollupAlong(ctx, s, q)
 	}
 	if err := checkGraphQueryScope(q.Related); err != nil {
 		return nil, err
@@ -39,34 +53,142 @@ func (s *Store) Rollup(ctx context.Context, q store.RollupQuery) (map[string]sto
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(ctx, sqlText, args...)
-	if err != nil {
-		return nil, fmt.Errorf("pgstore: rollup: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
+	err = boundedDB{s: s}.query(ctx, sqlText, args, func(rows pgx.Rows) error {
 		var (
 			src   string
 			count int
 			value *string
 		)
-		if err := rows.Scan(&src, &count, &value); err != nil {
-			return nil, fmt.Errorf("pgstore: rollup scan: %w", err)
+		if serr := rows.Scan(&src, &count, &value); serr != nil {
+			return fmt.Errorf("pgstore: rollup scan: %w", serr)
 		}
 		res := store.RollupResult{Count: count}
 		if value != nil {
-			v, err := rollupValue(q, *value)
-			if err != nil {
-				return nil, err
+			v, verr := rollupValue(q, *value)
+			if verr != nil {
+				return verr
 			}
 			res.Value = v
 		}
 		out[src] = res
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("pgstore: rollup: %w", err)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
+}
+
+// RollupStatementTimeout bounds every roll-up statement (design T7), and
+// every statement of a graph query whose Where holds a roll-up leaf. A walk
+// a writer made expensive fails instead of holding a connection.
+const RollupStatementTimeout = 5 * time.Second
+
+// rollupStatementTimeout holds [RollupStatementTimeout]. It is atomic only
+// so tests can shrink it while other tests' statements read it.
+var rollupStatementTimeout atomic.Int64
+
+func init() { rollupStatementTimeout.Store(int64(RollupStatementTimeout)) }
+
+// boundedDB is the store's handle with each Query run in its own read
+// transaction under [RollupStatementTimeout], ended when its rows close.
+// A keyset scan reads every page into memory and closes it before it
+// yields, so it holds no transaction across a yield. Exec, QueryRow and
+// Begin pass through unbounded; [graphPages] uses only Query.
+type boundedDB struct{ s *Store }
+
+// begin opens a read transaction under [RollupStatementTimeout]
+// and returns the handle to query it through. SET LOCAL ends with the
+// transaction (a savepoint inside a [Store.Tx] view), so the timeout never
+// reaches the next user of the connection.
+func (b boundedDB) begin(ctx context.Context) (pgx.Tx, DBTX, error) {
+	s := b.s
+	tx, err := unwrapDB(s.db).Begin(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("pgstore: rollup: %w", err)
+	}
+	ms := time.Duration(rollupStatementTimeout.Load()).Milliseconds()
+	if _, err = tx.Exec(ctx, fmt.Sprintf("SET LOCAL statement_timeout = '%dms'", max(ms, 1))); err != nil {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+		return nil, nil, fmt.Errorf("pgstore: rollup: %w", err)
+	}
+	var db DBTX = tx
+	if i, ok := s.db.(*instantDB); ok {
+		db = i.over(tx)
+	}
+	return tx, db, nil
+}
+
+// query runs one read statement in its own transaction under
+// [RollupStatementTimeout] and calls each for every row.
+func (b boundedDB) query(ctx context.Context, sqlText string, args []any, each func(pgx.Rows) error) error {
+	tx, db, err := b.begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // a read-only transaction; nothing to keep
+	rows, err := db.Query(ctx, sqlText, args...)
+	if err != nil {
+		return fmt.Errorf("pgstore: rollup: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		if err := each(rows); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("pgstore: rollup: %w", err)
+	}
+	return nil
+}
+
+func (b boundedDB) Query(ctx context.Context, sqlText string, args ...any) (pgx.Rows, error) {
+	tx, db, err := b.begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(ctx, sqlText, args...)
+	if err != nil {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+		return nil, err
+	}
+	return &boundedRows{Rows: rows, end: func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }}, nil
+}
+
+func (b boundedDB) Exec(ctx context.Context, sqlText string, args ...any) (pgconn.CommandTag, error) {
+	return b.s.db.Exec(ctx, sqlText, args...)
+}
+
+func (b boundedDB) QueryRow(ctx context.Context, sqlText string, args ...any) pgx.Row {
+	return b.s.db.QueryRow(ctx, sqlText, args...)
+}
+
+func (b boundedDB) Begin(ctx context.Context) (pgx.Tx, error) { return b.s.db.Begin(ctx) }
+
+// boundedRows ends its transaction once, when it closes.
+type boundedRows struct {
+	pgx.Rows
+	end  func()
+	done bool
+}
+
+func (r *boundedRows) Close() {
+	r.Rows.Close()
+	if !r.done {
+		r.done = true
+		r.end()
+	}
+}
+
+// graphDB is the handle a graph query over q reads through: bounded by
+// [RollupStatementTimeout] when q's Where holds a roll-up leaf, whose walk
+// runs per candidate inside the scan.
+func graphDB(s *Store, q store.GraphQuery) DBTX {
+	if store.HasRollupLeaf(q.Where) {
+		return boundedDB{s: s}
+	}
+	return s.db
 }
 
 // rollupValue decodes the text the statement returns for the aggregate.
@@ -106,7 +228,7 @@ func buildRollupSQL(q store.RollupQuery) (sqlText string, args []any, err error)
 	with, pairs := rollupPairsSQL(b, q)
 
 	typeArg := b.arg(q.Related.EntityType)
-	relWith, source := graphSource(b, q.Related, typeArg, "e.id IN (SELECT p.id FROM "+pairs+" p)")
+	relWith, source := graphSourceSeeded(b, "", q.Related, typeArg, "SELECT p.id FROM "+pairs+" p")
 	with = append(with, relWith...)
 
 	requireWith, require := rowConditionsSQL(b, "rq", q.Require, typeArg)
@@ -138,8 +260,8 @@ func rollupPairsSQL(b *sqlBuilder, q store.RollupQuery) (with []string, last str
 		name := fmt.Sprintf("rup%d", i)
 		with = append(with, name+"_raw AS ("+rollupHopSQL(b, q.Sources, prev, step.Relation, step.SourceIsTo)+")")
 		typeArg := b.arg(step.Through.EntityType)
-		gateWith, source := graphSourcePrefixed(b, name+"_", step.Through, typeArg,
-			"e.id IN (SELECT p.id FROM "+name+"_raw p)")
+		gateWith, source := graphSourceSeeded(b, name+"_", step.Through, typeArg,
+			"SELECT p.id FROM "+name+"_raw p")
 		with = append(with, gateWith...)
 		with = append(with, fmt.Sprintf(
 			"%s AS (SELECT p.src, p.id FROM %s_raw p WHERE p.id IN (SELECT e.id FROM %s))", name, name, source))

@@ -316,6 +316,9 @@ const (
 	CondOr
 	// CondNot holds when its one argument does not.
 	CondNot
+	// CondRollup is a leaf: [Cond.Rollup] holds for the row (design gap
+	// 3.5, step 2).
+	CondRollup
 )
 
 // MaxCondDepth bounds the nesting of a [Cond]. A deeper tree is
@@ -341,13 +344,15 @@ const (
 // which drops the row a two-valued reading keeps).
 //
 // Exactly the field of the node's Op is meaningful: Prop for CondProp, Rel
-// for CondRelated, Args for the others. Build nodes with [PropLeaf],
-// [RelatedCond], [AndCond], [OrCond] and [NotCond].
+// for CondRelated, Rollup for CondRollup, Args for the others. Build nodes
+// with [PropLeaf], [RelatedCond], [RollupLeaf], [AndCond], [OrCond] and
+// [NotCond].
 type Cond struct {
-	Op   CondOp
-	Prop PropPredicate
-	Rel  DirectedRelation
-	Args []Cond
+	Op     CondOp
+	Prop   PropPredicate
+	Rel    DirectedRelation
+	Rollup *RollupCond
+	Args   []Cond
 }
 
 // PropLeaf is a [CondProp] leaf.
@@ -436,7 +441,8 @@ func (c Cond) Walk(visit func(Cond) bool) bool {
 // ValidateCond refuses a malformed [Cond]: an unknown Op, a CondNot without
 // exactly one argument, a leaf with arguments, nesting beyond
 // [MaxCondDepth], more leaves than [MaxCondLeaves] or relation leaves than
-// [MaxCondRelations], a relation leaf that sets Pred.Negate (a tree negates
+// [MaxCondRelations] (a roll-up leaf counts as a relation leaf), a relation
+// leaf that sets Pred.Negate (a tree negates
 // with CondNot, so there is one way to say it), or a leaf predicate
 // [ValidatePropPredicates] refuses. A relation leaf's own shape is checked
 // with the other relation predicates (graphquerynaive.CheckEndpointShape).
@@ -450,7 +456,7 @@ func ValidateCond(c Cond) error {
 		switch n.Op {
 		case CondProp:
 			leaves++
-		case CondRelated:
+		case CondRelated, CondRollup:
 			leaves++
 			rels++
 		default:
@@ -482,6 +488,11 @@ func validateCond(c Cond, depth int) error {
 			return fmt.Errorf("%w: a relation leaf negates with a not node, not Pred.Negate", ErrInvalidQuery)
 		}
 		return nil
+	case CondRollup:
+		if len(c.Args) > 0 {
+			return fmt.Errorf("%w: a roll-up leaf takes no arguments", ErrInvalidQuery)
+		}
+		return validateRollupCond(c.Rollup)
 	case CondNot:
 		if len(c.Args) != 1 {
 			return fmt.Errorf("%w: not takes exactly one argument, got %d", ErrInvalidQuery, len(c.Args))

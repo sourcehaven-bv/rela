@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -229,3 +230,33 @@ func IntegerExprForTest(txt, jsn string) string { return integerExpr(txt, jsn) }
 
 // UnmarshalPropsForTest exposes unmarshalProps, the decode every read uses.
 func UnmarshalPropsForTest(raw []byte) (map[string]any, error) { return unmarshalProps(raw) }
+
+// BuildAlongSQLForTest exposes the statement [Store.Rollup] issues for an
+// along query. Test-only.
+func BuildAlongSQLForTest(q store.RollupQuery) (sqlText string, args []any, err error) {
+	return buildAlongSQL(q, store.AlongLevels(q.Along))
+}
+
+// BuildSiblingsSQLForTest exposes the statement [Store.Rollup] issues for
+// a siblings query. Test-only.
+func BuildSiblingsSQLForTest(q store.RollupQuery) (sqlText string, args []any, err error) {
+	return buildSiblingsSQL(q)
+}
+
+// RollupStatementTimeoutSettingForTest reads statement_timeout inside the
+// transaction a roll-up statement runs in. Test-only.
+func RollupStatementTimeoutSettingForTest(ctx context.Context, s *Store) (string, error) {
+	var got string
+	err := boundedDB{s: s}.query(ctx, "SELECT current_setting('statement_timeout')", nil, func(rows pgx.Rows) error {
+		return rows.Scan(&got)
+	})
+	return got, err
+}
+
+// SetRollupStatementTimeoutForTest shrinks [RollupStatementTimeout] for the
+// test's duration.
+func SetRollupStatementTimeoutForTest(t interface{ Cleanup(func()) }, d time.Duration) {
+	prev := rollupStatementTimeout.Load()
+	rollupStatementTimeout.Store(int64(d))
+	t.Cleanup(func() { rollupStatementTimeout.Store(prev) })
+}

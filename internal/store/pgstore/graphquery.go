@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/graphquerynaive"
@@ -39,13 +41,16 @@ func (s *Store) GraphQuery(ctx context.Context, q store.GraphQuery) iter.Seq2[*e
 	if err := checkGraphQueryScope(q); err != nil {
 		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }
 	}
-	return graphPages(ctx, s.db, q, graphSelectRows, scanEntity,
+	return graphPages(ctx, graphDB(s, q), q, graphSelectRows, scanEntity,
 		(*entity.Entity).Ref, "pgstore: graph query")
 }
 
 // CountMatched implements store.MatchedCounter: GraphCount's first statement
 // alone. A list page needs only the scoped count, and the second statement
 // GraphCount would run — the type's world-wide total — is the expensive one.
+// With a roll-up leaf the count runs the leaf's walk for every candidate of
+// the type, so its cost follows the population (accepted debt, design gap
+// 3.5); a statement timeout bounds it.
 func (s *Store) CountMatched(ctx context.Context, q store.GraphQuery) (int, error) {
 	if err := checkGraphQueryScope(q); err != nil {
 		return 0, err
@@ -54,11 +59,22 @@ func (s *Store) CountMatched(ctx context.Context, q store.GraphQuery) (int, erro
 	if err != nil {
 		return 0, err
 	}
-	var matched int
-	if err := s.db.QueryRow(ctx, matchedSQL, matchedArgs...).Scan(&matched); err != nil {
+	matched, err := countMatched(ctx, s, q, matchedSQL, matchedArgs)
+	if err != nil {
 		return 0, fmt.Errorf("pgstore: graph count (matched): %w", err)
 	}
 	return matched, nil
+}
+
+// countMatched runs the matched-count statement of q, under
+// [RollupStatementTimeout] when q's Where holds a roll-up leaf.
+func countMatched(ctx context.Context, s *Store, q store.GraphQuery, sqlText string, args []any) (int, error) {
+	var matched int
+	if store.HasRollupLeaf(q.Where) {
+		err := boundedDB{s: s}.query(ctx, sqlText, args, func(rows pgx.Rows) error { return rows.Scan(&matched) })
+		return matched, err
+	}
+	return matched, s.db.QueryRow(ctx, sqlText, args...).Scan(&matched)
 }
 
 // GraphQueryHeaders implements store.GraphHeaderQueryer: GraphQuery's
@@ -69,7 +85,7 @@ func (s *Store) GraphQueryHeaders(ctx context.Context, q store.GraphQuery) iter.
 	if err := checkGraphQueryScope(q); err != nil {
 		return func(yield func(store.EntityHeader, error) bool) { yield(store.EntityHeader{}, err) }
 	}
-	return graphPages(ctx, s.db, q, graphSelectHeaders, scanEntityHeader,
+	return graphPages(ctx, graphDB(s, q), q, graphSelectHeaders, scanEntityHeader,
 		func(h store.EntityHeader) entity.Ref { return entity.Ref{ID: h.ID, Face: h.Face} },
 		"pgstore: graph query headers")
 }
@@ -127,7 +143,7 @@ func (s *Store) GraphCount(ctx context.Context, q store.GraphQuery) (matched, to
 	if err != nil {
 		return 0, 0, err
 	}
-	if err = s.db.QueryRow(ctx, matchedSQL, matchedArgs...).Scan(&matched); err != nil {
+	if matched, err = countMatched(ctx, s, q, matchedSQL, matchedArgs); err != nil {
 		return 0, 0, fmt.Errorf("pgstore: graph count (matched): %w", err)
 	}
 	totalSQL, totalArgs := buildGraphTotalSQL(q)
@@ -280,8 +296,12 @@ type condBuilder struct {
 // the operand of a NOT is wrapped in COALESCE(..., FALSE), because a leaf
 // over an absent key may be NULL and `NOT NULL` would drop a row the
 // two-valued reading keeps (see [store.Cond]). Under AND and OR a NULL
-// already behaves as false in WHERE.
+// already behaves as false in WHERE. A subtree with a roll-up leaf is the
+// exception: it is NULL when a leaf in it is absent (see rollupStrict).
 func (cb *condBuilder) render(c store.Cond) string {
+	if store.HasRollupLeaf(&c) {
+		return "(" + cb.rollupStrict(c) + " = 1)"
+	}
 	switch c.Op {
 	case store.CondProp:
 		return propCond(cb.b, c.Prop)
@@ -355,6 +375,18 @@ func graphSourcePrefixed(
 		source += " WHERE " + strings.Join(post, " AND ")
 	}
 	return with, source
+}
+
+// graphSourceSeeded is [graphSourcePrefixed] restricted to the ids the
+// subquery ids selects: the candidates and the seed of every entity closure
+// the gate renders alike, so a gate costs its ids, not its type.
+func graphSourceSeeded(
+	b *sqlBuilder, prefix string, q store.GraphQuery, typeArg, ids string,
+) (with []string, source string) {
+	prev := b.closureSeed
+	b.closureSeed = ids
+	defer func() { b.closureSeed = prev }()
+	return graphSourcePrefixed(b, prefix, q, typeArg, "e.id IN ("+ids+")")
 }
 
 // withClause renders the recursive CTE prefix, or nothing.
@@ -986,6 +1018,9 @@ func entityClosureSQL(b *sqlBuilder, prefix string, p store.RelationPredicate, t
 		if b.pageAfter != "" {
 			seedAfter = " AND e0.id " + b.pageSeedOp + " " + b.pageAfter
 		}
+		if b.closureSeed != "" {
+			seedAfter += " AND e0.id IN (" + b.closureSeed + ")"
+		}
 		cte = fmt.Sprintf(`%s(id, root, depth) AS (
     -- IDENTITY ANCHOR (TKT-WAV8XP Q5). The seed is ENTITY-level: one row
     -- per id of the type, whatever faces it has, so a faced candidate
@@ -1198,6 +1233,10 @@ type sqlBuilder struct {
 	// pageSeedOp is ">" when the page resumes after a whole family and ">="
 	// when it may resume inside one.
 	pageSeedOp string
+	// closureSeed is a subquery of the only candidate ids the statement asks
+	// about, or "". A candidate-rooted closure then seeds from those ids
+	// alone, for the reason pageAfter does (T12). See [graphSourceSeeded].
+	closureSeed string
 	// err is the first predicate the builder could not render. A builder
 	// that sees it set must not run the statement.
 	err error

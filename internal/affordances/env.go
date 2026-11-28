@@ -35,9 +35,14 @@ var userRecordType = predicatefns.CurrentUserType
 // evaluating against a wrong runtime type (DR-C2). The `id` and `type`
 // pseudo-fields are always present.
 func buildEnv(meta *metamodel.Metamodel, entityType string) (*predicate.Env, error) {
+	return buildEnvWith(entityRecordType(meta, entityType, false))
+}
+
+// buildEnvWith is [buildEnv] over a given `entity` record type.
+func buildEnvWith(entity predicate.RecordType) (*predicate.Env, error) {
 	env := predicate.NewEnv()
 
-	if err := env.DeclareVar("entity", entityRecordType(meta, entityType)); err != nil {
+	if err := env.DeclareVar("entity", entity); err != nil {
 		// coverage-ignore: defensive: DeclareVar only errors on empty name / nil type / redeclare; "entity" is a non-
 		// empty constant,
 		// entityRecordType never returns nil, and this is the first declaration into a fresh env
@@ -88,7 +93,9 @@ func buildEnv(meta *metamodel.Metamodel, entityType string) (*predicate.Env, err
 // entityRecordType builds the RecordType for an entity type's
 // properties. id and type are always present; each property maps per
 // propertyPredicateType. Unsupported property types are omitted (DR-C2).
-func entityRecordType(meta *metamodel.Metamodel, entityType string) predicate.RecordType {
+// withRollups declares each roll-up at its declared type too; only the
+// load-time roll-up refusal compiles against it.
+func entityRecordType(meta *metamodel.Metamodel, entityType string, withRollups bool) predicate.RecordType {
 	rec := predicate.RecordType{
 		"id":   predicate.StringType,
 		"type": predicate.StringType,
@@ -104,6 +111,9 @@ func entityRecordType(meta *metamodel.Metamodel, entityType string) predicate.Re
 		return rec
 	}
 	for name, prop := range def.Properties {
+		if withRollups {
+			prop.Rollup = nil
+		}
 		if t, ok := propertyPredicateType(meta, prop); ok {
 			rec[name] = t
 		}

@@ -44,6 +44,24 @@ type Rollups struct {
 	// recs and now serve roll-ups over record types; see [Rollups.WithRecords].
 	recs RecordAggregator
 	now  func() time.Time
+	// rowCap caps the rows of each source's walk; zero means
+	// [store.AlongRowCap]. A nested roll-up shares it, per source, over the
+	// outer walk and its inner roll-ups.
+	rowCap int
+}
+
+// WithRowCap returns a copy of r whose walks hold at most n gated rows per
+// source; a nested roll-up (design section 10) splits n per source over
+// the outer walk and its inner roll-ups. Zero restores [store.AlongRowCap].
+//
+// Nil: accepted; a nil Rollups stays nil.
+func (r *Rollups) WithRowCap(n int) *Rollups {
+	if r == nil {
+		return nil
+	}
+	c := *r
+	c.rowCap = n
+	return &c
 }
 
 // NewRollups builds the roll-up reader.
@@ -93,13 +111,44 @@ func (r *Rollups) Names(entityType string) []string {
 func (r *Rollups) Values(
 	ctx context.Context, entityType string, rows []entity.Ref, world store.WorldScope, want func(string) bool,
 ) map[string]map[string]any {
-	out := map[string]map[string]any{}
-	if r == nil || len(rows) == 0 {
-		return out
+	if r == nil {
+		return map[string]map[string]any{}
+	}
+	out, _, _ := r.values(ctx, entityType, rows, world, want, r.rowCap)
+	return out
+}
+
+// ValuesOrAbsent is [Rollups.Values] that also says, keyed by id then
+// property, which roll-ups are absent because they could not be computed:
+// the store call failed, the source's walk is over its row cap, or the
+// value is withheld (a hidden sibling order, an absent inner value). A
+// condition must fail closed on such a roll-up; a roll-up that simply has
+// no value, or that a `visible:` grant hides on the row, is not in absent.
+//
+// Nil: accepted; a nil Rollups computes nothing.
+func (r *Rollups) ValuesOrAbsent(
+	ctx context.Context, entityType string, rows []entity.Ref, world store.WorldScope, want func(string) bool,
+) (values map[string]map[string]any, absent map[string]map[string]bool) {
+	if r == nil {
+		return map[string]map[string]any{}, map[string]map[string]bool{}
+	}
+	values, absent, _ = r.values(ctx, entityType, rows, world, want, r.rowCap)
+	return values, absent
+}
+
+// values is [Rollups.ValuesOrAbsent] with each walk capped at rowCap rows
+// per source, and the problems of the columns it left out joined into err.
+func (r *Rollups) values(
+	ctx context.Context, entityType string, rows []entity.Ref, world store.WorldScope, want func(string) bool,
+	rowCap int,
+) (out map[string]map[string]any, absent map[string]map[string]bool, err error) {
+	vals := rollupValues{out: map[string]map[string]any{}, absent: map[string]map[string]bool{}}
+	if len(rows) == 0 {
+		return vals.out, vals.absent, nil
 	}
 	cols := r.set.For(entityType)
 	if len(cols) == 0 {
-		return out
+		return vals.out, vals.absent, nil
 	}
 	ids := make([]string, 0, len(rows))
 	seen := make(map[string]struct{}, len(rows))
@@ -112,49 +161,104 @@ func (r *Rollups) Values(
 	own, err := r.fields.SearchFieldScope(ctx, entityType)
 	if err != nil {
 		slog.Warn("visibility: roll-ups left out", "type", entityType, "err", err)
-		return out
+		for _, col := range cols {
+			vals.markAll(ids, col.Property)
+		}
+		return vals.out, vals.absent, err
 	}
-	// bodies are the served rows' readable bodies, read once for every
-	// body_tasks column of the type.
-	var bodies map[entity.Ref]string
+	var failed []error
+	var read map[entity.Ref]string
+	bodies := func() map[entity.Ref]string {
+		if read == nil {
+			read = readBodiesOrNone(ctx, r.st, entityType, rows)
+		}
+		return read
+	}
 	for _, col := range cols {
 		if want != nil && !want(col.Property) {
 			continue
 		}
 		shown, err := r.shownOn(ctx, own, entityType, col.Property, ids)
-		if err != nil {
-			slog.Warn("visibility: roll-up left out", "type", entityType, "property", col.Property, "err", err)
-			continue
-		}
 		var results map[string]store.RollupResult
-		switch {
-		case col.BodyTasks != "":
-			if bodies == nil {
-				bodies = readBodiesOrNone(ctx, r.st, entityType, rows)
-			}
-			results = bodyColumn(col, rows, bodies)
-		case col.Records != "":
-			results, err = r.recordColumn(ctx, col, ids)
-		default:
-			results, err = r.column(ctx, col, ids, world)
+		var withheld map[string]bool
+		if err == nil {
+			results, withheld, err = r.columnResults(ctx, col, rows, ids, world, rowCap, bodies)
 		}
 		if err != nil {
 			slog.Warn("visibility: roll-up left out", "type", entityType, "property", col.Property, "err", err)
+			failed = append(failed, err)
+			vals.markAll(ids, col.Property)
 			continue
 		}
 		for _, ref := range rows {
-			id := ref.ID
-			v, ok := col.ValueOf(results[id])
-			if !ok || !shown(store.EntityHeader{ID: ref.ID, Face: ref.Face}) {
-				continue
+			if shown(store.EntityHeader{ID: ref.ID, Face: ref.Face}) {
+				vals.put(col, ref.ID, results[ref.ID], withheld[ref.ID])
 			}
-			if out[id] == nil {
-				out[id] = map[string]any{}
-			}
-			out[id][col.Property] = v
 		}
 	}
-	return out
+	return vals.out, vals.absent, errors.Join(failed...)
+}
+
+// columnResults computes col for ids. bodies returns the served rows'
+// readable bodies, read on the first body_tasks column and reused by the
+// others of the type.
+func (r *Rollups) columnResults(
+	ctx context.Context, col rollup.Column, rows []entity.Ref, ids []string,
+	world store.WorldScope, rowCap int, bodies func() map[entity.Ref]string,
+) (results map[string]store.RollupResult, withheld map[string]bool, err error) {
+	switch {
+	case col.BodyTasks != "":
+		return bodyColumn(col, rows, bodies()), nil, nil
+	case col.Records != "":
+		results, err = r.recordColumn(ctx, col, ids)
+		return results, nil, err
+	case col.Siblings != nil:
+		return r.siblingsColumn(ctx, col, ids, world, rowCap)
+	case col.Along != nil:
+		return r.alongColumn(ctx, col, ids, world, rowCap)
+	default:
+		results, err = r.column(ctx, col, ids, world)
+		return results, nil, err
+	}
+}
+
+// rollupValues collects the roll-up values of a page, keyed by id then
+// property, and the ones absent because they could not be computed.
+type rollupValues struct {
+	out    map[string]map[string]any
+	absent map[string]map[string]bool
+}
+
+// markAll marks prop absent on every id.
+func (v rollupValues) markAll(ids []string, prop string) {
+	for _, id := range ids {
+		v.mark(id, prop)
+	}
+}
+
+// mark marks prop absent on id.
+func (v rollupValues) mark(id, prop string) {
+	if v.absent[id] == nil {
+		v.absent[id] = map[string]bool{}
+	}
+	v.absent[id][prop] = true
+}
+
+// put records col's value of res on id: absent when withheld or over its
+// cap, nothing when it has no value.
+func (v rollupValues) put(col rollup.Column, id string, res store.RollupResult, withheld bool) {
+	if withheld || res.OverCap {
+		v.mark(id, col.Property)
+		return
+	}
+	val, ok := col.ValueOf(res)
+	if !ok {
+		return
+	}
+	if v.out[id] == nil {
+		v.out[id] = map[string]any{}
+	}
+	v.out[id][col.Property] = val
 }
 
 // shownOn is the test for "own shows prop on this row" over ids: one store

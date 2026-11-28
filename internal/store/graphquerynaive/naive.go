@@ -164,7 +164,7 @@ func Run(ctx context.Context, r Reader, q store.GraphQuery) iter.Seq2[*entity.En
 		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }
 	}
 	return func(yield func(*entity.Entity, error) bool) {
-		candidates, err := collectByType(ctx, r, q, nil)
+		rctx, candidates, rest, err := answeredCandidates(ctx, r, q)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -172,7 +172,7 @@ func Run(ctx context.Context, r Reader, q store.GraphQuery) iter.Seq2[*entity.En
 		paged := len(q.OrderBy) > 0 || q.Limit > 0 || q.Offset > 0
 		var matched []*entity.Entity
 		for _, e := range candidates {
-			ok, err := matches(ctx, r, e, q)
+			ok, err := matches(rctx, r, e, rest)
 			if err != nil {
 				if !yield(nil, err) {
 					return
@@ -308,8 +308,12 @@ func Count(ctx context.Context, r Reader, q store.GraphQuery) (matched, total in
 		return 0, 0, err
 	}
 	total = len(candidates)
+	ctx, candidates, rest, err := withRollupAnswers(ctx, r, q, candidates)
+	if err != nil {
+		return 0, 0, err
+	}
 	for _, e := range candidates {
-		ok, mErr := matches(ctx, r, e, q)
+		ok, mErr := matches(ctx, r, e, rest)
 		if mErr != nil {
 			return matched, total, mErr
 		}
@@ -345,11 +349,15 @@ func MatchingFaces(ctx context.Context, r Reader, q store.GraphQuery, ids []stri
 	if err != nil {
 		return nil, err
 	}
+	ctx, cands, rest, err := withRollupAnswers(ctx, r, q, cands)
+	if err != nil {
+		return nil, err
+	}
 	for _, e := range cands {
 		if !want[e.ID] {
 			continue
 		}
-		ok, mErr := matches(ctx, r, e, q)
+		ok, mErr := matches(ctx, r, e, rest)
 		if mErr != nil {
 			return nil, mErr
 		}
@@ -542,6 +550,9 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 		}
 	}
 	if q.Where != nil {
+		if !rollupLeavesKnown(ctx, e, *q.Where) {
+			return false, nil
+		}
 		ok, err := matchesCond(ctx, r, e, *q.Where, q.Faces)
 		if err != nil || !ok {
 			return ok, err
@@ -579,6 +590,12 @@ func matchesCond(
 		return matchesProp(e.Properties, c.Prop)
 	case store.CondRelated:
 		return matchesRelated(ctx, r, e, c.Rel, sel)
+	case store.CondRollup:
+		answers, ok := ctx.Value(rollupAnswersKey{}).(map[*store.RollupCond]map[string]bool)
+		if !ok {
+			return false, fmt.Errorf("%w: a roll-up leaf outside a graph query", store.ErrInvalidQuery)
+		}
+		return answers[c.Rollup][e.ID], nil
 	case store.CondNot:
 		if len(c.Args) != 1 {
 			return false, store.ValidateCond(c)
@@ -1095,4 +1112,97 @@ func expandSet(ctx context.Context, r Reader, seeds, through []string, depth int
 		frontier = next
 	}
 	return order, nil
+}
+
+// answeredCandidates is q's candidates and a context carrying the answers
+// of q's roll-up leaves for them, with the query left to judge them by
+// (see withRollupAnswers).
+func answeredCandidates(
+	ctx context.Context, r Reader, q store.GraphQuery,
+) (context.Context, []*entity.Entity, store.GraphQuery, error) {
+	candidates, err := collectByType(ctx, r, q, nil)
+	if err != nil {
+		return ctx, nil, q, err
+	}
+	return withRollupAnswers(ctx, r, q, candidates)
+}
+
+// rollupAnswersKey carries the roll-up leaf answers of one query run.
+type rollupAnswersKey struct{}
+
+// withRollupAnswers answers every roll-up leaf of q.Where for the
+// candidates that pass q's other conjuncts (the read gate among them), one
+// batch per leaf ([store.RollupLeafAnswers]), so matchesCond judges a leaf
+// without a store call per row and a row the gate refuses seeds no walk.
+// It returns those candidates and rest, q's Where alone, to judge them by.
+// Without a leaf it returns candidates and q as they are. r must then be a
+// [store.RollupReader].
+func withRollupAnswers(
+	ctx context.Context, r Reader, q store.GraphQuery, candidates []*entity.Entity,
+) (_ context.Context, gated []*entity.Entity, rest store.GraphQuery, _ error) {
+	if !store.HasRollupLeaf(q.Where) {
+		return ctx, candidates, q, nil
+	}
+	rr, ok := r.(store.RollupReader)
+	if !ok {
+		return ctx, nil, q, fmt.Errorf("%w: this reader cannot answer a roll-up leaf", store.ErrInvalidQuery)
+	}
+	gate := q
+	gate.Where, q.Where = splitRollupConjuncts(*q.Where)
+	ids := make([]string, 0, len(candidates))
+	for _, e := range candidates {
+		ok, err := matches(ctx, r, e, gate)
+		if err != nil {
+			return ctx, nil, q, err
+		}
+		if ok {
+			gated = append(gated, e)
+			ids = append(ids, e.ID)
+		}
+	}
+	slices.Sort(ids)
+	answers, err := store.RollupLeafAnswers(ctx, rr, *q.Where, slices.Compact(ids))
+	if err != nil {
+		return ctx, nil, q, err
+	}
+	rest = store.GraphQuery{EntityType: q.EntityType, Faces: q.Faces, Where: q.Where}
+	return context.WithValue(ctx, rollupAnswersKey{}, answers), gated, rest, nil
+}
+
+// splitRollupConjuncts splits where's top-level conjuncts into those with
+// no roll-up leaf, part of the gate, and those with one. Either is nil
+// when it has no conjunct.
+func splitRollupConjuncts(where store.Cond) (plain, leafy *store.Cond) {
+	var plains, leafies []store.Cond
+	var split func(c store.Cond)
+	split = func(c store.Cond) {
+		switch {
+		case c.Op == store.CondAnd:
+			for _, a := range c.Args {
+				split(a)
+			}
+		case store.HasRollupLeaf(&c):
+			leafies = append(leafies, c)
+		default:
+			plains = append(plains, c)
+		}
+	}
+	split(where)
+	if len(plains) > 0 {
+		p := store.AndCond(plains...)
+		plain = &p
+	}
+	if len(leafies) > 0 {
+		l := store.AndCond(leafies...)
+		leafy = &l
+	}
+	return plain, leafy
+}
+
+// rollupLeavesKnown reports whether every roll-up leaf of where has an
+// answer for e: a leaf over its row cap is absent, and its row is no
+// match under any polarity (see [store.RollupCond]).
+func rollupLeavesKnown(ctx context.Context, e *entity.Entity, where store.Cond) bool {
+	answers, ok := ctx.Value(rollupAnswersKey{}).(map[*store.RollupCond]map[string]bool)
+	return !ok || store.RollupLeavesKnown(answers, where, e.ID)
 }

@@ -8,10 +8,25 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/graphquerynaive"
 )
+
+// RollupTimeout bounds every [Store.Rollup] call, as pgstore's
+// RollupStatementTimeout bounds each roll-up statement (design T7). An
+// along walk is several statements here, so the bound is on the call. The
+// driver interrupts the running statement when it passes, and the caller
+// leaves the roll-up absent.
+const RollupTimeout = 5 * time.Second
+
+// rollupTimeout holds [RollupTimeout]. It is atomic only so tests can
+// shrink it while other tests' roll-ups read it.
+var rollupTimeout atomic.Int64
+
+func init() { rollupTimeout.Store(int64(RollupTimeout)) }
 
 // The SQL roll-up is the point of this file: without it [store.Rollup]
 // falls back to the Go fold, which costs more queries per column.
@@ -23,9 +38,19 @@ var _ store.Rollupper = (*Store)(nil)
 // path, when q has one) and grouped per source. A query whose names the
 // builder cannot render is answered by [store.RollupGeneric], the reference
 // both backends are tested against.
+// An along query ([store.AlongWalk]) runs one statement per level (see
+// rollup_along.go). Every roll-up is bounded by [RollupTimeout].
 func (s *Store) Rollup(ctx context.Context, q store.RollupQuery) (map[string]store.RollupResult, error) {
 	if err := store.ValidateRollupQuery(q); err != nil {
 		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(rollupTimeout.Load()))
+	defer cancel()
+	if q.Siblings != nil {
+		return rollupSiblings(ctx, s, q)
+	}
+	if q.Along != nil {
+		return rollupAlong(ctx, s, q)
 	}
 	if err := graphquerynaive.CheckEndpointShape(q.Related); err != nil {
 		return nil, err
@@ -176,7 +201,7 @@ func buildRollupSQL(q store.RollupQuery) (sqlText string, args []any, ok bool) {
 
 	order := "1"
 	if q.Func == store.RollupLatest {
-		by := nonEmptyStringSQL(b, "x", q.By)
+		by := nonEmptyStringSQL(b, q.By)
 		order = "(" + by + " IS NULL), " + by + " DESC, x.id"
 	}
 	rowsSQL := fmt.Sprintf(
@@ -300,9 +325,9 @@ func rollupAggregateSQL(b *sqlBuilder, q store.RollupQuery) string {
 		if q.Numeric {
 			return "CAST(" + fn + "(" + integralSQL(b, q.Value) + ") AS TEXT)"
 		}
-		return fn + "(" + nonEmptyStringSQL(b, "x", q.Value) + ")"
+		return fn + "(" + nonEmptyStringSQL(b, q.Value) + ")"
 	case store.RollupLatest:
-		by := nonEmptyStringSQL(b, "x", q.By)
+		by := nonEmptyStringSQL(b, q.By)
 		path := b.jsonPath(q.Value)
 		return "max(CASE WHEN x.rk = 1 AND " + by + " IS NOT NULL THEN json_array(x.properties -> " + path +
 			", CASE WHEN x.pickok THEN json('true') ELSE json('false') END) END)"
@@ -323,10 +348,10 @@ func integralSQL(b *sqlBuilder, prop string) string {
 		" THEN CAST(" + raw + " AS INTEGER) END END)"
 }
 
-// nonEmptyStringSQL is the property's text when it is a non-empty JSON
-// string, else NULL.
-func nonEmptyStringSQL(b *sqlBuilder, alias, prop string) string {
+// nonEmptyStringSQL is the property's text on the row aliased x when it is
+// a non-empty JSON string, else NULL.
+func nonEmptyStringSQL(b *sqlBuilder, prop string) string {
 	path := b.jsonPath(prop)
-	raw := rawExpr(alias, path)
-	return "(CASE WHEN " + typeExpr(alias, path) + " = 'text' AND " + raw + " <> '' THEN " + raw + " END)"
+	raw := rawExpr("x", path)
+	return "(CASE WHEN " + typeExpr("x", path) + " = 'text' AND " + raw + " <> '' THEN " + raw + " END)"
 }

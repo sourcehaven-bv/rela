@@ -161,7 +161,7 @@ func declaredOnEveryType(meta *metamodel.Metamodel, types []string, prop string,
 			return false
 		}
 		pd, ok := def.Properties[prop]
-		if !ok || pd.List != list {
+		if !ok || pd.List != list || pd.Rollup != nil {
 			return false
 		}
 		// A list must be a list of plain strings; a scalar may be any

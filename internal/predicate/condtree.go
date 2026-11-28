@@ -44,6 +44,7 @@ type CondTree struct {
 //     with an int literal. Comparison.Order holds the operator with the
 //     attribute on its left, so `3 < entity.x` reads as `entity.x > 3`
 //   - an `==` or `~=` of an int attribute with an int literal
+//   - an `==` of a boolean attribute with `true` or `false`
 //
 // Int comparisons set Comparison.Int and carry the literal in decimal in
 // Value. A literal `true` or `false` is a [CondTreeConst] leaf.
@@ -173,6 +174,12 @@ func condTreeNode(n node, spec PrefilterSpec, why *string) (CondTree, bool) {
 func treeComparison(x *relationalNode, spec PrefilterSpec) (Comparison, bool) {
 	switch x.op {
 	case "==", "~=":
+		if c, ok := boolComparison(x.lhs, x.rhs, x.op, spec); ok {
+			return c, true
+		}
+		if c, ok := boolComparison(x.rhs, x.lhs, x.op, spec); ok {
+			return c, true
+		}
 		if c, ok := intComparison(x.lhs, x.rhs, x.op, spec); ok {
 			return c, true
 		}
@@ -194,6 +201,30 @@ func treeComparison(x *relationalNode, spec PrefilterSpec) (Comparison, bool) {
 		return orderedComparison(x.rhs, x.lhs, flipOrder(x.op), spec)
 	}
 	return Comparison{}, false
+}
+
+// boolComparison matches `RecordVar.attr == <bool literal>` with attr in
+// lhs. `~=` is not read: its unset reading differs.
+func boolComparison(lhs, rhs node, op string, spec PrefilterSpec) (Comparison, bool) {
+	attr, ok := recordAttr(lhs, spec.RecordVar)
+	if !ok || op != "==" {
+		return Comparison{}, false
+	}
+	if t := attrTypeOf(lhs); t == nil || !t.equalsType(BoolType) {
+		return Comparison{}, false
+	}
+	c, ok := rhs.(*constNode)
+	if !ok {
+		return Comparison{}, false
+	}
+	b, ok := c.v.(Bool)
+	if !ok {
+		return Comparison{}, false
+	}
+	return Comparison{
+		ConstEquality: ConstEquality{Attribute: attr, Value: strconv.FormatBool(b.v)},
+		Bool:          true,
+	}, true
 }
 
 // intComparison matches `RecordVar.attr <op> <int literal>` with attr in

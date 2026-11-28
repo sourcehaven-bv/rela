@@ -920,7 +920,7 @@ type Config struct {
 	// labels and widgets of each channel message type, keyed by channel
 	// type. The structure comes from `GET /api/v1/_schema/channels`.
 	Channels    map[string]dataentryconfig.ChannelPresentation `json:"channels,omitempty"`
-	Lists       map[string]dataentryconfig.List                `json:"lists"`
+	Lists       map[string]List                                `json:"lists"`
 	Views       map[string]dataentryconfig.ViewConfig          `json:"views"`
 	EntityViews map[string]dataentryconfig.EntityViewConfig    `json:"entity_views,omitempty"`
 	Kanbans     map[string]dataentryconfig.Kanban              `json:"kanbans"`
@@ -954,6 +954,16 @@ type Config struct {
 	// Whether THIS principal may use piles is on `_sidebar`
 	// ([SidebarResponse.PilesAvailable]).
 	Piles *dataentryconfig.PilesConfig `json:"piles"`
+}
+
+// List is a list of data-entry.yaml as served to the SPA: the operator's
+// config plus what the server derives for it.
+type List struct {
+	dataentryconfig.List
+	// RefreshTypes is every entity type a change to which can change a
+	// roll-up of the list's type, nested roll-ups included, sorted. The SPA
+	// refetches the list on a change to any of them.
+	RefreshTypes []string `json:"refresh_types,omitempty"`
 }
 
 // App is the client-facing view of a custom app. It deliberately omits the

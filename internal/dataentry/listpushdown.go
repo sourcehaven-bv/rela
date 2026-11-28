@@ -3,7 +3,6 @@ package dataentry
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -226,7 +225,7 @@ func (n listNarrowing) pushdownPlan(
 		}
 	}
 	if n.cond != nil {
-		frag, denied, lowered := lowerViewCondition(ctx, n.state.Meta, n.cond, n.fields, typeName)
+		frag, denied, lowered := lowerViewCondition(ctx, n.cond, n.fields, typeName)
 		switch {
 		case !lowered:
 			return listPlan{}, false, false
@@ -259,19 +258,20 @@ type viewConditionLowerer interface {
 // rows of typeName, or reports ok=false to keep the Go path. The Go path
 // judges the REDACTED row, so every attribute the condition reads must be
 // visible on every row; otherwise a hidden field could decide which rows
-// match. A roll-up keeps the Go path. Each `related(...)` is gated with the
+// match; a roll-up read is no exception. A roll-up comparison lowers only
+// through a matcher that binds it ([rollupConditionMatcher.Lower]); any
+// other keeps the Go path. Each `related(...)` is gated with the
 // request's traversal gate. A lowering that admits another whole-record call
 // besides related(...) must extend this check.
 func lowerViewCondition(
-	ctx context.Context, meta *metamodel.Metamodel, m ViewConditionMatcher, fields fieldVisibility, typeName string,
+	ctx context.Context, m ViewConditionMatcher, fields fieldVisibility, typeName string,
 ) (frag store.GraphQuery, empty, ok bool) {
 	l, isLowerer := m.(viewConditionLowerer)
 	if !isLowerer || fields == nil || l.EntityType() != typeName {
 		return store.GraphQuery{}, false, false
 	}
-	rollups := meta.RollupNames(typeName)
 	for _, attr := range l.EntityAttributes() {
-		if slices.Contains(rollups, attr) || !fields.FieldVisibleOnEveryRow(ctx, typeName, attr) {
+		if !fields.FieldVisibleOnEveryRow(ctx, typeName, attr) {
 			return store.GraphQuery{}, false, false
 		}
 	}

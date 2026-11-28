@@ -962,7 +962,7 @@
   "internal/visibility/pushdown.go": 11,
   "internal/visibility/relationpage.go": 3,
   "internal/visibility/resolver.go": 3,
-  "internal/visibility/rollup.go": 4,
+  "internal/visibility/rollup.go": 3,
   "internal/visibility/rollup_records.go": 1,
   "internal/visibility/search.go": 3,
   "internal/visibility/taggedentities.go": 2,

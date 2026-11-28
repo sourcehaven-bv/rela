@@ -129,6 +129,14 @@ func (p PolicyRedactor) RelationMetaGated(relType string) bool {
 	return affordances.RelationMetaGated(p.r, relType)
 }
 
+// RelationFieldVerdicts is the resolver's verdict on each of metaKeys on an
+// edge of relType from from: false where the reader may not read it.
+func (p PolicyRedactor) RelationFieldVerdicts(
+	ctx context.Context, from *entity.Entity, relType string, metaKeys []string,
+) map[string]bool {
+	return p.r.RelationFieldVerdicts(ctx, from, relType, metaKeys)
+}
+
 // NopGate is the permit-all [RowGate] for wirings without an ACL policy —
 // the byte-parity path (behavior identical to pre-ACL reads).
 type NopGate struct{}
