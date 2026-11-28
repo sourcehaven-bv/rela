@@ -100,6 +100,7 @@ func TestCompile_Along(t *testing.T) {
 	if len(a.Segments) != 2 || a.Segments[0].Relation != "child_of" || !a.Segments[0].Repeat ||
 		strings.Join(a.Segments[0].Reaches, ",") != "action,project" ||
 		strings.Join(a.Segments[1].Reaches, ",") != "folder" || a.MaxDepth != 12 {
+
 		t.Errorf("segments = %+v", a.Segments)
 	}
 	if !a.Lowers() || len(a.Nodes) != 3 {
@@ -141,9 +142,9 @@ func TestCompile_AlongDefaults(t *testing.T) {
 		{map[string]any{"status": "on_hold"}, nil, false},
 		{nil, []string{"status"}, false},
 	} {
-		got, err := node.Holds(ctx, "PRJ-1", tc.props, tc.hidden)
-		if err != nil || got != tc.want {
-			t.Errorf("Holds(%v, hidden %v) = %v, %v; want %v", tc.props, tc.hidden, got, err, tc.want)
+		got, herr := node.Holds(ctx, "PRJ-1", tc.props, tc.hidden)
+		if herr != nil || got != tc.want {
+			t.Errorf("Holds(%v, hidden %v) = %v, %v; want %v", tc.props, tc.hidden, got, herr, tc.want)
 		}
 	}
 	filled, err := node.FillDefaults(*node.Lowered)

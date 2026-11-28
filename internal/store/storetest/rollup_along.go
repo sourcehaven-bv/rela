@@ -44,8 +44,6 @@ func alongNode(typ string, faces store.FaceSelection, counts *store.Cond) store.
 	return store.AlongNode{Gate: store.GraphQuery{EntityType: typ, Faces: faces}, Counts: counts}
 }
 
-func condPtr(c store.Cond) *store.Cond { return &c }
-
 // alongHeldQuery is the probe's walk: [child_of*, in_folder*], counting an
 // open action, an on-hold or dropped project, and a dropped folder.
 func alongHeldQuery(depth int, faces store.FaceSelection, srcs ...string) store.RollupQuery {
@@ -53,12 +51,12 @@ func alongHeldQuery(depth int, faces store.FaceSelection, srcs ...string) store.
 		MaxDepth: depth,
 		Segments: []store.AlongSegment{
 			{Relation: "child_of", Repeat: true, Through: map[string]store.AlongNode{
-				"action": alongNode("action", faces, condPtr(alongStatus("open"))),
+				"action": alongNode("action", faces, new(alongStatus("open"))),
 				"project": alongNode("project", faces,
-					condPtr(store.OrCond(alongStatus("on_hold"), alongStatus("dropped")))),
+					new(store.OrCond(alongStatus("on_hold"), alongStatus("dropped")))),
 			}},
 			{Relation: "in_folder", Repeat: true, Through: map[string]store.AlongNode{
-				"folder": alongNode("folder", faces, condPtr(alongStatus("dropped"))),
+				"folder": alongNode("folder", faces, new(alongStatus("dropped"))),
 			}},
 		},
 	}}
@@ -80,8 +78,9 @@ func alongSeed(t *testing.T, s store.Store, typ, status string, ids ...string) {
 	}
 }
 
-func alongOne(src string) map[string]store.RollupResult {
-	return map[string]store.RollupResult{src: {Count: 1}}
+// alongOne is the result of a walk that holds once for ACT-1.
+func alongOne() map[string]store.RollupResult {
+	return map[string]store.RollupResult{"ACT-1": {Count: 1}}
 }
 
 // alongHeld: ACT-1 in an active project is not held; ACT-2 in an on-hold
@@ -113,10 +112,10 @@ func alongDefaultFill(t *testing.T, s store.Store) {
 	q := store.RollupQuery{Sources: []string{"ACT-1"}, Func: store.RollupCount, Along: &store.AlongWalk{
 		MaxDepth: 2,
 		Segments: []store.AlongSegment{{Relation: "child_of", Repeat: true, Through: map[string]store.AlongNode{
-			"project": alongNode("project", alongWorld, condPtr(store.OrCond(alongStatus("active"), unset))),
+			"project": alongNode("project", alongWorld, new(store.OrCond(alongStatus("active"), unset))),
 		}}},
 	}}
-	requireRollup(t, s, q, alongOne("ACT-1"))
+	requireRollup(t, s, q, alongOne())
 }
 
 // alongDepthCap: PRJ-1 (on hold) is three hops above ACT-1. ACT-9 reaches
@@ -148,7 +147,7 @@ func alongRestartOnce(t *testing.T, s store.Store) {
 	alongChain(t, s, "in_folder", "PRJ-1", "FLD-1", "FLD-2", "FLD-3")
 	q := alongHeldQuery(12, alongWorld, "ACT-1")
 	q.Along.RowCap = 6
-	requireRollup(t, s, q, alongOne("ACT-1"))
+	requireRollup(t, s, q, alongOne())
 	q.Along.RowCap = 5
 	_, err := store.Rollup(ctx(), s, q)
 	require.ErrorIs(t, err, store.ErrAlongRowCap)
@@ -180,7 +179,7 @@ func alongBrokenCaps(t *testing.T, s store.Store) {
 	mustRel(t, s, "ACT-1", "child_of", "PRJ-2")
 	mustRel(t, s, "PRJ-2", "in_folder", "FLD-1")
 	mustRel(t, s, "PRJ-2", "in_folder", "FLD-2")
-	requireRollup(t, s, alongHeldQuery(4, alongWorld, "ACT-1"), alongOne("ACT-1"))
+	requireRollup(t, s, alongHeldQuery(4, alongWorld, "ACT-1"), alongOne())
 }
 
 // alongGateBreaksPaths: a project the gate does not select is not visited,
@@ -192,7 +191,7 @@ func alongGateBreaksPaths(t *testing.T, s store.Store) {
 	mustRel(t, s, "ACT-1", "child_of", "PRJ-1")
 	mustRel(t, s, "PRJ-1", "in_folder", "FLD-1")
 	q := alongHeldQuery(4, alongWorld, "ACT-1")
-	requireRollup(t, s, q, alongOne("ACT-1"))
+	requireRollup(t, s, q, alongOne())
 	gate := q.Along.Segments[0].Through["project"]
 	gate.Gate.Props = []store.PropPredicate{{Property: "secret", Op: store.PropEqual, Value: "no", Scalar: true}}
 	q.Along.Segments[0].Through["project"] = gate
@@ -217,7 +216,7 @@ func alongFacesAndWorlds(t *testing.T, s store.Store) {
 		"project": {Chain: []entity.Face{draft, ""}, Fallback: store.FallbackExclude},
 	}))
 	requireRollup(t, s, alongHeldQuery(2, alongWorld, "ACT-1"), map[string]store.RollupResult{})
-	requireRollup(t, s, alongHeldQuery(2, draftFirst, "ACT-1"), alongOne("ACT-1"))
+	requireRollup(t, s, alongHeldQuery(2, draftFirst, "ACT-1"), alongOne())
 	q := alongHeldQuery(2, draftFirst, "ACT-1")
 	gate := q.Along.Segments[0].Through["project"]
 	gate.Gate.FaceIn = []entity.Face{""}
@@ -236,7 +235,7 @@ func alongTags(t *testing.T, s store.Store) {
 	mustRel(t, s, "ACT-2", "tagged", "TAG-3")
 	mustRel(t, s, "TAG-1", "tag_parent", "TAG-2")
 	mustRel(t, s, "TAG-3", "tag_parent", "TAG-4")
-	tag := alongNode("tag", alongWorld, condPtr(alongStatus("on_hold")))
+	tag := alongNode("tag", alongWorld, new(alongStatus("on_hold")))
 	q := store.RollupQuery{Sources: []string{"ACT-1", "ACT-2"}, Func: store.RollupCount, Along: &store.AlongWalk{
 		MaxDepth: 4,
 		Segments: []store.AlongSegment{
@@ -244,7 +243,7 @@ func alongTags(t *testing.T, s store.Store) {
 			{Relation: "tag_parent", Repeat: true, Through: map[string]store.AlongNode{"tag": tag}},
 		},
 	}}
-	requireRollup(t, s, q, alongOne("ACT-1"))
+	requireRollup(t, s, q, alongOne())
 }
 
 // alongIncomingAndExtremes: walked backwards, child_of reaches PRJ-1's
@@ -259,12 +258,12 @@ func alongIncomingAndExtremes(t *testing.T, s store.Store) {
 		Sources: []string{"PRJ-1"}, Func: store.RollupMin, Value: "due", Along: &store.AlongWalk{
 			MaxDepth: 1,
 			Segments: []store.AlongSegment{{Relation: "child_of", SourceIsTo: true, Through: map[string]store.AlongNode{
-				"action": alongNode("action", alongWorld, condPtr(store.AndCond())),
+				"action": alongNode("action", alongWorld, new(store.AndCond())),
 			}}},
 		},
 	}
 	requireRollup(t, s, q, map[string]store.RollupResult{"PRJ-1": {Count: 2, Value: "2024-01-01"}})
-	q.Along.Segments[0].Through["action"] = alongNode("action", alongWorld, condPtr(alongStatus("open")))
+	q.Along.Segments[0].Through["action"] = alongNode("action", alongWorld, new(alongStatus("open")))
 	requireRollup(t, s, q, map[string]store.RollupResult{"PRJ-1": {Count: 1, Value: "2024-03-01"}})
 }
 

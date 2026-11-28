@@ -255,6 +255,6 @@ func alongValueSQL(b *sqlBuilder, q store.RollupQuery) string {
 	case q.Numeric:
 		return integralSQL(b, q.Value)
 	default:
-		return nonEmptyStringSQL(b, "x", q.Value)
+		return nonEmptyStringSQL(b, q.Value)
 	}
 }

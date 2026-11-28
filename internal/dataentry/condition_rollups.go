@@ -83,12 +83,20 @@ type rollupConditionMatcher struct {
 
 // EntityType is the type the inner condition was compiled against.
 func (m rollupConditionMatcher) EntityType() string {
-	return m.inner.(conditionAttributes).EntityType()
+	attrs, ok := m.inner.(conditionAttributes)
+	if !ok {
+		return ""
+	}
+	return attrs.EntityType()
 }
 
 // EntityAttributes are the entity fields the inner condition reads.
 func (m rollupConditionMatcher) EntityAttributes() []string {
-	return m.inner.(conditionAttributes).EntityAttributes()
+	attrs, ok := m.inner.(conditionAttributes)
+	if !ok {
+		return nil
+	}
+	return attrs.EntityAttributes()
 }
 
 // rollupLowerer is the optional capability of a compiled condition to lower

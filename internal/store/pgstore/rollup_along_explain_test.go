@@ -136,8 +136,8 @@ func seedAlongFixture(t *testing.T, pool *pgxpool.Pool, pad int) {
 		require.NoError(t, s.CreateEntity(ctx, e))
 	}
 	link := func(from, rel, to string) {
-		_, err := s.CreateRelation(ctx, entity.RelationKey{From: from, Type: rel, To: to}, nil)
-		require.NoError(t, err)
+		_, lerr := s.CreateRelation(ctx, entity.RelationKey{From: from, Type: rel, To: to}, nil)
+		require.NoError(t, lerr)
 	}
 	put("alice", "person", "")
 	put("FLD-P2", "folder", "dropped")

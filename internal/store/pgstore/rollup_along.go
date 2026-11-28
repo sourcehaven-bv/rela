@@ -47,8 +47,8 @@ func (s *Store) rollupAlong(ctx context.Context, q store.RollupQuery) (map[strin
 	visits := map[string][]store.EntityHeader{}
 	err = s.queryBounded(ctx, sqlText, args, func(rows pgx.Rows) error {
 		var r alongRow
-		if err := rows.Scan(&r.overCap, &r.src, &r.id, &r.typ, &r.face, &r.count, &r.value); err != nil {
-			return fmt.Errorf("pgstore: rollup scan: %w", err)
+		if serr := rows.Scan(&r.overCap, &r.src, &r.id, &r.typ, &r.face, &r.count, &r.value); serr != nil {
+			return fmt.Errorf("pgstore: rollup scan: %w", serr)
 		}
 		return r.collect(q, out, visits)
 	})

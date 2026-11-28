@@ -352,7 +352,8 @@ func alongHop(ctx context.Context, st RollupReader, seg AlongSegment, from []alo
 // it, and returns the (source, id) pairs that count. A visit counts when its
 // node's Counts holds on the face the walk's gate selected.
 func alongCounted(
-	ctx context.Context, st GraphQueryer, a *AlongWalk, seen map[alongKey]bool, visited map[string]map[string]alongVisit,
+	ctx context.Context, st GraphQueryer, a *AlongWalk,
+	seen map[alongKey]bool, visited map[string]map[string]alongVisit,
 ) (map[alongKey]bool, error) {
 	type node struct {
 		seg int

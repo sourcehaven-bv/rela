@@ -208,6 +208,16 @@ func (r *Rollups) alongGoFold(
 		}
 		holds[typ] = rows
 	}
+	results, withheld = foldVisits(q, res, holds, unknown)
+	return results, withheld, nil
+}
+
+// foldVisits folds, per source, the visited rows that hold, and withholds a
+// source with a visit whose inner value is unknown.
+func foldVisits(
+	q store.RollupQuery, res map[string]store.RollupResult,
+	holds map[string]map[entity.Ref]store.EntityHeader, unknown map[entity.Ref]bool,
+) (results map[string]store.RollupResult, withheld map[string]bool) {
 	results, withheld = map[string]store.RollupResult{}, map[string]bool{}
 	for src, sr := range res {
 		var rows []store.EntityHeader
@@ -224,7 +234,7 @@ func (r *Rollups) alongGoFold(
 			results[src] = store.FoldHeaders(q, rows)
 		}
 	}
-	return results, withheld, nil
+	return results, withheld
 }
 
 // innerValues computes the inner roll-ups of col for the frontier refs,

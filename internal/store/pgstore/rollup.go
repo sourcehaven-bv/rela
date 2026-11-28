@@ -57,14 +57,14 @@ func (s *Store) Rollup(ctx context.Context, q store.RollupQuery) (map[string]sto
 			count int
 			value *string
 		)
-		if err := rows.Scan(&src, &count, &value); err != nil {
-			return fmt.Errorf("pgstore: rollup scan: %w", err)
+		if serr := rows.Scan(&src, &count, &value); serr != nil {
+			return fmt.Errorf("pgstore: rollup scan: %w", serr)
 		}
 		res := store.RollupResult{Count: count}
 		if value != nil {
-			v, err := rollupValue(q, *value)
-			if err != nil {
-				return err
+			v, verr := rollupValue(q, *value)
+			if verr != nil {
+				return verr
 			}
 			res.Value = v
 		}
@@ -92,7 +92,7 @@ func (s *Store) queryBounded(ctx context.Context, sqlText string, args []any, ea
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // a read-only transaction; nothing to keep
 	timeout := fmt.Sprintf("SET LOCAL statement_timeout = '%dms'", RollupStatementTimeout.Milliseconds())
-	if _, err := tx.Exec(ctx, timeout); err != nil {
+	if _, err = tx.Exec(ctx, timeout); err != nil {
 		return fmt.Errorf("pgstore: rollup: %w", err)
 	}
 	var db DBTX = tx

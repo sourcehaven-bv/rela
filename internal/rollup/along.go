@@ -142,9 +142,8 @@ func emptyValue(v any) bool {
 func compileAlongColumn(
 	meta *metamodel.Metamodel, eval *predicatefns.Evaluator, typeName, name string, pd metamodel.PropertyDef,
 	fn metamodel.RollupFunc, prop, at string,
-) (Column, []string) {
+) (col Column, problems []string) {
 	r := pd.Rollup
-	var problems []string
 	if len(r.Via) > 0 {
 		problems = append(problems, at+": along cannot be combined with via")
 	}
@@ -260,7 +259,9 @@ func compileSegments(
 
 // compileSegment resolves one segment name, standing on any of the types in
 // before, or why it cannot be walked.
-func compileSegment(meta *metamodel.Metamodel, name string, repeat bool, before []string) (Segment, string) {
+func compileSegment(
+	meta *metamodel.Metamodel, name string, repeat bool, before []string,
+) (seg Segment, problem string) {
 	relType, incoming := name, false
 	def, ok := meta.GetRelationDef(name)
 	if !ok {
@@ -314,7 +315,9 @@ func compileSegment(meta *metamodel.Metamodel, name string, repeat bool, before 
 // refused: it must compile and read only stored properties, roll-ups of
 // typ ([Node.Rollups]), now() and today(). A condition that reads a
 // roll-up has no store form.
-func compileNode(meta *metamodel.Metamodel, eval *predicatefns.Evaluator, typ, src string) (*Node, string) {
+func compileNode(
+	meta *metamodel.Metamodel, eval *predicatefns.Evaluator, typ, src string,
+) (node *Node, problem string) {
 	def := meta.Entities[typ]
 	wide, err := eval.CompileWithRollups(typ, src)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -176,19 +177,14 @@ func TestRollups_AlongACL(t *testing.T) {
 			}
 			got := r.Values(ctx, "action", rows, store.TrivialScope(), nil)
 			for _, prop := range []string{"held", "held_go"} {
-				var line string
+				cells := make([]string, len(rows))
 				for i, ref := range rows {
-					if i > 0 {
-						line += " "
+					cells[i] = "-"
+					if v, ok := got[ref.ID][prop]; ok {
+						cells[i] = fmt.Sprint(v)
 					}
-					v, ok := got[ref.ID][prop]
-					if !ok {
-						line += "-"
-						continue
-					}
-					line += fmt.Sprint(v)
 				}
-				if line != tc.want {
+				if line := strings.Join(cells, " "); line != tc.want {
 					t.Errorf("%s = %q, want %q", prop, line, tc.want)
 				}
 			}

@@ -24,7 +24,7 @@ func alongVisits(t *testing.T, s store.Store) {
 		Sources: []string{"PRJ-1"}, Func: store.RollupMax, Value: "n", Numeric: true, Along: &store.AlongWalk{
 			MaxDepth: 1, Visits: true,
 			Segments: []store.AlongSegment{{Relation: "child_of", SourceIsTo: true, Through: map[string]store.AlongNode{
-				"action": alongNode("action", alongWorld, condPtr(alongStatus("open"))),
+				"action": alongNode("action", alongWorld, new(alongStatus("open"))),
 			}}},
 		},
 	}
@@ -64,7 +64,7 @@ func alongDifferential(t *testing.T, s store.Store) {
 		q := alongHeldQuery(1+rng.IntN(8), alongWorld, ids[:20]...)
 		q.Along.Segments[0].SourceIsTo = i%3 == 0
 		q.Along.Segments[1].Repeat = i%2 == 0
-		q.Along.Segments[1].Through["action"] = alongNode("action", alongWorld, condPtr(alongStatus("done")))
+		q.Along.Segments[1].Through["action"] = alongNode("action", alongWorld, new(alongStatus("done")))
 		q.Along.Visits = i%4 == 1
 		switch i % 5 {
 		case 1:

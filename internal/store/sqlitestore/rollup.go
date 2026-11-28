@@ -183,7 +183,7 @@ func buildRollupSQL(q store.RollupQuery) (sqlText string, args []any, ok bool) {
 
 	order := "1"
 	if q.Func == store.RollupLatest {
-		by := nonEmptyStringSQL(b, "x", q.By)
+		by := nonEmptyStringSQL(b, q.By)
 		order = "(" + by + " IS NULL), " + by + " DESC, x.id"
 	}
 	rowsSQL := fmt.Sprintf(
@@ -307,9 +307,9 @@ func rollupAggregateSQL(b *sqlBuilder, q store.RollupQuery) string {
 		if q.Numeric {
 			return "CAST(" + fn + "(" + integralSQL(b, q.Value) + ") AS TEXT)"
 		}
-		return fn + "(" + nonEmptyStringSQL(b, "x", q.Value) + ")"
+		return fn + "(" + nonEmptyStringSQL(b, q.Value) + ")"
 	case store.RollupLatest:
-		by := nonEmptyStringSQL(b, "x", q.By)
+		by := nonEmptyStringSQL(b, q.By)
 		path := b.jsonPath(q.Value)
 		return "max(CASE WHEN x.rk = 1 AND " + by + " IS NOT NULL THEN json_array(x.properties -> " + path +
 			", CASE WHEN x.pickok THEN json('true') ELSE json('false') END) END)"
@@ -330,10 +330,10 @@ func integralSQL(b *sqlBuilder, prop string) string {
 		" THEN CAST(" + raw + " AS INTEGER) END END)"
 }
 
-// nonEmptyStringSQL is the property's text when it is a non-empty JSON
-// string, else NULL.
-func nonEmptyStringSQL(b *sqlBuilder, alias, prop string) string {
+// nonEmptyStringSQL is the property's text on the row aliased x when it is
+// a non-empty JSON string, else NULL.
+func nonEmptyStringSQL(b *sqlBuilder, prop string) string {
 	path := b.jsonPath(prop)
-	raw := rawExpr(alias, path)
-	return "(CASE WHEN " + typeExpr(alias, path) + " = 'text' AND " + raw + " <> '' THEN " + raw + " END)"
+	raw := rawExpr("x", path)
+	return "(CASE WHEN " + typeExpr("x", path) + " = 'text' AND " + raw + " <> '' THEN " + raw + " END)"
 }
