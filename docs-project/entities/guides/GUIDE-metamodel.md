@@ -1098,7 +1098,8 @@ entities:
 | `body_tasks` | `done`, `open` or `total`: the task lines in the entity's own body (see below). No other key |
 
 Declare exactly one function. `pick` must have the roll-up's declared type.
-A roll-up cannot read another roll-up. It cannot be
+A roll-up reads another roll-up only through a `condition:` (see "Roll-up
+over roll-up" below). It cannot be
 `required`, `list`, `unique`, `computed`, have a `default`, or be a file. The
 schema fails to load when a roll-up names an unknown relation or property, or
 when a type does not match. `min`, `max` and `latest_by` take a `date` only in
@@ -1181,6 +1182,119 @@ and the number of rows to join grows with the fan-out of every step. The schema
 fails to load when a path is longer, names an unknown or content-scoped
 relation, or has a step that does not start where the previous one ended.
 
+**Along a path (`along:`).** An `along:` roll-up walks a path and summarizes
+every entity it passes, not only the entities at the far end. Use it for
+inherited state, such as "a group or a folder above this action is on hold".
+
+```yaml
+entities:
+  action:
+    properties:
+      held:
+        type: boolean
+        rollup:
+          exists: true
+          along: [child_of*, in_folder*]
+          max_depth: 12
+          condition:
+            action: "entity.status ~= 'open'"
+            project: "entity.status == 'on_hold' or entity.status == 'dropped'"
+            folder: "entity.status == 'dropped'"
+```
+
+- `along:` lists relation segments. A segment with a `*` suffix repeats zero
+  or more times; a segment without it is walked once. A repeated segment must
+  lead from a type back to the same type, and must be declared to-one on the
+  side it walks (`max_outgoing: 1`, or the matching cap for an inverse). An
+  `along:` walks up a tree, not down.
+- `max_depth` is required, from 1 to 32. It caps the number of hops and is
+  part of the meaning: "ancestors within N hops". Every backend stops at the
+  same depth.
+- `condition:` maps a visited type to a predicate expression. `entity` is the
+  visited entity, not the source. A type with no entry is walked through but
+  never counts. At least one entry is required. A node condition reads only the
+  visited entity's stored properties, `now()` and `today()`. It cannot read a
+  roll-up, a computed property, `current_user`, `has_role`, `related()` or a
+  graph function. A property with a declared default reads as that default
+  when the row omits it.
+- The functions are `exists`, `min` and `max`. `min` and `max` need the same
+  property type on every type with a condition entry. `count`, `sum`, `pick`
+  and `all` are refused.
+
+The source itself is never visited. An entity reached along several paths
+counts once. A loop in the data ends at `max_depth`. A walk that would hold
+more than 50,000 rows fails, and the roll-up then has no value; on PostgreSQL
+a roll-up statement also stops after 5 seconds.
+
+**Earlier siblings (`siblings_before:`).** A `siblings_before:` roll-up looks
+at the siblings that come before the entity in a parent's manual order. Use
+it for sequential work, such as "an earlier action in this sequential
+project is still open".
+
+```yaml
+entities:
+  action:
+    properties:
+      waiting:
+        type: boolean
+        rollup:
+          exists: true
+          siblings_before: child_of
+          where: { status: open }
+          when_parent: { ordering: sequential }
+          climb: true
+          max_depth: 12
+```
+
+- `siblings_before:` names a relation whose incoming side is orderable
+  (`orderable: incoming` or `both`), that is declared to-one on the source
+  side, and whose endpoint types are not content-scoped. Siblings are the
+  other sources of that relation into the same parent.
+- `where:` filters the siblings and `when_parent:` filters the parent. Both
+  follow the `where:` rules, including the default rule, and each key must be
+  a declared property of every sibling or parent type.
+- The order is the edge's `_order_in` value, as in the SPA: numbered edges
+  first, by number, then the rest; ties by source id.
+- `climb: true` also judges every ancestor along the relation, within
+  `max_depth` (1 to 32). The roll-up is then true when the entity or any
+  ancestor has an earlier matching sibling.
+- The functions are `exists` and `count` (how many matching siblings come
+  first). `count` cannot be combined with `climb`.
+
+An entity with no edge of the relation has no earlier sibling. A drag reorder
+changes the value at once, because nothing is stored.
+
+**Roll-up over roll-up.** A `via:` roll-up with a `condition:` judges each
+related entity with a predicate expression, and that expression may read the
+related type's own roll-ups. The project below has an available action when a
+direct child passes four roll-ups of its own:
+
+```yaml
+entities:
+  project:
+    properties:
+      has_available_action:
+        type: boolean
+        rollup:
+          exists: true
+          via: children
+          condition:
+            action: >-
+              entity.status == 'open' and entity.held == false
+              and entity.held_by_tag == false
+              and entity.waiting == false
+```
+
+- `via:` names one relation; to walk it from the far side, use the
+  relation's `inverse:` name (here `children` for `child_of`). `where:`,
+  `type:` and `pick:` are not allowed with `condition:`. The functions are
+  `exists`, `count`, `min` and `max`.
+- Nesting is one level deep. A roll-up read in the condition may not itself
+  read a roll-up, and the schema fails to load on a longer chain or a cycle.
+- When a related entity's inner value is absent for the reader, the outer
+  value is absent for the whole page. It is never computed from a partial
+  view.
+
 **How a roll-up differs from a computed property.**
 
 | | Computed | Roll-up |
@@ -1189,7 +1303,7 @@ relation, or has a step that does not start where the previous one ended.
 | When | On every write, then stored | On every read, never stored |
 | Access | One value for every reader | Per reader: it counts only what the reader may read |
 | Filter, sort, group | Yes, like any stored property | In a list, yes; on a board, no |
-| Conditions and triggers | Yes | No: a condition that names one fails to load |
+| Conditions and triggers | Yes | Only a list `condition:` and a roll-up `condition:`; elsewhere a condition that names one fails to load |
 
 **Access.** A related entity the reader cannot read is never counted. A related
 entity whose `where`, `latest_by`, `min`, `max` or `sum` property is hidden from
@@ -1197,8 +1311,13 @@ the reader by a `visible:` grant is left out, as if it did not match. When the
 `pick` property of the latest entity is hidden, the roll-up has no value; rela
 does not fall back to an older entity. On a path, every entity in between is
 checked too: an entity the reader cannot read breaks the paths through it, so
-a far entity reached only through it is not counted. Two readers can therefore
-see different values for the same entity.
+a far entity reached only through it is not counted. An `along:` walk stops
+at an entity the reader cannot read, so a hidden project also hides the
+folders above it. A sibling or parent the reader cannot read does not exist
+for `siblings_before:`, and a hidden ancestor ends a climb. A
+`siblings_before:` roll-up is absent for every child of a parent when the
+reader may not read `_order_in` on the edge of a sibling the reader can see.
+Two readers can therefore see different values for the same entity.
 
 **Where the value appears.** The entity API (`GET /api/v1/{type}/{id}`, and the
 responses of create and update), the entity detail page, view sections, list
@@ -1208,6 +1327,20 @@ roll-ups out of a list response. A list can filter, sort and group on a
 roll-up. rela then computes the roll-up for every row the list scopes before it
 pages, so such a list is slower on a large type. A kanban board cannot filter
 on a roll-up; a `data-entry.yaml` that tries fails to load.
+
+**List conditions.** A list `condition:` can read a roll-up, as in
+`entity.held == false`. rela computes the roll-ups the condition reads for the
+candidate rows, then judges the condition. On PostgreSQL an `exists` roll-up
+compared with `== true` or `== false` is pushed into the list query when every
+node condition lowers to SQL and the reader may see the roll-up on every row;
+otherwise the condition runs in Go. A condition with `now()` or a date
+comparison does not lower yet. Compare with `== false` rather than `not`: an
+absent value then leaves the row out. A list condition cannot read a
+`body_tasks` roll-up.
+
+**Live refresh.** A list refreshes when an entity changes whose type any
+roll-up of the list's type reads, through a nested roll-up too. The
+data-entry config sends this set as the list's `refresh_types`.
 
 **Writes.** Setting or unsetting a roll-up through the CLI, MCP, Lua or the
 data-entry API is refused. A whole-entity update that sends back the value it

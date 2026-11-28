@@ -1368,6 +1368,43 @@ exist after it.
   write and never confer writability by themselves, so they are intentionally
   outside the check.
 
+### Roll-ups gate before they fold
+
+A roll-up property is an aggregate over the graph, so it follows the same
+order. Its value is computed per reader and never cached across readers.
+
+1. Only source rows the reader may read get a value.
+2. Every entity a roll-up reaches is gated with the reader's read query, at
+   the row the reader's world ranks first, inside the walk. A hidden entity
+   is not counted, and an `along:` walk does not go on through it. A hidden
+   project therefore also hides the folders above it from this reader.
+3. A node condition or a `where:` is judged on the row as the reader sees
+   it. A property hidden by `visible:` reads as unset, never as its default.
+4. The values are folded.
+5. The value is dropped on a source row where `visible:` hides the roll-up
+   property.
+6. List counts are computed after the list condition.
+
+`siblings_before:` follows the same rules. A sibling or a parent the reader
+cannot read is not there for this reader, and a hidden ancestor ends a
+climb. The roll-up is absent for every child of a parent when the reader may
+not read `_order_in` on the edge of a sibling the reader can see. The edges
+of hidden siblings are not judged, because absence would then reveal that a
+hidden sibling exists.
+
+A nested roll-up gates twice: the outer roll-up gates the related entities,
+and each inner roll-up gates every entity it visits. When an inner value is
+absent for the reader, the outer value is absent too.
+
+Walks are bounded. A walk that would hold more than 50,000 rows fails closed:
+the roll-up has no value, and a list condition on it does not match the
+row. On PostgreSQL every roll-up statement runs with a 5 second
+`statement_timeout`.
+
+**A `visible:` `when:` cannot read a roll-up.** The policy fails to load with
+an error naming the property. The roll-up is computed through the read gate,
+so a gate that read it would be circular.
+
 ### Global search (`/_search`, TKT-BA8BSX)
 
 The search view runs through `search.VisibleSearcher` — a seam that

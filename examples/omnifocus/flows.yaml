@@ -1,0 +1,24 @@
+triggers:
+  stamp-completed:
+    description: Record the completion date.
+    on: { entity: [action, project], property: status, becomes: completed }
+    outputs:
+      - set: { properties: { completed_on: "{{today}}" } }
+  stamp-dropped:
+    on: { entity: [action, project], property: status, becomes: dropped }
+    outputs:
+      - set: { properties: { completed_on: "{{today}}" } }
+  clear-completed-on-reopen:
+    on: { entity: action, property: status, becomes: open }
+    outputs:
+      - set: { unset: [completed_on] }
+  clear-project-completed-on-reopen:
+    on: { entity: project, property: status, becomes: active }
+    outputs:
+      - set: { unset: [completed_on] }
+  # Complete-with-last-action and repeats. Sequential blocking is the
+  # `waiting` roll-up, computed on read, so nothing runs on a reorder.
+  action-status:
+    on: { entity: action, property: status }
+    outputs:
+      - script: { file: action_status.lua }
