@@ -18,6 +18,7 @@ func runRollupCapTests(t *testing.T, f Factory) {
 	for name, run := range map[string]func(*testing.T, store.Store){
 		"along_per_source":    capAlongPerSource,
 		"along_hidden":        capAlongHidden,
+		"along_hop":           capAlongHop,
 		"siblings_per_source": capSiblingsPerSource,
 		"siblings_hidden":     capSiblingsHidden,
 		"climb_hidden":        capClimbHidden,
@@ -101,6 +102,31 @@ func capAlongHidden(t *testing.T, s store.Store) {
 	q.Along.RowCap = 1
 	requireRollup(t, s, q, map[string]store.RollupResult{"ACT-1": {OverCap: true}})
 	requireRollup(t, s, capGateAlong(q), alongOne())
+}
+
+// capAlongHop: PRJ-1 has ten secret children and ACT-1, a visible open
+// one. Walking down from PRJ-1 reads eleven edges in one hop, so a hop cap
+// of ten leaves PRJ-1 over its cap even for the reader who sees one child;
+// a hop cap of eleven does not. PRJ-2, with one child, keeps its answer.
+func capAlongHop(t *testing.T, s store.Store) {
+	alongSeed(t, s, "project", "active", "PRJ-1", "PRJ-2")
+	alongSeed(t, s, "action", "open", "ACT-1", "ACT-2")
+	mustRel(t, s, "ACT-1", "child_of", "PRJ-1")
+	mustRel(t, s, "ACT-2", "child_of", "PRJ-2")
+	for i := range 10 {
+		id := fmt.Sprintf("ACT-S%d", i)
+		capSecret(t, s, "action", "open", id)
+		mustRel(t, s, id, "child_of", "PRJ-1")
+	}
+	q := capGateAlong(store.RollupQuery{Sources: []string{"PRJ-1", "PRJ-2"}, Func: store.RollupCount,
+		Along: &store.AlongWalk{MaxDepth: 2, HopCap: 10, Segments: []store.AlongSegment{{
+			Relation: "child_of", SourceIsTo: true, Repeat: true, Through: map[string]store.AlongNode{
+				"action": alongNode("action", alongWorld, new(alongStatus("open"))),
+			},
+		}}}})
+	requireRollup(t, s, q, map[string]store.RollupResult{"PRJ-1": {OverCap: true}, "PRJ-2": {Count: 1}})
+	q.Along.HopCap = 11
+	requireRollup(t, s, q, map[string]store.RollupResult{"PRJ-1": {Count: 1}, "PRJ-2": {Count: 1}})
 }
 
 // capSiblingsPerSource: ACT-1 sits in PRJ-1 with five siblings, ACT-9 in

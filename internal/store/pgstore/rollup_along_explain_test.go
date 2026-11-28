@@ -219,7 +219,7 @@ func TestRollupAlongExplainBudget(t *testing.T) {
 		require.Regexp(t, `\bid = `, sc.node.IndexCond,
 			"(c) %s scans entities by %s without the level's ids", sc.cte, sc.node.IndexCond)
 	}
-	hop := regexp.MustCompile(`^l\d+_s\d+$`)
+	hop := regexp.MustCompile(`^l\d+_s\d+_e$`)
 	upward := map[string]bool{"relations_type_from_idx": true, "relations_elementless_idx": true, "relations_pkey": true}
 	indexed := map[string]bool{"relations_from_idx": true, "relations_to_idx": true, "relations_type_to_idx": true}
 	for _, sc := range large.scans("relations") {
@@ -255,4 +255,46 @@ func TestRollupStatementTimeout(t *testing.T) {
 	var after string
 	require.NoError(t, pool.QueryRow(ctx, "SELECT current_setting('statement_timeout')").Scan(&after))
 	require.NotEqual(t, got, after, "the timeout leaked to the pool")
+}
+
+// TestRollupAlongExplainHubBounded: a walk down from a project with 2,000
+// children and a hop cap of 50 reads at most 51 of its edges, and the
+// project is over its cap.
+func TestRollupAlongExplainHubBounded(t *testing.T) {
+	const hopCap = 50
+	pool := newScopedPool(t)
+	ctx := context.Background()
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	require.NoError(t, s.CreateEntity(ctx, entity.New("PRJ-H", "project")))
+	for i := range 2000 {
+		id := fmt.Sprintf("ACT-H%04d", i)
+		e := entity.New(id, "action")
+		e.Properties["status"] = "open"
+		require.NoError(t, s.CreateEntity(ctx, e))
+		_, err = s.CreateRelation(ctx, entity.RelationKey{From: id, Type: "child_of", To: "PRJ-H"}, nil)
+		require.NoError(t, err)
+	}
+	_, err = pool.Exec(ctx, "ANALYZE entities; ANALYZE relations")
+	require.NoError(t, err)
+	q := store.RollupQuery{Sources: []string{"PRJ-H"}, Func: store.RollupCount, Along: &store.AlongWalk{
+		MaxDepth: 2, HopCap: hopCap,
+		Segments: []store.AlongSegment{{Relation: "child_of", SourceIsTo: true, Repeat: true,
+			Through: map[string]store.AlongNode{"action": {
+				Gate: alongPolicy("action"), Counts: new(alongPolicyStatus("open")),
+			}}}},
+	}}
+	got, err := store.Rollup(ctx, s, q)
+	require.NoError(t, err)
+	require.Equal(t, map[string]store.RollupResult{"PRJ-H": {OverCap: true}}, got)
+	plan := explainAlong(t, pool, q)
+	var read float64
+	for _, sc := range plan.scans("relations") {
+		if sc.cte == "l1_s0_e" {
+			read += sc.node.ActualRows * sc.node.ActualLoops
+		}
+	}
+	t.Logf("hop read %v edges, plan rows %v", read, plan.rows())
+	require.Positive(t, read)
+	require.LessOrEqual(t, read, float64(hopCap+1), "the hop reads the hub in full")
 }

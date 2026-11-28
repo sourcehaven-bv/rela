@@ -117,7 +117,8 @@ func siblingsWalkSQL(b *sqlBuilder, q store.RollupQuery, seed string) (with []st
 		climb := store.RollupQuery{Func: store.RollupCount, Along: store.SiblingClimb(w)}
 		with = alongWalkSQL(b, climb, store.AlongLevels(climb.Along), seed, b.arg(limit+1))
 		nodes += " UNION SELECT src, id FROM walk"
-		read = "(SELECT count(*) FROM walk w WHERE w.src = s.src)"
+		read = "(SELECT count(*) FROM walk w WHERE w.src = s.src) + " +
+			"(SELECT count(*) * " + b.arg(limit+1) + " FROM hopover o WHERE o.src = s.src)"
 	}
 	ord := siblingOrderSQL(b.arg(store.SiblingOrderProperty))
 	with = append(with,

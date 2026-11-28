@@ -25,7 +25,9 @@ import (
 // gated (src, id, state) triples no earlier level holds (a cumulative CTE),
 // at most cap + 1 of them per source. A source holding more than cap
 // triples in all is over its cap: a sentinel row names it, and it has no
-// other row. The reference is [store.RollupGeneric].
+// other row. A hop reads at most hop cap + 1 edges per frontier entity, and
+// a source reading more than hop cap edges in one hop is over its cap too,
+// so a hub is never read in full. The reference is [store.RollupGeneric].
 
 // rollupAlong is [Store.Rollup] for an along query.
 func (s *Store) rollupAlong(ctx context.Context, q store.RollupQuery) (map[string]store.RollupResult, error) {
@@ -147,14 +149,15 @@ func sourcesSeed(b *sqlBuilder, sources []string) string {
 }
 
 // alongCountedSQL renders the walk of q from the ids seed selects: capped,
-// the sources holding more than limit triples, and counted, the counted
-// visits per (src, id) of the others. overCap holds when some source is
-// over, for a walk seeded with one candidate.
+// the sources holding more than limit triples or over the hop cap, and
+// counted, the counted visits per (src, id) of the others. overCap holds
+// when some source is over, for a walk seeded with one candidate.
 func alongCountedSQL(
 	b *sqlBuilder, q store.RollupQuery, levels [][]store.AlongHop, seed string, limit int,
 ) (with []string, overCap string) {
 	with = append(alongWalkSQL(b, q, levels, seed, b.arg(limit+1)),
-		"capped AS (SELECT src FROM walk GROUP BY src HAVING count(*) > "+b.arg(limit)+")",
+		"capped AS (SELECT src FROM walk GROUP BY src HAVING count(*) > "+b.arg(limit)+
+			" UNION SELECT src FROM hopover)",
 		`counted AS (SELECT w.src, w.id, min(w.type) AS type, min(w.face COLLATE "C") AS face, `+
 			`min(w.val) AS val FROM walk w WHERE w.id <> w.src AND w.src NOT IN (SELECT src FROM capped) `+
 			`GROUP BY w.src, w.id HAVING bool_or(w.hit))`)
@@ -162,24 +165,39 @@ func alongCountedSQL(
 }
 
 // alongWalkSQL renders the CTEs l0 to lK of q's walk from the ids seed
-// selects and walk, the union of l1 to lK: every gated (src, id, state)
-// triple, at most limitArg per source per level.
+// selects; walk, the union of l1 to lK: every gated (src, id, state)
+// triple with its level, at most limitArg per source per level; and
+// hopover, the sources over the hop cap.
 func alongWalkSQL(b *sqlBuilder, q store.RollupQuery, levels [][]store.AlongHop, seed, limitArg string) []string {
 	with := []string{fmt.Sprintf(
 		`l0 AS (SELECT DISTINCT s COLLATE "C" AS src, s COLLATE "C" AS id, -1 AS state FROM (%s) z(s))`, seed)}
+	hopCap := q.Along.HopCap
+	if hopCap == 0 {
+		hopCap = store.AlongHopCap
+	}
+	hc := alongHopCap{limit: b.arg(hopCap), read: b.arg(hopCap + 1)}
 	walk := make([]string, 0, len(levels))
+	over := []string{`SELECT NULL::text COLLATE "C" AS src WHERE FALSE`}
 	for i, hops := range levels {
 		k := i + 1
-		with = append(with, alongLevelSQL(b, q, k, hops, limitArg)...)
+		with = append(with, alongLevelSQL(b, q, k, hops, limitArg, hc)...)
 		if k > 1 && k < len(levels) {
 			with = append(with, fmt.Sprintf(
 				"%s AS (SELECT src, id, state FROM %s UNION ALL SELECT src, id, state FROM l%d)",
 				alongSeen(k), alongSeen(k-1), k))
 		}
-		walk = append(walk, fmt.Sprintf("SELECT src, id, type, face, hit, val FROM l%d", k))
+		walk = append(walk, fmt.Sprintf("SELECT src, id, state, %d AS lvl, type, face, hit, val FROM l%d", k, k))
+		for _, hop := range hops {
+			over = append(over, fmt.Sprintf("SELECT src FROM l%d_s%d_o", k, hop.Seg))
+		}
 	}
-	return append(with, "walk AS ("+strings.Join(walk, " UNION ALL ")+")")
+	return append(with, "walk AS ("+strings.Join(walk, " UNION ALL ")+")",
+		"hopover AS ("+strings.Join(over, " UNION ")+")")
 }
+
+// alongHopCap is the placeholders of a walk's hop cap and of the edges a
+// hop reads per frontier entity, one past it.
+type alongHopCap struct{ limit, read string }
 
 // alongSeen names the CTE of every triple levels 1 to k hold.
 func alongSeen(k int) string {
@@ -191,12 +209,14 @@ func alongSeen(k int) string {
 
 // alongLevelSQL renders level k: per hop its pairs and one gate per type,
 // then the level itself, the gated triples no earlier level holds.
-func alongLevelSQL(b *sqlBuilder, q store.RollupQuery, k int, hops []store.AlongHop, limitArg string) []string {
+func alongLevelSQL(
+	b *sqlBuilder, q store.RollupQuery, k int, hops []store.AlongHop, limitArg string, hc alongHopCap,
+) []string {
 	var with, arms []string
 	for _, hop := range hops {
 		seg := q.Along.Segments[hop.Seg]
 		pairs := fmt.Sprintf("l%d_s%d", k, hop.Seg)
-		with = append(with, pairs+" AS ("+alongHopSQL(b, k, hop, seg)+")")
+		with = append(with, alongHopSQL(b, k, hop, seg, hc)...)
 		for ti, typ := range slices.Sorted(maps.Keys(seg.Through)) {
 			gate := fmt.Sprintf("%s_t%d", pairs, ti)
 			with = append(with, alongGateSQL(b, gate, seg.Through[typ], q, "SELECT id FROM "+pairs)...)
@@ -216,9 +236,11 @@ func alongLevelSQL(b *sqlBuilder, q store.RollupQuery, k int, hops []store.Along
 		k, level, limitArg))
 }
 
-// alongHopSQL selects the distinct (src, id) pairs the identity-scoped
-// edges of seg reach from the level k-1 triples in hop's states.
-func alongHopSQL(b *sqlBuilder, k int, hop store.AlongHop, seg store.AlongSegment) string {
+// alongHopSQL renders hop's edges at level k: _e, at most hc.read edges
+// of seg per distinct (src, entity) of the level k-1 triples in hop's
+// states; _o, the sources reading more than hc.limit of them; and the
+// hop itself, the distinct (src, id) pairs of the other sources.
+func alongHopSQL(b *sqlBuilder, k int, hop store.AlongHop, seg store.AlongSegment, hc alongHopCap) []string {
 	nearCol, farCol := "from_id", "to_id"
 	if seg.SourceIsTo {
 		nearCol, farCol = farCol, nearCol
@@ -227,9 +249,16 @@ func alongHopSQL(b *sqlBuilder, k int, hop store.AlongHop, seg store.AlongSegmen
 	for i, st := range hop.From {
 		states[i] = strconv.Itoa(st)
 	}
-	return fmt.Sprintf("SELECT DISTINCT p.src, r.%s AS id FROM l%d p JOIN relations r ON r.%s = p.id "+
-		"WHERE r.rel_type = %s AND r.from_face = '' AND p.state IN (%s)",
-		farCol, k-1, nearCol, b.arg(seg.Relation), strings.Join(states, ", "))
+	name := fmt.Sprintf("l%d_s%d", k, hop.Seg)
+	return []string{
+		fmt.Sprintf("%s_e AS (SELECT p.src, x.id FROM (SELECT DISTINCT src, id FROM l%d WHERE state IN (%s)) p "+
+			"CROSS JOIN LATERAL (SELECT r.%s AS id FROM relations r WHERE r.%s = p.id AND r.rel_type = %s "+
+			"AND r.from_face = '' LIMIT %s) x)",
+			name, k-1, strings.Join(states, ", "), farCol, nearCol, b.arg(seg.Relation), hc.read),
+		fmt.Sprintf("%s_o AS (SELECT src FROM %s_e GROUP BY src HAVING count(*) > %s)", name, name, hc.limit),
+		fmt.Sprintf("%s AS (SELECT DISTINCT src, id FROM %s_e WHERE src NOT IN (SELECT src FROM %s_o))",
+			name, name, name),
+	}
 }
 
 // alongGateSQL renders the gate name over the ids subquery: the prime row

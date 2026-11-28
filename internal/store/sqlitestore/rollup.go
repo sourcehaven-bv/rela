@@ -8,10 +8,25 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/graphquerynaive"
 )
+
+// RollupTimeout bounds every [Store.Rollup] call, as pgstore's
+// RollupStatementTimeout bounds each roll-up statement (design T7). An
+// along walk is several statements here, so the bound is on the call. The
+// driver interrupts the running statement when it passes, and the caller
+// leaves the roll-up absent.
+const RollupTimeout = 5 * time.Second
+
+// rollupTimeout holds [RollupTimeout]. It is atomic only so tests can
+// shrink it while other tests' roll-ups read it.
+var rollupTimeout atomic.Int64
+
+func init() { rollupTimeout.Store(int64(RollupTimeout)) }
 
 // The SQL roll-up is the point of this file: without it [store.Rollup]
 // falls back to the Go fold, which costs more queries per column.
@@ -23,11 +38,14 @@ var _ store.Rollupper = (*Store)(nil)
 // path, when q has one) and grouped per source. A query whose names the
 // builder cannot render is answered by [store.RollupGeneric], the reference
 // both backends are tested against.
-// An along query ([store.AlongWalk]) runs as one unrolled statement.
+// An along query ([store.AlongWalk]) runs one statement per level (see
+// rollup_along.go). Every roll-up is bounded by [RollupTimeout].
 func (s *Store) Rollup(ctx context.Context, q store.RollupQuery) (map[string]store.RollupResult, error) {
 	if err := store.ValidateRollupQuery(q); err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(rollupTimeout.Load()))
+	defer cancel()
 	if q.Siblings != nil {
 		return s.rollupSiblings(ctx, q)
 	}

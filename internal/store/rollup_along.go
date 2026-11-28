@@ -22,6 +22,13 @@ const MaxAlongDepth = 32
 // [RollupResult.OverCap] rather than a truncated, and so inexact, answer.
 const AlongRowCap = 50000
 
+// AlongHopCap is the default most identity-scoped edges one source may
+// read in one hop of its walk, gated or not. It bounds what a hub costs:
+// a source whose hop reads more is over its cap, as for [AlongRowCap].
+// Since the edges are read before any gate, a reader can learn that a hop
+// reached more than this many entities, hidden ones included.
+const AlongHopCap = 50000
+
 // ErrAlongRowCap is returned when a row budget is too small to hold any
 // walk at all, whatever the data. The caller leaves the roll-up absent: it
 // fails closed. A source over its cap is reported by
@@ -44,6 +51,9 @@ type AlongWalk struct {
 	// RowCap caps the gated triples each source's walk holds; zero means
 	// [AlongRowCap].
 	RowCap int
+	// HopCap caps the edges each source reads per hop; zero means
+	// [AlongHopCap].
+	HopCap int
 	// Visits asks for the counted visits themselves in
 	// [RollupResult.Visits], for a caller that folds in Go.
 	Visits bool
@@ -93,8 +103,8 @@ func validateAlong(q RollupQuery) error {
 		return fmt.Errorf("%w: rollup: along needs a segment", ErrInvalidQuery)
 	case a.MaxDepth < 1 || a.MaxDepth > MaxAlongDepth:
 		return fmt.Errorf("%w: rollup: along max depth %d is outside 1 to %d", ErrInvalidQuery, a.MaxDepth, MaxAlongDepth)
-	case a.RowCap < 0:
-		return fmt.Errorf("%w: rollup: along row cap is negative", ErrInvalidQuery)
+	case a.RowCap < 0 || a.HopCap < 0:
+		return fmt.Errorf("%w: rollup: along row or hop cap is negative", ErrInvalidQuery)
 	}
 	switch q.Func {
 	case RollupCount:
@@ -246,11 +256,16 @@ type alongWalked struct {
 }
 
 // walkAlong walks a from sources, each source capped alone at the walk's
-// row cap over the gated triples it holds.
+// row cap over the gated triples it holds and at its hop cap over the
+// edges it reads per hop.
 func walkAlong(ctx context.Context, st RollupReader, a *AlongWalk, sources []string) (alongWalked, error) {
 	limit := a.RowCap
 	if limit == 0 {
 		limit = AlongRowCap
+	}
+	hopCap := a.HopCap
+	if hopCap == 0 {
+		hopCap = AlongHopCap
 	}
 	w := alongWalked{
 		seen: map[alongKey]bool{}, visited: map[string]map[string]alongVisit{},
@@ -270,9 +285,12 @@ func walkAlong(ctx context.Context, st RollupReader, a *AlongWalk, sources []str
 		}
 		var next []alongKey
 		for _, j := range slices.Sorted(maps.Keys(bySeg)) {
-			reached, err := alongHop(ctx, st, a.Segments[j], bySeg[j])
+			reached, over, err := alongHop(ctx, st, a.Segments[j], bySeg[j], hopCap)
 			if err != nil {
 				return alongWalked{}, err
+			}
+			for _, src := range over {
+				w.over[src] = true
 			}
 			for _, r := range reached {
 				k := alongKey{src: r.src, id: r.header.ID, state: j}
@@ -330,7 +348,11 @@ type alongReach struct {
 
 // alongHop follows seg from the frontier triples: one relation read for
 // every frontier id, then one gated header read per type seg reaches.
-func alongHop(ctx context.Context, st RollupReader, seg AlongSegment, from []alongKey) ([]alongReach, error) {
+// over are the sources that read more than hopCap edges; they reach
+// nothing.
+func alongHop(
+	ctx context.Context, st RollupReader, seg AlongSegment, from []alongKey, hopCap int,
+) (reached []alongReach, over []string, err error) {
 	srcsOf := map[string][]string{}
 	for _, k := range from {
 		if !slices.Contains(srcsOf[k.id], k.src) {
@@ -338,30 +360,18 @@ func alongHop(ctx context.Context, st RollupReader, seg AlongSegment, from []alo
 		}
 	}
 	near := slices.Sorted(maps.Keys(srcsOf))
-	identity := entity.Face("")
-	rq := RelationQuery{Type: seg.Relation, EntityIDs: near, FromFace: &identity, Direction: DirectionOutgoing}
-	if seg.SourceIsTo {
-		rq.Direction = DirectionIncoming
+	linked, edges, err := alongLinks(ctx, st, seg, near, srcsOf)
+	if err != nil {
+		return nil, nil, err
 	}
-	linked := map[string][]string{}
-	for r, err := range st.ListRelations(ctx, rq) {
-		if err != nil {
-			return nil, err
-		}
-		nearID, far := r.From, r.To
-		if seg.SourceIsTo {
-			nearID, far = r.To, r.From
-		}
-		for _, src := range srcsOf[nearID] {
-			if !slices.Contains(linked[far], src) {
-				linked[far] = append(linked[far], src)
-			}
+	for _, src := range slices.Sorted(maps.Keys(edges)) {
+		if edges[src] > hopCap {
+			over = append(over, src)
 		}
 	}
 	if len(linked) == 0 {
-		return nil, nil
+		return nil, over, nil
 	}
-	var out []alongReach
 	for _, typ := range slices.Sorted(maps.Keys(seg.Through)) {
 		gate := seg.Through[typ].Gate
 		gate.Related = append(slices.Clone(gate.Related), DirectedRelation{
@@ -370,15 +380,46 @@ func alongHop(ctx context.Context, st RollupReader, seg AlongSegment, from []alo
 		})
 		for h, err := range GraphQueryHeaders(ctx, st, gate) {
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			h.Type = typ
 			for _, src := range linked[h.ID] {
-				out = append(out, alongReach{src: src, header: h})
+				if !slices.Contains(over, src) {
+					reached = append(reached, alongReach{src: src, header: h})
+				}
 			}
 		}
 	}
-	return out, nil
+	return reached, over, nil
+}
+
+// alongLinks reads seg's identity-scoped edges at near: the sources that
+// reach each far entity, and the edges each source read.
+func alongLinks(
+	ctx context.Context, st RollupReader, seg AlongSegment, near []string, srcsOf map[string][]string,
+) (linked map[string][]string, edges map[string]int, err error) {
+	identity := entity.Face("")
+	rq := RelationQuery{Type: seg.Relation, EntityIDs: near, FromFace: &identity, Direction: DirectionOutgoing}
+	if seg.SourceIsTo {
+		rq.Direction = DirectionIncoming
+	}
+	linked, edges = map[string][]string{}, map[string]int{}
+	for r, err := range st.ListRelations(ctx, rq) {
+		if err != nil {
+			return nil, nil, err
+		}
+		nearID, far := r.From, r.To
+		if seg.SourceIsTo {
+			nearID, far = r.To, r.From
+		}
+		for _, src := range srcsOf[nearID] {
+			edges[src]++
+			if !slices.Contains(linked[far], src) {
+				linked[far] = append(linked[far], src)
+			}
+		}
+	}
+	return linked, edges, nil
 }
 
 // alongCounted judges every counting node once over the ids visited through

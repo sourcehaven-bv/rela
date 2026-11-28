@@ -2,8 +2,10 @@ package sqlitestore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -142,4 +144,32 @@ func (s *Store) ExecRaw(ctx context.Context, sqlText string) error {
 func GraphQueryPushesDownForTest(q store.GraphQuery) bool {
 	_, _, ok := buildGraphQuerySQL(q, graphSelectRows)
 	return ok
+}
+
+// ExplainAlongLevelForTest is the query plan of the first level statement
+// of q's walk, on a connection holding the seen table.
+func (s *Store) ExplainAlongLevelForTest(ctx context.Context, q store.RollupQuery) (plan string, err error) {
+	lvl, ok := buildAlongLevelSQL(q, store.AlongLevels(q.Along)[0])
+	if !ok {
+		return "", errors.New("along level does not render")
+	}
+	seen, err := s.openAlongSeen(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer func() { err = errors.Join(err, seen.close(ctx)) }()
+	args := append([]any{"[]", 1}, lvl.args[2:]...)
+	lines, err := collectRows(ctx, seen.raw, "EXPLAIN QUERY PLAN "+lvl.sql, args, func(sc scanner) (string, error) {
+		var id, parent, unused int
+		var detail string
+		return detail, sc.Scan(&id, &parent, &unused, &detail)
+	})
+	return strings.Join(lines, "\n"), err
+}
+
+// SetRollupTimeoutForTest shrinks [RollupTimeout] for the test's duration.
+func SetRollupTimeoutForTest(t interface{ Cleanup(func()) }, d time.Duration) {
+	prev := rollupTimeout.Load()
+	rollupTimeout.Store(int64(d))
+	t.Cleanup(func() { rollupTimeout.Store(prev) })
 }
