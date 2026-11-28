@@ -51,7 +51,7 @@ type alongVisit struct {
 }
 
 // rollupAlong is [Store.Rollup] for an along query.
-func (s *Store) rollupAlong(ctx context.Context, q store.RollupQuery) (map[string]store.RollupResult, error) {
+func rollupAlong(ctx context.Context, s *Store, q store.RollupQuery) (map[string]store.RollupResult, error) {
 	for _, seg := range q.Along.Segments {
 		for _, node := range seg.Through {
 			if err := graphquerynaive.CheckEndpointShape(node.Gate); err != nil {
@@ -71,7 +71,7 @@ func (s *Store) rollupAlong(ctx context.Context, q store.RollupQuery) (map[strin
 		}
 		stmts[i] = lvl
 	}
-	w, err := s.walkAlong(ctx, q, stmts)
+	w, err := walkAlong(ctx, s, q, stmts)
 	if err != nil {
 		return nil, err
 	}
@@ -98,12 +98,12 @@ type alongWalked struct {
 // more edges than the hop cap in one hop, is over it: its arrivals are
 // dropped and it walks no further. Each level returns at most one row past
 // the cap per source.
-func (s *Store) walkAlong(ctx context.Context, q store.RollupQuery, stmts []alongLevel) (w alongWalked, err error) {
+func walkAlong(ctx context.Context, s *Store, q store.RollupQuery, stmts []alongLevel) (w alongWalked, err error) {
 	limit := q.Along.RowCap
 	if limit == 0 {
 		limit = store.AlongRowCap
 	}
-	seen, err := s.openAlongSeen(ctx)
+	seen, err := openAlongSeen(ctx, s)
 	if err != nil {
 		return alongWalked{}, err
 	}
@@ -167,7 +167,7 @@ type alongSeen struct {
 // empties the seen table on it. The table is temporary, so it is never
 // part of the database file; close empties it again and releases the
 // connection.
-func (s *Store) openAlongSeen(ctx context.Context) (alongSeen, error) {
+func openAlongSeen(ctx context.Context, s *Store) (alongSeen, error) {
 	var raw querier = s.conn
 	release := func() error { return nil }
 	if s.conn == nil {

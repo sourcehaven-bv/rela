@@ -30,7 +30,7 @@ type siblingNode struct {
 }
 
 // rollupSiblings is [Store.Rollup] for a siblings query.
-func (s *Store) rollupSiblings(ctx context.Context, q store.RollupQuery) (map[string]store.RollupResult, error) {
+func rollupSiblings(ctx context.Context, s *Store, q store.RollupQuery) (map[string]store.RollupResult, error) {
 	w := q.Siblings
 	for _, nodes := range []map[string]store.AlongNode{w.Parents, w.Siblings} {
 		for _, node := range nodes {
@@ -44,7 +44,7 @@ func (s *Store) rollupSiblings(ctx context.Context, q store.RollupQuery) (map[st
 	if !ok || !climbOK {
 		return store.RollupGeneric(ctx, s, q)
 	}
-	nodes, climbed, err := s.siblingNodes(ctx, q, climb, stmts)
+	nodes, climbed, err := siblingNodes(ctx, s, q, climb, stmts)
 	if err != nil {
 		return nil, err
 	}
@@ -113,13 +113,13 @@ func siblingClimbSQL(q store.RollupQuery) (store.RollupQuery, []alongLevel, bool
 // siblingNodes is q's sources within the climb's cap, each its own node,
 // and every gated ancestor the climb's stmts reached, with what the climb
 // held per source.
-func (s *Store) siblingNodes(
-	ctx context.Context, q, climb store.RollupQuery, stmts []alongLevel,
+func siblingNodes(
+	ctx context.Context, s *Store, q, climb store.RollupQuery, stmts []alongLevel,
 ) ([]siblingNode, alongWalked, error) {
 	w := alongWalked{held: map[string]int{}, over: map[string]bool{}}
 	if len(stmts) > 0 {
 		var err error
-		if w, err = s.walkAlong(ctx, climb, stmts); err != nil {
+		if w, err = walkAlong(ctx, s, climb, stmts); err != nil {
 			return nil, alongWalked{}, err
 		}
 	}

@@ -41,7 +41,7 @@ func (s *Store) GraphQuery(ctx context.Context, q store.GraphQuery) iter.Seq2[*e
 	if err := checkGraphQueryScope(q); err != nil {
 		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }
 	}
-	return graphPages(ctx, s.graphDB(q), q, graphSelectRows, scanEntity,
+	return graphPages(ctx, graphDB(s, q), q, graphSelectRows, scanEntity,
 		(*entity.Entity).Ref, "pgstore: graph query")
 }
 
@@ -59,7 +59,7 @@ func (s *Store) CountMatched(ctx context.Context, q store.GraphQuery) (int, erro
 	if err != nil {
 		return 0, err
 	}
-	matched, err := s.countMatched(ctx, q, matchedSQL, matchedArgs)
+	matched, err := countMatched(ctx, s, q, matchedSQL, matchedArgs)
 	if err != nil {
 		return 0, fmt.Errorf("pgstore: graph count (matched): %w", err)
 	}
@@ -68,10 +68,10 @@ func (s *Store) CountMatched(ctx context.Context, q store.GraphQuery) (int, erro
 
 // countMatched runs the matched-count statement of q, under
 // [RollupStatementTimeout] when q's Where holds a roll-up leaf.
-func (s *Store) countMatched(ctx context.Context, q store.GraphQuery, sqlText string, args []any) (int, error) {
+func countMatched(ctx context.Context, s *Store, q store.GraphQuery, sqlText string, args []any) (int, error) {
 	var matched int
 	if store.HasRollupLeaf(q.Where) {
-		err := s.queryBounded(ctx, sqlText, args, func(rows pgx.Rows) error { return rows.Scan(&matched) })
+		err := boundedDB{s: s}.query(ctx, sqlText, args, func(rows pgx.Rows) error { return rows.Scan(&matched) })
 		return matched, err
 	}
 	return matched, s.db.QueryRow(ctx, sqlText, args...).Scan(&matched)
@@ -85,7 +85,7 @@ func (s *Store) GraphQueryHeaders(ctx context.Context, q store.GraphQuery) iter.
 	if err := checkGraphQueryScope(q); err != nil {
 		return func(yield func(store.EntityHeader, error) bool) { yield(store.EntityHeader{}, err) }
 	}
-	return graphPages(ctx, s.graphDB(q), q, graphSelectHeaders, scanEntityHeader,
+	return graphPages(ctx, graphDB(s, q), q, graphSelectHeaders, scanEntityHeader,
 		func(h store.EntityHeader) entity.Ref { return entity.Ref{ID: h.ID, Face: h.Face} },
 		"pgstore: graph query headers")
 }
@@ -143,7 +143,7 @@ func (s *Store) GraphCount(ctx context.Context, q store.GraphQuery) (matched, to
 	if err != nil {
 		return 0, 0, err
 	}
-	if matched, err = s.countMatched(ctx, q, matchedSQL, matchedArgs); err != nil {
+	if matched, err = countMatched(ctx, s, q, matchedSQL, matchedArgs); err != nil {
 		return 0, 0, fmt.Errorf("pgstore: graph count (matched): %w", err)
 	}
 	totalSQL, totalArgs := buildGraphTotalSQL(q)

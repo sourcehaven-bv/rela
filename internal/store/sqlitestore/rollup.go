@@ -47,10 +47,10 @@ func (s *Store) Rollup(ctx context.Context, q store.RollupQuery) (map[string]sto
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(rollupTimeout.Load()))
 	defer cancel()
 	if q.Siblings != nil {
-		return s.rollupSiblings(ctx, q)
+		return rollupSiblings(ctx, s, q)
 	}
 	if q.Along != nil {
-		return s.rollupAlong(ctx, q)
+		return rollupAlong(ctx, s, q)
 	}
 	if err := graphquerynaive.CheckEndpointShape(q.Related); err != nil {
 		return nil, err

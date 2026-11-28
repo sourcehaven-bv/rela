@@ -247,7 +247,7 @@ func BuildSiblingsSQLForTest(q store.RollupQuery) (sqlText string, args []any, e
 // transaction a roll-up statement runs in. Test-only.
 func RollupStatementTimeoutSettingForTest(ctx context.Context, s *Store) (string, error) {
 	var got string
-	err := s.queryBounded(ctx, "SELECT current_setting('statement_timeout')", nil, func(rows pgx.Rows) error {
+	err := boundedDB{s: s}.query(ctx, "SELECT current_setting('statement_timeout')", nil, func(rows pgx.Rows) error {
 		return rows.Scan(&got)
 	})
 	return got, err

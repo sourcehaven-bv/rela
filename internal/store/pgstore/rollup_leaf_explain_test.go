@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
@@ -99,7 +100,10 @@ func measureLeaf(t *testing.T, pad int) leafRun {
 // here rather than hidden. Here they grow faster than the candidates:
 // alice owns every padding tree, and the policy gate reads her owner-of
 // edges until it meets the candidate's tree, so a later tree costs more.
+// The test counts rows, not time, so it lifts the statement timeout: the
+// many-rejected scan at 3,000 entities passes 5 s under the race detector.
 func TestRollupLeafBudget(t *testing.T) {
+	pgstore.SetRollupStatementTimeoutForTest(t, 2*time.Minute)
 	tiny, small, large := measureLeaf(t, 100), measureLeaf(t, 1000), measureLeaf(t, 3000)
 	require.Equal(t, tiny.cost, small.cost, "calls or rows returned grow with the store")
 	require.Equal(t, small.cost, large.cost, "calls or rows returned grow with the store")

@@ -126,12 +126,16 @@ type RollupDef struct {
 	MaxDepth  int               `yaml:"max_depth,omitempty"`
 	Condition map[string]string `yaml:"condition,omitempty"`
 
-	// SiblingsBefore names the ordered relation of an earlier-siblings
-	// roll-up (design gap 2): the entity's siblings are the other sources of
-	// the relation into its parent, and the roll-up reads those that come
-	// before it in the incoming order. Where filters the siblings,
-	// WhenParent the parent; Climb judges each ancestor along the relation
-	// too, within MaxDepth hops.
+	SiblingsDef `yaml:",inline"`
+}
+
+// SiblingsDef holds the options of an earlier-siblings roll-up (design
+// gap 2). SiblingsBefore names the ordered relation: the entity's siblings
+// are the other sources of the relation into its parent, and the roll-up
+// reads those that come before it in the incoming order. Where filters the
+// siblings, WhenParent the parent; Climb judges each ancestor along the
+// relation too, within MaxDepth hops.
+type SiblingsDef struct {
 	SiblingsBefore string            `yaml:"siblings_before,omitempty"`
 	WhenParent     map[string]string `yaml:"when_parent,omitempty"`
 	Climb          bool              `yaml:"climb,omitempty"`

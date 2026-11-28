@@ -32,7 +32,7 @@ import (
 // [store.RollupGeneric].
 
 // rollupAlong is [Store.Rollup] for an along query.
-func (s *Store) rollupAlong(ctx context.Context, q store.RollupQuery) (map[string]store.RollupResult, error) {
+func rollupAlong(ctx context.Context, s *Store, q store.RollupQuery) (map[string]store.RollupResult, error) {
 	for _, seg := range q.Along.Segments {
 		for _, node := range seg.Through {
 			if err := checkGraphQueryScope(node.Gate); err != nil {
@@ -50,7 +50,7 @@ func (s *Store) rollupAlong(ctx context.Context, q store.RollupQuery) (map[strin
 		return nil, err
 	}
 	visits := map[string][]store.EntityHeader{}
-	err = s.queryBounded(ctx, sqlText, args, func(rows pgx.Rows) error {
+	err = boundedDB{s: s}.query(ctx, sqlText, args, func(rows pgx.Rows) error {
 		var r alongRow
 		if serr := rows.Scan(&r.overCap, &r.src, &r.id, &r.typ, &r.face, &r.count, &r.value); serr != nil {
 			return fmt.Errorf("pgstore: rollup scan: %w", serr)

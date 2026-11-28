@@ -153,7 +153,7 @@ func (s *Store) ExplainAlongLevelForTest(ctx context.Context, q store.RollupQuer
 	if !ok {
 		return "", errors.New("along level does not render")
 	}
-	seen, err := s.openAlongSeen(ctx)
+	seen, err := openAlongSeen(ctx, s)
 	if err != nil {
 		return "", err
 	}

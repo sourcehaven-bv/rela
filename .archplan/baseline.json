@@ -2930,6 +2930,30 @@
       "reason": "Design: the schema sub-routes serve the metamodel, which is config and goes to every signed-in user like /api/v1/_schema. The only refusal is an unsigned caller, refused at the identity edge.",
       "at": "2026-11-27T14:00:00Z",
       "title": "No test shows handleV1SchemaRoutes refusing a caller."
+    },
+    "concepts.data_clump-350d1521e523": {
+      "state": "accepted",
+      "reason": "Design: store.RollupQuery is the store form of the compiled rollup.Column, so it carries the same fields on purpose.",
+      "at": "2026-11-28T12:30:00Z",
+      "title": "The fields along, by, decimal, func, numeric, … and value appear together in 2 types across 2 components."
+    },
+    "concepts.missing_operation-276bf8f771c5": {
+      "state": "accepted",
+      "reason": "By design: one reader per backend for the same store contract (PostgreSQL SQL, SQLite SQL); the shared walk plan lives in store.",
+      "at": "2026-11-28T12:30:00Z",
+      "title": "2 components (pgstore, sqlitestore) each write their own admitted_sibling_sql for AlongNode, a type of store."
+    },
+    "concepts.bool_params-32d250150329": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding. RollupLeaf(holds) is the value the leaf compares with, not a mode flag.",
+      "at": "2026-11-28T12:30:00Z",
+      "title": "6 functions in store take boolean flags."
+    },
+    "concepts.untyped_bag-4b4754d4cb44": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model. Node.defaults holds property defaults.",
+      "at": "2026-11-28T12:30:00Z",
+      "title": "1 type of rollup that other components use carries untyped data: Node.defaults (map[string]any)."
     }
   },
   "labels": {},

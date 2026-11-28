@@ -36,7 +36,7 @@ const orderOverflow = "179769313486231580793728971405303415079934132710037826936
 	"855571366959622842914819860834936475292719074168444365510704342711559699508093042880177904174497792"
 
 // rollupSiblings is [Store.Rollup] for a siblings query.
-func (s *Store) rollupSiblings(ctx context.Context, q store.RollupQuery) (map[string]store.RollupResult, error) {
+func rollupSiblings(ctx context.Context, s *Store, q store.RollupQuery) (map[string]store.RollupResult, error) {
 	for _, nodes := range []map[string]store.AlongNode{q.Siblings.Parents, q.Siblings.Siblings} {
 		for _, node := range nodes {
 			if err := checkGraphQueryScope(node.Gate); err != nil {
@@ -49,7 +49,7 @@ func (s *Store) rollupSiblings(ctx context.Context, q store.RollupQuery) (map[st
 		return nil, err
 	}
 	out := map[string]store.RollupResult{}
-	err = s.queryBounded(ctx, sqlText, args, func(rows pgx.Rows) error {
+	err = boundedDB{s: s}.query(ctx, sqlText, args, func(rows pgx.Rows) error {
 		var (
 			overCap bool
 			src     *string

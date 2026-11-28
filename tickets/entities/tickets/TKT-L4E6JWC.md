@@ -28,3 +28,5 @@ Threat model and security requirements:
 - An absent value (over cap, timeout, withheld) fails closed under every comparison, including `not`.
 - Config names reach SQL only as bind parameters.
 - Accepted residual: hop and edge reads are not gated, so hidden volume can affect latency and the one-bit ceiling outcome. Both fail closed.
+
+Structure: the new store helpers are package functions or methods of `boundedDB`, not `Store` methods, and the siblings options sit in `metamodel.SiblingsDef`, so the types stay within their plimsoll load lines. The four new archplan findings are accepted in the baseline.
