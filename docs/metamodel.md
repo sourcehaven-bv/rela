@@ -1324,10 +1324,11 @@ on a roll-up; a `data-entry.yaml` that tries fails to load.
 
 **List conditions.** A list `condition:` can read a roll-up, as in
 `entity.held == false`. rela computes the roll-ups the condition reads for the
-candidate rows, then judges the condition. On PostgreSQL an `exists` roll-up
-compared with `== true` or `== false` is pushed into the list query when every
-node condition lowers to SQL and the reader may see the roll-up on every row;
-otherwise the condition runs in Go. A condition with `now()` or a date
+candidate rows, then judges the condition. On PostgreSQL an `exists`
+`along:` or `siblings_before:` roll-up compared with `== true` or `== false`
+is pushed into the list query when every node condition lowers to SQL and the
+reader may see the roll-up on every row. Otherwise the condition runs in Go,
+and its cost grows with the number of rows of the type, not with the page. A condition with `now()` or a date
 comparison does not lower yet. Compare with `== false` rather than `not`: an
 absent value then leaves the row out. A list condition cannot read a
 `body_tasks` roll-up.
