@@ -1,14 +1,16 @@
 version: 2
 
-# Cooldown waits N days after a version is published before opening a PR.
-# This is the supply-chain soak: malicious versions are typically caught
-# (via advisories, retractions, account lock) within days of publication.
-# Once the PR opens, dependabot-auto-merge.yml merges immediately on green CI.
+# Daily. Cooldown waits N days after a version is published before opening
+# a PR. This is the supply-chain soak: malicious versions are typically
+# caught (via advisories, retractions, account lock) within days of
+# publication. Security updates skip the cooldown.
+# dependabot-auto-merge.yml enables auto-merge for patch and minor only;
+# the merge still waits for green CI and one human approval (ruleset).
 updates:
   - package-ecosystem: gomod
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
     cooldown:
       default-days: 3
       semver-major-days: 7
@@ -32,7 +34,7 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
     # No cooldown for trusted-org Actions (actions/*, dependabot/*, github/*)
     # is enforced in the auto-merge workflow; third-party Actions still go
     # through cooldown here as an extra layer.
@@ -48,7 +50,7 @@ updates:
   - package-ecosystem: npm
     directory: /frontend
     schedule:
-      interval: weekly
+      interval: daily
     cooldown:
       default-days: 7
       semver-major-days: 14
@@ -68,8 +70,8 @@ updates:
         update-types: ["version-update:semver-major"]
     # Groups bundle minor+patch only. Majors fall out as individual PRs
     # so a single breaking upgrade can't block the safe ones in its group.
-    # Auto-merge is unconditional on green CI, so each PR (group or
-    # singleton) merges itself the moment its checks pass.
+    # Patch/minor PRs (group or singleton) merge on green CI plus one
+    # human approval; majors are never auto-merged.
     groups:
       vue-ecosystem:
         patterns:
@@ -121,7 +123,7 @@ updates:
   - package-ecosystem: npm
     directory: /e2e
     schedule:
-      interval: weekly
+      interval: daily
     cooldown:
       default-days: 7
       semver-major-days: 14
