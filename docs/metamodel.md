@@ -2187,8 +2187,8 @@ at any list size.
 Any other scope, for example one with an ordered comparison of a date, is still correct. It is
 evaluated after the store read, and its cost grows with the number of rows of
 the type. The same slower path applies when the rest of the request does not
-suit the store, for example with free-text search, a relation filter, or a
-sort on a property that is not string-shaped. A list `condition:` that reads
+suit the store, for example with free-text search, a relation filter by
+title, or a sort on a property that is not string-shaped. A list `condition:` that reads
 a property the reader cannot see on every row also takes the slower path.
 
 ### Which surfaces apply scopes

@@ -268,9 +268,9 @@ for the principal — a handful of statements whatever the page size. Collection
 rows are read as headers (no markdown body) throughout; see the API reference
 for `include_content`. The list page is pushed into the database — paging,
 ordering and equality filters in SQL — when the request carries no free-text
-search, no relation filter, and only `=`/`!=` filters and sort keys on
-string-shaped properties; anything else takes the whole-type path in Go, which
-still reads headers only.
+search, no relation filter other than an id filter the read gate can answer
+in SQL, and only `=`/`!=` filters and sort keys on string-shaped properties;
+anything else takes the whole-type path in Go, which still reads headers only.
 
 Ordering, on either path, compares property values byte-wise as text and puts
 a row without the property after every row that has one when ascending and
