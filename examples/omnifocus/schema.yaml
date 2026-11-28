@@ -97,8 +97,10 @@ entities:
       remaining_actions:
         type: integer
         rollup: { via: children, count: true, where: { status: open } }
-      # True when at least one direct child action is available. A group is
-      # an action, so an available group counts.
+      # True when at least one direct child action is available, by the
+      # same rules as the Available list: not deferred itself, and not a
+      # group with open children. Work inside a group is one level too deep
+      # to count here.
       has_available_action:
         type: boolean
         rollup:
@@ -110,6 +112,8 @@ entities:
               and entity.held_by_tag == false
               and entity.deferred_above == false
               and entity.waiting == false
+              and (entity.defer_date == nil or entity.defer_date <= now())
+              and entity.subactions_open == 0
     query_scopes:
       active: "entity.status == 'active'"
       remaining: "entity.status == 'active' or entity.status == 'on_hold'"
@@ -135,7 +139,8 @@ entities:
       repeat_rule: { type: repeat_rrule }
       repeat_method: { type: repeat_method }
       # True when a group above, the project, or a folder above holds the
-      # action back by its status.
+      # action back by its status. A completed project holds its open
+      # actions too.
       held:
         type: boolean
         rollup:
@@ -144,7 +149,9 @@ entities:
           max_depth: 12
           condition:
             action: "entity.status ~= 'open'"
-            project: "entity.status == 'on_hold' or entity.status == 'dropped'"
+            project: >-
+              entity.status == 'on_hold' or entity.status == 'dropped'
+              or entity.status == 'completed'
             folder: "entity.status == 'dropped'"
       # True when a tag on the action, or a parent of one, is on hold or
       # dropped.

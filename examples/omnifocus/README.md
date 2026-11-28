@@ -31,8 +31,8 @@ Availability is computed by roll-ups. No script writes it, so it stays
 correct when a row is moved, reordered by drag or changes status.
 
 - `held` walks up `child_of` and `in_folder`. It is true when a group above
-  is not open, the project is on hold or dropped, or a folder above is
-  dropped.
+  is not open, the project is on hold, dropped or completed, or a folder
+  above is dropped.
 - `held_by_tag` walks `tagged` and then up `tag_parent`. It is true when a
   tag on the action, or a parent of that tag, is on hold or dropped.
 - `deferred_above` is true when a group above or the project has a defer
@@ -40,7 +40,10 @@ correct when a row is moved, reordered by drag or changes status.
 - `waiting` is true when, in a sequential parent, an earlier sibling is still
   open. With `climb: true` it also checks every group above.
 - `has_available_action` on a project is true when a direct child passes all
-  four checks.
+  four checks and the rest of the Available list's rules: its own defer date
+  is not in the future, and it is not a group with open children. It reads
+  `subactions_open` for the last rule. Open work inside a group is one level
+  too deep for it, so such a project shows as stalled.
 
 Each roll-up only sees the rows the reader may see. A hidden parent or
 sibling does not count.
