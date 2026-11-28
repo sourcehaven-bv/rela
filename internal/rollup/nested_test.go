@@ -221,12 +221,16 @@ func readsAll(string) bool { return true }
 
 // TestSet_ReadTypesOnlyReadRollups pins that only the roll-ups a view reads
 // add types: held alone reads action and project, never tag, and a view
-// that reads no roll-up refreshes on nothing.
+// that reads only stored properties refreshes on nothing.
 func TestSet_ReadTypesOnlyReadRollups(t *testing.T) {
 	t.Parallel()
-	set, err := compileNested(t, "", "")
+	set, err := compileNested(t, "note: {type: string}", "")
 	if err != nil {
 		t.Fatal(err)
+	}
+	stored := func(p string) bool { return p == "note" || p == "status" }
+	if got := set.ReadTypes("action", stored); len(got) != 0 {
+		t.Errorf("action ReadTypes(stored) = %v, want none", got)
 	}
 	held := func(p string) bool { return p == "held" }
 	if got := strings.Join(set.ReadTypes("action", held), ","); got != "action,project" {

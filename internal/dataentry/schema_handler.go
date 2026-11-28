@@ -283,7 +283,8 @@ func resolveListDirections(
 			cond = conditionReads(id)
 		}
 		reads := listRollupReads(s.Meta, list, cond)
-		out[id] = v1.List{List: l, RefreshTypes: s.rollups.ReadTypes(l.EntityType, func(p string) bool { return reads[p] })}
+		refresh := s.rollups.ReadTypes(l.EntityType, func(p string) bool { return reads[p] })
+		out[id] = v1.List{List: l, RefreshTypes: refresh}
 	}
 	return out
 }
