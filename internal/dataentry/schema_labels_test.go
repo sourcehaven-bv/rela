@@ -115,7 +115,7 @@ func TestResolveListDirections_FillsLabels(t *testing.T) {
 		EntityType: "account",
 		Columns:    []dec.ListColumn{{Property: "status"}, {Relation: "billed-to"}},
 	}}
-	got := resolveListDirections(s, lists)["accounts"].Columns
+	got := resolveListDirections(s, lists, nil)["accounts"].Columns
 	if got[0].Label != "Account status" || got[1].Label != "Invoices" {
 		t.Errorf("labels = %q, %q; want Account status, Invoices", got[0].Label, got[1].Label)
 	}

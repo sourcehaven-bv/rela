@@ -202,18 +202,39 @@ func TestSet_ReadTypes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(set.ReadTypes("project"), ","); got != "action,project,tag" {
+	if got := strings.Join(set.ReadTypes("project", readsAll), ","); got != "action,project,tag" {
 		t.Errorf("project ReadTypes = %s", got)
 	}
-	if got := strings.Join(set.ReadTypes("action"), ","); got != "action,project,tag" {
+	if got := strings.Join(set.ReadTypes("action", readsAll), ","); got != "action,project,tag" {
 		t.Errorf("action ReadTypes = %s", got)
 	}
-	if got := set.ReadTypes("folder"); len(got) != 0 {
+	if got := set.ReadTypes("folder", readsAll); len(got) != 0 {
 		t.Errorf("folder ReadTypes = %v", got)
 	}
 	var nilSet *rollup.Set
-	if got := nilSet.ReadTypes("project"); got != nil {
+	if got := nilSet.ReadTypes("project", readsAll); got != nil {
 		t.Errorf("nil set ReadTypes = %v", got)
+	}
+}
+
+func readsAll(string) bool { return true }
+
+// TestSet_ReadTypesOnlyReadRollups pins that only the roll-ups a view reads
+// add types: held alone reads action and project, never tag, and a view
+// that reads no roll-up refreshes on nothing.
+func TestSet_ReadTypesOnlyReadRollups(t *testing.T) {
+	t.Parallel()
+	set, err := compileNested(t, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := func(p string) bool { return p == "held" }
+	if got := strings.Join(set.ReadTypes("action", held), ","); got != "action,project" {
+		t.Errorf("action ReadTypes(held) = %s, want action,project", got)
+	}
+	none := func(string) bool { return false }
+	if got := set.ReadTypes("project", none); len(got) != 0 {
+		t.Errorf("project ReadTypes(none) = %v, want none", got)
 	}
 }
 
@@ -240,7 +261,7 @@ func TestSet_ReadTypesTransitive(t *testing.T) {
 	if got := strings.Join(col.Types, ","); got != "action,project" {
 		t.Errorf("direct Types = %s", got)
 	}
-	if got := strings.Join(set.ReadTypes("project"), ","); !strings.Contains(got, "tag") {
+	if got := strings.Join(set.ReadTypes("project", readsAll), ","); !strings.Contains(got, "tag") {
 		t.Errorf("ReadTypes = %s, want tag through held_by_tag", got)
 	}
 }

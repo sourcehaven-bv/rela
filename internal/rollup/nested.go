@@ -153,14 +153,16 @@ func columnTypes(meta *metamodel.Metamodel, typeName string, col Column) []strin
 	return slices.Compact(types)
 }
 
-// ReadTypes is every entity type a change to which can change a roll-up of
-// entityType, through its nested roll-ups too, sorted. A live view of
-// entityType that shows its roll-ups refreshes on a change to any of them
-// (design decision Q8); a change to an edge reaches the view as a change
-// to the relation's end types. Empty when entityType has no roll-ups.
+// ReadTypes is every entity type a change to which can change one of the
+// roll-ups of entityType that reads names, through their nested roll-ups
+// too, sorted. A live view that shows or filters on those roll-ups
+// refreshes on a change to any of them (design decision Q8); a change to
+// an edge reaches the view as a change to the relation's end types. Empty
+// when reads names no roll-up of entityType. A records roll-up adds no
+// type: record writes raise no store event.
 //
 // Nil: accepted; a nil Set has no roll-ups.
-func (s *Set) ReadTypes(entityType string) []string {
+func (s *Set) ReadTypes(entityType string, reads func(property string) bool) []string {
 	if s == nil {
 		return nil
 	}
@@ -181,7 +183,9 @@ func (s *Set) ReadTypes(entityType string) []string {
 		}
 	}
 	for _, col := range s.For(entityType) {
-		add(entityType, col)
+		if reads(col.Property) {
+			add(entityType, col)
+		}
 	}
 	slices.Sort(out)
 	return slices.Compact(out)

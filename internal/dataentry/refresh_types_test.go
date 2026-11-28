@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	dec "github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -63,27 +64,78 @@ relations:
 `
 
 // TestResolveListDirections_RefreshTypes pins decision Q8: the config
-// response publishes, per list, the transitive set of types its roll-ups
-// read, sorted, so the Stalled list refreshes on a change to a tag. A list
-// of a type without roll-ups publishes none.
+// response publishes, per list, the transitive set of types the roll-ups it
+// reads read, sorted, so the Stalled list refreshes on a change to a tag. A
+// roll-up counts as read through a column, a sort, a filter, a filter
+// control or the condition. A list that reads none, even over a type with
+// roll-ups, publishes none.
 func TestResolveListDirections_RefreshTypes(t *testing.T) {
 	meta, err := metamodel.Parse([]byte(refreshMeta))
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := &Schema{Meta: meta, rollups: compileRollups(meta)}
-	got := resolveListDirections(s, map[string]dec.List{
-		"stalled": {EntityType: "project"},
-		"notes":   {EntityType: "note"},
-	})
-	if types := strings.Join(got["stalled"].RefreshTypes, ","); types != "action,project,tag" {
-		t.Errorf("stalled refresh_types = %s, want action,project,tag", types)
+	const want = "action,project,tag"
+	condReads := func(id string) map[string]bool {
+		if id == "by_condition" {
+			return map[string]bool{"has_available_action": true}
+		}
+		return nil
 	}
-	raw, err := json.Marshal(got["notes"])
+	got := resolveListDirections(s, map[string]dec.List{
+		"by_column":    {EntityType: "project", Columns: []dec.ListColumn{{Property: "has_available_action"}}},
+		"by_sort":      {EntityType: "project", Sort: []dec.SortSpec{{Property: "has_available_action"}}},
+		"by_filter":    {EntityType: "project", Filters: []dec.FilterConfig{{Property: "has_available_action"}}},
+		"by_control":   {EntityType: "project", FilterControls: []dec.FilterControl{{Property: "has_available_action"}}},
+		"by_condition": {EntityType: "project"},
+		"plain":        {EntityType: "project", Columns: []dec.ListColumn{{Property: "status"}}},
+		"notes":        {EntityType: "note"},
+	}, condReads)
+	for _, id := range []string{"by_column", "by_sort", "by_filter", "by_control", "by_condition"} {
+		if types := strings.Join(got[id].RefreshTypes, ","); types != want {
+			t.Errorf("%s refresh_types = %s, want %s", id, types, want)
+		}
+	}
+	for _, id := range []string{"plain", "notes"} {
+		raw, err := json.Marshal(got[id])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "refresh_types") {
+			t.Errorf("%s = %s, want no refresh_types", id, raw)
+		}
+	}
+}
+
+// TestListConditionReads_RealCompiler pins that the roll-ups a list's
+// condition reads come from the compiled condition: only the one it names.
+func TestListConditionReads_RealCompiler(t *testing.T) {
+	meta, err := metamodel.Parse([]byte(refreshMeta))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "refresh_types") {
-		t.Errorf("notes = %s, want no refresh_types", raw)
+	cfg := &dec.Config{Lists: map[string]dec.List{
+		"stalled": {EntityType: "project", Condition: "entity.has_available_action == false"},
+		"active":  {EntityType: "project", Condition: "entity.status == 'active'"},
+	}}
+	s := &Schema{Meta: meta, Cfg: cfg, rollups: compileRollups(meta)}
+	fn := withConditionRollups(AdaptViewConditions(appbuild.ViewConditions), rollupSource{})
+	h := &schemaHandler{viewConditions: func() ViewConditionFunc { return fn }}
+	reads := h.listConditionReads(s)
+	if reads == nil {
+		t.Fatal("listConditionReads = nil, want a lookup")
+	}
+	if got := reads("stalled"); len(got) != 1 || !got["has_available_action"] {
+		t.Errorf("stalled reads %v, want has_available_action", got)
+	}
+	if got := reads("active"); len(got) != 0 {
+		t.Errorf("active reads %v, want none", got)
+	}
+	served := resolveListDirections(s, cfg.Lists, reads)
+	if types := strings.Join(served["stalled"].RefreshTypes, ","); types != "action,project,tag" {
+		t.Errorf("stalled refresh_types = %s", types)
+	}
+	if types := served["active"].RefreshTypes; len(types) != 0 {
+		t.Errorf("active refresh_types = %v, want none", types)
 	}
 }

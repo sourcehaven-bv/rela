@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -48,6 +49,10 @@ type schemaHandler struct {
 	// templater loads the entity templates for /_templates. Nil in tests
 	// that never serve that route.
 	templater templating.Templater
+	// viewConditions compiles the lists' `condition:`, so a list's refresh
+	// types cover the roll-ups its condition reads. Nil in tests that do
+	// not wire one; such a list's condition then adds no roll-up.
+	viewConditions func() ViewConditionFunc
 }
 
 // newSchemaHandler wires the handler to app's live collaborators.
@@ -63,6 +68,7 @@ func newSchemaHandler(app *App, templater templating.Templater) *schemaHandler {
 		palette:        func() *paletteService { return app.palette },
 		assets:         func() projectAssets { return app.assets },
 		templater:      templater,
+		viewConditions: func() ViewConditionFunc { return app.viewConditions },
 	}
 }
 
@@ -252,10 +258,14 @@ func resolveConfigDirection(
 
 // resolveListDirections returns a copy of lists with relation-column and
 // filter-control directions materialized, empty column labels filled from
-// the schema (withSchemaLabels), and the refresh types of its roll-ups set.
-// Copy-on-serve, like resolveFormRelations: the in-memory config keeps
-// what the operator wrote.
-func resolveListDirections(s *Schema, lists map[string]dataentryconfig.List) map[string]v1.List {
+// the schema (withSchemaLabels), and the refresh types of the roll-ups each
+// list reads set ([listRollupReads]). Copy-on-serve, like
+// resolveFormRelations: the in-memory config keeps what the operator wrote.
+//
+// Nil conditionReads: accepted; no list's condition then reads a roll-up.
+func resolveListDirections(
+	s *Schema, lists map[string]dataentryconfig.List, conditionReads func(listID string) map[string]bool,
+) map[string]v1.List {
 	out := make(map[string]v1.List, len(lists))
 	for id, list := range lists {
 		l := list
@@ -268,9 +278,65 @@ func resolveListDirections(s *Schema, lists map[string]dataentryconfig.List) map
 			l.Columns = withSchemaLabels(s.Meta, []string{l.EntityType}, cols)
 		}
 		l.FilterControls = resolveFilterControlDirections(s, l.EntityType, l.FilterControls)
-		out[id] = v1.List{List: l, RefreshTypes: s.rollups.ReadTypes(l.EntityType)}
+		var cond map[string]bool
+		if conditionReads != nil {
+			cond = conditionReads(id)
+		}
+		reads := listRollupReads(s.Meta, list, cond)
+		out[id] = v1.List{List: l, RefreshTypes: s.rollups.ReadTypes(l.EntityType, func(p string) bool { return reads[p] })}
 	}
 	return out
+}
+
+// listRollupReads is the set of roll-ups of l's type that l shows, sorts
+// on or filters on, plus cond, the ones its condition reads. A roll-up the
+// list does not read cannot change what it renders, so it adds no refresh.
+func listRollupReads(meta *metamodel.Metamodel, l dataentryconfig.List, cond map[string]bool) map[string]bool {
+	if meta == nil {
+		return cond
+	}
+	names := meta.RollupNames(l.EntityType)
+	reads := maps.Clone(cond)
+	if reads == nil {
+		reads = map[string]bool{}
+	}
+	mark := func(p string) {
+		if slices.Contains(names, p) {
+			reads[p] = true
+		}
+	}
+	for _, c := range l.Columns {
+		mark(c.Property)
+	}
+	for _, o := range l.Sort {
+		mark(o.Property)
+	}
+	for _, f := range l.Filters {
+		mark(f.Property)
+	}
+	for _, fc := range l.FilterControls {
+		mark(fc.Property)
+	}
+	return reads
+}
+
+// listConditionReads returns, per list id, the roll-ups that list's
+// condition reads, compiled once against s. Nil when no compiler is wired.
+func (h *schemaHandler) listConditionReads(s *Schema) func(listID string) map[string]bool {
+	if h.viewConditions == nil || h.viewConditions() == nil {
+		return nil
+	}
+	lookup, _ := h.viewConditions()(s.Cfg, s.Meta)
+	if lookup == nil {
+		return nil
+	}
+	return func(listID string) map[string]bool {
+		m, ok := lookup(viewKindList, listID)
+		if !ok {
+			return nil
+		}
+		return conditionRollups(s.Meta, m)
+	}
 }
 
 // resolveFilterControlDirections materializes directions on a filter-control
@@ -446,7 +512,7 @@ func (h *schemaHandler) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Styles:           s.StyleMap,
 		Forms:            forms,
 		Channels:         s.Cfg.Channels,
-		Lists:            resolveListDirections(s, s.Cfg.Lists),
+		Lists:            resolveListDirections(s, s.Cfg.Lists, h.listConditionReads(s)),
 		Views:            s.Cfg.Views,
 		EntityViews:      s.Cfg.EntityViews,
 		Kanbans:          resolveKanbanDirections(s, s.Cfg.Kanbans),

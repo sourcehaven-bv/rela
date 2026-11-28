@@ -11,7 +11,7 @@ import {
   setLiveReconnect,
 } from './useLiveSubscription'
 import { invalidateWhenVisible, refetchJitter, runWhenVisible } from './visibleRefetch'
-import { listTypesRefreshedBy } from './listRefresh'
+import { isListQueryOf, listsRefreshedBy } from './listRefresh'
 
 export type SSEEventType = 'refresh' | 'git' | 'git:status' | 'entity:changed'
 
@@ -256,10 +256,14 @@ export function useEvents() {
           invalidateWhenVisible(queryCache, {
             key: data.type ? entityKeys.type(data.type) : entityKeys.root,
           }).catch(() => {})
-          if (data.type) {
-            for (const listType of listTypesRefreshedBy(schemaStore.lists.values(), data.type)) {
-              invalidateWhenVisible(queryCache, { key: entityKeys.list(listType) }).catch(() => {})
-            }
+          const refreshed = data.type
+            ? listsRefreshedBy(schemaStore.lists.entries(), data.type)
+            : new Map()
+          for (const listType of new Set(refreshed.values())) {
+            invalidateWhenVisible(queryCache, {
+              key: entityKeys.list(listType),
+              predicate: (entry) => isListQueryOf(entry.key, refreshed),
+            }).catch(() => {})
           }
           eventHandlers.get('entity:changed')?.forEach((handler) => handler(data))
         } catch {
