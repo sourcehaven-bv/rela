@@ -186,8 +186,11 @@ func valueLine(got map[string]map[string]any, rows []entity.Ref, prop string) st
 // st: an available child or group makes a project not stalled; held,
 // waiting and done children do not; a child the reader cannot read does
 // not count for that reader; an inner roll-up `visible:` hides makes the
-// outer value absent; and a row cap over the whole nested evaluation
-// leaves the value out.
+// outer value absent; and the row cap is per source. With a cap of 3,
+// PRJ-2's three children charge it 4 and PRJ-5's inner tag walk holds 2
+// rows of its share of 1, so only those two are absent. A child the
+// reader cannot read is not charged: with a cap of 2, PRJ-4 is over it for
+// the owner and within it for the reader of own actions.
 func assertNestedRollups(t *testing.T, st store.Store) {
 	t.Helper()
 	ctx := context.Background()
@@ -212,10 +215,12 @@ func assertNestedRollups(t *testing.T, st store.Store) {
 		{"inner hidden", visibility.AllowAllReadQueries{}, innerHidden, 0, "- - - - - false"},
 		{"inner shown on done rows only", visibility.AllowAllReadQueries{}, innerShownWhenMine, 0,
 			"- - - - - false"},
-		{"row cap over the nested evaluation", visibility.AllowAllReadQueries{}, visibility.NopRedactor{}, 8,
-			"- - - - - -"},
-		{"row cap shared with the inner walks", visibility.AllowAllReadQueries{}, visibility.NopRedactor{}, 20,
-			"- - - - - -"},
+		{"row cap per source", visibility.AllowAllReadQueries{}, visibility.NopRedactor{}, 3,
+			"true - true true - false"},
+		{"row cap per source, all children read", visibility.AllowAllReadQueries{}, visibility.NopRedactor{}, 2,
+			"- - true - - false"},
+		{"row cap per source, hidden child not charged", ownActions, visibility.NopRedactor{}, 2,
+			"- - true false - false"},
 		{"row cap with room", visibility.AllowAllReadQueries{}, visibility.NopRedactor{}, 400,
 			"true false true true false false"},
 	}

@@ -2,6 +2,8 @@ package dataentry
 
 import (
 	"context"
+	"log/slog"
+	"maps"
 	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -135,15 +137,32 @@ func (m rollupConditionMatcher) Lower(
 }
 
 // MatchPage computes the roll-ups the condition reads for rows, one batch
-// per entity type, and judges the copies that carry them.
+// per entity type, and judges the copies that carry them. A row on which a
+// roll-up the condition reads is absent, because it could not be computed
+// (over its row cap, a failed store call, a withheld value), is no match:
+// the condition fails closed whatever it does with the value, `not`
+// included.
 func (m rollupConditionMatcher) MatchPage(
 	ctx context.Context, rows []*entityPkg.Entity, gate relresolve.Gate, match relresolve.Match,
 ) ([]bool, error) {
-	return m.inner.MatchPage(ctx, m.withRollups(ctx, rows), gate, match)
+	copies, absent := m.withRollups(ctx, rows)
+	out, err := m.inner.MatchPage(ctx, copies, gate, match)
+	if err != nil {
+		return out, err
+	}
+	for i := range out {
+		if i < len(absent) && absent[i] {
+			out[i] = false
+		}
+	}
+	return out, nil
 }
 
-// withRollups returns copies of rows carrying the wanted roll-ups, in order.
-func (m rollupConditionMatcher) withRollups(ctx context.Context, rows []*entityPkg.Entity) []*entityPkg.Entity {
+// withRollups returns copies of rows carrying the wanted roll-ups, in order,
+// and per row whether one of them is absent.
+func (m rollupConditionMatcher) withRollups(
+	ctx context.Context, rows []*entityPkg.Entity,
+) (out []*entityPkg.Entity, absent []bool) {
 	byType := map[string][]int{}
 	var order []string
 	for i, e := range rows {
@@ -152,16 +171,81 @@ func (m rollupConditionMatcher) withRollups(ctx context.Context, rows []*entityP
 		}
 		byType[e.Type] = append(byType[e.Type], i)
 	}
-	out := make([]*entityPkg.Entity, len(rows))
+	out = make([]*entityPkg.Entity, len(rows))
+	absent = make([]bool, len(rows))
 	for _, typ := range order {
 		idx := byType[typ]
 		group := make([]*entityPkg.Entity, len(idx))
 		for j, i := range idx {
 			group[j] = rows[i]
 		}
-		for j, c := range m.src.copiesWithRollups(ctx, typ, group, m.want) {
-			out[idx[j]] = c
+		copies, gone := m.src.conditionCopies(ctx, typ, group, m.want)
+		for j, c := range copies {
+			out[idx[j]], absent[idx[j]] = c, gone[j]
 		}
 	}
-	return out
+	return out, absent
+}
+
+// conditionCopies is [rollupSource.copiesWithRollups] for a condition: it
+// also reports, per entity, whether a roll-up in want is absent because it
+// could not be computed ([visibility.Rollups.ValuesOrAbsent]). When the
+// roll-up reader cannot be built, every entity has one absent.
+func (s rollupSource) conditionCopies(
+	ctx context.Context, typeName string, entities []*entityPkg.Entity, want map[string]bool,
+) (copies []*entityPkg.Entity, gone []bool) {
+	copies = make([]*entityPkg.Entity, len(entities))
+	refs := make([]entityPkg.Ref, len(entities))
+	for i, e := range entities {
+		cp := *e
+		cp.Properties = maps.Clone(e.Properties)
+		if cp.Properties == nil {
+			cp.Properties = map[string]any{}
+		}
+		copies[i], refs[i] = &cp, e.Ref()
+	}
+	gone = make([]bool, len(entities))
+	if s.schema == nil || s.schema() == nil {
+		return copies, gone
+	}
+	sch := s.schema()
+	values, absent := s.conditionValues(ctx, sch, typeName, refs, want)
+	names := sch.Meta.RollupNames(typeName)
+	for i, cp := range copies {
+		visibility.MergeRollups(cp.Properties, names, values[cp.ID])
+		for p := range want {
+			gone[i] = gone[i] || absent[cp.ID][p]
+		}
+	}
+	return copies, gone
+}
+
+// conditionValues computes the roll-ups in want of refs, all of typeName,
+// one call per [rollupChunk] refs, with the absent ones keyed by id.
+func (s rollupSource) conditionValues(
+	ctx context.Context, sch *Schema, typeName string, refs []entityPkg.Ref, want map[string]bool,
+) (values map[string]map[string]any, absent map[string]map[string]bool) {
+	values, absent = map[string]map[string]any{}, map[string]map[string]bool{}
+	if len(sch.rollups.For(typeName)) == 0 {
+		return values, absent
+	}
+	gate := visibility.ReadQueryFunc(func(ctx context.Context, t string) (acl.ReadQueryResult, error) {
+		return readGateFromContext(ctx).ReadQuery(ctx, t), nil
+	})
+	r, err := visibility.NewRollups(sch.rollups, s.st, gate, s.fields())
+	if err != nil {
+		slog.WarnContext(ctx, "condition roll-ups not computed", "type", typeName, "error", err)
+		for _, ref := range refs {
+			absent[ref.ID] = maps.Clone(want)
+		}
+		return values, absent
+	}
+	r = s.withRecords(r)
+	world := worldScopeFrom(ctx)
+	for chunk := range slices.Chunk(refs, rollupChunk) {
+		v, a := r.ValuesOrAbsent(ctx, typeName, chunk, world, func(p string) bool { return want[p] })
+		maps.Copy(values, v)
+		maps.Copy(absent, a)
+	}
+	return values, absent
 }

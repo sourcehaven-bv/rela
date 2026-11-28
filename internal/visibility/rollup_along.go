@@ -160,6 +160,10 @@ func (r *Rollups) alongCounts(
 // nested roll-up the visits are the frontier: each inner roll-up is
 // computed for them first, one batched call per inner column, and a
 // source with a visit whose inner value is absent is withheld.
+//
+// A nested source has its own budget of rowCap rows: charged (1 + its
+// gated visits) x segments, it is withheld when over it. No other row of
+// the page changes it; innerValues caps the inner walks.
 func (r *Rollups) alongGoFold(
 	ctx context.Context, col rollup.Column, ids []string, gates alongGates, world store.WorldScope, rowCap int,
 ) (results map[string]store.RollupResult, withheld map[string]bool, err error) {
@@ -182,9 +186,12 @@ func (r *Rollups) alongGoFold(
 		return nil, nil, err
 	}
 	refs := map[string][]entity.Ref{}
-	charged := len(ids)
+	over := map[string]bool{}
 	for _, src := range slices.Sorted(maps.Keys(res)) {
-		charged += len(res[src].Visits)
+		if res[src].OverCap || nested && (1+len(res[src].Visits))*len(col.Along.Segments) > rowCap {
+			over[src] = true
+			continue
+		}
 		for _, v := range res[src].Visits {
 			ref := entity.Ref{ID: v.ID, Face: v.Face}
 			if _, node := col.Along.Nodes[v.Type]; node && !slices.Contains(refs[v.Type], ref) {
@@ -194,8 +201,7 @@ func (r *Rollups) alongGoFold(
 	}
 	var inner map[string]map[string]map[string]any
 	if nested {
-		left := rowCap - charged*len(col.Along.Segments)
-		if inner, err = r.innerValues(ctx, col, refs, world, left); err != nil {
+		if inner, err = r.innerValues(ctx, col, refs, world, rowCap); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -208,18 +214,22 @@ func (r *Rollups) alongGoFold(
 		}
 		holds[typ] = rows
 	}
-	results, withheld = foldVisits(q, res, holds, unknown)
+	results, withheld = foldVisits(q, res, holds, unknown, over)
 	return results, withheld, nil
 }
 
 // foldVisits folds, per source, the visited rows that hold, and withholds a
-// source with a visit whose inner value is unknown.
+// source over its budget or with a visit whose inner value is unknown.
 func foldVisits(
 	q store.RollupQuery, res map[string]store.RollupResult,
-	holds map[string]map[entity.Ref]store.EntityHeader, unknown map[entity.Ref]bool,
+	holds map[string]map[entity.Ref]store.EntityHeader, unknown map[entity.Ref]bool, over map[string]bool,
 ) (results map[string]store.RollupResult, withheld map[string]bool) {
 	results, withheld = map[string]store.RollupResult{}, map[string]bool{}
 	for src, sr := range res {
+		if over[src] {
+			withheld[src] = true
+			continue
+		}
 		var rows []store.EntityHeader
 		for _, v := range sr.Visits {
 			ref := entity.Ref{ID: v.ID, Face: v.Face}
@@ -238,11 +248,13 @@ func foldVisits(
 }
 
 // innerValues computes the inner roll-ups of col for the frontier refs,
-// keyed by type, id and property, with the left rows of the shared cap
-// split evenly over the inner columns that walk. An inner column that
-// fails fails col: its value would be judged on a guess.
+// keyed by type, id and property, each inner walk capped per inner source
+// at rowCap split evenly over the inner columns that walk. An inner column
+// that fails fails col: its value would be judged on a guess. An inner
+// source over its cap has no value, so the outer sources visiting it are
+// withheld.
 func (r *Rollups) innerValues(
-	ctx context.Context, col rollup.Column, refs map[string][]entity.Ref, world store.WorldScope, left int,
+	ctx context.Context, col rollup.Column, refs map[string][]entity.Ref, world store.WorldScope, rowCap int,
 ) (map[string]map[string]map[string]any, error) {
 	walks := 0
 	for _, in := range col.Inner() {
@@ -255,9 +267,9 @@ func (r *Rollups) innerValues(
 			}
 		}
 	}
-	share := left
+	share := rowCap
 	if walks > 0 {
-		share = left / walks
+		share = rowCap / walks
 		if share <= 0 {
 			return nil, store.ErrAlongRowCap
 		}
@@ -269,7 +281,7 @@ func (r *Rollups) innerValues(
 			continue
 		}
 		want := func(p string) bool { return slices.Contains(names, p) }
-		vals, err := r.values(ctx, typ, refs[typ], world, want, share)
+		vals, _, err := r.values(ctx, typ, refs[typ], world, want, share)
 		if err != nil {
 			return nil, fmt.Errorf("inner roll-ups of %s: %w", typ, err)
 		}
@@ -328,6 +340,9 @@ func (r *Rollups) judgeVisits(
 			continue
 		}
 		props := maps.Clone(h.Properties)
+		if props == nil {
+			props = map[string]any{}
+		}
 		var hidden []string
 		for _, p := range slices.Sorted(maps.Keys(shown)) {
 			if !shown[p](h) {
