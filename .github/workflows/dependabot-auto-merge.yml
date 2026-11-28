@@ -1,37 +1,44 @@
 name: Dependabot Auto-Merge
 
-# Soak protection lives in .github/dependabot.yml via `cooldown:` — by the
-# time a PR opens here, the dep version has already been published long
-# enough to catch retractions, advisories, and compromised releases. So we
-# approve and enable auto-merge unconditionally for every Dependabot PR.
+# Enables auto-merge on Dependabot PRs for patch and minor updates only.
+# It does not approve: the ruleset requires one human approval, so a PR
+# merges once CI is green and a reviewer has approved. Majors get no
+# auto-merge and are merged by hand.
+#
+# pull_request_target runs this file from the base branch, so a PR cannot
+# change it. It never checks out or runs PR code.
+#
+# Auto-merge is enabled with the GitHub App token (APP_ID, APP_PRIVATE_KEY),
+# so the merge commit triggers the push workflows; GITHUB_TOKEN merges do not.
 
 on: pull_request_target
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
+  pull-requests: read
 
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
-    if: github.actor == 'dependabot[bot]'
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     steps:
-      # App token is used for approve / auto-merge so the eventual merge
-      # commit can trigger downstream workflows. GITHUB_TOKEN-authored
-      # approvals are also silently ignored by branch protection's
-      # "require approving review" rule, so the App token future-proofs
-      # against that being enabled later.
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Generate app token
-        uses: actions/create-github-app-token@v3
+        if: steps.metadata.outputs.update-type == 'version-update:semver-patch' || steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         id: app-token
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
-      - name: Approve and enable auto-merge
-        run: |
-          gh pr review --approve "$PR_URL"
-          gh pr merge --auto --squash "$PR_URL"
+      - name: Enable auto-merge
+        if: steps.app-token.outcome == 'success'
+        run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
