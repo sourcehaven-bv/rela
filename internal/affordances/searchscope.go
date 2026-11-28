@@ -70,8 +70,7 @@ func refuseRollupRead(meta *metamodel.Metamodel, roleName, entityType string, id
 	}
 	env, err := buildEnvWith(entityRecordType(meta, entityType, true))
 	if err != nil {
-		// coverage-ignore: defensive: buildEnvWith only errors on constant declarations into a fresh env
-		return nil
+		return fmt.Errorf("role %q: %s visible[%d] %s: roll-up env: %w", roleName, entityType, idx, field, err)
 	}
 	prog, err := predicate.Compile(env, when)
 	if err != nil {

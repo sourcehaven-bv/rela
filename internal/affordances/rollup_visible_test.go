@@ -1,6 +1,7 @@
 package affordances_test
 
 import (
+	"maps"
 	"strings"
 	"testing"
 
@@ -36,13 +37,11 @@ func rollupMeta(t *testing.T) *metamodel.Metamodel {
 		}},
 		"tasks_open": {Type: metamodel.PropertyTypeInteger, Rollup: &metamodel.RollupDef{BodyTasks: "open"}},
 	}
-	merged := map[string]metamodel.PropertyDef{}
-	for k, v := range ticket.Properties {
-		merged[k] = v
+	merged := maps.Clone(ticket.Properties)
+	if merged == nil {
+		merged = map[string]metamodel.PropertyDef{}
 	}
-	for k, v := range props {
-		merged[k] = v
-	}
+	maps.Copy(merged, props)
 	ticket.Properties = merged
 	m.Entities["ticket"] = ticket
 	return m
