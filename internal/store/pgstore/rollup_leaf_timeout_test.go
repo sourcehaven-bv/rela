@@ -4,7 +4,6 @@ package pgstore_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -63,6 +62,6 @@ func TestRollupLeafScanTimesOut(t *testing.T) {
 func requireStatementTimeout(t *testing.T, what string, err error) {
 	t.Helper()
 	var pgErr *pgconn.PgError
-	require.Truef(t, errors.As(err, &pgErr), "%s: err = %v, want a statement timeout", what, err)
+	require.ErrorAsf(t, err, &pgErr, "%s: want a statement timeout", what)
 	require.Equalf(t, "57014", pgErr.Code, "%s: err = %v, want a statement timeout", what, err)
 }
