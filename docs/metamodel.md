@@ -1206,11 +1206,15 @@ entities:
   same depth.
 - `condition:` maps a visited type to a predicate expression. `entity` is the
   visited entity, not the source. A type with no entry is walked through but
-  never counts. At least one entry is required. A node condition reads only the
-  visited entity's stored properties, `now()` and `today()`. It cannot read a
-  roll-up, a computed property, `current_user`, `has_role`, `related()` or a
-  graph function. A property with a declared default reads as that default
+  never counts. At least one entry is required. A node condition reads the
+  visited entity's stored properties, `now()` and `today()`, and the visited
+  type's own roll-ups, one level deep (see roll-up over roll-up below). It
+  cannot read a computed property, `current_user`, `has_role`, `related()` or
+  a graph function. A property with a declared default reads as that default
   when the row omits it.
+- `along:` cannot be combined with `via:`, `type:`, `where:`, `window:`,
+  `pick:`, `climb:`, `when_parent:` or `siblings_before:`; the schema fails to
+  load.
 - The functions are `exists`, `min` and `max`. `min` and `max` need the same
   property type on every type with a condition entry. `count`, `sum`, `pick`
   and `all` are refused.
@@ -1260,7 +1264,8 @@ changes the value at once, because nothing is stored.
 
 **Roll-up over roll-up.** A `via:` roll-up with a `condition:` judges each
 related entity with a predicate expression, and that expression may read the
-related type's own roll-ups. The project below has an available action when a
+related type's own roll-ups. So may an `along:` node condition, for the
+visited type's roll-ups. The project below has an available action when a
 direct child passes four roll-ups of its own:
 
 ```yaml
@@ -1283,11 +1288,14 @@ entities:
   relation's `inverse:` name (here `children` for `child_of`). `where:`,
   `type:` and `pick:` are not allowed with `condition:`. The functions are
   `exists`, `count`, `min` and `max`.
-- Nesting is one level deep. A roll-up read in the condition may not itself
-  read a roll-up, and the schema fails to load on a longer chain or a cycle.
-- When a related entity's inner value is absent for the reader, the outer
-  value is absent for the whole page. It is never computed from a partial
-  view.
+- Nesting is one level deep, for `via:` and `along:` alike. A roll-up read in
+  the condition may not itself read a roll-up, and the schema fails to load
+  on a longer chain or a cycle.
+- The inner roll-up is computed for the reader, over what the reader may
+  read, before the outer roll-up folds it.
+- When a related or visited entity's inner value is absent for the reader,
+  the outer value is absent for that source. It is never computed from a
+  partial view.
 
 **How a roll-up differs from a computed property.**
 
@@ -1328,14 +1336,20 @@ candidate rows, then judges the condition. On PostgreSQL an `exists`
 `along:` or `siblings_before:` roll-up compared with `== true` or `== false`
 is pushed into the list query when every node condition lowers to SQL and the
 reader may see the roll-up on every row. Otherwise the condition runs in Go,
-and its cost grows with the number of rows of the type, not with the page. A condition with `now()` or a date
-comparison does not lower yet. Compare with `== false` rather than `not`: an
-absent value then leaves the row out. A list condition cannot read a
-`body_tasks` roll-up.
+and its cost grows with the number of rows of the type, not with the page. A
+condition with `now()` or a date comparison does not lower yet. A row whose
+roll-up value is absent for the reader (over its row cap, or hidden) is left
+out, whatever the condition does with the value, `not` included. A list
+condition cannot read a `body_tasks` roll-up.
 
-**Live refresh.** A list refreshes when an entity changes whose type any
-roll-up of the list's type reads, through a nested roll-up too. The
-data-entry config sends this set as the list's `refresh_types`.
+**Live refresh.** A list refreshes when an entity changes whose type a
+roll-up the list reads reads, through a nested roll-up too. A list reads a
+roll-up when a column, a sort, a filter, a filter control or its
+`condition:` names it. The data-entry config sends this set as the list's
+`refresh_types`, and only that list refetches, not every list of its type.
+Pages, kanban boards and sidebar counts get no such refresh: they update on a
+change to their own type only. A `records:` roll-up gets none either,
+because a record write raises no change event.
 
 **Writes.** Setting or unsetting a roll-up through the CLI, MCP, Lua or the
 data-entry API is refused. A whole-entity update that sends back the value it
