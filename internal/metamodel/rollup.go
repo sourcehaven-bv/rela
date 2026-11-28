@@ -140,6 +140,13 @@ type RollupDef struct {
 // AlongRepeat is the suffix that makes an along segment repeat.
 const AlongRepeat = "*"
 
+// ParseAlongSegment splits one along segment into its relation name and
+// whether it repeats, trimming space around both parts.
+func ParseAlongSegment(seg string) (name string, repeat bool) {
+	name, repeat = strings.CutSuffix(strings.TrimSpace(seg), AlongRepeat)
+	return strings.TrimSpace(name), repeat
+}
+
 // MaxRollupPath is the most relations a roll-up's via may name. Each hop is
 // one more join in the statement that computes the roll-up for a page, and
 // the number of (entity, related entity) pairs it carries grows with the
@@ -287,6 +294,10 @@ func validateRollupShape(schemaName, propName string, pd PropertyDef, allowRollu
 // validateRecordsRollupShape checks a roll-up over a record type: one of
 // sum, avg or latest, a valid window, and none of the relation options.
 func validateRecordsRollupShape(at string, r *RollupDef) []string {
+	if len(r.Along) > 0 || strings.TrimSpace(r.SiblingsBefore) != "" {
+		return []string{at + ": records reads the entity's own rows and cannot walk a path; " +
+			"declare records or along/siblings_before, not both"}
+	}
 	var errs []string
 	for _, c := range []struct {
 		set  bool
@@ -295,6 +306,8 @@ func validateRecordsRollupShape(at string, r *RollupDef) []string {
 		{len(r.Via) > 0, "via"}, {r.Type != "", "type"}, {len(r.Where) > 0, "where"},
 		{r.Pick != "", "pick"}, {r.LatestBy != "", "latest_by"}, {r.Min != "", "min"},
 		{r.Max != "", "max"}, {r.Count, "count"}, {r.Exists, "exists"},
+		{len(r.Condition) > 0, "condition"}, {r.MaxDepth != 0, "max_depth"}, {r.Climb, "climb"},
+		{len(r.WhenParent) > 0, "when_parent"},
 	} {
 		if c.set {
 			errs = append(errs, fmt.Sprintf("%s: records cannot be combined with %s", at, c.name))
@@ -318,7 +331,8 @@ func validateBodyTasksRollupShape(at string, r *RollupDef, pd PropertyDef) []str
 		name string
 	}{
 		{len(r.Via) > 0, "via"}, {r.Type != "", "type"}, {len(r.Where) > 0, "where"},
-		{r.Records != "", "records"}, {r.Window != "", "window"},
+		{r.Records != "", "records"}, {r.Window != "", "window"}, {len(r.Along) > 0, "along"},
+		{r.SiblingsBefore != "", "siblings_before"}, {len(r.Condition) > 0, "condition"},
 	} {
 		if c.set {
 			errs = append(errs, fmt.Sprintf("%s: body_tasks cannot be combined with %s", at, c.name))
@@ -341,7 +355,7 @@ func validateBodyTasksRollupShape(at string, r *RollupDef, pd PropertyDef) []str
 func validateAlongRollupShape(at string, r *RollupDef) []string {
 	var errs []string
 	for i, seg := range r.Along {
-		if strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(seg), AlongRepeat)) == "" {
+		if name, _ := ParseAlongSegment(seg); name == "" {
 			errs = append(errs, fmt.Sprintf("%s: along[%d] names no relation", at, i))
 		}
 	}
@@ -349,15 +363,26 @@ func validateAlongRollupShape(at string, r *RollupDef) []string {
 		set  bool
 		name string
 	}{
-		{r.Type != "", "type"}, {len(r.Where) > 0, "where"}, {r.Records != "", "records"},
-		{r.Window != "", "window"}, {r.Pick != "", "pick"},
+		{len(r.Via) > 0, "via"}, {r.Type != "", "type"}, {len(r.Where) > 0, "where"},
+		{r.Window != "", "window"}, {r.Pick != "", "pick"}, {r.Climb, "climb"},
+		{len(r.WhenParent) > 0, "when_parent"},
 	} {
 		if c.set {
-			errs = append(errs, fmt.Sprintf("%s: along cannot be combined with %s; use condition", at, c.name))
+			errs = append(errs, fmt.Sprintf("%s: along cannot be combined with %s", at, c.name))
 		}
 	}
-	for _, name := range slices.Sorted(maps.Keys(r.Condition)) {
-		if strings.TrimSpace(name) == "" || strings.TrimSpace(r.Condition[name]) == "" {
+	if len(r.Condition) == 0 {
+		errs = append(errs, at+": along needs a condition for at least one visited type")
+	}
+	return append(errs, conditionEntryErrors(at, r.Condition)...)
+}
+
+// conditionEntryErrors reports each condition entry with an empty type or
+// expression.
+func conditionEntryErrors(at string, cond map[string]string) []string {
+	var errs []string
+	for _, name := range slices.Sorted(maps.Keys(cond)) {
+		if strings.TrimSpace(name) == "" || strings.TrimSpace(cond[name]) == "" {
 			errs = append(errs, fmt.Sprintf("%s: condition %q has an empty type or expression", at, name))
 		}
 	}
@@ -380,12 +405,7 @@ func validateViaConditionShape(at string, r *RollupDef) []string {
 			errs = append(errs, fmt.Sprintf("%s: a via with condition cannot be combined with %s", at, c.name))
 		}
 	}
-	for _, name := range slices.Sorted(maps.Keys(r.Condition)) {
-		if strings.TrimSpace(name) == "" || strings.TrimSpace(r.Condition[name]) == "" {
-			errs = append(errs, fmt.Sprintf("%s: condition %q has an empty type or expression", at, name))
-		}
-	}
-	return errs
+	return append(errs, conditionEntryErrors(at, r.Condition)...)
 }
 
 // validateSiblingsRollupShape checks an earlier-siblings roll-up's own

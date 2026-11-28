@@ -1,12 +1,15 @@
 package dataentry
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
@@ -89,20 +92,25 @@ func TestListCondition_RollupTotalIsPostCondition(t *testing.T) {
 	}
 }
 
-// TestListCondition_RollupNeverPushedDown pins that a condition reading a
-// roll-up is never lowered: the store holds no roll-up value.
-func TestListCondition_RollupNeverPushedDown(t *testing.T) {
+// TestListCondition_CountRollupNotPushedDown pins that a condition on a
+// count roll-up keeps the Go path: only an exists roll-up compared with
+// true or false lowers to the store.
+func TestListCondition_CountRollupNotPushedDown(t *testing.T) {
 	app, _ := newRollupSortApp(t)
 	withRollupListCondition(t, app, "entity.bewijs_aantal >= 1")
 	m, err := viewCondition(app.viewConditions, app.State(), viewKindList, "cond")
 	if err != nil || m == nil {
 		t.Fatalf("viewCondition = %v, %v", m, err)
 	}
-	if _, ok := m.(interface{ Lower() }); ok {
-		t.Error("a roll-up condition offers a store lowering")
+	rm, ok := m.(rollupConditionMatcher)
+	if !ok {
+		t.Fatalf("matcher = %T, want rollupConditionMatcher", m)
 	}
-	if _, ok := m.(rollupConditionMatcher); !ok {
-		t.Errorf("matcher = %T, want rollupConditionMatcher", m)
+	gate := func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error) {
+		return &store.RelationPredicate{}, nil
+	}
+	if _, _, lowers := rm.Lower(principalCtx("PERS-A"), gate); lowers {
+		t.Error("a count roll-up condition lowers to the store")
 	}
 }
 

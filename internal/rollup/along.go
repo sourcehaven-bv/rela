@@ -13,7 +13,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/queryplan"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/store/graphquerynaive"
 )
 
 // MaxAlongDepth is the most hops an along roll-up's max_depth may name. It
@@ -112,11 +111,11 @@ func (n *Node) FillDefaults(c store.Cond) (store.Cond, error) {
 	if !ok {
 		return c, nil
 	}
-	atDefault, err := graphquerynaive.MatchProps(map[string]any{p: d}, []store.PropPredicate{c.Prop})
+	atDefault, err := propHolds(c.Prop, d)
 	if err != nil {
 		return store.Cond{}, err
 	}
-	atUnset, err := graphquerynaive.MatchProps(map[string]any{}, []store.PropPredicate{c.Prop})
+	atUnset, err := propHolds(c.Prop, nil)
 	if err != nil {
 		return store.Cond{}, err
 	}
@@ -144,9 +143,6 @@ func compileAlongColumn(
 	fn metamodel.RollupFunc, prop, at string,
 ) (col Column, problems []string) {
 	r := pd.Rollup
-	if len(r.Via) > 0 {
-		problems = append(problems, at+": along cannot be combined with via")
-	}
 	switch fn {
 	case metamodel.RollupExists, metamodel.RollupMin, metamodel.RollupMax:
 	case metamodel.RollupCount, metamodel.RollupSum, metamodel.RollupLatest, metamodel.RollupAvg,
@@ -178,7 +174,7 @@ func compileViaConditionColumn(
 			at, fn))
 	}
 	if len(pd.Rollup.Via) != 1 {
-		return Column{}, append(problems, at+": a via with condition names exactly one relation")
+		return Column{}, problems
 	}
 	col, walkProblems := compileWalk(meta, eval, typeName, name, pd, fn, prop, at, pd.Rollup.Via, 1)
 	problems = append(problems, walkProblems...)
@@ -195,9 +191,6 @@ func compileWalk(
 	segs, reach, problems := compileSegments(meta, typeName, path, at)
 	resolved := problems == nil
 	along := &Along{Segments: segs, MaxDepth: depth, Nodes: map[string]*Node{}}
-	if len(r.Condition) == 0 {
-		problems = append(problems, at+": along needs a condition for at least one visited type")
-	}
 	for _, typ := range slices.Sorted(maps.Keys(r.Condition)) {
 		if resolved && !reach[typ] {
 			problems = append(problems, fmt.Sprintf("%s: condition type %q is not a type the walk reaches", at, typ))
@@ -231,12 +224,11 @@ func compileSegments(
 	reach = map[string]bool{}
 	repeats := make([]store.AlongSegment, len(along))
 	for i, raw := range along {
-		_, repeats[i].Repeat = strings.CutSuffix(strings.TrimSpace(raw), metamodel.AlongRepeat)
+		_, repeats[i].Repeat = metamodel.ParseAlongSegment(raw)
 	}
 	reached := map[int][]string{-1: {typeName}}
 	for j, raw := range along {
-		name, repeat := strings.CutSuffix(strings.TrimSpace(raw), metamodel.AlongRepeat)
-		name = strings.TrimSpace(name)
+		name, repeat := metamodel.ParseAlongSegment(raw)
 		var before []string
 		for s := -1; s <= j; s++ {
 			if slices.Contains(store.AlongNext(repeats, s), j) {

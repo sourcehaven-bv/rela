@@ -900,8 +900,8 @@ func (q qualifier) alongRefs(prop string, r *RollupDef) {
 	if len(r.Along) > 0 {
 		along := make(StringOrSlice, len(r.Along))
 		for i, seg := range r.Along {
-			name, repeat := strings.CutSuffix(strings.TrimSpace(seg), AlongRepeat)
-			along[i] = q.relationRef(strings.TrimSpace(name))
+			name, repeat := ParseAlongSegment(seg)
+			along[i] = q.relationRef(name)
 			if repeat {
 				along[i] += AlongRepeat
 			}

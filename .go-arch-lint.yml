@@ -1904,10 +1904,9 @@ deps:
       - metamodel
       - predicate
       - predicatefns
-      # An along node condition lowers to a store condition (queryplan),
-      # and its defaults are judged by the reference matcher.
+      # An along node condition lowers to a store condition (queryplan).
       - queryplan
-      - graphquerynaive
+      - propmatch
       - store
   # Schema transitions compiled into headless flows and enforced on the
   # write path (TKT-12RC7JT, TKT-ZRQSGCM). It sits under flowcfg but shares

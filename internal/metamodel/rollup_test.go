@@ -73,6 +73,23 @@ func TestRollupShape(t *testing.T) {
           condition: {plan: "true"}}}`, "a via with condition names exactly one relation"},
 		{"via with empty condition", `any: {type: boolean, rollup: {via: treatedBy, exists: true,
           condition: {plan: " "}}}`, "has an empty type or expression"},
+		{"along with climb", `any: {type: boolean, rollup: {along: [treatedBy], max_depth: 1, exists: true,
+          climb: true, condition: {plan: "true"}}}`, "along cannot be combined with climb"},
+		{"along with when_parent", `any: {type: boolean, rollup: {along: [treatedBy], max_depth: 1, exists: true,
+          when_parent: {done: "true"}, condition: {plan: "true"}}}`, "along cannot be combined with when_parent"},
+		{"along with siblings_before", `any: {type: boolean, rollup: {along: [treatedBy], max_depth: 1,
+          exists: true, siblings_before: treats, condition: {plan: "true"}}}`,
+			"siblings_before cannot be combined with along"},
+		{"along with via", `any: {type: boolean, rollup: {along: [treatedBy], via: treatedBy, max_depth: 1,
+          exists: true, condition: {plan: "true"}}}`, "along cannot be combined with via"},
+		{"along without condition", `any: {type: boolean, rollup: {along: [treatedBy], max_depth: 1,
+          exists: true}}`, "along needs a condition"},
+		{"along with empty condition", `any: {type: boolean, rollup: {along: [treatedBy], max_depth: 1,
+          exists: true, condition: {plan: ""}}}`, "has an empty type or expression"},
+		{"records with along", `n: {type: decimal, rollup: {records: r, sum: x, along: [treatedBy],
+          max_depth: 1, condition: {plan: "true"}}}`, "records reads the entity's own rows and cannot walk a path"},
+		{"body_tasks with along", `n: {type: integer, rollup: {body_tasks: done, along: [treatedBy]}}`,
+			"body_tasks cannot be combined with along"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
