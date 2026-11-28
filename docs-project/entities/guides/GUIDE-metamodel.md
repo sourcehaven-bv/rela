@@ -1226,9 +1226,12 @@ entities:
   and `all` are refused.
 
 The source itself is never visited. An entity reached along several paths
-counts once. A loop in the data ends at `max_depth`. A walk that would hold
-more than 50,000 rows fails, and the roll-up then has no value; on PostgreSQL
-a roll-up statement also stops after 5 seconds.
+counts once. A loop in the data ends at `max_depth`. A walk from one entity
+that would hold more than 50,000 rows the reader may read, or read more than
+50,001 edges in one hop, fails, and the roll-up then has no value for that
+entity. A roll-up statement on PostgreSQL, and a roll-up call on SQLite,
+also stops after 5 seconds. See the access guide for what these bounds
+reveal.
 
 **Earlier siblings (`siblings_before:`).** A `siblings_before:` roll-up looks
 at the siblings that come before the entity in a parent's manual order. Use
