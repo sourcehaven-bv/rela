@@ -72,21 +72,44 @@ func (s *Store) rollupSiblings(ctx context.Context, q store.RollupQuery) (map[st
 // buildSiblingsSQL renders q's siblings walk as one statement returning
 // the sentinel, then per source its count and its qualifying parents.
 func buildSiblingsSQL(q store.RollupQuery) (sqlText string, args []any, err error) {
-	w := q.Siblings
 	b := &sqlBuilder{}
+	with, overCap := siblingsWalkSQL(b, q, sourcesSeed(b, q.Sources))
+	count := "(SELECT count(DISTINCT j.id) FROM sj j WHERE j.src = g.src AND EXISTS " +
+		"(SELECT 1 FROM sf m WHERE m.parent = j.parent AND " + siblingBefore + "))::int"
+	if q.Siblings.CountSiblings {
+		count = "(SELECT count(DISTINCT (j.id, m.peer)) FROM sj j JOIN sm m ON m.parent = j.parent " +
+			"WHERE j.src = g.src AND " + siblingBefore + ")::int"
+	}
+	sentinel := "SELECT TRUE AS over_cap, NULL::text AS src, NULL::int AS n, NULL::text[] AS parents WHERE " + overCap
+	result := "SELECT FALSE, g.src, " + count + ", array_agg(DISTINCT g.parent) FROM sj g GROUP BY g.src"
+	sqlText = withClause(with) + "SELECT * FROM (" + sentinel + " UNION ALL " + result + ") o ORDER BY o.over_cap DESC"
+	if b.err != nil {
+		return "", nil, b.err
+	}
+	return sqlText, b.args, nil
+}
+
+// siblingBefore holds when the sibling edge m sorts before the node edge j.
+const siblingBefore = `(m.ord IS NULL, COALESCE(m.ord, 0), m.peer COLLATE "C") < ` +
+	`(j.ord IS NULL, COALESCE(j.ord, 0), j.id COLLATE "C")`
+
+// siblingsWalkSQL renders the CTEs of q's siblings walk from the ids seed
+// selects: sj, each source's node edges into a qualifying parent; sm, the
+// qualifying siblings' edges; sf, each parent's first of them. overCap is
+// the condition under which the walk is over its cap.
+func siblingsWalkSQL(b *sqlBuilder, q store.RollupQuery, seed string) (with []string, overCap string) {
+	w := q.Siblings
 	limit := w.RowCap
 	if limit == 0 {
 		limit = store.AlongRowCap
 	}
 	limitArg := b.arg(limit + 1)
 	relArg := b.arg(w.Relation)
-	var with []string
-	nodes := fmt.Sprintf(`SELECT DISTINCT s COLLATE "C" AS src, s COLLATE "C" AS id FROM unnest(%s::text[]) s`,
-		b.arg(q.Sources))
+	nodes := `SELECT DISTINCT s COLLATE "C" AS src, s COLLATE "C" AS id FROM (` + seed + `) z(s)`
 	read := "0"
 	if w.Climb > 0 {
-		climb := store.RollupQuery{Sources: q.Sources, Func: store.RollupCount, Along: store.SiblingClimb(w)}
-		with = alongWalkSQL(b, climb, store.AlongLevels(climb.Along), limitArg)
+		climb := store.RollupQuery{Func: store.RollupCount, Along: store.SiblingClimb(w)}
+		with = alongWalkSQL(b, climb, store.AlongLevels(climb.Along), seed, limitArg)
 		nodes += " UNION SELECT src, id FROM walk"
 		read = "(SELECT count(*) FROM walk)"
 	}
@@ -106,25 +129,10 @@ func buildSiblingsSQL(q store.RollupQuery) (sqlText string, args []any, err erro
 	with = append(with,
 		"sm AS (SELECT se.* FROM se WHERE se.peer IN ("+siblingAdmittedSQL("ss", w.Siblings)+"))",
 		"sj AS (SELECT n.src, ne.id, ne.parent, ne.ord FROM sn n JOIN ne ON ne.id = n.id "+
-			"WHERE ne.parent IN (SELECT id FROM qp))")
-	before := `(m.ord IS NULL, COALESCE(m.ord, 0), m.peer COLLATE "C") < ` +
-		`(j.ord IS NULL, COALESCE(j.ord, 0), j.id COLLATE "C")`
-	count := "(SELECT count(DISTINCT j.id) FROM sj j WHERE j.src = g.src AND EXISTS " +
-		"(SELECT 1 FROM sf m WHERE m.parent = j.parent AND " + before + "))::int"
-	with = append(with, `sf AS (SELECT DISTINCT ON (parent) parent, peer, ord FROM sm `+
-		`ORDER BY parent, ord IS NULL, ord, peer COLLATE "C")`)
-	if w.CountSiblings {
-		count = "(SELECT count(DISTINCT (j.id, m.peer)) FROM sj j JOIN sm m ON m.parent = j.parent " +
-			"WHERE j.src = g.src AND " + before + ")::int"
-	}
-	sentinel := "SELECT TRUE AS over_cap, NULL::text AS src, NULL::int AS n, NULL::text[] AS parents WHERE " +
-		read + " + (SELECT count(*) FROM ne) + (SELECT count(*) FROM se) > " + b.arg(limit)
-	result := "SELECT FALSE, g.src, " + count + ", array_agg(DISTINCT g.parent) FROM sj g GROUP BY g.src"
-	sqlText = withClause(with) + "SELECT * FROM (" + sentinel + " UNION ALL " + result + ") o ORDER BY o.over_cap DESC"
-	if b.err != nil {
-		return "", nil, b.err
-	}
-	return sqlText, b.args, nil
+			"WHERE ne.parent IN (SELECT id FROM qp))",
+		`sf AS (SELECT DISTINCT ON (parent) parent, peer, ord FROM sm `+
+			`ORDER BY parent, ord IS NULL, ord, peer COLLATE "C")`)
+	return with, read + " + (SELECT count(*) FROM ne) + (SELECT count(*) FROM se) > " + b.arg(limit)
 }
 
 // siblingOrderSQL is an edge's order over r: the stored number as float8

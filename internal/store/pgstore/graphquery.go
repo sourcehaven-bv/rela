@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/graphquerynaive"
@@ -46,6 +48,9 @@ func (s *Store) GraphQuery(ctx context.Context, q store.GraphQuery) iter.Seq2[*e
 // CountMatched implements store.MatchedCounter: GraphCount's first statement
 // alone. A list page needs only the scoped count, and the second statement
 // GraphCount would run — the type's world-wide total — is the expensive one.
+// With a roll-up leaf the count runs the leaf's walk for every candidate of
+// the type, so its cost follows the population (accepted debt, design gap
+// 3.5); a statement timeout bounds it.
 func (s *Store) CountMatched(ctx context.Context, q store.GraphQuery) (int, error) {
 	if err := checkGraphQueryScope(q); err != nil {
 		return 0, err
@@ -55,7 +60,12 @@ func (s *Store) CountMatched(ctx context.Context, q store.GraphQuery) (int, erro
 		return 0, err
 	}
 	var matched int
-	if err := s.db.QueryRow(ctx, matchedSQL, matchedArgs...).Scan(&matched); err != nil {
+	if store.HasRollupLeaf(q.Where) {
+		err = s.queryBounded(ctx, matchedSQL, matchedArgs, func(rows pgx.Rows) error { return rows.Scan(&matched) })
+	} else {
+		err = s.db.QueryRow(ctx, matchedSQL, matchedArgs...).Scan(&matched)
+	}
+	if err != nil {
 		return 0, fmt.Errorf("pgstore: graph count (matched): %w", err)
 	}
 	return matched, nil
@@ -291,6 +301,8 @@ func (cb *condBuilder) render(c store.Cond) string {
 		w, ex := buildPredicateSQL(cb.b, prefix, c.Rel.Pred, cb.typeArg, relatedDirection(c.Rel), cb.sel)
 		cb.with = append(cb.with, w...)
 		return existsCond(ex, c.Rel.Pred.Negate)
+	case store.CondRollup:
+		return cb.rollupLeaf(c.Rollup)
 	case store.CondNot:
 		if len(c.Args) != 1 {
 			return cb.b.fail(store.ValidateCond(c))

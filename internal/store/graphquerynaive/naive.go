@@ -164,7 +164,7 @@ func Run(ctx context.Context, r Reader, q store.GraphQuery) iter.Seq2[*entity.En
 		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }
 	}
 	return func(yield func(*entity.Entity, error) bool) {
-		candidates, err := collectByType(ctx, r, q, nil)
+		rctx, candidates, err := answeredCandidates(ctx, r, q)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -172,7 +172,7 @@ func Run(ctx context.Context, r Reader, q store.GraphQuery) iter.Seq2[*entity.En
 		paged := len(q.OrderBy) > 0 || q.Limit > 0 || q.Offset > 0
 		var matched []*entity.Entity
 		for _, e := range candidates {
-			ok, err := matches(ctx, r, e, q)
+			ok, err := matches(rctx, r, e, q)
 			if err != nil {
 				if !yield(nil, err) {
 					return
@@ -307,6 +307,9 @@ func Count(ctx context.Context, r Reader, q store.GraphQuery) (matched, total in
 	if err != nil {
 		return 0, 0, err
 	}
+	if ctx, err = withRollupAnswers(ctx, r, q, candidates); err != nil {
+		return 0, 0, err
+	}
 	total = len(candidates)
 	for _, e := range candidates {
 		ok, mErr := matches(ctx, r, e, q)
@@ -343,6 +346,9 @@ func MatchingFaces(ctx context.Context, r Reader, q store.GraphQuery, ids []stri
 	// costs len(ids) rather than the whole type (TKT-F2EJQY8).
 	cands, err := collectByType(ctx, r, q, slices.Sorted(maps.Keys(want)))
 	if err != nil {
+		return nil, err
+	}
+	if ctx, err = withRollupAnswers(ctx, r, q, cands); err != nil {
 		return nil, err
 	}
 	for _, e := range cands {
@@ -579,6 +585,12 @@ func matchesCond(
 		return matchesProp(e.Properties, c.Prop)
 	case store.CondRelated:
 		return matchesRelated(ctx, r, e, c.Rel, sel)
+	case store.CondRollup:
+		answers, ok := ctx.Value(rollupAnswersKey{}).(map[*store.RollupCond]map[string]bool)
+		if !ok {
+			return false, fmt.Errorf("%w: a roll-up leaf outside a graph query", store.ErrInvalidQuery)
+		}
+		return answers[c.Rollup][e.ID], nil
 	case store.CondNot:
 		if len(c.Args) != 1 {
 			return false, store.ValidateCond(c)
@@ -1095,4 +1107,45 @@ func expandSet(ctx context.Context, r Reader, seeds, through []string, depth int
 		frontier = next
 	}
 	return order, nil
+}
+
+// answeredCandidates is q's candidates and a context carrying the answers
+// of q's roll-up leaves for them (see withRollupAnswers).
+func answeredCandidates(
+	ctx context.Context, r Reader, q store.GraphQuery,
+) (context.Context, []*entity.Entity, error) {
+	candidates, err := collectByType(ctx, r, q, nil)
+	if err != nil {
+		return ctx, nil, err
+	}
+	ctx, err = withRollupAnswers(ctx, r, q, candidates)
+	return ctx, candidates, err
+}
+
+// rollupAnswersKey carries the roll-up leaf answers of one query run.
+type rollupAnswersKey struct{}
+
+// withRollupAnswers answers every roll-up leaf of q.Where for candidates,
+// one batch per leaf ([store.RollupLeafAnswers]), so matchesCond judges a
+// leaf without a store call per row. r must then be a [store.RollupReader].
+func withRollupAnswers(
+	ctx context.Context, r Reader, q store.GraphQuery, candidates []*entity.Entity,
+) (context.Context, error) {
+	if !store.HasRollupLeaf(q.Where) {
+		return ctx, nil
+	}
+	rr, ok := r.(store.RollupReader)
+	if !ok {
+		return ctx, fmt.Errorf("%w: this reader cannot answer a roll-up leaf", store.ErrInvalidQuery)
+	}
+	ids := make([]string, 0, len(candidates))
+	for _, e := range candidates {
+		ids = append(ids, e.ID)
+	}
+	slices.Sort(ids)
+	answers, err := store.RollupLeafAnswers(ctx, rr, *q.Where, slices.Compact(ids))
+	if err != nil {
+		return ctx, err
+	}
+	return context.WithValue(ctx, rollupAnswersKey{}, answers), nil
 }

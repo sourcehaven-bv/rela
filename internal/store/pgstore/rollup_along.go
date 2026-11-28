@@ -124,11 +124,9 @@ func buildAlongSQL(q store.RollupQuery, levels [][]store.AlongHop) (sqlText stri
 	if limit == 0 {
 		limit = store.AlongRowCap
 	}
-	with := append(alongWalkSQL(b, q, levels, b.arg(limit+1)),
-		`counted AS (SELECT w.src, w.id, min(w.type) AS type, min(w.face COLLATE "C") AS face, `+
-			`min(w.val) AS val FROM walk w WHERE w.id <> w.src GROUP BY w.src, w.id HAVING bool_or(w.hit))`)
+	with, overCap := alongCountedSQL(b, q, levels, sourcesSeed(b, q.Sources), limit)
 	sentinel := "SELECT TRUE AS over_cap, NULL::text AS src, NULL::text AS id, NULL::text AS type, " +
-		"NULL::text AS face, NULL::int AS n, NULL::text AS value WHERE (SELECT count(*) FROM walk) > " + b.arg(limit)
+		"NULL::text AS face, NULL::int AS n, NULL::text AS value WHERE " + overCap
 	result := "SELECT FALSE, c.src, NULL, NULL, NULL, count(*)::int, " + alongFoldSQL(q) +
 		" FROM counted c GROUP BY c.src"
 	if q.Along.Visits {
@@ -141,13 +139,29 @@ func buildAlongSQL(q store.RollupQuery, levels [][]store.AlongHop) (sqlText stri
 	return sqlText, b.args, nil
 }
 
-// alongWalkSQL renders the CTEs l0 to lK of q's walk and walk, the union
-// of l1 to lK: every gated (src, id, state) triple, at most limitArg per
-// level.
-func alongWalkSQL(b *sqlBuilder, q store.RollupQuery, levels [][]store.AlongHop, limitArg string) []string {
+// sourcesSeed selects the ids of sources, one column per row.
+func sourcesSeed(b *sqlBuilder, sources []string) string {
+	return "SELECT unnest(" + b.arg(sources) + "::text[])"
+}
+
+// alongCountedSQL renders the walk of q from the ids seed selects and
+// counted, its counted visits per (src, id), with the condition under which
+// the walk is over limit rows.
+func alongCountedSQL(
+	b *sqlBuilder, q store.RollupQuery, levels [][]store.AlongHop, seed string, limit int,
+) (with []string, overCap string) {
+	with = append(alongWalkSQL(b, q, levels, seed, b.arg(limit+1)),
+		`counted AS (SELECT w.src, w.id, min(w.type) AS type, min(w.face COLLATE "C") AS face, `+
+			`min(w.val) AS val FROM walk w WHERE w.id <> w.src GROUP BY w.src, w.id HAVING bool_or(w.hit))`)
+	return with, "(SELECT count(*) FROM walk) > " + b.arg(limit)
+}
+
+// alongWalkSQL renders the CTEs l0 to lK of q's walk from the ids seed
+// selects and walk, the union of l1 to lK: every gated (src, id, state)
+// triple, at most limitArg per level.
+func alongWalkSQL(b *sqlBuilder, q store.RollupQuery, levels [][]store.AlongHop, seed, limitArg string) []string {
 	with := []string{fmt.Sprintf(
-		`l0 AS (SELECT DISTINCT s COLLATE "C" AS src, s COLLATE "C" AS id, -1 AS state FROM unnest(%s::text[]) s)`,
-		b.arg(q.Sources))}
+		`l0 AS (SELECT DISTINCT s COLLATE "C" AS src, s COLLATE "C" AS id, -1 AS state FROM (%s) z(s))`, seed)}
 	walk := make([]string, 0, len(levels))
 	for i, hops := range levels {
 		k := i + 1
